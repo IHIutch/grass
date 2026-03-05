@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::{ast::ArgumentResult, error::SassResult, evaluate::Visitor, value::Value};
 
@@ -80,7 +80,7 @@ impl PartialEq for Builtin {
 
 impl Eq for Builtin {}
 
-pub(crate) static GLOBAL_FUNCTIONS: Lazy<GlobalFunctionMap> = Lazy::new(|| {
+pub(crate) static GLOBAL_FUNCTIONS: LazyLock<GlobalFunctionMap> = LazyLock::new(|| {
     let mut m = HashMap::new();
     color::declare(&mut m);
     list::declare(&mut m);
@@ -92,7 +92,7 @@ pub(crate) static GLOBAL_FUNCTIONS: Lazy<GlobalFunctionMap> = Lazy::new(|| {
     m
 });
 
-pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: Lazy<BTreeSet<&str>> = Lazy::new(|| {
+pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<BTreeSet<&str>> = LazyLock::new(|| {
     GLOBAL_FUNCTIONS
         .keys()
         .copied()
