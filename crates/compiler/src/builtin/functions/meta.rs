@@ -85,9 +85,17 @@ pub(crate) fn unitless(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 }
 
 pub(crate) fn inspect(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
-    args.max_args(1)?;
+    let value = if args.len() > 1 {
+        Value::List(
+            args.positional.drain(..).collect(),
+            ListSeparator::Comma,
+            Brackets::None,
+        )
+    } else {
+        args.get_err(0, "value")?
+    };
     Ok(Value::String(
-        args.get_err(0, "value")?.inspect(args.span())?,
+        value.inspect(args.span())?,
         QuoteKind::None,
     ))
 }

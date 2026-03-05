@@ -112,7 +112,6 @@ test!(
     "a {\n  color: 1 2 3;\n}\n"
 );
 test!(
-    #[ignore = "we don't support multiple arguments to inspect"]
     inspect_comma_list,
     "a {\n  color: inspect(1, 2, 3)\n}\n",
     "a {\n  color: 1, 2, 3;\n}\n"
