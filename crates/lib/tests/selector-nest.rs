@@ -149,20 +149,20 @@ error!(
 error!(
     disallows_parent_not_at_start_of_compound_selector_attribute,
     "a {\n  color: selector-nest(\"[d]&\");\n}\n",
-    "Error: \"&\" may only used at the beginning of a compound selector."
+    "Error: $selectors: \"&\" may only used at the beginning of a compound selector."
 );
 error!(
     disallows_parent_not_at_start_of_compound_selector_type,
     "a {\n  color: selector-nest(\"d&\");\n}\n",
-    "Error: \"&\" may only used at the beginning of a compound selector."
+    "Error: $selectors: \"&\" may only used at the beginning of a compound selector."
 );
 error!(
     improperly_terminated_attribute_selector_first_arg,
-    "a {\n  color: selector-nest(\"[d\");\n}\n", "Error: expected more input."
+    "a {\n  color: selector-nest(\"[d\");\n}\n", "Error: $selectors: expected more input."
 );
 error!(
     improperly_terminated_attribute_selector_second_arg,
-    "a {\n  color: selector-nest(\"c\", \"[d\");\n}\n", "Error: expected more input."
+    "a {\n  color: selector-nest(\"c\", \"[d\");\n}\n", "Error: $selectors: expected more input."
 );
 error!(
     unquoted_integer_first_arg,

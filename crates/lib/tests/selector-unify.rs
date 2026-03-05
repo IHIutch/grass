@@ -579,12 +579,10 @@ error!(
     "Error: $selector2: Parent selectors aren't allowed here."
 );
 error!(
-    #[ignore = "we don't include the name of the arg in the error message"]
     malformed_selector_in_first_arg,
     "a {\n  color: selector-unify(\"[c\", \"c\");\n}\n", "Error: $selector1: expected more input."
 );
 error!(
-    #[ignore = "we don't include the name of the arg in the error message"]
     malformed_selector_in_second_arg,
     "a {\n  color: selector-unify(\"c\", \"[c\");\n}\n", "Error: $selector2: expected more input."
 );

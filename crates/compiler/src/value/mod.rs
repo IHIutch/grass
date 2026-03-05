@@ -472,7 +472,10 @@ impl Value {
             allows_parent,
             true,
             span,
-        )?))
+        ).map_err(|e| {
+            let (msg, span) = (*e).raw();
+            (format!("${name}: {msg}"), span)
+        })?))
     }
 
     fn selector_string(self) -> SassResult<Option<String>> {
