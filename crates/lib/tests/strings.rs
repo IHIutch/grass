@@ -389,13 +389,12 @@ error!(
     ",
     "Error: $separator: 2 is not a string."
 );
-error!(
-    #[ignore = "overflow issue"]
+test!(
     str_split_limit_above_i64_max,
     "@use 'sass:string';
     a {
         color: string.split('1', '1', 36893488147419103232);
     }
     ",
-    "Error: $limit: 36893488147419103000 is not an int."
+    "a {\n  color: [\"\", \"\"];\n}\n"
 );
