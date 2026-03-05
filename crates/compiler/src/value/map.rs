@@ -69,7 +69,7 @@ impl SassMap {
         }
     }
 
-    pub fn iter(&self) -> Iter<(Spanned<Value>, Value)> {
+    pub fn iter(&self) -> Iter<'_, (Spanned<Value>, Value)> {
         self.0.iter()
     }
 

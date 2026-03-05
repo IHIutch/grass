@@ -182,11 +182,11 @@ impl ForwardedModule {
             && rule
                 .hidden_mixins_and_functions
                 .as_ref()
-                .map_or(false, HashSet::is_empty)
+                .is_some_and(HashSet::is_empty)
             && rule
                 .hidden_variables
                 .as_ref()
-                .map_or(false, HashSet::is_empty)
+                .is_some_and(HashSet::is_empty)
         {
             module
         } else {

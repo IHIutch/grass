@@ -102,10 +102,10 @@ fn inner_rgb_3_arg(
             .map(|alpha| alpha.node.is_special_function())
             .unwrap_or(false)
     {
-        let fn_string = if alpha.is_some() {
+        let fn_string = if let Some(alpha) = alpha {
             function_string(
                 name,
-                &[red, green, blue, alpha.unwrap().node],
+                &[red, green, blue, alpha.node],
                 visitor,
                 args.span(),
             )?

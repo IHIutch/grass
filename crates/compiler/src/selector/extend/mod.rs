@@ -30,10 +30,12 @@ mod rule;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 /// Different modes in which extension can run.
+#[derive(Default)]
 enum ExtendMode {
     /// Normal mode, used with the `@extend` rule.
     ///
     /// This preserves existing selectors and extends each target individually.
+    #[default]
     Normal,
 
     /// Replace mode, used by the `selector-replace()` function.
@@ -49,11 +51,6 @@ enum ExtendMode {
     AllTargets,
 }
 
-impl Default for ExtendMode {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExtensionStore {

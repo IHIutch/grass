@@ -30,7 +30,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn is_plain_css(&self) -> bool;
     // todo: make constant?
     fn is_indented(&self) -> bool;
-    fn options(&self) -> &Options;
+    fn options(&self) -> &Options<'_>;
     fn path(&self) -> &Path;
     fn empty_span(&self) -> Span;
     fn current_indentation(&self) -> usize;
@@ -636,7 +636,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }
         }
 
-        return match self.plain_at_rule_name()?.as_str() {
+        match self.plain_at_rule_name()?.as_str() {
             "debug" => self.parse_debug_rule(),
             "each" => self.parse_each_rule(Self::function_child),
             "else" => self.parse_disallowed_at_rule(start),
@@ -647,7 +647,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             "warn" => self.parse_warn_rule(),
             "while" => self.parse_while_rule(Self::function_child),
             _ => self.parse_disallowed_at_rule(start),
-        };
+        }
     }
 
     fn parse_if_rule(
@@ -1237,7 +1237,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let identifier = self.parse_interpolated_identifier()?;
             let ident_span = self.toks_mut().span_from(start);
 
-            if identifier.as_plain().unwrap_or("").to_ascii_lowercase() == "not" {
+            if identifier.as_plain().unwrap_or("").eq_ignore_ascii_case("not") {
                 return Err((r#""not" is not a valid identifier here."#, ident_span).into());
             }
 
@@ -1294,15 +1294,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         // sense to parse that case faster in exchange for less code complexity and
         // a slower backtracking case.
 
-        let name: AstExpr;
         let name_start = self.toks().cursor();
         let was_in_parens = self.flags().in_parens();
 
         let expr = self.parse_expression(None, None, None);
         let found_colon = self.expect_char(':');
-        match (expr, found_colon) {
+        let name: AstExpr = match (expr, found_colon) {
             (Ok(val), Ok(..)) => {
-                name = val.node;
+                val.node
             }
             (Ok(..), Err(e)) | (Err(e), Ok(..)) | (Err(e), Err(..)) => {
                 self.toks_mut().set_cursor(name_start);
@@ -1334,7 +1333,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
                 return Ok(AstSupportsCondition::Anything { contents });
             }
-        }
+        };
 
         let declaration = self.supports_declaration_value(name, start)?;
         self.expect_char(')')?;
@@ -3029,7 +3028,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let ident1 = self.parse_interpolated_identifier()?;
 
-        if ident1.as_plain().unwrap_or("").to_ascii_lowercase() == "not" {
+        if ident1.as_plain().unwrap_or("").eq_ignore_ascii_case("not") {
             // For example, "@media not (...) {"
             self.expect_whitespace()?;
             if !self.looking_at_interpolated_identifier() {
@@ -3050,7 +3049,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let ident2 = self.parse_interpolated_identifier()?;
 
-        if ident2.as_plain().unwrap_or("").to_ascii_lowercase() == "and" {
+        if ident2.as_plain().unwrap_or("").eq_ignore_ascii_case("and") {
             self.expect_whitespace()?;
             // For example, "@media screen and ..."
             buf.add_string(" and ".to_owned());

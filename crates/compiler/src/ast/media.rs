@@ -24,7 +24,7 @@ impl MediaQuery {
             || self
                 .media_type
                 .as_ref()
-                .map_or(false, |v| v.to_ascii_lowercase() == "all")
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
     }
 
     pub fn condition(

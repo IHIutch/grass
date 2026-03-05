@@ -532,7 +532,7 @@ impl<'a> Serializer<'a> {
             self.buffer.extend_from_slice(b"not ");
             let condition = query.conditions.first().unwrap();
             self.buffer
-                .extend_from_slice(condition["(not ".len()..condition.len() - 1].as_bytes());
+                .extend_from_slice(&condition.as_bytes()["(not ".len()..condition.len() - 1]);
         } else {
             let operator = if query.conjunction { " and " } else { " or " };
             self.buffer

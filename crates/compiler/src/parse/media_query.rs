@@ -63,7 +63,7 @@ impl MediaQueryParser {
         let media_type: Option<String>;
         let identifier1 = self.parse_identifier(false, false)?;
 
-        if identifier1.to_ascii_lowercase() == "not" {
+        if identifier1.eq_ignore_ascii_case("not") {
             self.expect_whitespace()?;
             if !self.looking_at_identifier() {
                 return Ok(MediaQuery::condition(
@@ -81,7 +81,7 @@ impl MediaQueryParser {
 
         let identifier2 = self.parse_identifier(false, false)?;
 
-        if identifier2.to_ascii_lowercase() == "and" {
+        if identifier2.eq_ignore_ascii_case("and") {
             self.expect_whitespace()?;
             media_type = Some(identifier1);
         } else {

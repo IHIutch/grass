@@ -100,9 +100,8 @@ impl Iterator for Lexer {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.buf.get(self.cursor).copied().map(|tok| {
+        self.buf.get(self.cursor).copied().inspect(|_tok| {
             self.cursor += 1;
-            tok
         })
     }
 

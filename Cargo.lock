@@ -174,7 +174,6 @@ dependencies = [
  "codemap",
  "indexmap",
  "lasso",
- "once_cell",
  "phf",
  "rand",
  "wasm-bindgen",

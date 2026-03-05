@@ -610,7 +610,7 @@ fn group_selectors(
         let mut last_group = groups.pop_back().unwrap();
         if last_group
             .last()
-            .map_or(false, ComplexSelectorComponent::is_combinator)
+            .is_some_and(ComplexSelectorComponent::is_combinator)
             || c.is_combinator()
         {
             last_group.push(c);

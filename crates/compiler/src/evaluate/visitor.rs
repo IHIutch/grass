@@ -660,24 +660,23 @@ impl<'a> Visitor<'a> {
         };
 
         if let Some(builtin) = builtin {
-            // todo: lots of ugly unwraps here
-            if configuration.is_some()
-                && !(**configuration.as_ref().unwrap()).borrow().is_implicit()
-            {
-                let msg = if names_in_errors {
-                    format!(
-                        "Built-in module {} can't be configured.",
-                        url.to_string_lossy()
-                    )
-                } else {
-                    "Built-in modules can't be configured.".to_owned()
-                };
+            if let Some(ref configuration) = configuration {
+                if !(**configuration).borrow().is_implicit() {
+                    let msg = if names_in_errors {
+                        format!(
+                            "Built-in module {} can't be configured.",
+                            url.to_string_lossy()
+                        )
+                    } else {
+                        "Built-in modules can't be configured.".to_owned()
+                    };
 
-                return Err((
-                    msg,
-                    (**configuration.as_ref().unwrap()).borrow().span.unwrap(),
-                )
-                    .into());
+                    return Err((
+                        msg,
+                        (**configuration).borrow().span.unwrap(),
+                    )
+                        .into());
+                }
             }
 
             callback(
@@ -2583,7 +2582,7 @@ impl<'a> Visitor<'a> {
         Ok(match expr {
             AstExpr::Paren(inner) => match &*inner {
                 AstExpr::FunctionCall(FunctionCallExpr { ref name, .. })
-                    if name.as_str().to_ascii_lowercase() == "var" =>
+                    if name.as_str().eq_ignore_ascii_case("var") =>
                 {
                     let result =
                         self.visit_calculation_value((*inner).clone(), in_min_or_max, span)?;

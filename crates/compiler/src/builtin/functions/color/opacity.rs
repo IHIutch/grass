@@ -4,7 +4,7 @@ use crate::builtin::builtin_imports::*;
 fn is_ms_filter(s: &str) -> bool {
     let mut bytes = s.bytes();
 
-    if !bytes.next().map_or(false, |c| c.is_ascii_alphabetic()) {
+    if !bytes.next().is_some_and(|c| c.is_ascii_alphabetic()) {
         return false;
     }
 
