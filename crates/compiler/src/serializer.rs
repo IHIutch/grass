@@ -583,7 +583,38 @@ impl<'a> Serializer<'a> {
 
         let num = float.abs();
 
-        if self.options.is_compressed() && num < 1.0 {
+        // For very large numbers that exceed f64's integer precision,
+        // format via scientific notation to avoid precision artifacts.
+        // f64 has ~15-17 significant decimal digits; beyond that, the
+        // decimal representation includes spurious non-zero digits.
+        // This matches dart-sass behavior where 1e100 outputs as 1 followed
+        // by 100 zeros.
+        if num >= 1e15 && num.fract() == 0.0 {
+            let s = format!("{:.16e}", num);
+            if let Some(e_pos) = s.find('e') {
+                let mantissa = &s[..e_pos];
+                let exp: usize = s[e_pos + 1..].parse().unwrap_or(0);
+                let digits: String = mantissa
+                    .replace('.', "")
+                    .trim_end_matches('0')
+                    .to_string();
+                let num_digits = digits.len();
+                if exp + 1 > num_digits {
+                    buffer.push_str(&digits);
+                    for _ in 0..(exp + 1 - num_digits) {
+                        buffer.push('0');
+                    }
+                } else {
+                    buffer.push_str(&digits[..exp + 1]);
+                }
+            } else {
+                buffer.push_str(
+                    format!("{:.10}", num)
+                        .trim_end_matches('0')
+                        .trim_end_matches('.'),
+                );
+            }
+        } else if self.options.is_compressed() && num < 1.0 {
             buffer.push_str(
                 format!("{:.10}", num)[1..]
                     .trim_end_matches('0')
