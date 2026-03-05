@@ -50,7 +50,6 @@ test!(
     grass::Options::default().style(grass::OutputStyle::Compressed)
 );
 test!(
-    #[ignore = "regress not emitting the trailing semicolon here"]
     removes_multiline_comment_after_style,
     "a {\n  color: red;\n  /* abc */\n}\n",
     "a{color:red}",

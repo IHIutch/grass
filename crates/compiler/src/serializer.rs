@@ -1068,6 +1068,15 @@ impl<'a> Serializer<'a> {
             }
         }
 
+        // In compressed mode, remove trailing semicolons before closing brace
+        // This handles cases where the last visible child was followed by
+        // invisible children (e.g., comments stripped in compressed mode)
+        if self.options.is_compressed() {
+            while self.buffer.last() == Some(&b';') {
+                self.buffer.pop();
+            }
+        }
+
         self.indentation -= self.indent_width;
 
         if self.options.is_compressed() {
