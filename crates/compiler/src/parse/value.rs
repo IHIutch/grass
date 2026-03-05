@@ -914,15 +914,21 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             blue = (digit3 << 4) + digit3;
         }
 
+        // Don't emit four- or eight-digit hex colors as hex, since that's not
+        // yet well-supported in browsers.
+        let format = if alpha == 1.0 {
+            ColorFormat::Literal(parser.toks_mut().raw_text(start - 1))
+        } else {
+            let _ = parser.toks_mut().raw_text(start - 1);
+            ColorFormat::Infer
+        };
+
         Ok(Color::new_rgba(
             Number::from(red),
             Number::from(green),
             Number::from(blue),
             Number(alpha),
-            // todo:
-            //     // Don't emit four- or eight-digit hex colors as hex, since that's not
-            //     // yet well-supported in browsers.
-            ColorFormat::Literal(parser.toks_mut().raw_text(start - 1)),
+            format,
         ))
     }
 

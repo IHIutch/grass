@@ -19,12 +19,12 @@ test!(
 test!(
     preserves_hex_8_val_10000000,
     "a {\n  color: #10000000;\n}\n",
-    "a {\n  color: #10000000;\n}\n"
+    "a {\n  color: rgba(16, 0, 0, 0);\n}\n"
 );
 test!(
     preserves_hex_8_val_12312312,
     "a {\n  color: #12312312;\n}\n",
-    "a {\n  color: #12312312;\n}\n"
+    "a {\n  color: rgba(18, 49, 35, 0.0705882353);\n}\n"
 );
 test!(
     preserves_hex_8_val_ab234cff,
@@ -49,12 +49,12 @@ test!(
 test!(
     preserves_hex_4_val_0000,
     "a {\n  color: #0000;\n}\n",
-    "a {\n  color: #0000;\n}\n"
+    "a {\n  color: rgba(0, 0, 0, 0);\n}\n"
 );
 test!(
     preserves_hex_4_val_123a,
     "a {\n  color: #123a;\n}\n",
-    "a {\n  color: #123a;\n}\n"
+    "a {\n  color: rgba(17, 34, 51, 0.6666666667);\n}\n"
 );
 test!(
     preserves_hex_4_val_ab2f,
@@ -476,12 +476,12 @@ test!(
 test!(
     more_than_8_hex_chars_after_hash_starts_with_number,
     "a {\n  color: #0000000000;\n}\n",
-    "a {\n  color: #00000000 0;\n}\n"
+    "a {\n  color: rgba(0, 0, 0, 0) 0;\n}\n"
 );
 test!(
     more_than_8_hex_chars_after_hash_starts_with_number_contains_hex_char,
     "a {\n  color: #00000000f00;\n}\n",
-    "a {\n  color: #00000000 f00;\n}\n"
+    "a {\n  color: rgba(0, 0, 0, 0) f00;\n}\n"
 );
 test!(
     all_three_rgb_channels_have_decimal,
@@ -685,7 +685,6 @@ test!(
     "a {\n  color: #000 z;\n}\n"
 );
 test!(
-    #[ignore = "we don't emit 4 character hex colors correctly"]
     hex_color_starts_with_number_non_hex_digit_at_position_5,
     "a {\n  color: #0000z;\n}\n",
     "a {\n  color: rgba(0, 0, 0, 0) z;\n}\n"
