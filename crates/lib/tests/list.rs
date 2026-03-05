@@ -524,7 +524,6 @@ error!(
     "Error: $n: Invalid index 1px for a list with 0 elements."
 );
 error!(
-    #[ignore = "we don't error"]
     empty_list_is_invalid,
     "a {\n  color: ();\n}\n", "Error: () isn't a valid CSS value."
 );
@@ -634,4 +633,4 @@ test!(
     "a {\n  color: join(a, b, space, null);\n}\n",
     "a {\n  color: a b;\n}\n"
 );
-test!(zip_no_args, "a {\n  color: zip();\n}\n", "");
+error!(zip_no_args, "a {\n  color: zip();\n}\n", "Error: () isn't a valid CSS value.");
