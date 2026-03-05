@@ -34,9 +34,9 @@ bench = false
 
 [package.metadata.docs.rs]
 # To build locally:
-# RUSTDOCFLAGS="--cfg doc_cfg" cargo +nightly doc --features=macro --no-deps --open
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --features=macro --no-deps --open
 features = ["macro"]
-rustdoc-args = ["--cfg", "doc_cfg"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 wasm-bindgen = { version = "0.2", optional = true }

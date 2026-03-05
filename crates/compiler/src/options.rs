@@ -171,7 +171,6 @@ impl<'a> Options<'a> {
     #[must_use]
     #[inline]
     #[cfg(any(feature = "custom-builtin-fns", doc))]
-    #[cfg_attr(doc_cfg, doc(cfg(feature = "custom-builtin-fns")))]
     pub fn add_custom_fn<S: Into<String>>(mut self, name: S, func: Builtin) -> Self {
         self.custom_fns.insert(name.into(), func);
         self
