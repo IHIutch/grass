@@ -4,10 +4,9 @@ use std::io::Write;
 mod macros;
 
 test!(
-    #[ignore = "weird ordering problem"]
     module_functions_builtin,
     "@use 'sass:meta';\na {\n  color: inspect(meta.module-functions(meta));\n}\n",
-    "a {\n  color: (\"feature-exists\": get-function(\"feature-exists\"), \"inspect\": get-function(\"inspect\"), \"type-of\": get-function(\"type-of\"), \"keywords\": get-function(\"keywords\"), \"global-variable-exists\": get-function(\"global-variable-exists\"), \"variable-exists\": get-function(\"variable-exists\"), \"function-exists\": get-function(\"function-exists\"), \"mixin-exists\": get-function(\"mixin-exists\"), \"content-exists\": get-function(\"content-exists\"), \"module-variables\": get-function(\"module-variables\"), \"module-functions\": get-function(\"module-functions\"), \"get-function\": get-function(\"get-function\"), \"call\": get-function(\"call\"), \"calc-args\": get-function(\"calc-args\"), \"calc-name\": get-function(\"calc-name\"));\n}\n"
+    "a {\n  color: (\"module-functions\": get-function(\"module-functions\"), \"inspect\": get-function(\"inspect\"), \"feature-exists\": get-function(\"feature-exists\"), \"type-of\": get-function(\"type-of\"), \"keywords\": get-function(\"keywords\"), \"global-variable-exists\": get-function(\"global-variable-exists\"), \"variable-exists\": get-function(\"variable-exists\"), \"function-exists\": get-function(\"function-exists\"), \"mixin-exists\": get-function(\"mixin-exists\"), \"content-exists\": get-function(\"content-exists\"), \"module-variables\": get-function(\"module-variables\"), \"get-function\": get-function(\"get-function\"), \"call\": get-function(\"call\"), \"calc-args\": get-function(\"calc-args\"), \"calc-name\": get-function(\"calc-name\"));\n}\n"
 );
 test!(
     module_variables_builtin,
