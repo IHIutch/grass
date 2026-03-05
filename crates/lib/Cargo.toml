@@ -18,7 +18,7 @@ include = [
     "LICENSE",
 ]
 default-run = "grass"
-rust-version = "1.70"
+rust-version = "1.80"
 
 [[bin]]
 name = "grass"
