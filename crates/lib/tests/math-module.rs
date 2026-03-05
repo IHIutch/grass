@@ -52,7 +52,6 @@ test!(
     "a {\n  color: NaN;\n}\n"
 );
 test!(
-    #[ignore = "regress big numbers"]
     sqrt_big_positive,
     "@use 'sass:math';\na {\n  color: math.sqrt(9999999999999999999999999999999999999999999999999);\n}\n",
     "a {\n  color: 3162277660168379000000000;\n}\n"
