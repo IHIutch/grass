@@ -361,6 +361,18 @@ impl SimpleSelector {
             if self == their_simple {
                 return true;
             }
+            // A universal-namespace type selector (*|c) is a superselector of
+            // any type selector with the same ident (d|c, c, |c).
+            match (self, their_simple) {
+                (
+                    SimpleSelector::Type(QualifiedName {
+                        namespace: Namespace::Asterisk,
+                        ident: ident1,
+                    }),
+                    SimpleSelector::Type(QualifiedName { ident: ident2, .. }),
+                ) if ident1 == ident2 => return true,
+                _ => {}
+            }
             if let SimpleSelector::Pseudo(Pseudo {
                 selector: Some(sel),
                 name,

@@ -172,19 +172,16 @@ test!(
     "a {\n  color: true;\n}\n"
 );
 test!(
-    #[ignore = "https://github.com/sass/dart-sass/issues/789"]
     simple_type_universal_namespace_and_explicit_namespace,
     "a {\n  color: is-superselector(\"*|c\", \"d|c\");\n}\n",
     "a {\n  color: true;\n}\n"
 );
 test!(
-    #[ignore = "https://github.com/sass/dart-sass/issues/789"]
     simple_type_universal_namespace_and_implicit_namespace,
     "a {\n  color: is-superselector(\"*|c\", \"c\");\n}\n",
     "a {\n  color: true;\n}\n"
 );
 test!(
-    #[ignore = "https://github.com/sass/dart-sass/issues/789"]
     simple_type_universal_namespace_and_empty_namespace,
     "a {\n  color: is-superselector(\"*|c\", \"|c\");\n}\n",
     "a {\n  color: true;\n}\n"
