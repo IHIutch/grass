@@ -120,6 +120,16 @@ impl Color {
     pub fn color_space(&self) -> ColorSpace {
         self.space
     }
+
+    /// Get the raw channel values (with None for missing channels).
+    pub fn raw_channels(&self) -> [Option<f64>; 3] {
+        self.channels
+    }
+
+    /// Get the raw alpha value (None for missing alpha).
+    pub fn raw_alpha(&self) -> Option<f64> {
+        self.alpha
+    }
 }
 
 // ---- Legacy constructors ----
@@ -609,6 +619,138 @@ impl Color {
             _ => false,
         }
     }
+}
+
+// ---- Gamut mapping ----
+impl Color {
+    /// Clamp all channels to the gamut bounds of this color's space.
+    pub fn to_gamut_clip(&self) -> Self {
+        let channel_defs = self.space.channels();
+        let mut channels = self.channels;
+        for i in 0..3 {
+            if let Some(val) = channels[i] {
+                if !channel_defs[i].is_polar {
+                    channels[i] = Some(val.clamp(channel_defs[i].min, channel_defs[i].max));
+                }
+            }
+        }
+        Color {
+            space: self.space,
+            channels,
+            alpha: self.alpha,
+            format: ColorFormat::Infer,
+        }
+    }
+
+    /// CSS Color 4 local-MINDE gamut mapping algorithm.
+    ///
+    /// This maps an out-of-gamut color to the closest in-gamut color using
+    /// perceptual uniformity in OKLch. It bisects on chroma while checking
+    /// deltaEOK to ensure perceptual accuracy.
+    pub fn to_gamut_local_minde(&self) -> Self {
+        // If already in gamut, return as-is
+        if self.is_in_gamut() {
+            return self.clone();
+        }
+
+        let origin = self.to_space(ColorSpace::Oklch);
+        let l = origin.channels[0].unwrap_or(0.0);
+        let c = origin.channels[1].unwrap_or(0.0);
+        let h = origin.channels[2].unwrap_or(0.0);
+
+        // Handle edge cases: if lightness is at or beyond bounds
+        if l >= 1.0 {
+            let white = Color::for_space(
+                self.space,
+                self.space.white_channels(),
+                self.alpha,
+                ColorFormat::Infer,
+            );
+            return white.to_gamut_clip();
+        }
+        if l <= 0.0 {
+            let black = Color::for_space(
+                self.space,
+                self.space.black_channels(),
+                self.alpha,
+                ColorFormat::Infer,
+            );
+            return black.to_gamut_clip();
+        }
+
+        const EPSILON: f64 = 0.02;
+        const DELTA_E_THRESHOLD: f64 = 0.02;
+
+        let mut min_chroma = 0.0_f64;
+        let mut max_chroma = c;
+        let mut current_chroma;
+
+        // Bisect on chroma
+        loop {
+            current_chroma = (min_chroma + max_chroma) / 2.0;
+
+            // Create color with reduced chroma in OKLch
+            let candidate_oklch = Color::for_space(
+                ColorSpace::Oklch,
+                [Some(l), Some(current_chroma), Some(h)],
+                self.alpha,
+                ColorFormat::Infer,
+            );
+
+            // Convert to target space
+            let candidate = candidate_oklch.to_space(self.space);
+
+            // Check if in gamut
+            if candidate.is_in_gamut() {
+                // Check if we're close enough to the boundary
+                if max_chroma - min_chroma < EPSILON {
+                    return candidate;
+                }
+                // Try higher chroma
+                min_chroma = current_chroma;
+            } else {
+                // Clip the candidate
+                let clipped = candidate.to_gamut_clip();
+
+                // Calculate deltaEOK between clipped and candidate
+                let delta = delta_e_ok(&clipped, &candidate);
+
+                if delta - DELTA_E_THRESHOLD < EPSILON {
+                    if max_chroma - min_chroma < EPSILON {
+                        return clipped;
+                    }
+                    // Clipped is close enough perceptually, try higher chroma
+                    min_chroma = current_chroma;
+                } else {
+                    // Too much perceptual difference, reduce chroma
+                    max_chroma = current_chroma;
+                }
+            }
+
+            // Safety: if chroma range is tiny, return clipped
+            if max_chroma - min_chroma < EPSILON / 100.0 {
+                let final_oklch = Color::for_space(
+                    ColorSpace::Oklch,
+                    [Some(l), Some(current_chroma), Some(h)],
+                    self.alpha,
+                    ColorFormat::Infer,
+                );
+                return final_oklch.to_space(self.space).to_gamut_clip();
+            }
+        }
+    }
+}
+
+/// Calculate deltaEOK (Euclidean distance in OKLab space).
+fn delta_e_ok(a: &Color, b: &Color) -> f64 {
+    let a_oklab = a.to_space(ColorSpace::Oklab);
+    let b_oklab = b.to_space(ColorSpace::Oklab);
+
+    let dl = a_oklab.channels[0].unwrap_or(0.0) - b_oklab.channels[0].unwrap_or(0.0);
+    let da = a_oklab.channels[1].unwrap_or(0.0) - b_oklab.channels[1].unwrap_or(0.0);
+    let db = a_oklab.channels[2].unwrap_or(0.0) - b_oklab.channels[2].unwrap_or(0.0);
+
+    (dl * dl + da * da + db * db).sqrt()
 }
 
 /// Check if a source channel has an analogous channel in the target space.

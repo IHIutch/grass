@@ -163,6 +163,41 @@ impl ColorSpace {
         }
     }
 
+    /// Channel values representing white in this color space.
+    pub fn white_channels(self) -> [Option<f64>; 3] {
+        match self {
+            Self::Rgb => [Some(255.0), Some(255.0), Some(255.0)],
+            Self::Hsl => [Some(0.0), Some(0.0), Some(1.0)],
+            Self::Hwb => [Some(0.0), Some(1.0), Some(0.0)],
+            Self::SRgb | Self::DisplayP3 | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => {
+                [Some(1.0), Some(1.0), Some(1.0)]
+            }
+            Self::SRgbLinear => [Some(1.0), Some(1.0), Some(1.0)],
+            Self::Lab => [Some(100.0), Some(0.0), Some(0.0)],
+            Self::Lch => [Some(100.0), Some(0.0), Some(0.0)],
+            Self::Oklab => [Some(1.0), Some(0.0), Some(0.0)],
+            Self::Oklch => [Some(1.0), Some(0.0), Some(0.0)],
+            Self::XyzD50 => [Some(0.9642), Some(1.0), Some(0.8252)],
+            Self::XyzD65 => [Some(0.9505), Some(1.0), Some(1.0890)],
+        }
+    }
+
+    /// Channel values representing black in this color space.
+    pub fn black_channels(self) -> [Option<f64>; 3] {
+        match self {
+            Self::Rgb => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::Hsl => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::Hwb => [Some(0.0), Some(0.0), Some(1.0)],
+            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::A98Rgb
+            | Self::ProphotoRgb | Self::Rec2020 => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::Lab => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::Lch => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::Oklab => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::Oklch => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::XyzD50 | Self::XyzD65 => [Some(0.0), Some(0.0), Some(0.0)],
+        }
+    }
+
     /// The index of the hue channel in this space, if any.
     pub fn hue_channel_index(self) -> Option<usize> {
         match self {

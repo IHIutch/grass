@@ -575,11 +575,32 @@ impl<'a> Serializer<'a> {
     }
 
     /// Write a single channel value, or "none" if missing.
+    /// Adds appropriate units: `%` for lightness, `deg` for hue.
     fn write_channel(&mut self, color: &Color, index: usize) {
         if color.has_missing_channel(index) {
             self.buffer.extend_from_slice(b"none");
         } else {
-            self.write_float(color.channel_value(index).0);
+            let space = color.color_space();
+            let channel_defs = space.channels();
+            let val = color.channel_value(index).0;
+
+            // Lightness channels in perceptual spaces serialize with %
+            if channel_defs[index].name == "lightness" {
+                // OKLab/OKLCh: lightness is in [0, 1], serialize as percentage
+                if matches!(space, ColorSpace::Oklab | ColorSpace::Oklch) {
+                    self.write_float(val * 100.0);
+                } else {
+                    // Lab/LCH: lightness is already in [0, 100]
+                    self.write_float(val);
+                }
+                self.buffer.push(b'%');
+            } else if channel_defs[index].is_polar {
+                // Hue channels serialize with deg
+                self.write_float(val);
+                self.buffer.extend_from_slice(b"deg");
+            } else {
+                self.write_float(val);
+            }
         }
     }
 

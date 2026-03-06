@@ -1,5 +1,6 @@
 use crate::{
     builtin::{builtin_imports::*, color::angle_value},
+    color::{space::ColorSpace, ColorFormat},
     utils::to_sentence,
     value::fuzzy_round,
 };
@@ -9,6 +10,251 @@ enum UpdateComponents {
     Change,
     Adjust,
     Scale,
+}
+
+/// Parse a channel value for a modern color space.
+/// Returns the adjustment value in channel units.
+fn parse_modern_channel(
+    val: Value,
+    name: &str,
+    is_polar: bool,
+    percentage_ref: Option<f64>,
+    update: UpdateComponents,
+    span: Span,
+) -> SassResult<Option<f64>> {
+    // Handle `none` keyword for change
+    if update == UpdateComponents::Change {
+        if let Value::String(s, QuoteKind::None) = &val {
+            if s == "none" {
+                // Signal to set channel to None (missing)
+                return Ok(None);
+            }
+        }
+    }
+
+    let num = val.assert_number_with_name(name, span)?;
+
+    if update == UpdateComponents::Scale {
+        // Scale requires percentage
+        num.assert_unit(&Unit::Percent, name, span)?;
+        num.assert_bounds(name, -100.0, 100.0, span)?;
+        return Ok(Some(num.num.0 / 100.0));
+    }
+
+    if is_polar {
+        // Hue channels accept deg, grad, rad, turn, or no unit
+        // But NOT percentages
+        if num.unit == Unit::Percent {
+            return Err((
+                format!(
+                    "${}: Expected {} to have an angle unit (deg, grad, rad, turn).",
+                    name,
+                    num.num.inspect()
+                ),
+                span,
+            )
+                .into());
+        }
+        // Convert angle units to degrees
+        let degrees = if num.unit == Unit::None || num.unit == Unit::Deg {
+            num.num.0
+        } else if num.unit == Unit::Grad {
+            num.num.0 * 0.9
+        } else if num.unit == Unit::Rad {
+            num.num.0 * 180.0 / std::f64::consts::PI
+        } else if num.unit == Unit::Turn {
+            num.num.0 * 360.0
+        } else {
+            return Err((
+                format!(
+                    "${}: Expected {} to have an angle unit (deg, grad, rad, turn).",
+                    name,
+                    num.num.inspect()
+                ),
+                span,
+            )
+                .into());
+        };
+        Ok(Some(degrees))
+    } else {
+        // Non-polar channels accept unitless or percentage
+        if num.unit == Unit::Percent {
+            if let Some(pref) = percentage_ref {
+                Ok(Some((num.num.0 / 100.0) * pref))
+            } else {
+                Err((
+                    format!(
+                        "${}: Expected {} to have no units or \"%\".",
+                        name,
+                        num.num.inspect()
+                    ),
+                    span,
+                )
+                    .into())
+            }
+        } else if num.unit == Unit::None {
+            Ok(Some(num.num.0))
+        } else {
+            Err((
+                format!(
+                    "${}: Expected {} to have unit \"%\" or no units.",
+                    name,
+                    num.num.inspect()
+                ),
+                span,
+            )
+                .into())
+        }
+    }
+}
+
+/// Handle adjust/scale/change for a modern (non-legacy) working space.
+fn update_modern(
+    color: &Arc<Color>,
+    args: &mut ArgumentResult,
+    working_space: ColorSpace,
+    convert_back: bool,
+    update: UpdateComponents,
+    span: Span,
+) -> SassResult<Value> {
+    let channel_defs = working_space.channels();
+
+    // Convert color to working space
+    let color_in_space = if color.color_space() != working_space {
+        color.to_space(working_space)
+    } else {
+        color.as_ref().clone()
+    };
+
+    // Extract channel arguments for the working space
+    // Each entry is Some(Some(value)) for a real value, Some(None) for `none`, or None for not provided
+    let mut channel_adjustments: [Option<Option<f64>>; 3] = [None, None, None];
+
+    for i in 0..3 {
+        if let Some(v) = args.get(usize::MAX, channel_defs[i].name) {
+            // Scale doesn't work on hue channels
+            if update == UpdateComponents::Scale && channel_defs[i].is_polar {
+                return Err((
+                    format!(
+                        "$hue: Cannot scale a polar channel (hue)."
+                    ),
+                    span,
+                )
+                    .into());
+            }
+
+            let result = parse_modern_channel(
+                v.node,
+                channel_defs[i].name,
+                channel_defs[i].is_polar,
+                channel_defs[i].percentage_ref,
+                update,
+                span,
+            )?;
+
+            match result {
+                Some(val) => channel_adjustments[i] = Some(Some(val)),
+                None => channel_adjustments[i] = Some(None), // `none` keyword
+            }
+        }
+    }
+
+    // Extract alpha
+    let alpha_adjustment = if let Some(v) = args.get(usize::MAX, "alpha") {
+        let num = v.node.assert_number_with_name("alpha", span)?;
+        if update == UpdateComponents::Scale {
+            num.assert_unit(&Unit::Percent, "alpha", span)?;
+            num.assert_bounds("alpha", -100.0, 100.0, span)?;
+            Some(num.num.0 / 100.0)
+        } else {
+            Some(num.num.0)
+        }
+    } else {
+        None
+    };
+
+    // Check for unknown named arguments
+    if !args.named.is_empty() {
+        let argument_names: Vec<String> = args
+            .named
+            .keys()
+            .map(|key| format!("${key}"))
+            .collect();
+
+        let first_name = &argument_names[0];
+        return Err((
+            format!(
+                "{}: Color space {} doesn't have a channel with this name.",
+                first_name,
+                working_space.name()
+            ),
+            span,
+        )
+            .into());
+    }
+
+    // Apply modifications to channels
+    let mut new_channels = color_in_space.raw_channels();
+
+    for i in 0..3 {
+        if let Some(adj) = channel_adjustments[i] {
+            match adj {
+                None => {
+                    // `none` keyword - set channel to missing
+                    new_channels[i] = None;
+                }
+                Some(adj_val) => {
+                    let current = new_channels[i].unwrap_or(0.0);
+                    let new_val = match update {
+                        UpdateComponents::Change => adj_val,
+                        UpdateComponents::Adjust => current + adj_val,
+                        UpdateComponents::Scale => {
+                            let max = channel_defs[i].max;
+                            let min = channel_defs[i].min;
+                            current
+                                + if adj_val > 0.0 {
+                                    (max - current) * adj_val
+                                } else {
+                                    (current - min) * adj_val
+                                }
+                        }
+                    };
+                    new_channels[i] = Some(new_val);
+                }
+            }
+        }
+    }
+
+    // Apply alpha modification
+    let new_alpha = if let Some(adj) = alpha_adjustment {
+        let current = color_in_space.alpha().0;
+        Some(match update {
+            UpdateComponents::Change => adj.clamp(0.0, 1.0),
+            UpdateComponents::Adjust => (current + adj).clamp(0.0, 1.0),
+            UpdateComponents::Scale => {
+                let val = current
+                    + if adj > 0.0 {
+                        (1.0 - current) * adj
+                    } else {
+                        current * adj
+                    };
+                val.clamp(0.0, 1.0)
+            }
+        })
+    } else {
+        color_in_space.raw_alpha()
+    };
+
+    let result = Color::for_space(working_space, new_channels, new_alpha, ColorFormat::Infer);
+
+    // Convert back to original space if $space was explicit
+    let final_color = if convert_back && color.color_space() != working_space {
+        result.to_space(color.color_space())
+    } else {
+        result
+    };
+
+    Ok(Value::Color(Arc::new(final_color)))
 }
 
 fn update_components(
@@ -29,6 +275,43 @@ fn update_components(
         )
             .into());
     }
+
+    // Check for $space parameter
+    let space_arg = args.get(usize::MAX, "space");
+
+    // Determine if we should use the modern path
+    if let Some(space_val) = space_arg {
+        // Explicit $space parameter
+        let space_str = match &space_val.node {
+            Value::String(s, _) => s.clone(),
+            v => {
+                return Err((
+                    format!(
+                        "$space: {} is not a string.",
+                        v.inspect(span)?
+                    ),
+                    span,
+                )
+                    .into())
+            }
+        };
+
+        let working_space = ColorSpace::from_name(&space_str).ok_or_else(|| {
+            (
+                format!("$space: Unknown color space \"{}\".", space_str),
+                span,
+            )
+        })?;
+
+        return update_modern(&color, &mut args, working_space, true, update, span);
+    }
+
+    // No $space parameter - check if color is in a modern space
+    if !color.color_space().is_legacy() {
+        return update_modern(&color, &mut args, color.color_space(), false, update, span);
+    }
+
+    // Legacy path: existing behavior for RGB/HSL/HWB colors
 
     let check_num = |num: Spanned<Value>,
                      name: &str,
