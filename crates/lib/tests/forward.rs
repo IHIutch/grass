@@ -464,7 +464,6 @@ fn forward_with_through_forward_show() {
 }
 
 #[test]
-#[ignore = "incorrectly thinks there's a module loop"]
 fn import_forwarded_first_no_use() {
     let mut fs = TestFs::new();
 

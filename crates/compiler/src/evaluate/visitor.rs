@@ -798,7 +798,7 @@ impl<'a> Visitor<'a> {
     /// <https://sass-lang.com/documentation/at-rules/import#finding-the-file>
     /// <https://sass-lang.com/documentation/at-rules/import#load-paths>
     #[allow(clippy::cognitive_complexity, clippy::redundant_clone)]
-    pub fn find_import(&self, path: &Path) -> Option<PathBuf> {
+    pub fn find_import(&self, path: &Path, for_import: bool) -> Option<PathBuf> {
         let path_buf = if path.is_absolute() {
             path.into()
         } else {
@@ -831,7 +831,9 @@ impl<'a> Visitor<'a> {
             || path_buf.extension() == Some(OsStr::new("css"))
         {
             let extension = path_buf.extension().unwrap();
-            try_path!(path_buf.with_extension(format!(".import{}", extension.to_str().unwrap())));
+            if for_import {
+                try_path!(path_buf.with_extension(format!(".import{}", extension.to_str().unwrap())));
+            }
             try_path!(path_buf);
             // todo: consider load paths
             return None;
@@ -840,9 +842,11 @@ impl<'a> Visitor<'a> {
         macro_rules! try_path_with_extensions {
             ($path:expr) => {
                 let path = $path;
-                try_path!(path.with_extension("import.sass"));
-                try_path!(path.with_extension("import.scss"));
-                try_path!(path.with_extension("import.css"));
+                if for_import {
+                    try_path!(path.with_extension("import.sass"));
+                    try_path!(path.with_extension("import.scss"));
+                    try_path!(path.with_extension("import.css"));
+                }
                 try_path!(path.with_extension("sass"));
                 try_path!(path.with_extension("scss"));
                 try_path!(path.with_extension("css"));
@@ -884,10 +888,10 @@ impl<'a> Visitor<'a> {
     fn import_like_node(
         &mut self,
         url: &str,
-        _for_import: bool,
+        for_import: bool,
         span: Span,
     ) -> SassResult<StyleSheet> {
-        if let Some(name) = self.find_import(url.as_ref()) {
+        if let Some(name) = self.find_import(url.as_ref(), for_import) {
             let name = self.options.fs.canonicalize(&name).unwrap_or(name);
             if let Some(style_sheet) = self.import_cache.get(&name) {
                 return Ok(style_sheet.clone());
