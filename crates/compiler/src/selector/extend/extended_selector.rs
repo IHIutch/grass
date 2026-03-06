@@ -1,6 +1,9 @@
 use std::{
     cell::RefCell,
-    collections::{hash_set::IntoIter, HashSet},
+    collections::{
+        hash_set::{IntoIter, Iter},
+        HashSet,
+    },
     hash::{Hash, Hasher},
     ops::Deref,
     ptr,
@@ -74,6 +77,10 @@ impl SelectorHashSet {
 
     pub fn insert(&mut self, selector: ExtendedSelector) {
         self.0.insert(selector);
+    }
+
+    pub fn iter(&self) -> Iter<'_, ExtendedSelector> {
+        self.0.iter()
     }
 }
 

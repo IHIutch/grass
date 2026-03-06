@@ -73,7 +73,7 @@ pub(crate) struct ExtensionStore {
     ///
     /// This tracks the contexts in which each selector's style rule is defined.
     /// If a rule is defined at the top level, it doesn't have an entry.
-    media_contexts: HashMap<SelectorList, Vec<CssMediaQuery>>,
+    media_contexts: HashMap<ExtendedSelector, Vec<CssMediaQuery>>,
 
     /// A map from `SimpleSelector`s to the specificity of their source
     /// selectors.
@@ -902,12 +902,11 @@ impl ExtensionStore {
             }
               */
         }
-        if let Some(mut media_query_context) = media_query_context.clone() {
-            self.media_contexts
-                .get_mut(&selector)
-                .replace(&mut media_query_context);
-        }
         let extended_selector = ExtendedSelector::new(selector.clone());
+        if let Some(media_query_context) = media_query_context.clone() {
+            self.media_contexts
+                .insert(extended_selector.clone(), media_query_context);
+        }
         self.register_selector(selector, &extended_selector);
         extended_selector
     }
@@ -960,9 +959,23 @@ impl ExtensionStore {
         extend: &ExtendRule,
         media_context: &Option<Vec<CssMediaQuery>>,
         span: Span,
-    ) {
+    ) -> SassResult<()> {
         let selectors = self.selectors.get(target).cloned();
         let existing_extensions = self.extensions_by_extender.get(target).cloned();
+
+        // Check that the extension doesn't cross media query boundaries.
+        if let Some(ref selectors) = selectors {
+            for selector in selectors.iter() {
+                let selector_media = self.media_contexts.get(selector);
+                if media_context.as_ref() != selector_media {
+                    return Err((
+                        "You may not @extend selectors across media queries.",
+                        span,
+                    )
+                        .into());
+                }
+            }
+        }
 
         let mut new_extensions: Option<IndexMap<ComplexSelector, Extension>> = None;
 
@@ -1021,7 +1034,7 @@ impl ExtensionStore {
         let new_extensions = if let Some(new) = new_extensions {
             new
         } else {
-            return;
+            return Ok(());
         };
 
         let mut new_extensions_by_target = HashMap::new();
@@ -1038,6 +1051,8 @@ impl ExtensionStore {
         if let Some(selectors) = selectors {
             self.extend_existing_selectors(selectors, &new_extensions_by_target);
         }
+
+        Ok(())
     }
 
     /// Extend `extensions` using `new_extensions`.
@@ -1155,7 +1170,7 @@ impl ExtensionStore {
             selector.set_inner(self.extend_list(
                 old_value.clone(),
                 Some(new_extensions),
-                &self.media_contexts.get(&old_value).cloned(),
+                &self.media_contexts.get(&selector).cloned(),
             ));
             /*
             todo: error handling

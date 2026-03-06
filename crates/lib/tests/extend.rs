@@ -1936,7 +1936,6 @@ error!(
     "Error: Parent selectors aren't allowed here."
 );
 error!(
-    #[ignore = "we do not currently respect this"]
     extend_across_media_boundary,
     "a {
         display: none;
