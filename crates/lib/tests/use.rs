@@ -876,7 +876,6 @@ fn use_member_global_variable_assignment_toplevel() {
 }
 
 #[test]
-#[ignore = "we don't hermetically evaluate @extend"]
 fn use_module_with_extend() {
     let mut fs = TestFs::new();
 

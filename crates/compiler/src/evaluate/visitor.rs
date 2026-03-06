@@ -634,6 +634,8 @@ impl<'a> Visitor<'a> {
             Ok(())
         })?;
 
+        extension_store.check_unsatisfied_extends()?;
+
         let module = env.to_module(extension_store);
 
         self.modules.insert(url, Arc::clone(&module));
