@@ -152,10 +152,80 @@ For more details, see README.md and docs/QUICKSTART.md.
 # grass - Sass compiler in Rust
 
 ## Build & Test
-- `cargo test --features=macro` - run all tests
-- `cargo clippy --features=macro -- -D warnings` - lint check
 - `cargo build --release` - release build
+- `cargo clippy --features=macro -- -D warnings` - lint check
+- `cargo test --features=macro` - run all tests
 - Rust MSRV: see rust-version in crates/*/Cargo.toml
+
+## Testing Strategy
+- **Iterate with sass-spec first** when working on features targeting spec compliance. sass-spec tests run much faster than `cargo test` and are the source of truth for correctness.
+- **Run `cargo test --features=macro` as a final gate** before committing to catch regressions across the full test suite.
+
+## Development Workflow
+
+### Adding a New Feature or Fixing a Bug
+
+1. **Check if dart-sass has it** — look at [dart-sass source](https://github.com/sass/dart-sass) to understand expected behavior
+2. **Search the sass-spec test suite** — before writing code, search `sass-spec/spec/` for related test files (see below)
+3. **Add tests first** — put test cases in the appropriate `crates/lib/tests/*.rs` file using the `test!` macro
+4. **Implement** — most changes are in `crates/compiler/src/` (parser, evaluator, or builtins)
+5. **Run sass-spec tests** to verify correctness, then `cargo test` as a final gate
+
+### Searching the sass-spec Test Suite
+
+**This is a required step for all feature work and bug fixes.** Before writing code, search `sass-spec/spec/` for tests related to whatever you're working on. Search broadly, not just for exact feature names.
+
+For example, when working on `@extend`:
+- Search for `extend` in test directory and file names
+- Search for error messages like `"can't extend"` to find validation tests
+- Check for edge cases like nested selectors, media boundaries, chained extends
+
+**Why this matters:** grass aims to match dart-sass behavior exactly. If sass-spec has a test for it, we should pass it. Missing this step has caused silent behavioral differences.
+
+When you find relevant sass-spec tests, use them to guide implementation and add equivalent unit tests in `crates/lib/tests/`:
+```rust
+// Based on sass-spec: spec/css/if/sass.hrx
+test!(css_if_sass_true, "a {b: if(sass(true): c; else: d)}", "a {\n  b: c;\n}\n");
+```
+
+**Search locally with `find` and `grep`:**
+```bash
+# Find test files by topic
+find sass-spec/spec -name "*.hrx" | grep -i "extend"
+
+# Search test content for specific behavior
+grep -r "error" sass-spec/spec/css/if/ --include="*.hrx" -l
+```
+
+**Search the dart-sass repo with `gh` for implementation details and tests:**
+```bash
+# Search dart-sass source for how a feature is implemented
+gh search code "visitIfExpression" --repo sass/dart-sass --limit 10
+
+# Search for test cases related to a feature
+gh search code "if()" --repo sass/sass-spec --filename "*.hrx" --limit 20
+
+# Search for specific error messages
+gh search code "may not contain" --repo sass/dart-sass --limit 10
+```
+
+### Running Tests
+
+**Iterate with sass-spec first, cargo test last.** The full `cargo test` suite is slow to start up. When working on spec compliance, test against sass-spec directly using the release binary, then run `cargo test` as a final regression gate before committing.
+
+```bash
+# Build release binary for sass-spec testing
+~/.cargo/bin/cargo build --release
+
+# Test against sass-spec with the binary
+echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
+
+# Run full test suite (final gate before committing)
+~/.cargo/bin/cargo test --features=macro
+
+# Run a single test file
+~/.cargo/bin/cargo test --features=macro --test css_if
+```
 
 ## Project Structure
 - `crates/compiler/` - core compiler (grass_compiler crate)
@@ -174,10 +244,3 @@ For more details, see README.md and docs/QUICKSTART.md.
 - `#[ignore = "reason"]` marks known-failing tests with explanation
 - Targets feature parity with dart-sass reference implementation
 - Error message and span differences from dart-sass are acceptable
-
-## Key Architecture Notes
-- CSS tree (`css_tree.rs`): During evaluation, CssStmt bodies are always empty — children are tracked in the `parent_to_child` BTreeMap and only assembled in `finish()`. Use `parent_to_child` (not `is_invisible()` on CssStmt) to check visibility during tree building.
-- `has_following_sibling()` in css_tree.rs controls whether parent blocks (@media, etc.) get duplicated when child rules are added — it affects splitting, not just newlines.
-- ExtensionStore (`selector/extend/mod.rs`): `media_contexts` map is keyed by SelectorList (structural equality), which causes collisions when different selectors have the same structure. This is a known architectural issue blocking the `extend_across_media_boundary` fix.
-- `@extend` ordering: Extensions are processed as they're encountered during evaluation. Transitive extends (A extends B extends C) require special handling that is not yet implemented (`extend_extender` test).
-- Unknown at-rules: `@keyframes` is stored as `CssStmt::UnknownAtRule`, not a dedicated variant. Check `unvendor(&name) == "keyframes"` to distinguish.
