@@ -18,7 +18,9 @@
 use crate::value::{fuzzy_round, Number};
 pub(crate) use name::NAMED_COLORS;
 
+pub(crate) mod conversion;
 mod name;
+pub(crate) mod space;
 
 // todo: only store alpha once on color
 #[derive(Debug, Clone)]
