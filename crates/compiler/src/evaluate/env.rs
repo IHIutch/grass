@@ -267,7 +267,7 @@ impl Environment {
         match self.scopes.get_mixin(name) {
             Ok(v) => Ok(v),
             Err(e) => {
-                if let Some(v) = self.get_mixin_from_global_modules(name.node) {
+                if let Some(v) = self.get_mixin_from_global_modules(name.node, name.span)? {
                     return Ok(v);
                 }
 
@@ -288,6 +288,7 @@ impl Environment {
         &self,
         name: Identifier,
         namespace: Option<Spanned<Identifier>>,
+        span: Span,
     ) -> SassResult<Option<SassFunction>> {
         if let Some(namespace) = namespace {
             let modules = (*self.modules).borrow();
@@ -295,10 +296,10 @@ impl Environment {
             return Ok((*module).borrow().get_fn(name));
         }
 
-        Ok(self
-            .scopes
-            .get_fn(name)
-            .or_else(|| self.get_function_from_global_modules(name)))
+        match self.scopes.get_fn(name) {
+            Some(v) => Ok(Some(v)),
+            None => self.get_function_from_global_modules(name, span),
+        }
     }
 
     pub fn var_exists(
@@ -329,7 +330,7 @@ impl Environment {
         match self.scopes.get_var(name) {
             Ok(v) => Ok(v),
             Err(e) => {
-                if let Some(v) = self.get_variable_from_global_modules(name.node) {
+                if let Some(v) = self.get_variable_from_global_modules(name.node, name.span)? {
                     Ok(v)
                 } else {
                     Err(e)
@@ -357,13 +358,13 @@ impl Environment {
             // If this module doesn't already contain a variable named [name], try
             // setting it in a global module.
             if !self.scopes.global_var_exists(name.node) {
-                let module_with_name = self.from_one_module(name.node, "variable", |module| {
+                let module_with_name = self.from_one_module(name.node, "variable", name.span, |module| {
                     if module.borrow().var_exists(*name) {
                         Some(Arc::clone(module))
                     } else {
                         None
                     }
-                });
+                })?;
 
                 if let Some(module_with_name) = module_with_name {
                     module_with_name.borrow_mut().update_var(name, value)?;
@@ -411,18 +412,18 @@ impl Environment {
         self.scopes.global_functions()
     }
 
-    fn get_variable_from_global_modules(&self, name: Identifier) -> Option<Value> {
-        self.from_one_module(name, "variable", |module| {
+    fn get_variable_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<Value>> {
+        self.from_one_module(name, "variable", span, |module| {
             (**module).borrow().get_var_no_err(name)
         })
     }
 
-    fn get_function_from_global_modules(&self, name: Identifier) -> Option<SassFunction> {
-        self.from_one_module(name, "function", |module| (**module).borrow().get_fn(name))
+    fn get_function_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<SassFunction>> {
+        self.from_one_module(name, "function", span, |module| (**module).borrow().get_fn(name))
     }
 
-    fn get_mixin_from_global_modules(&self, name: Identifier) -> Option<Mixin> {
-        self.from_one_module(name, "mixin", |module| {
+    fn get_mixin_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<Mixin>> {
+        self.from_one_module(name, "mixin", span, |module| {
             (**module).borrow().get_mixin_no_err(name)
         })
     }
@@ -464,14 +465,15 @@ impl Environment {
     fn from_one_module<T>(
         &self,
         _name: Identifier,
-        _ty: &str,
+        ty: &str,
+        span: Span,
         callback: impl Fn(&Arc<RefCell<Module>>) -> Option<T>,
-    ) -> Option<T> {
+    ) -> SassResult<Option<T>> {
         if let Some(nested_forwarded_modules) = &self.nested_forwarded_modules {
             for modules in nested_forwarded_modules.borrow().iter().rev() {
                 for module in modules.borrow().iter().rev() {
                     if let Some(value) = callback(module) {
-                        return Some(value);
+                        return Ok(Some(value));
                     }
                 }
             }
@@ -479,12 +481,11 @@ impl Environment {
 
         for module in self.imported_modules.borrow().iter() {
             if let Some(value) = callback(module) {
-                return Some(value);
+                return Ok(Some(value));
             }
         }
 
         let mut value: Option<T> = None;
-        //     Object? identity;
 
         for module in self.global_modules.iter() {
             let value_in_module = match callback(module) {
@@ -492,29 +493,17 @@ impl Environment {
                 None => continue,
             };
 
+            if value.is_some() {
+                return Err((
+                    format!("This {ty} is available from multiple global modules."),
+                    span,
+                )
+                    .into());
+            }
+
             value = Some(value_in_module);
-
-            //       Object? identityFromModule = valueInModule is AsyncCallable
-            //           ? valueInModule
-            //           : module.variableIdentity(name);
-            //       if (identityFromModule == identity) continue;
-
-            //       if (value != null) {
-            //         var spans = _globalModules.entries.map(
-            //             (entry) => callback(entry.key).andThen((_) => entry.value.span));
-
-            //         throw MultiSpanSassScriptException(
-            //             'This $type is available from multiple global modules.',
-            //             '$type use', {
-            //           for (var span in spans)
-            //             if (span != null) span: 'includes $type'
-            //         });
-            //       }
-
-            //       value = valueInModule;
-            //       identity = identityFromModule;
         }
 
-        value
+        Ok(value)
     }
 }

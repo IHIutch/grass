@@ -2467,7 +2467,7 @@ impl<'a> Visitor<'a> {
     fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {
         let name = func_call.name;
 
-        let func = match self.env.get_fn(name, func_call.namespace)? {
+        let func = match self.env.get_fn(name, func_call.namespace, func_call.span)? {
             Some(func) => func,
             None => {
                 if let Some(f) = self.options.custom_fns.get(name.as_str()) {

@@ -749,7 +749,6 @@ fn use_variable_declared_in_this_and_other_module() {
 }
 
 #[test]
-#[ignore = "we don't check for this"]
 fn use_variable_declared_in_two_modules() {
     let mut fs = TestFs::new();
 

@@ -258,9 +258,10 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
                 node: module_name.into(),
                 span: args.span(),
             }),
+            args.span(),
         )?
     } else {
-        match visitor.env.get_fn(name, None)? {
+        match visitor.env.get_fn(name, None, args.span())? {
             Some(f) => Some(f),
             None => GLOBAL_FUNCTIONS
                 .get(name.as_str())
@@ -281,7 +282,7 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         Value::String(name, ..) => {
             let name = Identifier::from(name);
 
-            match visitor.env.get_fn(name, None)? {
+            match visitor.env.get_fn(name, None, span)? {
                 Some(f) => f,
                 None => match GLOBAL_FUNCTIONS.get(name.as_str()) {
                     Some(f) => SassFunction::Builtin(f.clone(), name),
