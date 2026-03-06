@@ -227,6 +227,20 @@ echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
 ~/.cargo/bin/cargo test --features=macro --test css_if
 ```
 
+### Verifying Test Expectations
+
+**NEVER change a test expectation based on reasoning alone.** Always verify against dart-sass before changing what a test expects:
+
+```bash
+# Check expected output for any Sass input (use the version matching our target)
+echo 'a { color: rgb(1.5, 1.5, 1.5); }' | npx sass@1.97.3 --stdin --style=expanded
+```
+
+When modifying test expectations:
+1. Run the input through dart-sass to get ground truth
+2. Use that exact output as the expected value
+3. Note in the commit message that expectations were verified against dart-sass
+
 ## Project Structure
 - `crates/compiler/` - core compiler (grass_compiler crate)
 - `crates/lib/` - public library + CLI binary (grass crate)
