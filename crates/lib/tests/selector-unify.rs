@@ -537,7 +537,6 @@ test!(
     "a {\n  color: :root .d .c.e;\n}\n"
 );
 test!(
-    #[ignore = "https://github.com/sass/dart-sass/issues/969"]
     root_in_first_three_layers,
     "a {\n  color: selector-unify(\":root .c .d\", \".e .f\");\n}\n",
     "a {\n  color: :root .c .e .d.f, :root .e .c .d.f;\n}\n"
@@ -548,7 +547,6 @@ test!(
     "a {\n  color: :root .c .d.e;\n}\n"
 );
 test!(
-    #[ignore = "https://github.com/sass/dart-sass/issues/969"]
     root_in_second_three_layers,
     "a {\n  color: selector-unify(\".c .d\", \":root .e .f\");\n}\n",
     "a {\n  color: :root .c .e .d.f, :root .e .c .d.f;\n}\n"

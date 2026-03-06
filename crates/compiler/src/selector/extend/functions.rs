@@ -131,10 +131,12 @@ fn weave_parents(
             queue_two.push_front(root);
         }
         (Some(root_one), None) => {
+            queue_one.push_front(ComplexSelectorComponent::Compound(root_one.clone()));
             queue_two.push_front(ComplexSelectorComponent::Compound(root_one));
         }
         (None, Some(root_two)) => {
-            queue_one.push_front(ComplexSelectorComponent::Compound(root_two));
+            queue_one.push_front(ComplexSelectorComponent::Compound(root_two.clone()));
+            queue_two.push_front(ComplexSelectorComponent::Compound(root_two));
         }
         (None, None) => {}
     }
