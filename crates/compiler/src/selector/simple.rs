@@ -384,13 +384,12 @@ impl SimpleSelector {
                         if complex.components.len() != 1 {
                             return false;
                         };
-                        complex
-                            .components
-                            .first()
-                            .unwrap()
-                            .as_compound()
-                            .components
-                            .contains(self)
+                        match complex.components.first().unwrap() {
+                            ComplexSelectorComponent::Compound(compound) => {
+                                compound.components.contains(self)
+                            }
+                            ComplexSelectorComponent::Combinator(..) => false,
+                        }
                     });
                 }
                 false

@@ -1957,7 +1957,7 @@ error!(
     "Error: The target selector was not found."
 );
 error!(
-    #[ignore = "crash"]
+    #[ignore = "dart-sass errors on this but we silently succeed; need to validate combinator-only args in :is()"]
     extends_self_is_has_invalid_combinator,
     "a :is(#a, >) {
         @extend a
