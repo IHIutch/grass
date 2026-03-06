@@ -84,25 +84,29 @@ jobs:
               echo "No differences found"
           fi
 
-  # sass-spec:
-  #   continue-on-error: true
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@master
-  #     - uses: dtolnay/rust-toolchain@master
-  #       with:
-  #         toolchain: stable
-  #     - name: version info
-  #       run:  rustc --version; cargo --version;
-  #     - name: Build binary
-  #       run: cargo b --release
-  #     - name: Get sass-spec
-  #       run: git submodule init && git submodule update
-  #     - name: Install whatever Ruby needs
-  #       run: |
-  #         sudo apt-get install libncurses5-dev libncursesw5-dev
-  #         sudo gem install bundler
-  #         cd sass-spec && bundler install
-  #     - name: Run Sass spec
-  #       run: ./sass-spec/sass-spec.rb -c './target/release/grass'
+  sass-spec:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Build binary
+        run: cargo build --release
+
+      - name: Get sass-spec
+        run: git submodule init && git submodule update
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install sass-spec dependencies
+        run: cd sass-spec && npm install
+
+      - name: Run sass-spec
+        run: cd sass-spec && npm run sass-spec -- -c '../target/release/grass' --impl grass
