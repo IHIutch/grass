@@ -488,3 +488,120 @@ impl Color {
         Number(1.0) - (self.red().max(self.green()).max(self.blue()) / Number(255.0))
     }
 }
+
+// ---- Color space conversion and query methods ----
+impl Color {
+    /// Convert this color to a different color space.
+    pub fn to_space(&self, target: ColorSpace) -> Self {
+        if self.space == target {
+            return self.clone();
+        }
+
+        let c0 = self.channels[0].unwrap_or(0.0);
+        let c1 = self.channels[1].unwrap_or(0.0);
+        let c2 = self.channels[2].unwrap_or(0.0);
+
+        let converted = conversion::convert([c0, c1, c2], self.space, target);
+
+        // Propagate missing channels: if a channel was None in source,
+        // the corresponding channel in target is also None (CSS Color 4 spec)
+        let new_channels = [
+            if self.channels[0].is_none() && has_analogous_channel(self.space, 0, target, 0) {
+                None
+            } else {
+                Some(converted[0])
+            },
+            if self.channels[1].is_none() && has_analogous_channel(self.space, 1, target, 1) {
+                None
+            } else {
+                Some(converted[1])
+            },
+            if self.channels[2].is_none() && has_analogous_channel(self.space, 2, target, 2) {
+                None
+            } else {
+                Some(converted[2])
+            },
+        ];
+
+        Color {
+            space: target,
+            channels: new_channels,
+            alpha: self.alpha,
+            format: ColorFormat::Infer,
+        }
+    }
+
+    /// Whether a channel is missing (None/`none`).
+    pub fn has_missing_channel(&self, index: usize) -> bool {
+        self.channels.get(index).map_or(false, |c| c.is_none())
+    }
+
+    /// Whether alpha is missing.
+    pub fn has_missing_alpha(&self) -> bool {
+        self.alpha.is_none()
+    }
+
+    /// Get a channel value, treating None as 0.
+    pub fn channel_value(&self, index: usize) -> Number {
+        Number(self.channels.get(index).and_then(|c| *c).unwrap_or(0.0))
+    }
+
+    /// Check if all channels are within the gamut bounds for this space.
+    pub fn is_in_gamut(&self) -> bool {
+        let channel_defs = self.space.channels();
+        for i in 0..3 {
+            if let Some(val) = self.channels[i] {
+                if !channel_defs[i].is_polar && (val < channel_defs[i].min || val > channel_defs[i].max) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Check if a specific channel is "powerless" in this color.
+    /// A channel is powerless when its value has no effect on the color's appearance.
+    /// Examples: hue when saturation=0 in HSL, hue when chroma=0 in LCH/OKLch.
+    pub fn is_channel_powerless(&self, index: usize) -> bool {
+        let channel_defs = self.space.channels();
+        if !channel_defs[index].is_polar {
+            return false;
+        }
+
+        // Hue is powerless when the associated chroma/saturation is 0
+        match self.space {
+            ColorSpace::Hsl => {
+                // hue is channel 0, powerless when saturation (channel 1) is 0
+                index == 0 && fuzzy_is_zero(self.channels[1].unwrap_or(0.0))
+            }
+            ColorSpace::Hwb => {
+                // hue is channel 0, powerless when whiteness + blackness >= 1
+                index == 0 && {
+                    let w = self.channels[1].unwrap_or(0.0);
+                    let b = self.channels[2].unwrap_or(0.0);
+                    w + b >= 1.0
+                }
+            }
+            ColorSpace::Lch => {
+                // hue is channel 2, powerless when chroma (channel 1) is 0
+                index == 2 && fuzzy_is_zero(self.channels[1].unwrap_or(0.0))
+            }
+            ColorSpace::Oklch => {
+                // hue is channel 2, powerless when chroma (channel 1) is 0
+                index == 2 && fuzzy_is_zero(self.channels[1].unwrap_or(0.0))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Check if a source channel has an analogous channel in the target space.
+/// For simplicity, same-index channels are considered analogous for now.
+fn has_analogous_channel(_from: ColorSpace, _from_idx: usize, _to: ColorSpace, _to_idx: usize) -> bool {
+    // TODO: implement proper analogous channel mapping per CSS Color 4 spec
+    true
+}
+
+fn fuzzy_is_zero(v: f64) -> bool {
+    v.abs() < 1e-10
+}

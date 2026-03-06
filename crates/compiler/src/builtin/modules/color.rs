@@ -5,6 +5,7 @@ use crate::builtin::{
         opacity::alpha,
         other::{adjust_color, change_color, ie_hex_str, scale_color},
         rgb::{blue, green, mix, red},
+        space_fns::{channel, is_in_gamut, is_legacy, is_missing, is_powerless, space, to_space},
     },
     modules::Module,
 };
@@ -14,17 +15,24 @@ pub(crate) fn declare(f: &mut Module) {
     f.insert_builtin("alpha", alpha);
     f.insert_builtin("blue", blue);
     f.insert_builtin("change", change_color);
+    f.insert_builtin("channel", channel);
     f.insert_builtin("complement", complement);
     f.insert_builtin("grayscale", grayscale);
     f.insert_builtin("green", green);
     f.insert_builtin("hue", hue);
     f.insert_builtin("ie-hex-str", ie_hex_str);
     f.insert_builtin("invert", invert);
+    f.insert_builtin("is-in-gamut", is_in_gamut);
+    f.insert_builtin("is-legacy", is_legacy);
+    f.insert_builtin("is-missing", is_missing);
+    f.insert_builtin("is-powerless", is_powerless);
     f.insert_builtin("lightness", lightness);
     f.insert_builtin("mix", mix);
     f.insert_builtin("red", red);
     f.insert_builtin("saturation", saturation);
     f.insert_builtin("scale", scale_color);
+    f.insert_builtin("space", space);
+    f.insert_builtin("to-space", to_space);
     f.insert_builtin("blackness", blackness);
     f.insert_builtin("whiteness", whiteness);
     f.insert_builtin("hwb", hwb);

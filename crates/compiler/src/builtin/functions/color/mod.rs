@@ -13,6 +13,7 @@ pub mod hwb;
 pub mod opacity;
 pub mod other;
 pub mod rgb;
+pub mod space_fns;
 
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedChannels {
