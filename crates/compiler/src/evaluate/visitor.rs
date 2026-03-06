@@ -49,6 +49,46 @@ use super::{
     env::Environment,
 };
 
+/// Result of evaluating an if() condition.
+/// Sass atoms evaluate to True/False; CSS atoms remain as CSS.
+enum ConditionResult {
+    True,
+    False,
+    Css(IfCondition),
+}
+
+/// Check if a condition tree contains any sass() atoms (crossing paren boundaries).
+fn condition_has_sass(cond: &IfCondition) -> bool {
+    match cond {
+        IfCondition::Atom(IfConditionAtom::Sass(_, _)) => true,
+        IfCondition::Atom(_) => false,
+        IfCondition::Else => false,
+        IfCondition::Not(inner, _) | IfCondition::Paren(inner) => condition_has_sass(inner),
+        IfCondition::And(ops) | IfCondition::Or(ops) => ops.iter().any(condition_has_sass),
+    }
+}
+
+/// Check if a condition tree has raw substitutions (not crossing paren boundaries).
+fn condition_has_raw(cond: &IfCondition) -> bool {
+    match cond {
+        IfCondition::Atom(IfConditionAtom::CssRaw(_, _)) => true,
+        IfCondition::Atom(IfConditionAtom::Interp(_, _)) => true,
+        IfCondition::Atom(_) => false,
+        IfCondition::Else => false,
+        IfCondition::Not(inner, _) => condition_has_raw(inner),
+        IfCondition::Paren(_) => false, // Don't cross paren boundary
+        IfCondition::And(ops) | IfCondition::Or(ops) => ops.iter().any(condition_has_raw),
+    }
+}
+
+/// Unwrap a Paren wrapper — used when simplifying And/Or to a single operand.
+fn unwrap_paren(cond: IfCondition) -> IfCondition {
+    match cond {
+        IfCondition::Paren(inner) => *inner,
+        other => other,
+    }
+}
+
 trait UserDefinedCallable {
     fn name(&self) -> Identifier;
     fn arguments(&self) -> &ArgumentDeclaration;
@@ -2565,6 +2605,7 @@ impl<'a> Visitor<'a> {
             AstExpr::Calculation { name, args } => {
                 self.visit_calculation_expr(name, args, self.empty_span)?
             }
+            AstExpr::CssIf(css_if) => self.visit_css_if((*css_if).clone())?,
             AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
             AstExpr::If(if_expr) => self.visit_ternary((*if_expr).clone())?,
             AstExpr::InterpolatedFunction(func) => {
@@ -2621,6 +2662,7 @@ impl<'a> Visitor<'a> {
             AstExpr::Number { .. }
             | AstExpr::Calculation { .. }
             | AstExpr::Variable { .. }
+            | AstExpr::CssIf(..)
             | AstExpr::FunctionCall { .. }
             | AstExpr::If(..) => {
                 let result = self.visit_expr(expr)?;
@@ -2735,6 +2777,296 @@ impl<'a> Visitor<'a> {
         };
 
         Ok(self.without_slash(value))
+    }
+
+    fn visit_css_if(&mut self, css_if: CssIfExpression) -> SassResult<Value> {
+        // Validate: sass() and raw substitutions cannot coexist in same condition
+        for clause in &css_if.clauses {
+            self.check_no_sass_with_raw(&clause.condition, css_if.span)?;
+        }
+
+        // Evaluate each clause
+        for clause in &css_if.clauses {
+            match self.eval_if_condition(&clause.condition)? {
+                ConditionResult::True => {
+                    let value = self.visit_expr(clause.value.clone())?;
+                    return Ok(self.without_slash(value));
+                }
+                ConditionResult::False => continue,
+                ConditionResult::Css(remaining) => {
+                    // This clause has CSS parts that can't be evaluated.
+                    // Collect remaining clauses as CSS output.
+                    return self.build_css_if_output(&remaining, clause, &css_if);
+                }
+            }
+        }
+
+        // No clause matched, no else → null
+        Ok(Value::Null)
+    }
+
+    fn build_css_if_output(
+        &mut self,
+        first_remaining: &IfCondition,
+        first_clause: &IfClause,
+        css_if: &CssIfExpression,
+    ) -> SassResult<Value> {
+        let mut parts = Vec::new();
+
+        // Add the first remaining clause
+        let cond_str = self.serialize_if_condition(first_remaining)?;
+        let val_str = self.evaluate_to_css(first_clause.value.clone(), QuoteKind::None, css_if.span)?;
+        parts.push(format!("{}: {}", cond_str, val_str));
+
+        // Find remaining clauses after the first CSS one
+        let first_idx = css_if
+            .clauses
+            .iter()
+            .position(|c| std::ptr::eq(c, first_clause))
+            .unwrap_or(0);
+
+        for clause in &css_if.clauses[first_idx + 1..] {
+            match &clause.condition {
+                IfCondition::Else => {
+                    let val_str = self.evaluate_to_css(
+                        clause.value.clone(),
+                        QuoteKind::None,
+                        css_if.span,
+                    )?;
+                    parts.push(format!("else: {}", val_str));
+                }
+                other => {
+                    match self.eval_if_condition(other)? {
+                        ConditionResult::True => {
+                            // Sass condition that's true — this becomes the value
+                            let val_str = self.evaluate_to_css(
+                                clause.value.clone(),
+                                QuoteKind::None,
+                                css_if.span,
+                            )?;
+                            // Replace all remaining with just this value
+                            parts.push(format!("else: {}", val_str));
+                            break;
+                        }
+                        ConditionResult::False => {
+                            // Sass condition that's false — skip this clause
+                            continue;
+                        }
+                        ConditionResult::Css(remaining) => {
+                            let cond_str = self.serialize_if_condition(&remaining)?;
+                            let val_str = self.evaluate_to_css(
+                                clause.value.clone(),
+                                QuoteKind::None,
+                                css_if.span,
+                            )?;
+                            parts.push(format!("{}: {}", cond_str, val_str));
+                        }
+                    }
+                }
+            }
+        }
+
+        let output = format!("if({})", parts.join("; "));
+        Ok(Value::String(output, QuoteKind::None))
+    }
+
+    fn eval_if_condition(&mut self, condition: &IfCondition) -> SassResult<ConditionResult> {
+        match condition {
+            IfCondition::Else => Ok(ConditionResult::True),
+            IfCondition::Atom(atom) => self.eval_if_atom(atom),
+            IfCondition::Not(inner, _span) => {
+                match self.eval_if_condition(inner)? {
+                    ConditionResult::True => Ok(ConditionResult::False),
+                    ConditionResult::False => Ok(ConditionResult::True),
+                    ConditionResult::Css(inner_cond) => {
+                        Ok(ConditionResult::Css(IfCondition::Not(
+                            Box::new(inner_cond),
+                            *_span,
+                        )))
+                    }
+                }
+            }
+            IfCondition::Paren(inner) => {
+                match self.eval_if_condition(inner)? {
+                    ConditionResult::True => Ok(ConditionResult::True),
+                    ConditionResult::False => Ok(ConditionResult::False),
+                    ConditionResult::Css(inner_cond) => {
+                        Ok(ConditionResult::Css(IfCondition::Paren(Box::new(inner_cond))))
+                    }
+                }
+            }
+            IfCondition::And(operands) => {
+                let mut remaining_css = Vec::new();
+                for op in operands {
+                    match self.eval_if_condition(op)? {
+                        ConditionResult::True => {
+                            // True AND x → continue checking
+                        }
+                        ConditionResult::False => {
+                            // False AND anything → false (short-circuit)
+                            return Ok(ConditionResult::False);
+                        }
+                        ConditionResult::Css(css_cond) => {
+                            remaining_css.push(css_cond);
+                        }
+                    }
+                }
+                if remaining_css.is_empty() {
+                    Ok(ConditionResult::True)
+                } else if remaining_css.len() == 1 {
+                    // Unwrap Paren if the sole remaining was in a group
+                    Ok(ConditionResult::Css(unwrap_paren(remaining_css.pop().unwrap())))
+                } else {
+                    Ok(ConditionResult::Css(IfCondition::And(remaining_css)))
+                }
+            }
+            IfCondition::Or(operands) => {
+                let mut remaining_css = Vec::new();
+                for op in operands {
+                    match self.eval_if_condition(op)? {
+                        ConditionResult::True => {
+                            // True OR anything → true (short-circuit)
+                            return Ok(ConditionResult::True);
+                        }
+                        ConditionResult::False => {
+                            // False OR x → continue checking
+                        }
+                        ConditionResult::Css(css_cond) => {
+                            remaining_css.push(css_cond);
+                        }
+                    }
+                }
+                if remaining_css.is_empty() {
+                    Ok(ConditionResult::False)
+                } else if remaining_css.len() == 1 {
+                    Ok(ConditionResult::Css(unwrap_paren(remaining_css.pop().unwrap())))
+                } else {
+                    Ok(ConditionResult::Css(IfCondition::Or(remaining_css)))
+                }
+            }
+        }
+    }
+
+    /// Check that a condition doesn't mix sass() with raw substitutions.
+    /// Rule: if raw substitutions exist at the current scope (not crossing paren
+    /// boundaries), then sass() must not exist ANYWHERE in the tree (including
+    /// inside parens). Raw inside parens does NOT conflict with sass at outer scope.
+    fn check_no_sass_with_raw(
+        &self,
+        condition: &IfCondition,
+        span: Span,
+    ) -> SassResult<()> {
+        let has_raw = condition_has_raw(condition);
+        if has_raw {
+            // Raw at this scope — check for sass anywhere (crossing paren boundaries)
+            let has_sass = condition_has_sass(condition);
+            if has_sass {
+                return Err((
+                    "if() conditions with arbitrary substitutions may not contain sass() expressions.",
+                    span,
+                )
+                    .into());
+            }
+        }
+
+        // Recurse into paren groups to check each scope independently
+        self.check_parens_for_sass_raw(condition, span)
+    }
+
+    fn check_parens_for_sass_raw(
+        &self,
+        condition: &IfCondition,
+        span: Span,
+    ) -> SassResult<()> {
+        match condition {
+            IfCondition::Paren(inner) => {
+                self.check_no_sass_with_raw(inner, span)?;
+            }
+            IfCondition::Not(inner, _) => {
+                self.check_parens_for_sass_raw(inner, span)?;
+            }
+            IfCondition::And(ops) | IfCondition::Or(ops) => {
+                for op in ops {
+                    self.check_parens_for_sass_raw(op, span)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn eval_if_atom(&mut self, atom: &IfConditionAtom) -> SassResult<ConditionResult> {
+        match atom {
+            IfConditionAtom::Sass(expr, _span) => {
+                let value = self.visit_expr(expr.clone())?;
+                if value.is_truthy() {
+                    Ok(ConditionResult::True)
+                } else {
+                    Ok(ConditionResult::False)
+                }
+            }
+            IfConditionAtom::Css(interp, span)
+            | IfConditionAtom::CssRaw(interp, span) => {
+                // Evaluate any interpolations within the CSS text
+                let text = self.perform_interpolation(interp.clone(), false)?;
+                Ok(ConditionResult::Css(IfCondition::Atom(
+                    IfConditionAtom::Css(
+                        Interpolation::new_plain(text),
+                        *span,
+                    ),
+                )))
+            }
+            IfConditionAtom::Interp(expr, span) => {
+                let value = self.visit_expr(expr.clone())?;
+                let text = self.serialize(value, QuoteKind::None, *span)?;
+                Ok(ConditionResult::Css(IfCondition::Atom(
+                    IfConditionAtom::Css(
+                        Interpolation::new_plain(text),
+                        *span,
+                    ),
+                )))
+            }
+        }
+    }
+
+    fn serialize_if_condition(&mut self, condition: &IfCondition) -> SassResult<String> {
+        match condition {
+            IfCondition::Else => Ok("else".to_string()),
+            IfCondition::Atom(atom) => match atom {
+                IfConditionAtom::Css(interp, _)
+                | IfConditionAtom::CssRaw(interp, _) => {
+                    Ok(interp.as_plain().unwrap_or("").to_string())
+                }
+                IfConditionAtom::Sass(_, _) => {
+                    unreachable!("sass atoms should have been evaluated")
+                }
+                IfConditionAtom::Interp(_, _) => {
+                    unreachable!("interpolation atoms should have been evaluated")
+                }
+            },
+            IfCondition::Not(inner, _) => {
+                let inner_str = self.serialize_if_condition(inner)?;
+                Ok(format!("not {}", inner_str))
+            }
+            IfCondition::Paren(inner) => {
+                let inner_str = self.serialize_if_condition(inner)?;
+                Ok(format!("({})", inner_str))
+            }
+            IfCondition::And(operands) => {
+                let parts: Vec<String> = operands
+                    .iter()
+                    .map(|op| self.serialize_if_condition(op))
+                    .collect::<SassResult<_>>()?;
+                Ok(parts.join(" and "))
+            }
+            IfCondition::Or(operands) => {
+                let parts: Vec<String> = operands
+                    .iter()
+                    .map(|op| self.serialize_if_condition(op))
+                    .collect::<SassResult<_>>()?;
+                Ok(parts.join(" or "))
+            }
+        }
     }
 
     fn visit_string(&mut self, mut text: Interpolation, quote: QuoteKind) -> SassResult<Value> {

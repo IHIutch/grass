@@ -12,6 +12,7 @@ pub(crate) use stylesheet::StylesheetParser;
 mod at_root_query;
 mod base;
 mod css;
+pub(crate) mod css_if;
 mod keyframes;
 mod media_query;
 mod sass;

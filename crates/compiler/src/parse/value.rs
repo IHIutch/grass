@@ -1163,6 +1163,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         if let Some(plain) = plain {
             if plain == "if" && parser.toks().next_char_is('(') {
+                // Try CSS-native if() syntax first
+                if let Some(css_if) =
+                    super::css_if::try_parse_css_if(parser, start)?
+                {
+                    return Ok(css_if);
+                }
+                // Fall back to legacy if($condition, $if-true, $if-false)
                 let call_args = parser.parse_argument_invocation(false, false)?;
                 let span = call_args.span;
                 return Ok(AstExpr::If(Arc::new(Ternary(call_args))).span(span));

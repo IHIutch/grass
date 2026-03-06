@@ -11,9 +11,50 @@ use crate::{
 
 use super::{ArgumentInvocation, AstSupportsCondition, Interpolation, InterpolationPart};
 
-/// Represented by the `if` function
+/// Represented by the legacy `if($condition, $if-true, $if-false)` function
 #[derive(Debug, Clone)]
 pub struct Ternary(pub ArgumentInvocation);
+
+/// An atom in a CSS-native `if()` condition
+#[derive(Debug, Clone)]
+pub enum IfConditionAtom {
+    /// `sass(expr)` — evaluable at compile time
+    Sass(AstExpr, Span),
+    /// `css(...)`, `var(...)`, `attr(...)`, or any other CSS function — raw passthrough
+    /// Contains an Interpolation for the full text (including function name and parens)
+    Css(Interpolation, Span),
+    /// Like Css but formed from adjacent raw substitutions (var, attr, if, interp).
+    /// Cannot coexist with sass() in the same condition.
+    CssRaw(Interpolation, Span),
+    /// `#{...}` interpolation — evaluated then treated as raw CSS
+    Interp(AstExpr, Span),
+}
+
+/// A boolean condition in a CSS-native `if()` expression
+#[derive(Debug, Clone)]
+pub enum IfCondition {
+    Atom(IfConditionAtom),
+    Not(Box<IfCondition>, Span),
+    And(Vec<IfCondition>),
+    Or(Vec<IfCondition>),
+    Paren(Box<IfCondition>),
+    /// The `else` keyword — always true
+    Else,
+}
+
+/// A single clause in a CSS-native `if()`: `condition: value`
+#[derive(Debug, Clone)]
+pub struct IfClause {
+    pub condition: IfCondition,
+    pub value: AstExpr,
+}
+
+/// CSS-native `if()` expression with condition clauses
+#[derive(Debug, Clone)]
+pub struct CssIfExpression {
+    pub clauses: Vec<IfClause>,
+    pub span: Span,
+}
 
 #[derive(Debug, Clone)]
 pub struct ListExpr {
@@ -59,6 +100,7 @@ pub enum AstExpr {
         args: Vec<Self>,
     },
     Color(Arc<Color>),
+    CssIf(Arc<CssIfExpression>),
     FunctionCall(FunctionCallExpr),
     If(Arc<Ternary>),
     InterpolatedFunction(Arc<InterpolatedFunction>),
