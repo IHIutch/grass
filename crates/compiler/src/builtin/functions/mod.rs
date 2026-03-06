@@ -108,6 +108,11 @@ pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<BTreeSet<&str>> 
                     | "alpha"
                     | "opacity"
                     | "saturate"
+                    | "lab"
+                    | "lch"
+                    | "oklab"
+                    | "oklch"
+                    | "color"
             )
         })
         .collect()

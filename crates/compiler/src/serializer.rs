@@ -4,7 +4,7 @@ use codemap::{CodeMap, Span};
 
 use crate::{
     ast::{CssStmt, MediaQuery, Style, SupportsRule},
-    color::{Color, ColorFormat, NAMED_COLORS},
+    color::{Color, ColorFormat, ColorSpace, NAMED_COLORS},
     common::{BinaryOp, Brackets, ListSeparator, QuoteKind},
     error::SassResult,
     selector::{
@@ -464,6 +464,12 @@ impl<'a> Serializer<'a> {
     }
 
     pub fn visit_color(&mut self, color: &Color) {
+        // Modern (non-legacy) color spaces get their own serialization
+        if !color.color_space().is_legacy() {
+            self.write_modern_color(color);
+            return;
+        }
+
         let red = color.red().0.round() as u8;
         let green = color.green().0.round() as u8;
         let blue = color.blue().0.round() as u8;
@@ -512,6 +518,68 @@ impl<'a> Serializer<'a> {
             self.write_hex_component(blue as u32);
         } else {
             self.write_rgb(color);
+        }
+    }
+
+    /// Serialize a color in a modern (non-legacy) color space.
+    fn write_modern_color(&mut self, color: &Color) {
+        let space = color.color_space();
+        let c0 = color.channel_value(0);
+        let c1 = color.channel_value(1);
+        let c2 = color.channel_value(2);
+        let alpha = color.alpha();
+        let is_opaque = fuzzy_equals(alpha.0, 1.0);
+        let has_missing_alpha = color.has_missing_alpha();
+
+        match space {
+            // Lab-family: lab(L a b) / lch(L C H)
+            ColorSpace::Lab | ColorSpace::Lch | ColorSpace::Oklab | ColorSpace::Oklch => {
+                self.buffer.extend_from_slice(space.name().as_bytes());
+                self.buffer.push(b'(');
+                self.write_channel(color, 0);
+                self.buffer.push(b' ');
+                self.write_channel(color, 1);
+                self.buffer.push(b' ');
+                self.write_channel(color, 2);
+                if !is_opaque || has_missing_alpha {
+                    self.buffer.extend_from_slice(b" / ");
+                    if has_missing_alpha {
+                        self.buffer.extend_from_slice(b"none");
+                    } else {
+                        self.write_float(alpha.0);
+                    }
+                }
+                self.buffer.push(b')');
+            }
+            // Predefined RGB spaces + XYZ: color(space r g b)
+            _ => {
+                self.buffer.extend_from_slice(b"color(");
+                self.buffer.extend_from_slice(space.name().as_bytes());
+                self.buffer.push(b' ');
+                self.write_channel(color, 0);
+                self.buffer.push(b' ');
+                self.write_channel(color, 1);
+                self.buffer.push(b' ');
+                self.write_channel(color, 2);
+                if !is_opaque || has_missing_alpha {
+                    self.buffer.extend_from_slice(b" / ");
+                    if has_missing_alpha {
+                        self.buffer.extend_from_slice(b"none");
+                    } else {
+                        self.write_float(alpha.0);
+                    }
+                }
+                self.buffer.push(b')');
+            }
+        }
+    }
+
+    /// Write a single channel value, or "none" if missing.
+    fn write_channel(&mut self, color: &Color, index: usize) {
+        if color.has_missing_channel(index) {
+            self.buffer.extend_from_slice(b"none");
+        } else {
+            self.write_float(color.channel_value(index).0);
         }
     }
 

@@ -209,6 +209,22 @@ impl Color {
         color
     }
 
+    /// Create a color in any color space with explicit channels and alpha.
+    /// Channels and alpha can be None to represent CSS "none" (missing).
+    pub(crate) fn for_space(
+        space: ColorSpace,
+        channels: [Option<f64>; 3],
+        alpha: Option<f64>,
+        format: ColorFormat,
+    ) -> Self {
+        Color {
+            space,
+            channels,
+            alpha,
+            format,
+        }
+    }
+
     pub fn from_hwb(hue: Number, white: Number, black: Number, alpha: Number) -> Color {
         // Convert HWB to RGB immediately (legacy behavior)
         let h = hue.rem_euclid(360.0);

@@ -8,6 +8,7 @@ use crate::{
 
 use super::GlobalFunctionMap;
 
+pub mod css_color4;
 pub mod hsl;
 pub mod hwb;
 pub mod opacity;
@@ -34,6 +35,7 @@ pub(crate) fn angle_value(num: Value, name: &str, span: Span) -> SassResult<Numb
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    css_color4::declare(f);
     hsl::declare(f);
     opacity::declare(f);
     other::declare(f);

@@ -1,5 +1,6 @@
 use crate::builtin::{
     color::{
+        css_color4::{color_fn, lab, lch, oklab, oklch},
         hsl::{complement, grayscale, hue, invert, lightness, saturation},
         hwb::{blackness, hwb, whiteness},
         opacity::alpha,
@@ -36,4 +37,9 @@ pub(crate) fn declare(f: &mut Module) {
     f.insert_builtin("blackness", blackness);
     f.insert_builtin("whiteness", whiteness);
     f.insert_builtin("hwb", hwb);
+    f.insert_builtin("lab", lab);
+    f.insert_builtin("lch", lch);
+    f.insert_builtin("oklab", oklab);
+    f.insert_builtin("oklch", oklch);
+    f.insert_builtin("color", color_fn);
 }
