@@ -913,6 +913,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }
         }
 
+        self.expect_statement_separator(Some("@import rule"))?;
+
         Ok(AstStmt::ImportRule(AstImportRule { imports }))
     }
 

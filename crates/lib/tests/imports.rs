@@ -44,12 +44,11 @@ fn imports_variable() {
 }
 
 #[test]
-#[ignore = "we don't actually check if the semicolon exists"]
 fn import_no_semicolon() {
     let input = "@import \"import_no_semicolon\"\na {\n color: $a;\n}";
     tempfile!("import_no_semicolon", "$a: red;");
 
-    drop(input);
+    assert!(grass::from_string(input.to_string(), &grass::Options::default()).is_err());
 }
 
 #[test]
