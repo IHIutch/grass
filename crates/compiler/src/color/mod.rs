@@ -1,33 +1,33 @@
-//! A color is internally represented as either RGBA or HSLA.
+//! CSS Color Level 4 color representation.
 //!
-//! Colors can be constructed in Sass through names (e.g. red, blue, aqua)
-//! or the builtin functions `rgb()`, `rgba()`, `hsl()`, and `hsla()`,
-//! all of which can accept 1-4 arguments.
+//! Colors are stored in their native color space with three channels and an alpha.
+//! Legacy spaces (RGB, HSL, HWB) use their traditional channel ranges:
+//! - RGB: red/green/blue in [0, 255]
+//! - HSL: hue in [0, 360], saturation/lightness in [0, 1]
+//! - HWB: hue in [0, 360], whiteness/blackness in [0, 1]
 //!
-//! It is necessary to retain the original values with which the
-//! color was constructed.
-//! E.g. `hsla(.999999999999, 100, 100, 1)` should retain its full HSLA
-//! values to an arbitrary precision.
+//! Modern spaces store channels in their natural ranges per CSS Color Level 4.
 //!
-//! Color values matching named colors are implicitly converted to named colors
-//! E.g. `rgba(255, 0, 0, 1)` => `red`
-//!
-//! Named colors retain their original casing,
-//! so `rEd` should be emitted as `rEd`.
+//! Channels may be `None` to represent the CSS "missing" component (`none` keyword).
+//! This is important for interpolation behavior in CSS Color 4.
 
 use crate::value::{fuzzy_round, Number};
 pub(crate) use name::NAMED_COLORS;
+pub(crate) use space::ColorSpace;
 
 pub(crate) mod conversion;
 mod name;
 pub(crate) mod space;
 
-// todo: only store alpha once on color
 #[derive(Debug, Clone)]
 pub struct Color {
-    rgba: Rgb,
-    hsla: Option<Hsl>,
-    alpha: Number,
+    /// The color space this color is stored in.
+    space: ColorSpace,
+    /// Three channel values in the native space, or None for missing channels.
+    channels: [Option<f64>; 3],
+    /// Alpha channel (0.0-1.0), or None for missing alpha.
+    alpha: Option<f64>,
+    /// How this color should be serialized.
     pub(crate) format: ColorFormat,
 }
 
@@ -36,7 +36,6 @@ pub(crate) enum ColorFormat {
     Rgb,
     Hsl,
     /// Literal string from source text. Either a named color like `red` or a hex color
-    // todo: make this is a span and lookup text from codemap
     Literal(String),
     /// Use the most appropriate format
     Infer,
@@ -44,18 +43,86 @@ pub(crate) enum ColorFormat {
 
 impl PartialEq for Color {
     fn eq(&self, other: &Self) -> bool {
-        if self.alpha != other.alpha
-            && !(self.alpha >= Number::one() && other.alpha >= Number::one())
+        let self_alpha = self.alpha();
+        let other_alpha = other.alpha();
+        if self_alpha != other_alpha
+            && !(self_alpha >= Number::one() && other_alpha >= Number::one())
         {
             return false;
         }
 
-        self.rgba == other.rgba
+        // Compare in RGB space for legacy colors
+        let self_rgb = self.to_rgb_channels();
+        let other_rgb = other.to_rgb_channels();
+
+        let cmp = |a: Number, b: Number| -> bool {
+            a == b || (a >= Number(255.0) && b >= Number(255.0))
+        };
+
+        cmp(Number(self_rgb[0]).round(), Number(other_rgb[0]).round())
+            && cmp(Number(self_rgb[1]).round(), Number(other_rgb[1]).round())
+            && cmp(Number(self_rgb[2]).round(), Number(other_rgb[2]).round())
     }
 }
 
 impl Eq for Color {}
 
+impl Color {
+    /// Get the RGB channel values [red, green, blue] in 0-255 range.
+    /// Converts from native space if necessary.
+    fn to_rgb_channels(&self) -> [f64; 3] {
+        let c0 = self.channels[0].unwrap_or(0.0);
+        let c1 = self.channels[1].unwrap_or(0.0);
+        let c2 = self.channels[2].unwrap_or(0.0);
+
+        match self.space {
+            ColorSpace::Rgb => [c0, c1, c2],
+            ColorSpace::Hsl => {
+                let srgb = conversion::hsl_to_srgb(c0, c1, c2);
+                [
+                    fuzzy_round(srgb[0] * 255.0),
+                    fuzzy_round(srgb[1] * 255.0),
+                    fuzzy_round(srgb[2] * 255.0),
+                ]
+            }
+            ColorSpace::Hwb => {
+                let srgb = conversion::hwb_to_srgb(c0, c1, c2);
+                [
+                    fuzzy_round(srgb[0] * 255.0),
+                    fuzzy_round(srgb[1] * 255.0),
+                    fuzzy_round(srgb[2] * 255.0),
+                ]
+            }
+            _ => {
+                // Modern spaces: convert through XYZ to sRGB, scale to 0-255
+                let srgb = conversion::convert([c0, c1, c2], self.space, ColorSpace::SRgb);
+                [srgb[0] * 255.0, srgb[1] * 255.0, srgb[2] * 255.0]
+            }
+        }
+    }
+
+    /// Get the HSL channel values (hue, saturation, lightness).
+    /// Returns (hue 0-360, saturation 0-1, lightness 0-1).
+    fn to_hsl_channels(&self) -> [f64; 3] {
+        match self.space {
+            ColorSpace::Hsl => [
+                self.channels[0].unwrap_or(0.0),
+                self.channels[1].unwrap_or(0.0),
+                self.channels[2].unwrap_or(0.0),
+            ],
+            _ => {
+                let rgb = self.to_rgb_channels();
+                conversion::srgb_to_hsl(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0)
+            }
+        }
+    }
+
+    pub fn color_space(&self) -> ColorSpace {
+        self.space
+    }
+}
+
+// ---- Legacy constructors ----
 impl Color {
     pub(crate) const fn new_rgba(
         red: Number,
@@ -65,91 +132,19 @@ impl Color {
         format: ColorFormat,
     ) -> Color {
         Color {
-            rgba: Rgb::new(red, green, blue),
-            alpha,
-            hsla: None,
+            space: ColorSpace::Rgb,
+            channels: [Some(red.0), Some(green.0), Some(blue.0)],
+            alpha: Some(alpha.0),
             format,
         }
     }
 
-    const fn new_hsla(red: Number, green: Number, blue: Number, alpha: Number, hsla: Hsl) -> Color {
-        Color {
-            rgba: Rgb::new(red, green, blue),
-            alpha,
-            hsla: Some(hsla),
-            format: ColorFormat::Infer,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Rgb {
-    red: Number,
-    green: Number,
-    blue: Number,
-}
-
-impl PartialEq for Rgb {
-    fn eq(&self, other: &Self) -> bool {
-        if self.red != other.red && !(self.red >= Number(255.0) && other.red >= Number(255.0)) {
-            return false;
-        }
-        if self.green != other.green
-            && !(self.green >= Number(255.0) && other.green >= Number(255.0))
-        {
-            return false;
-        }
-        if self.blue != other.blue && !(self.blue >= Number(255.0) && other.blue >= Number(255.0)) {
-            return false;
-        }
-        true
-    }
-}
-
-impl Eq for Rgb {}
-
-impl Rgb {
-    pub const fn new(red: Number, green: Number, blue: Number) -> Self {
-        Rgb { red, green, blue }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Hsl {
-    hue: Number,
-    saturation: Number,
-    luminance: Number,
-}
-
-impl Hsl {
-    pub const fn new(hue: Number, saturation: Number, luminance: Number) -> Self {
-        Hsl {
-            hue,
-            saturation,
-            luminance,
-        }
-    }
-
-    pub fn hue(&self) -> Number {
-        self.hue
-    }
-
-    pub fn saturation(&self) -> Number {
-        self.saturation
-    }
-
-    pub fn luminance(&self) -> Number {
-        self.luminance
-    }
-}
-
-// RGBA color functions
-impl Color {
+    /// Create from named color lookup (rgba bytes).
     pub fn new(red: u8, green: u8, blue: u8, alpha: u8, format: String) -> Self {
         Color {
-            rgba: Rgb::new(red.into(), green.into(), blue.into()),
-            hsla: None,
-            alpha: alpha.into(),
+            space: ColorSpace::Rgb,
+            channels: [Some(red as f64), Some(green as f64), Some(blue as f64)],
+            alpha: Some(alpha as f64 / 255.0),
             format: ColorFormat::Literal(format),
         }
     }
@@ -157,48 +152,99 @@ impl Color {
     /// Create a new `Color` with just RGBA values.
     /// Color representation is created automatically.
     pub fn from_rgba(
-        mut red: Number,
-        mut green: Number,
-        mut blue: Number,
-        mut alpha: Number,
+        red: Number,
+        green: Number,
+        blue: Number,
+        alpha: Number,
     ) -> Self {
-        red = red.clamp(0.0, 255.0);
-        green = green.clamp(0.0, 255.0);
-        blue = blue.clamp(0.0, 255.0);
-        alpha = alpha.clamp(0.0, 1.0);
-
-        Color::new_rgba(red, green, blue, alpha, ColorFormat::Infer)
+        Color {
+            space: ColorSpace::Rgb,
+            channels: [
+                Some(red.0.clamp(0.0, 255.0)),
+                Some(green.0.clamp(0.0, 255.0)),
+                Some(blue.0.clamp(0.0, 255.0)),
+            ],
+            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            format: ColorFormat::Infer,
+        }
     }
 
     pub fn from_rgba_fn(
-        mut red: Number,
-        mut green: Number,
-        mut blue: Number,
-        mut alpha: Number,
+        red: Number,
+        green: Number,
+        blue: Number,
+        alpha: Number,
     ) -> Self {
-        red = red.clamp(0.0, 255.0);
-        green = green.clamp(0.0, 255.0);
-        blue = blue.clamp(0.0, 255.0);
-        alpha = alpha.clamp(0.0, 1.0);
-
-        Color::new_rgba(red, green, blue, alpha, ColorFormat::Rgb)
+        Color {
+            space: ColorSpace::Rgb,
+            channels: [
+                Some(red.0.clamp(0.0, 255.0)),
+                Some(green.0.clamp(0.0, 255.0)),
+                Some(blue.0.clamp(0.0, 255.0)),
+            ],
+            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            format: ColorFormat::Rgb,
+        }
     }
 
+    /// Create RGBA representation from HSLA values.
+    /// hue in degrees, saturation and lightness in [0, 1].
+    pub fn from_hsla(hue: Number, saturation: Number, lightness: Number, alpha: Number) -> Self {
+        let hue = hue % Number(360.0);
+        Color {
+            space: ColorSpace::Hsl,
+            channels: [
+                Some(hue.0),
+                Some(saturation.0.clamp(0.0, 1.0)),
+                Some(lightness.0.clamp(0.0, 1.0)),
+            ],
+            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            format: ColorFormat::Infer,
+        }
+    }
+
+    pub fn from_hsla_fn(hue: Number, saturation: Number, luminance: Number, alpha: Number) -> Self {
+        let mut color = Self::from_hsla(hue, saturation, luminance, alpha);
+        color.format = ColorFormat::Hsl;
+        color
+    }
+
+    pub fn from_hwb(hue: Number, white: Number, black: Number, alpha: Number) -> Color {
+        // Convert HWB to RGB immediately (legacy behavior)
+        let h = hue.rem_euclid(360.0);
+        let w = white.0 / 100.0;
+        let b = black.0 / 100.0;
+
+        let srgb = conversion::hwb_to_srgb(h, w, b);
+        Color {
+            space: ColorSpace::Rgb,
+            channels: [
+                Some(fuzzy_round(srgb[0] * 255.0)),
+                Some(fuzzy_round(srgb[1] * 255.0)),
+                Some(fuzzy_round(srgb[2] * 255.0)),
+            ],
+            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            format: ColorFormat::Infer,
+        }
+    }
+}
+
+// ---- RGBA getters ----
+impl Color {
     pub fn red(&self) -> Number {
-        self.rgba.red.round()
-    }
-
-    pub fn blue(&self) -> Number {
-        self.rgba.blue.round()
+        Number(self.to_rgb_channels()[0]).round()
     }
 
     pub fn green(&self) -> Number {
-        self.rgba.green.round()
+        Number(self.to_rgb_channels()[1]).round()
     }
 
-    /// Mix two colors together with weight
-    /// Algorithm adapted from
-    /// <https://github.com/sass/dart-sass/blob/0d0270cb12a9ac5cce73a4d0785fecb00735feee/lib/src/functions/color.dart#L718>
+    pub fn blue(&self) -> Number {
+        Number(self.to_rgb_channels()[2]).round()
+    }
+
+    /// Mix two colors together with weight.
+    /// Algorithm adapted from dart-sass.
     pub fn mix(&self, other: &Color, weight: Number) -> Self {
         let weight = weight.clamp(0.0, 100.0);
         let normalized_weight = weight * Number(2.0) - Number::one();
@@ -222,46 +268,28 @@ impl Color {
     }
 }
 
-/// HSLA color functions
-/// Algorithms adapted from <http://www.niwa.nu/2013/05/math-behind-colorspace-conversions-rgb-hsl/>
+// ---- HSLA getters ----
 impl Color {
-    /// Calculate hue from RGBA values
+    /// Calculate hue (0-360 degrees)
     pub fn hue(&self) -> Number {
-        if let Some(h) = &self.hsla {
-            return h.hue();
+        if self.space == ColorSpace::Hsl {
+            return Number(self.channels[0].unwrap_or(0.0));
         }
 
-        let red = self.red() / Number(255.0);
-        let green = self.green() / Number(255.0);
-        let blue = self.blue() / Number(255.0);
-
-        let min = red.min(green.min(blue));
-        let max = red.max(green.max(blue));
-
-        let delta = max - min;
-
-        let hue = if min == max {
-            Number::zero()
-        } else if max == red {
-            Number(60.0) * (green - blue) / delta
-        } else if max == green {
-            Number(120.0) + Number(60.0) * (blue - red) / delta
-        } else {
-            Number(240.0) + Number(60.0) * (red - green) / delta
-        };
-
-        hue % Number(360.0)
+        let hsl = self.to_hsl_channels();
+        Number(hsl[0]) % Number(360.0)
     }
 
-    /// Calculate saturation from RGBA values
+    /// Calculate saturation (0-100%)
     pub fn saturation(&self) -> Number {
-        if let Some(h) = &self.hsla {
-            return h.saturation() * Number(100.0);
+        if self.space == ColorSpace::Hsl {
+            return Number(self.channels[1].unwrap_or(0.0)) * Number(100.0);
         }
 
-        let red: Number = self.red() / Number(255.0);
-        let green = self.green() / Number(255.0);
-        let blue = self.blue() / Number(255.0);
+        let rgb = self.to_rgb_channels();
+        let red = Number(rgb[0]) / Number(255.0);
+        let green = Number(rgb[1]) / Number(255.0);
+        let blue = Number(rgb[2]) / Number(255.0);
 
         let min = red.min(green.min(blue));
         let max = red.max(green.max(blue));
@@ -271,7 +299,6 @@ impl Color {
         }
 
         let delta = max - min;
-
         let sum = max + min;
 
         let s = delta
@@ -284,28 +311,35 @@ impl Color {
         s * Number(100.0)
     }
 
-    /// Calculate luminance from RGBA values
+    /// Calculate lightness (0-100%)
     pub fn lightness(&self) -> Number {
-        if let Some(h) = &self.hsla {
-            return h.luminance() * Number(100.0);
+        if self.space == ColorSpace::Hsl {
+            return Number(self.channels[2].unwrap_or(0.0)) * Number(100.0);
         }
 
-        let red: Number = self.red() / Number(255.0);
-        let green = self.green() / Number(255.0);
-        let blue = self.blue() / Number(255.0);
+        let rgb = self.to_rgb_channels();
+        let red = Number(rgb[0]) / Number(255.0);
+        let green = Number(rgb[1]) / Number(255.0);
+        let blue = Number(rgb[2]) / Number(255.0);
         let min = red.min(green.min(blue));
         let max = red.max(green.max(blue));
         (((min + max) / Number(2.0)) * Number(100.0)).round()
     }
 
     pub fn as_hsla(&self) -> (Number, Number, Number, Number) {
-        if let Some(h) = &self.hsla {
-            return (h.hue(), h.saturation(), h.luminance(), self.alpha());
+        if self.space == ColorSpace::Hsl {
+            return (
+                Number(self.channels[0].unwrap_or(0.0)),
+                Number(self.channels[1].unwrap_or(0.0)),
+                Number(self.channels[2].unwrap_or(0.0)),
+                self.alpha(),
+            );
         }
 
-        let red = self.red() / Number(255.0);
-        let green = self.green() / Number(255.0);
-        let blue = self.blue() / Number(255.0);
+        let rgb = self.to_rgb_channels();
+        let red = Number(rgb[0]) / Number(255.0);
+        let green = Number(rgb[1]) / Number(255.0);
+        let blue = Number(rgb[2]) / Number(255.0);
         let min = red.min(green.min(blue));
         let max = red.max(green.max(blue));
 
@@ -367,107 +401,71 @@ impl Color {
         Color::from_hsla(hue, (saturation - amount).clamp(0.0, 1.0), luminance, alpha)
     }
 
-    pub fn from_hsla_fn(hue: Number, saturation: Number, luminance: Number, alpha: Number) -> Self {
-        let mut color = Self::from_hsla(hue, saturation, luminance, alpha);
-        color.format = ColorFormat::Hsl;
-        color
-    }
-
-    /// Create RGBA representation from HSLA values
-    pub fn from_hsla(hue: Number, saturation: Number, lightness: Number, alpha: Number) -> Self {
-        let hue = hue % Number(360.0);
-        let hsla = Hsl::new(hue, saturation.clamp(0.0, 1.0), lightness.clamp(0.0, 1.0));
-
-        let scaled_hue = hue.0 / 360.0;
-        let scaled_saturation = saturation.0.clamp(0.0, 1.0);
-        let scaled_lightness = lightness.0.clamp(0.0, 1.0);
-
-        let m2 = if scaled_lightness <= 0.5 {
-            scaled_lightness * (scaled_saturation + 1.0)
-        } else {
-            scaled_lightness.mul_add(-scaled_saturation, scaled_lightness + scaled_saturation)
-        };
-
-        let m1 = scaled_lightness.mul_add(2.0, -m2);
-
-        let red = fuzzy_round(Self::hue_to_rgb(m1, m2, scaled_hue + 1.0 / 3.0) * 255.0);
-        let green = fuzzy_round(Self::hue_to_rgb(m1, m2, scaled_hue) * 255.0);
-        let blue = fuzzy_round(Self::hue_to_rgb(m1, m2, scaled_hue - 1.0 / 3.0) * 255.0);
-
-        Color::new_hsla(Number(red), Number(green), Number(blue), alpha, hsla)
-    }
-
-    fn hue_to_rgb(m1: f64, m2: f64, mut hue: f64) -> f64 {
-        if hue < 0.0 {
-            hue += 1.0;
-        }
-        if hue > 1.0 {
-            hue -= 1.0;
-        }
-
-        if hue < 1.0 / 6.0 {
-            ((m2 - m1) * hue).mul_add(6.0, m1)
-        } else if hue < 1.0 / 2.0 {
-            m2
-        } else if hue < 2.0 / 3.0 {
-            ((m2 - m1) * (2.0 / 3.0 - hue)).mul_add(6.0, m1)
-        } else {
-            m1
-        }
-    }
-
     pub fn invert(&self, weight: Number) -> Self {
         if weight.is_zero() {
             return self.clone();
         }
 
-        let red = Number(255.0) - self.red();
-        let green = Number(255.0) - self.green();
-        let blue = Number(255.0) - self.blue();
+        let rgb = self.to_rgb_channels();
+        let red = Number(255.0) - Number(rgb[0]).round();
+        let green = Number(255.0) - Number(rgb[1]).round();
+        let blue = Number(255.0) - Number(rgb[2]).round();
 
-        let inverse = Color::new_rgba(red, green, blue, self.alpha(), ColorFormat::Infer);
+        let inverse = Color {
+            space: ColorSpace::Rgb,
+            channels: [Some(red.0), Some(green.0), Some(blue.0)],
+            alpha: self.alpha,
+            format: ColorFormat::Infer,
+        };
 
         inverse.mix(self, weight)
     }
 
     pub fn complement(&self) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-
         Color::from_hsla(hue + Number(180.0), saturation, luminance, alpha)
     }
 }
 
-/// Opacity color functions
+// ---- Alpha/opacity ----
 impl Color {
     pub fn alpha(&self) -> Number {
-        if self.alpha > Number::one() {
-            self.alpha / Number(255.0)
-        } else {
-            self.alpha
-        }
+        Number(self.alpha.unwrap_or(1.0))
     }
 
     /// Change `alpha` to value given
     pub fn with_alpha(&self, alpha: Number) -> Self {
-        Color::from_rgba(self.red(), self.green(), self.blue(), alpha)
+        let rgb = self.to_rgb_channels();
+        Color::from_rgba(
+            Number(rgb[0]).round(),
+            Number(rgb[1]).round(),
+            Number(rgb[2]).round(),
+            alpha,
+        )
     }
 
-    /// Makes a color more opaque.
-    /// Takes a color and a number between 0 and 1,
-    /// and returns a color with the opacity increased by that amount.
     pub fn fade_in(&self, amount: Number) -> Self {
-        Color::from_rgba(self.red(), self.green(), self.blue(), self.alpha() + amount)
+        let rgb = self.to_rgb_channels();
+        Color::from_rgba(
+            Number(rgb[0]).round(),
+            Number(rgb[1]).round(),
+            Number(rgb[2]).round(),
+            self.alpha() + amount,
+        )
     }
 
-    /// Makes a color more transparent.
-    /// Takes a color and a number between 0 and 1,
-    /// and returns a color with the opacity decreased by that amount.
     pub fn fade_out(&self, amount: Number) -> Self {
-        Color::from_rgba(self.red(), self.green(), self.blue(), self.alpha() - amount)
+        let rgb = self.to_rgb_channels();
+        Color::from_rgba(
+            Number(rgb[0]).round(),
+            Number(rgb[1]).round(),
+            Number(rgb[2]).round(),
+            self.alpha() - amount,
+        )
     }
 }
 
-/// Other color functions
+// ---- Other ----
 impl Color {
     pub fn to_ie_hex_str(&self) -> String {
         format!(
@@ -480,35 +478,8 @@ impl Color {
     }
 }
 
-/// HWB color functions
+// ---- HWB getters ----
 impl Color {
-    pub fn from_hwb(hue: Number, white: Number, black: Number, mut alpha: Number) -> Color {
-        let hue = Number(hue.rem_euclid(360.0) / 360.0);
-        let mut scaled_white = white.0 / 100.0;
-        let mut scaled_black = black.0 / 100.0;
-        alpha = alpha.clamp(0.0, 1.0);
-
-        let white_black_sum = scaled_white + scaled_black;
-
-        if white_black_sum > 1.0 {
-            scaled_white /= white_black_sum;
-            scaled_black /= white_black_sum;
-        }
-
-        let factor = 1.0 - scaled_white - scaled_black;
-
-        let to_rgb = |hue: f64| -> Number {
-            let channel = Self::hue_to_rgb(0.0, 1.0, hue).mul_add(factor, scaled_white);
-            Number(fuzzy_round(channel * 255.0))
-        };
-
-        let red = to_rgb(hue.0 + 1.0 / 3.0);
-        let green = to_rgb(hue.0);
-        let blue = to_rgb(hue.0 - 1.0 / 3.0);
-
-        Color::new_rgba(red, green, blue, alpha, ColorFormat::Infer)
-    }
-
     pub fn whiteness(&self) -> Number {
         self.red().min(self.green()).min(self.blue()) / Number(255.0)
     }
