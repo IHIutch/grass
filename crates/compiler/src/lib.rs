@@ -195,7 +195,10 @@ fn from_string_with_file_name<P: AsRef<Path>>(
         Ok(_) => {}
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     }
-    let stmts = visitor.finish();
+    let stmts = match visitor.finish() {
+        Ok(s) => s,
+        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
+    };
 
     let mut serializer = Serializer::new(options, &map, false, empty_span);
 

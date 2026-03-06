@@ -192,13 +192,14 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Vec<CssStmt> {
+    pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
+        self.extender.check_unsatisfied_extends()?;
         let mut finished_tree = self.css_tree.finish();
         if self.import_nodes.is_empty() {
-            finished_tree
+            Ok(finished_tree)
         } else {
             self.import_nodes.append(&mut finished_tree);
-            self.import_nodes
+            Ok(self.import_nodes)
         }
     }
 

@@ -1950,7 +1950,6 @@ error!(
     "Error: You may not @extend selectors across media queries."
 );
 error!(
-    #[ignore = "we do not error for this"]
     extend_target_does_not_exist,
     "a {
         @extend dne;

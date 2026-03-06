@@ -129,6 +129,27 @@ impl ExtensionStore {
         }
     }
 
+    /// Check that all non-optional extends matched a target selector.
+    /// Returns an error if any mandatory extend had no matching target.
+    pub fn check_unsatisfied_extends(&self) -> SassResult<()> {
+        for (target, sources) in &self.extensions {
+            if self.selectors.contains_key(target) {
+                continue;
+            }
+            for extension in sources.values() {
+                if !extension.is_optional && !extension.is_original {
+                    return Err((
+                        "The target selector was not found.\nUse \"@extend ${target} !optional\" to avoid this error."
+                            .replace("${target}", &target.to_string()),
+                        extension.span,
+                    )
+                        .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn replace(
         selector: SelectorList,
         source: SelectorList,
