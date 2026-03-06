@@ -1107,7 +1107,7 @@ impl ExtensionStore {
 
             let contains_extension = selectors.first() == Some(&extension.extender);
 
-            let mut first = false;
+            let mut first = true;
             for complex in selectors {
                 // If the output contains the original complex selector, there's no
                 // need to recreate it.
@@ -1124,9 +1124,7 @@ impl ExtensionStore {
                             .unwrap(),
                     );
                 } else {
-                    sources
-                        .get_mut(&complex)
-                        .replace(&mut with_extender.clone());
+                    sources.insert(complex.clone(), with_extender.clone());
 
                     for component in complex.components.clone() {
                         if let ComplexSelectorComponent::Compound(component) = component {
@@ -1139,7 +1137,7 @@ impl ExtensionStore {
                         }
                     }
 
-                    if new_extensions.contains_key(&extension.target.clone().unwrap()) {
+                    if !new_extensions.contains_key(&extension.target.clone().unwrap()) {
                         additional_extensions
                             .get_or_insert_with(HashMap::new)
                             .entry(extension.target.clone().unwrap())
@@ -1155,6 +1153,10 @@ impl ExtensionStore {
                 // todo: evaluate whether we could get away with swap_remove
                 sources.shift_remove(&extension.extender);
             }
+
+            // Write the modified sources back to self.extensions.
+            self.extensions
+                .insert(extension.target.clone().unwrap(), sources);
         }
         additional_extensions
     }

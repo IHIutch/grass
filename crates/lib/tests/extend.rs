@@ -1758,7 +1758,6 @@ test!(
     ".foo {\n  escape: none;\n}\n\n\\.foo, .bar {\n  escape: slash dot;\n}\n\n\\.foo, .bar {\n  escape: hex;\n}\n"
 );
 test!(
-    #[ignore = "Rc<RefCell<Selector>>"]
     extend_extender,
     "// For implementations like Dart Sass that process extensions as they occur,
     // extending rules that contain their own extends needs special handling.
