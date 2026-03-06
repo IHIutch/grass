@@ -170,9 +170,9 @@ impl Color {
         Color {
             space: ColorSpace::Rgb,
             channels: [
-                Some(red.0.clamp(0.0, 255.0)),
-                Some(green.0.clamp(0.0, 255.0)),
-                Some(blue.0.clamp(0.0, 255.0)),
+                Some(fuzzy_round(red.0).clamp(0.0, 255.0)),
+                Some(fuzzy_round(green.0).clamp(0.0, 255.0)),
+                Some(fuzzy_round(blue.0).clamp(0.0, 255.0)),
             ],
             alpha: Some(alpha.0.clamp(0.0, 1.0)),
             format: ColorFormat::Infer,

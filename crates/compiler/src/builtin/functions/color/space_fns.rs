@@ -180,14 +180,17 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
 
     match idx {
         Some(i) => {
-            let val = color_in_space.channel_value(i);
+            let mut val = color_in_space.channel_value(i);
+            let is_legacy_pct = target_space.is_legacy()
+                && matches!(
+                    channel_str.as_str(),
+                    "saturation" | "lightness" | "whiteness" | "blackness"
+                );
             let unit = if channels[i].is_polar {
                 Unit::Deg
-            } else if target_space.is_legacy() && channel_str == "saturation"
-                || channel_str == "lightness"
-                || channel_str == "whiteness"
-                || channel_str == "blackness"
-            {
+            } else if is_legacy_pct {
+                // Internal storage is [0, 1], display as [0%, 100%]
+                val = val * Number(100.0);
                 Unit::Percent
             } else {
                 Unit::None

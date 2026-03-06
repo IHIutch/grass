@@ -422,6 +422,31 @@ impl<'a> Serializer<'a> {
         self.buffer.push(b')');
     }
 
+    /// Write RGB color with fractional channel values (from space conversions).
+    fn write_rgb_fractional(&mut self, color: &Color) {
+        let raw = color.raw_channels();
+        let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
+
+        if is_opaque {
+            self.buffer.extend_from_slice(b"rgb(");
+        } else {
+            self.buffer.extend_from_slice(b"rgba(");
+        }
+
+        self.write_float(raw[0].unwrap_or(0.0));
+        self.buffer.extend_from_slice(b", ");
+        self.write_float(raw[1].unwrap_or(0.0));
+        self.buffer.extend_from_slice(b", ");
+        self.write_float(raw[2].unwrap_or(0.0));
+
+        if !is_opaque {
+            self.buffer.extend_from_slice(b", ");
+            self.write_float(color.alpha().0);
+        }
+
+        self.buffer.push(b')');
+    }
+
     fn write_hsl(&mut self, color: &Color) {
         let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
 
@@ -468,6 +493,26 @@ impl<'a> Serializer<'a> {
         if !color.color_space().is_legacy() {
             self.write_modern_color(color);
             return;
+        }
+
+        // Check if RGB channels have fractional values (from space conversions)
+        // Only applies when the color is stored in RGB space
+        if color.color_space() == ColorSpace::Rgb {
+            let raw = color.raw_channels();
+            let has_fractional = raw.iter().any(|c| {
+                if let Some(v) = c {
+                    let rounded = v.round();
+                    (v - rounded).abs() > 1e-10
+                } else {
+                    false
+                }
+            });
+
+            if has_fractional {
+                // Use rgb() with fractional values
+                self.write_rgb_fractional(color);
+                return;
+            }
         }
 
         let red = color.red().0.round() as u8;

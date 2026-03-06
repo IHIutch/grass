@@ -79,13 +79,15 @@ impl ColorSpace {
             ],
             Self::Hsl => [
                 ChannelDef::new("hue", 0.0, 360.0, true, None),
-                ChannelDef::new("saturation", 0.0, 100.0, false, Some(100.0)),
-                ChannelDef::new("lightness", 0.0, 100.0, false, Some(100.0)),
+                // Internal storage is [0, 1], CSS display is [0%, 100%]
+                ChannelDef::new("saturation", 0.0, 1.0, false, Some(1.0)),
+                ChannelDef::new("lightness", 0.0, 1.0, false, Some(1.0)),
             ],
             Self::Hwb => [
                 ChannelDef::new("hue", 0.0, 360.0, true, None),
-                ChannelDef::new("whiteness", 0.0, 100.0, false, Some(100.0)),
-                ChannelDef::new("blackness", 0.0, 100.0, false, Some(100.0)),
+                // Internal storage is [0, 1], CSS display is [0%, 100%]
+                ChannelDef::new("whiteness", 0.0, 1.0, false, Some(1.0)),
+                ChannelDef::new("blackness", 0.0, 1.0, false, Some(1.0)),
             ],
             Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => [
                 ChannelDef::new("red", 0.0, 1.0, false, Some(1.0)),
@@ -167,8 +169,8 @@ impl ColorSpace {
     pub fn white_channels(self) -> [Option<f64>; 3] {
         match self {
             Self::Rgb => [Some(255.0), Some(255.0), Some(255.0)],
-            Self::Hsl => [Some(0.0), Some(0.0), Some(1.0)],
-            Self::Hwb => [Some(0.0), Some(1.0), Some(0.0)],
+            Self::Hsl => [Some(0.0), Some(0.0), Some(1.0)], // hue=0, sat=0, lightness=1.0 (100%)
+            Self::Hwb => [Some(0.0), Some(1.0), Some(0.0)], // hue=0, whiteness=1.0, blackness=0
             Self::SRgb | Self::DisplayP3 | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => {
                 [Some(1.0), Some(1.0), Some(1.0)]
             }
