@@ -521,7 +521,6 @@ test!(
     "@media (foo) {\n  a {\n    color: red;\n  }\n  a {\n    color: red;\n  }\n}\n@media (foo) and (prefers-reduced-motion: reduce) {\n  a {\n    transition: none;\n  }\n}\n"
 );
 test!(
-    #[ignore = "our is_invisible_check inside css tree is flawed here"]
     doesnt_split_child_nodes_when_leading_but_invisible_media,
     "@media (foo) {
         @media (prefers-reduced-motion: reduce) {}
@@ -546,7 +545,6 @@ test!(
     "@media (url) {\n  a {\n    color: red;\n  }\n}\n"
 );
 test!(
-    #[ignore = "our is_invisible_check inside css tree is flawed here"]
     media_does_not_split_when_child_rule_has_invisible_media,
     "@media (min-width: 1px) {
         .first {

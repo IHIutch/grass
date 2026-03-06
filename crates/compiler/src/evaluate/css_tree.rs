@@ -128,8 +128,70 @@ impl CssTree {
 
         let parent_children = self.parent_to_child.get(parent_idx).unwrap();
 
-        // todo: we shouldn't take into account children that are invisible
-        parent_children.last() != Some(&child)
+        // Check if any sibling after `child` would produce visible output.
+        // We skip siblings that are empty container statements (media, supports,
+        // rulesets) with no children in the tree, since those won't produce
+        // any output. Note: during tree building, CssStmt bodies are always
+        // empty — actual children are tracked in parent_to_child, so we check
+        // that map instead of is_invisible().
+        let mut found_child = false;
+        for &sibling in parent_children {
+            if sibling == child {
+                found_child = true;
+                continue;
+            }
+            if !found_child {
+                continue;
+            }
+            // This is a sibling after `child`. Check if it would be visible.
+            let stmt = self.stmts[sibling.0].borrow();
+            match &*stmt {
+                None => {
+                    // Tombstone — represents a moved/merged node.
+                    // Conservatively treat as a visible sibling.
+                    return true;
+                }
+                Some(s) => {
+                    if self.is_stmt_visible(sibling, s) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a statement would produce visible output during tree building.
+    /// Unlike is_invisible(), this checks the parent_to_child map for children
+    /// since CssStmt bodies are not populated until finish().
+    fn is_stmt_visible(&self, idx: CssTreeIdx, stmt: &CssStmt) -> bool {
+        match stmt {
+            CssStmt::Media(..) | CssStmt::Supports(..) => {
+                // A media/supports rule is visible if it has any visible children
+                self.has_visible_child(idx)
+            }
+            CssStmt::RuleSet { selector, .. } => {
+                // A ruleset is visible if its selector is visible and it has visible children
+                !selector.is_invisible() && self.has_visible_child(idx)
+            }
+            // Styles, comments, imports, unknown at-rules, keyframes are always visible
+            _ => true,
+        }
+    }
+
+    /// Recursively check if a node has any visible children in the tree.
+    fn has_visible_child(&self, idx: CssTreeIdx) -> bool {
+        let Some(children) = self.parent_to_child.get(&idx) else {
+            return false;
+        };
+        children.iter().any(|&child_idx| {
+            let stmt = self.stmts[child_idx.0].borrow();
+            match &*stmt {
+                None => false, // tombstone
+                Some(s) => self.is_stmt_visible(child_idx, s),
+            }
+        })
     }
 
     pub fn add_stmt(&mut self, child: CssStmt, parent: Option<CssTreeIdx>) -> CssTreeIdx {
