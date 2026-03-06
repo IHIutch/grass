@@ -202,7 +202,6 @@ test!(
     "a {\n  color: 2px/em;\n}\n"
 );
 test!(
-    #[ignore = "we need to rewrite how we compare and convert units"]
     complex_units_with_same_denom_and_comparable_numer_are_comparable,
     "a {\n  color: comparable((23in/2fu), (23cm/2fu));\n}\n",
     "a {\n  color: true;\n}\n"

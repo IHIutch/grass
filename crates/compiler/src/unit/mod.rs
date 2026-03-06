@@ -167,6 +167,13 @@ impl Unit {
         if other == &Unit::None {
             return true;
         }
+        if let (Unit::Complex(a), Unit::Complex(b)) = (self, other) {
+            if a.numer.len() != b.numer.len() || a.denom.len() != b.denom.len() {
+                return false;
+            }
+            return a.numer.iter().zip(&b.numer).all(|(u1, u2)| u1.comparable(u2))
+                && a.denom.iter().zip(&b.denom).all(|(u1, u2)| u1.comparable(u2));
+        }
         match self.kind() {
             UnitKind::FontRelative | UnitKind::ViewportRelative | UnitKind::Other => self == other,
             UnitKind::None => true,
