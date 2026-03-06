@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{builtin::builtin_imports::*, serializer::serialize_number, value::SassNumber};
+use crate::color::space::ColorSpace;
 
 use super::{
     angle_value,
+    css_color4::construct_color,
     rgb::{function_string, parse_channels, percentage_or_unitless},
     ParsedChannels,
 };
@@ -83,6 +85,12 @@ fn inner_hsl(
         )? {
             ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
             ParsedChannels::List(list) => {
+                // Check if any channel is `none` — if so, use modern Color 4 path
+                let has_none = list.iter().take(3).any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                if has_none {
+                    let has_alpha = list.len() > 3;
+                    return construct_color(ColorSpace::Hsl, &list, has_alpha, span, visitor);
+                }
                 let args = ArgumentResult {
                     positional: list,
                     named: BTreeMap::new(),

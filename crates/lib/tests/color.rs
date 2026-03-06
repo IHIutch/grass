@@ -109,7 +109,7 @@ test!(
 test!(
     rgba_percent_round_up,
     "a {\n  color: rgba(59%, 169, 69%, 50%);\n}\n",
-    "a {\n  color: rgba(150, 169, 176, 0.5);\n}\n"
+    "a {\n  color: rgba(150.45, 169, 175.95, 0.5);\n}\n"
 );
 test!(
     rgb_double_digits,
@@ -179,7 +179,7 @@ test!(
 test!(
     rgba_3_args,
     "a {\n  color: rgba(7.1%, 20.4%, 33.9%);\n}\n",
-    "a {\n  color: rgb(18, 52, 86);\n}\n"
+    "a {\n  color: rgb(18.105, 52.02, 86.445);\n}\n"
 );
 error!(
     rgb_no_args,
@@ -407,17 +407,17 @@ test!(
 test!(
     rgba_1_arg,
     "a {\n  color: rgba(74.7% 173 93%);\n}\n",
-    "a {\n  color: rgb(190, 173, 237);\n}\n"
+    "a {\n  color: rgb(190.485, 173, 237.15);\n}\n"
 );
 test!(
     hsla_1_arg,
     "a {\n  color: hsla(60 60% 50%);\n}\n",
-    "a {\n  color: hsl(60deg, 60%, 50%);\n}\n"
+    "a {\n  color: hsl(60, 60%, 50%);\n}\n"
 );
 test!(
     hsla_1_arg_weird_units,
     "a {\n  color: hsla(60foo 60foo 50foo);\n}\n",
-    "a {\n  color: hsl(60deg, 60%, 50%);\n}\n"
+    "a {\n  color: hsl(60, 60%, 50%);\n}\n"
 );
 test!(
     sass_spec__spec_colors_basic,
@@ -486,7 +486,7 @@ test!(
 test!(
     all_three_rgb_channels_have_decimal,
     "a {\n  color: rgba(1.5, 1.5, 1.5, 1);\n}\n",
-    "a {\n  color: rgb(2, 2, 2);\n}\n"
+    "a {\n  color: rgb(1.5, 1.5, 1.5);\n}\n"
 );
 test!(
     builtin_fn_red_rounds_channel,
@@ -558,12 +558,12 @@ test!(
 test!(
     rgb_special_fn_4_arg_maintains_units,
     "a {\n  color: rgb(1, 0.02, 3%, max(0.4));\n}\n",
-    "a {\n  color: rgba(1, 0, 8, 0.4);\n}\n"
+    "a {\n  color: rgba(1, 0.02, 7.65, 0.4);\n}\n"
 );
 test!(
     rgb_special_fn_3_arg_maintains_units,
     "a {\n  color: rgb(1, 0.02, max(0.4));\n}\n",
-    "a {\n  color: rgb(1, 0, 0);\n}\n"
+    "a {\n  color: rgb(1, 0.02, 0.4);\n}\n"
 );
 test!(
     rgb_special_fn_2_arg_first_non_color,

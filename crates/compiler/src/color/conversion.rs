@@ -229,8 +229,6 @@ fn rec2020_decode(c: f64) -> f64 {
 pub fn hsl_to_srgb(h: f64, s: f64, l: f64) -> [f64; 3] {
     let h = h % 360.0;
     let scaled_hue = h / 360.0;
-    let s = s.clamp(0.0, 1.0);
-    let l = l.clamp(0.0, 1.0);
 
     let m2 = if l <= 0.5 {
         l * (s + 1.0)
@@ -499,6 +497,8 @@ fn to_xyz_d65(channels: [f64; 3], space: ColorSpace) -> [f64; 3] {
             mat3_mul(&DISPLAY_P3_LINEAR_TO_XYZ_D65, linear)
         }
 
+        ColorSpace::DisplayP3Linear => mat3_mul(&DISPLAY_P3_LINEAR_TO_XYZ_D65, channels),
+
         ColorSpace::A98Rgb => {
             let linear = [a98_rgb_decode(c0), a98_rgb_decode(c1), a98_rgb_decode(c2)];
             mat3_mul(&A98_RGB_LINEAR_TO_XYZ_D65, linear)
@@ -571,6 +571,8 @@ fn from_xyz_d65(xyz: [f64; 3], space: ColorSpace) -> [f64; 3] {
             let linear = mat3_mul(&XYZ_D65_TO_DISPLAY_P3_LINEAR, xyz);
             [display_p3_encode(linear[0]), display_p3_encode(linear[1]), display_p3_encode(linear[2])]
         }
+
+        ColorSpace::DisplayP3Linear => mat3_mul(&XYZ_D65_TO_DISPLAY_P3_LINEAR, xyz),
 
         ColorSpace::A98Rgb => {
             let linear = mat3_mul(&XYZ_D65_TO_A98_RGB_LINEAR, xyz);

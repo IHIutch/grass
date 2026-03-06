@@ -18,6 +18,8 @@ pub enum ColorSpace {
     SRgbLinear,
     /// Display P3 (wide gamut). Channels in [0,1].
     DisplayP3,
+    /// Linear-light Display P3. Channels in [0,1].
+    DisplayP3Linear,
     /// Adobe RGB 1998. Channels in [0,1].
     A98Rgb,
     /// ProPhoto RGB (ROMM RGB). Channels in [0,1].
@@ -60,7 +62,7 @@ impl ColorSpace {
     pub fn is_predefined_rgb(self) -> bool {
         matches!(
             self,
-            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020
+            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020
         )
     }
 
@@ -89,7 +91,7 @@ impl ColorSpace {
                 ChannelDef::new("whiteness", 0.0, 1.0, false, Some(1.0)),
                 ChannelDef::new("blackness", 0.0, 1.0, false, Some(1.0)),
             ],
-            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => [
+            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => [
                 ChannelDef::new("red", 0.0, 1.0, false, Some(1.0)),
                 ChannelDef::new("green", 0.0, 1.0, false, Some(1.0)),
                 ChannelDef::new("blue", 0.0, 1.0, false, Some(1.0)),
@@ -131,6 +133,7 @@ impl ColorSpace {
             Self::SRgb => "srgb",
             Self::SRgbLinear => "srgb-linear",
             Self::DisplayP3 => "display-p3",
+            Self::DisplayP3Linear => "display-p3-linear",
             Self::A98Rgb => "a98-rgb",
             Self::ProphotoRgb => "prophoto-rgb",
             Self::Rec2020 => "rec2020",
@@ -152,6 +155,7 @@ impl ColorSpace {
             "srgb" => Some(Self::SRgb),
             "srgb-linear" => Some(Self::SRgbLinear),
             "display-p3" => Some(Self::DisplayP3),
+            "display-p3-linear" => Some(Self::DisplayP3Linear),
             "a98-rgb" => Some(Self::A98Rgb),
             "prophoto-rgb" => Some(Self::ProphotoRgb),
             "rec2020" => Some(Self::Rec2020),
@@ -171,7 +175,7 @@ impl ColorSpace {
             Self::Rgb => [Some(255.0), Some(255.0), Some(255.0)],
             Self::Hsl => [Some(0.0), Some(0.0), Some(1.0)], // hue=0, sat=0, lightness=1.0 (100%)
             Self::Hwb => [Some(0.0), Some(1.0), Some(0.0)], // hue=0, whiteness=1.0, blackness=0
-            Self::SRgb | Self::DisplayP3 | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => {
+            Self::SRgb | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => {
                 [Some(1.0), Some(1.0), Some(1.0)]
             }
             Self::SRgbLinear => [Some(1.0), Some(1.0), Some(1.0)],
@@ -190,7 +194,7 @@ impl ColorSpace {
             Self::Rgb => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Hsl => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Hwb => [Some(0.0), Some(0.0), Some(1.0)],
-            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::A98Rgb
+            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb
             | Self::ProphotoRgb | Self::Rec2020 => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Lab => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Lch => [Some(0.0), Some(0.0), Some(0.0)],

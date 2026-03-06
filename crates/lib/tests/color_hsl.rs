@@ -12,47 +12,47 @@ error!(
 test!(
     hsl_basic,
     "a {\n  color: hsl(193, 67%, 99);\n}\n",
-    "a {\n  color: hsl(193deg, 67%, 99%);\n}\n"
+    "a {\n  color: hsl(193, 67%, 99%);\n}\n"
 );
 test!(
     hsla_basic,
     "a {\n  color: hsla(193, 67%, 99, .6);\n}\n",
-    "a {\n  color: hsla(193deg, 67%, 99%, 0.6);\n}\n"
+    "a {\n  color: hsla(193, 67%, 99%, 0.6);\n}\n"
 );
 test!(
     hsl_doesnt_care_about_units,
-    "a {\n  color: hsl(193deg, 67foo, 99%);\n}\n",
-    "a {\n  color: hsl(193deg, 67%, 99%);\n}\n"
+    "a {\n  color: hsl(193, 67foo, 99%);\n}\n",
+    "a {\n  color: hsl(193, 67%, 99%);\n}\n"
 );
 test!(
     hsl_named,
     "a {\n  color: hsl($hue: 193, $saturation: 67%, $lightness: 99);\n}\n",
-    "a {\n  color: hsl(193deg, 67%, 99%);\n}\n"
+    "a {\n  color: hsl(193, 67%, 99%);\n}\n"
 );
 test!(
     hsl_four_args,
     "a {\n  color: hsl(0, 0, 0, 0.456);\n}\n",
-    "a {\n  color: hsla(0deg, 0%, 0%, 0.456);\n}\n"
+    "a {\n  color: hsla(0, 0%, 0%, 0.456);\n}\n"
 );
 test!(
     hsl_negative_hue,
     "a {\n  color: hsl(-60deg, 100%, 50%);\n}\n",
-    "a {\n  color: hsl(300deg, 100%, 50%);\n}\n"
+    "a {\n  color: hsl(300, 100%, 50%);\n}\n"
 );
 test!(
     hsl_hue_above_max,
     "a {\n  color: hsl(540, 100%, 50%);\n}\n",
-    "a {\n  color: hsl(180deg, 100%, 50%);\n}\n"
+    "a {\n  color: hsl(180, 100%, 50%);\n}\n"
 );
 test!(
     hsl_hue_below_min,
     "a {\n  color: hsl(-540, 100%, 50%);\n}\n",
-    "a {\n  color: hsl(180deg, 100%, 50%);\n}\n"
+    "a {\n  color: hsl(180, 100%, 50%);\n}\n"
 );
 test!(
     hsla_named,
     "a {\n  color: hsla($hue: 193, $saturation: 67%, $lightness: 99, $alpha: .6);\n}\n",
-    "a {\n  color: hsla(193deg, 67%, 99%, 0.6);\n}\n"
+    "a {\n  color: hsla(193, 67%, 99%, 0.6);\n}\n"
 );
 test!(
     hue,
@@ -240,22 +240,22 @@ test!(
 test!(
     negative_values_in_hsl,
     "a {\n  color: hsl(-1 -1 -1);\n}\n",
-    "a {\n  color: hsl(359deg, 0%, 0%);\n}\n"
+    "a {\n  color: hsl(359, 0%, -1%);\n}\n"
 );
 test!(
     hsla_becomes_named_color,
-    "a {\n  color: hsla(0deg, 100%, 50%);\n}\n",
-    "a {\n  color: hsl(0deg, 100%, 50%);\n}\n"
+    "a {\n  color: hsla(0, 100%, 50%);\n}\n",
+    "a {\n  color: hsl(0, 100%, 50%);\n}\n"
 );
 test!(
     hsl_special_fn_4_arg_maintains_units,
     "a {\n  color: hsl(1, 0.02, 3%, max(0.4));\n}\n",
-    "a {\n  color: hsla(1deg, 0.02%, 3%, 0.4);\n}\n"
+    "a {\n  color: hsla(1, 0.02%, 3%, 0.4);\n}\n"
 );
 test!(
     hsl_special_fn_3_arg_maintains_units,
     "a {\n  color: hsl(1, 0.02, max(0.4));\n}\n",
-    "a {\n  color: hsl(1deg, 0.02%, 0.4%);\n}\n"
+    "a {\n  color: hsl(1, 0.02%, 0.4%);\n}\n"
 );
 test!(
     hsla_special_fn_1_arg_is_not_list,
@@ -285,17 +285,17 @@ test!(
 test!(
     hsl_with_turn_unit,
     "a {\n  color: hsl(8turn, 25%, 50%);\n}\n",
-    "a {\n  color: hsl(0deg, 25%, 50%);\n}\n"
+    "a {\n  color: hsl(0, 25%, 50%);\n}\n"
 );
 test!(
     hsl_with_rad_unit,
     "a {\n  color: hsl(8rad, 25%, 50%);\n}\n",
-    "a {\n  color: hsl(98.3662361047deg, 25%, 50%);\n}\n"
+    "a {\n  color: hsl(98.3662361047, 25%, 50%);\n}\n"
 );
 test!(
     hsl_with_grad_unit,
     "a {\n  color: hsl(8grad, 25%, 50%);\n}\n",
-    "a {\n  color: hsl(7.2deg, 25%, 50%);\n}\n"
+    "a {\n  color: hsl(7.2, 25%, 50%);\n}\n"
 );
 test!(
     adjust_hue_nan,
@@ -354,7 +354,7 @@ test!(
 test!(
     hsl_hue_rad,
     "a {\n  color: hsl(60rad, 100%, 50%);\n}\n",
-    "a {\n  color: hsl(197.7467707849deg, 100%, 50%);\n}\n"
+    "a {\n  color: hsl(197.7467707849, 100%, 50%);\n}\n"
 );
 error!(
     hsl_one_arg_bracketed,

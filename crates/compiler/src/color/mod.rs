@@ -174,7 +174,7 @@ impl Color {
                 Some(fuzzy_round(green.0).clamp(0.0, 255.0)),
                 Some(fuzzy_round(blue.0).clamp(0.0, 255.0)),
             ],
-            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            alpha: Some(alpha.clamp(0.0, 1.0).0),
             format: ColorFormat::Infer,
         }
     }
@@ -192,7 +192,7 @@ impl Color {
                 Some(green.0.clamp(0.0, 255.0)),
                 Some(blue.0.clamp(0.0, 255.0)),
             ],
-            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            alpha: Some(alpha.clamp(0.0, 1.0).0),
             format: ColorFormat::Rgb,
         }
     }
@@ -205,10 +205,10 @@ impl Color {
             space: ColorSpace::Hsl,
             channels: [
                 Some(hue.0),
-                Some(saturation.0.clamp(0.0, 1.0)),
-                Some(lightness.0.clamp(0.0, 1.0)),
+                Some(saturation.0.max(0.0)), // saturation clamped to non-negative
+                Some(lightness.0),
             ],
-            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            alpha: Some(alpha.clamp(0.0, 1.0).0),
             format: ColorFormat::Infer,
         }
     }
@@ -559,7 +559,7 @@ impl Color {
 
     /// Whether a channel is missing (None/`none`).
     pub fn has_missing_channel(&self, index: usize) -> bool {
-        self.channels.get(index).map_or(false, |c| c.is_none())
+        self.channels.get(index).is_some_and(|c| c.is_none())
     }
 
     /// Whether alpha is missing.
@@ -575,9 +575,9 @@ impl Color {
     /// Check if all channels are within the gamut bounds for this space.
     pub fn is_in_gamut(&self) -> bool {
         let channel_defs = self.space.channels();
-        for i in 0..3 {
+        for (i, def) in channel_defs.iter().enumerate() {
             if let Some(val) = self.channels[i] {
-                if !channel_defs[i].is_polar && (val < channel_defs[i].min || val > channel_defs[i].max) {
+                if !def.is_polar && (val < def.min || val > def.max) {
                     return false;
                 }
             }

@@ -81,7 +81,7 @@ fn parse_alpha_value(
 }
 
 /// Construct a Color from parsed channels for a known color space.
-fn construct_color(
+pub(crate) fn construct_color(
     space: ColorSpace,
     channels: &[Value],
     has_alpha: bool,
@@ -291,7 +291,19 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     };
 
     // Remaining items are channels
-    let channel_items: Vec<Value> = items[1..].to_vec();
+    let mut channel_items: Vec<Value> = items[1..].to_vec();
+
+    // Check if the last channel has as_slash (i.e. `0.3 / 0.4` parsed as division).
+    // If so, split it back into channel value and alpha.
+    if alpha_val.is_none() {
+        if let Some(Value::Dimension(SassNumber { as_slash: Some(slash), .. })) = channel_items.last() {
+            let alpha = Value::Dimension(slash.1.clone());
+            let chan = Value::Dimension(slash.0.clone());
+            let last_idx = channel_items.len() - 1;
+            channel_items[last_idx] = chan;
+            alpha_val = Some(alpha);
+        }
+    }
 
     if channel_items.len() < 3 {
         let channel_defs = space.channels();

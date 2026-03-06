@@ -1,4 +1,5 @@
-use crate::{builtin::builtin_imports::*, serializer::inspect_number, value::fuzzy_round};
+use crate::{builtin::builtin_imports::*, serializer::inspect_number};
+use crate::color::space::ColorSpace;
 
 use super::ParsedChannels;
 
@@ -123,15 +124,15 @@ fn inner_rgb_3_arg(
     let blue = blue.assert_number_with_name("blue", span)?;
 
     Ok(Value::Color(Arc::new(Color::from_rgba_fn(
-        Number(fuzzy_round(percentage_or_unitless(
+        Number(percentage_or_unitless(
             &red, 255.0, "red", span, visitor,
-        )?)),
-        Number(fuzzy_round(percentage_or_unitless(
+        )?),
+        Number(percentage_or_unitless(
             &green, 255.0, "green", span, visitor,
-        )?)),
-        Number(fuzzy_round(percentage_or_unitless(
+        )?),
+        Number(percentage_or_unitless(
             &blue, 255.0, "blue", span, visitor,
-        )?)),
+        )?),
         Number(
             alpha
                 .map(|alpha| {
@@ -172,7 +173,7 @@ pub(crate) fn percentage_or_unitless(
             .into());
     };
 
-    Ok(value.clamp(0.0, max).0)
+    Ok(value.0)
 }
 
 fn is_var_slash(value: &Value) -> bool {
@@ -314,20 +315,27 @@ fn inner_rgb(
 
     match args.len() {
         0 | 1 => {
+            let span = args.span();
             match parse_channels(
                 name,
                 &["red", "green", "blue"],
                 args.get_err(0, "channels")?,
                 visitor,
-                args.span(),
+                span,
             )? {
                 ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
                 ParsedChannels::List(list) => {
+                    // Check if any channel is `none` — if so, use modern Color 4 path
+                    let has_none = list.iter().take(3).any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                    if has_none {
+                        let has_alpha = list.len() > 3;
+                        return super::css_color4::construct_color(ColorSpace::Rgb, &list, has_alpha, span, visitor);
+                    }
                     let args = ArgumentResult {
                         positional: list,
                         named: BTreeMap::new(),
                         separator: ListSeparator::Comma,
-                        span: args.span(),
+                        span,
                         touched: BTreeSet::new(),
                     };
 

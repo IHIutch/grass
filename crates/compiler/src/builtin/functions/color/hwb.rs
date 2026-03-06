@@ -1,9 +1,10 @@
 use crate::builtin::builtin_imports::*;
+use crate::color::space::ColorSpace;
 
 use super::{
     angle_value,
     rgb::{parse_channels, percentage_or_unitless},
-    ParsedChannels,
+    GlobalFunctionMap, ParsedChannels,
 };
 
 pub(crate) fn blackness(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -69,24 +70,31 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
     args.max_args(4)?;
 
     if args.len() == 0 || args.len() == 1 {
+        let span = args.span();
         match parse_channels(
             "hwb",
             &["hue", "whiteness", "blackness"],
             args.get_err(0, "channels")?,
             visitor,
-            args.span(),
+            span,
         )? {
             ParsedChannels::String(s) => Err((
                 format!("Expected numeric channels, got \"{}\".", s),
-                args.span(),
+                span,
             )
                 .into()),
             ParsedChannels::List(list) => {
+                // Check if any channel is `none` — if so, use modern Color 4 path
+                let has_none = list.iter().take(3).any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                if has_none {
+                    let has_alpha = list.len() > 3;
+                    return super::css_color4::construct_color(ColorSpace::Hwb, &list, has_alpha, span, visitor);
+                }
                 let args = ArgumentResult {
                     positional: list,
                     named: BTreeMap::new(),
                     separator: ListSeparator::Comma,
-                    span: args.span(),
+                    span,
                     touched: BTreeSet::new(),
                 };
 
@@ -99,4 +107,10 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         args.max_args(1)?;
         unreachable!()
     }
+}
+
+pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    f.insert("hwb", Builtin::new(hwb));
+    f.insert("whiteness", Builtin::new(whiteness));
+    f.insert("blackness", Builtin::new(blackness));
 }

@@ -457,7 +457,7 @@ impl<'a> Serializer<'a> {
         }
 
         self.write_float(color.hue().0);
-        self.buffer.extend_from_slice(b"deg, ");
+        self.buffer.extend_from_slice(b", ");
         self.write_float(color.saturation().0);
         self.buffer.extend_from_slice(b"%, ");
         self.write_float(color.lightness().0);
@@ -466,6 +466,72 @@ impl<'a> Serializer<'a> {
         if !is_opaque {
             self.buffer.extend_from_slice(b", ");
             self.write_float(color.alpha().0);
+        }
+
+        self.buffer.push(b')');
+    }
+
+    /// Serialize a legacy color (RGB, HSL, HWB) that has missing (none) channels.
+    /// Uses modern space-separated syntax: `hsl(none 100% 50%)`, `rgb(none 100 200)`.
+    fn write_legacy_with_none(&mut self, color: &Color) {
+        let space = color.color_space();
+        let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
+        let has_missing_alpha = color.has_missing_alpha();
+
+        // Write function name
+        self.buffer.extend_from_slice(space.name().as_bytes());
+        self.buffer.push(b'(');
+
+        // Write channels with none support
+        for i in 0..3 {
+            if i > 0 {
+                self.buffer.push(b' ');
+            }
+            if color.has_missing_channel(i) {
+                self.buffer.extend_from_slice(b"none");
+            } else {
+                let val = color.channel_value(i).0;
+                match space {
+                    ColorSpace::Rgb => {
+                        self.write_float(val);
+                    }
+                    ColorSpace::Hsl => {
+                        if i == 0 {
+                            // hue
+                            self.write_float(val);
+                            self.buffer.extend_from_slice(b"deg");
+                        } else {
+                            // saturation, lightness (stored as [0,1], display as %)
+                            self.write_float(val * 100.0);
+                            self.buffer.push(b'%');
+                        }
+                    }
+                    ColorSpace::Hwb => {
+                        if i == 0 {
+                            // hue
+                            self.write_float(val);
+                            self.buffer.extend_from_slice(b"deg");
+                        } else {
+                            // whiteness, blackness (stored as [0,1], display as %)
+                            self.write_float(val * 100.0);
+                            self.buffer.push(b'%');
+                        }
+                    }
+                    _ => {
+                        self.write_float(val);
+                    }
+                }
+            }
+        }
+
+        // Alpha
+        if !is_opaque || has_missing_alpha {
+            self.buffer.extend_from_slice(b" / ");
+            if has_missing_alpha {
+                self.buffer.extend_from_slice(b"none");
+            } else {
+                self.write_float(color.alpha().0);
+            }
         }
 
         self.buffer.push(b')');
@@ -492,6 +558,14 @@ impl<'a> Serializer<'a> {
         // Modern (non-legacy) color spaces get their own serialization
         if !color.color_space().is_legacy() {
             self.write_modern_color(color);
+            return;
+        }
+
+        // Legacy colors with missing channels use modern space-separated syntax
+        let has_missing = color.has_missing_channel(0) || color.has_missing_channel(1)
+            || color.has_missing_channel(2) || color.has_missing_alpha();
+        if has_missing {
+            self.write_legacy_with_none(color);
             return;
         }
 
@@ -569,9 +643,6 @@ impl<'a> Serializer<'a> {
     /// Serialize a color in a modern (non-legacy) color space.
     fn write_modern_color(&mut self, color: &Color) {
         let space = color.color_space();
-        let c0 = color.channel_value(0);
-        let c1 = color.channel_value(1);
-        let c2 = color.channel_value(2);
         let alpha = color.alpha();
         let is_opaque = fuzzy_equals(alpha.0, 1.0);
         let has_missing_alpha = color.has_missing_alpha();

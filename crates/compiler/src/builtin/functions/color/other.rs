@@ -135,9 +135,7 @@ fn update_modern(
             // Scale doesn't work on hue channels
             if update == UpdateComponents::Scale && channel_defs[i].is_polar {
                 return Err((
-                    format!(
-                        "$hue: Cannot scale a polar channel (hue)."
-                    ),
+                    "$hue: Cannot scale a polar channel (hue).".to_owned(),
                     span,
                 )
                     .into());

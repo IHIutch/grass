@@ -190,7 +190,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
                 Unit::Deg
             } else if is_legacy_pct {
                 // Internal storage is [0, 1], display as [0%, 100%]
-                val = val * Number(100.0);
+                val *= Number(100.0);
                 Unit::Percent
             } else {
                 Unit::None
