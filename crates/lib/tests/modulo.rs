@@ -29,37 +29,37 @@ test!(
 test!(
     zero_mod_zero,
     "a {\n  color: 0 % 0;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     positive_mod_zero,
     "a {\n  color: 1 % 0;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     positive_unit_mod_zero,
     "a {\n  color: 1px % 0;\n}\n",
-    "a {\n  color: NaNpx;\n}\n"
+    "a {\n  color: calc(NaN * 1px);\n}\n"
 );
 test!(
     positive_mod_zero_unit,
     "a {\n  color: 1 % 0px;\n}\n",
-    "a {\n  color: NaNpx;\n}\n"
+    "a {\n  color: calc(NaN * 1px);\n}\n"
 );
 test!(
     positive_unit_mod_zero_unit_same,
     "a {\n  color: 1px % 0px;\n}\n",
-    "a {\n  color: NaNpx;\n}\n"
+    "a {\n  color: calc(NaN * 1px);\n}\n"
 );
 test!(
     positive_unit_mod_zero_unit_different_compatible_takes_first_1,
     "a {\n  color: 1px % 0in;\n}\n",
-    "a {\n  color: NaNpx;\n}\n"
+    "a {\n  color: calc(NaN * 1px);\n}\n"
 );
 test!(
     positive_unit_mod_zero_unit_different_compatible_takes_first_2,
     "a {\n  color: 1in % 0px;\n}\n",
-    "a {\n  color: NaNin;\n}\n"
+    "a {\n  color: calc(NaN * 1in);\n}\n"
 );
 error!(
     positive_unit_mod_zero_unit_incompatible_units,
@@ -93,12 +93,12 @@ test!(
 test!(
     comparable_units_denom_0,
     "a {\n  color: 1in % 0px;\n}\n",
-    "a {\n  color: NaNin;\n}\n"
+    "a {\n  color: calc(NaN * 1in);\n}\n"
 );
 test!(
     comparable_units_negative_denom_0,
     "a {\n  color: -1in % 0px;\n}\n",
-    "a {\n  color: NaNin;\n}\n"
+    "a {\n  color: calc(NaN * 1in);\n}\n"
 );
 test!(
     comparable_units_both_positive,
@@ -123,37 +123,37 @@ test!(
 test!(
     comparable_units_both_0,
     "a {\n  color: 0in % 0px;\n}\n",
-    "a {\n  color: NaNin;\n}\n"
+    "a {\n  color: calc(NaN * 1in);\n}\n"
 );
 test!(
     nan_mod_positive_finite,
     "a {\n  color: (0/0) % 5;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     nan_mod_negative_finite,
     "a {\n  color: (0/0) % -5;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     infinity_mod_positive_finite,
     "a {\n  color: (1/0) % 5;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     infinity_mod_negative_finite,
     "a {\n  color: (1/0) % -5;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     positive_finite_mod_nan,
     "a {\n  color: 5 % (0/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     negative_finite_mod_nan,
     "a {\n  color: -5 % (0/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     positive_finite_mod_infinity,
@@ -163,17 +163,17 @@ test!(
 test!(
     negative_finite_mod_infinity,
     "a {\n  color: -5 % (1/0);\n}\n",
-    "a {\n  color: Infinity;\n}\n"
+    "a {\n  color: calc(infinity);\n}\n"
 );
 test!(
     positive_finite_mod_negative_infinity,
     "a {\n  color: 5 % (-1/0);\n}\n",
-    "a {\n  color: -Infinity;\n}\n"
+    "a {\n  color: calc(-infinity);\n}\n"
 );
 test!(
     negative_finite_mod_negative_infinity,
     "a {\n  color: -5 % (-1/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     zero_mod_negative,

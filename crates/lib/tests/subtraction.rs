@@ -285,12 +285,12 @@ test!(
 test!(
     sub_nan_left,
     "a {\n  left: (0/0) - 0;\n}\n",
-    "a {\n  left: NaN;\n}\n"
+    "a {\n  left: calc(NaN);\n}\n"
 );
 test!(
     sub_nan_right,
     "a {\n  left: 0 - (0/0);\n}\n",
-    "a {\n  left: NaN;\n}\n"
+    "a {\n  left: calc(NaN);\n}\n"
 );
 test!(
     true_minus_null,

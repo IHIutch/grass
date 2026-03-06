@@ -216,12 +216,12 @@ test!(
 test!(
     overflows_float_positive,
     "a {\n  color: 1e999;\n}\n",
-    "a {\n  color: Infinity;\n}\n"
+    "a {\n  color: calc(infinity);\n}\n"
 );
 test!(
     overflows_float_negative,
     "a {\n  color: -1e999;\n}\n",
-    "a {\n  color: -Infinity;\n}\n"
+    "a {\n  color: calc(-infinity);\n}\n"
 );
 test!(
     very_large_but_no_overflow,

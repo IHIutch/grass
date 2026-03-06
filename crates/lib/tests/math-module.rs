@@ -49,7 +49,7 @@ test!(
 test!(
     sqrt_small_negative,
     "@use 'sass:math';\na {\n  color: math.sqrt(-99);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     sqrt_big_positive,
@@ -59,7 +59,7 @@ test!(
 test!(
     sqrt_big_negative,
     "@use 'sass:math';\na {\n  color: math.sqrt(-9999999999999999999999999999999999999999999999999);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     sqrt_irrational,
@@ -69,7 +69,7 @@ test!(
 test!(
     sqrt_of_nan,
     "@use 'sass:math';\na {\n  color: math.sqrt((0 / 0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 error!(
     sqrt_with_units,
@@ -214,12 +214,12 @@ test!(
 test!(
     acos_above_one,
     "@use 'sass:math';\na {\n  color: math.acos(2);\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     acos_below_negative_one,
     "@use 'sass:math';\na {\n  color: math.acos(-2);\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     acos_one,
@@ -244,17 +244,17 @@ test!(
 test!(
     acos_nan,
     "@use 'sass:math';\na {\n  color: math.acos((0 / 0));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     asin_above_one,
     "@use 'sass:math';\na {\n  color: math.asin(2);\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     asin_below_negative_one,
     "@use 'sass:math';\na {\n  color: math.asin(-2);\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     asin_one,
@@ -279,7 +279,7 @@ test!(
 test!(
     asin_nan,
     "@use 'sass:math';\na {\n  color: math.asin((0 / 0));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     atan_above_one,
@@ -314,7 +314,7 @@ test!(
 test!(
     atan_nan,
     "@use 'sass:math';\na {\n  color: math.atan((0 / 0));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     log_above_one,
@@ -324,7 +324,7 @@ test!(
 test!(
     log_below_negative_one,
     "@use 'sass:math';\na {\n  color: math.log(-2);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_one,
@@ -334,12 +334,12 @@ test!(
 test!(
     log_negative_one,
     "@use 'sass:math';\na {\n  color: math.log(-1);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_zero,
     "@use 'sass:math';\na {\n  color: math.log(0);\n}\n",
-    "a {\n  color: -Infinity;\n}\n"
+    "a {\n  color: calc(-infinity);\n}\n"
 );
 test!(
     log_point_five,
@@ -349,12 +349,12 @@ test!(
 test!(
     log_nan,
     "@use 'sass:math';\na {\n  color: math.log((0 / 0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_base_nan,
     "@use 'sass:math';\na {\n  color: math.log(1, (0 / 0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_base_above_one,
@@ -364,17 +364,17 @@ test!(
 test!(
     log_base_below_negative_one,
     "@use 'sass:math';\na {\n  color: math.log(2, -2);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_base_one,
     "@use 'sass:math';\na {\n  color: math.log(2, 1);\n}\n",
-    "a {\n  color: Infinity;\n}\n"
+    "a {\n  color: calc(infinity);\n}\n"
 );
 test!(
     log_base_negative_one,
     "@use 'sass:math';\na {\n  color: math.log(2, -1);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_base_zero,
@@ -425,17 +425,17 @@ test!(
 test!(
     pow_base_nan,
     "@use 'sass:math';\na {\n  color: math.pow((0 / 0), 3);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     pow_exponent_nan,
     "@use 'sass:math';\na {\n  color: math.pow(2, (0 / 0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     pow_base_and_exponent_nan,
     "@use 'sass:math';\na {\n  color: math.pow((0 / 0), (0 / 0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     pow_exponent_zero,
@@ -465,7 +465,7 @@ test!(
 test!(
     hypot_nan_has_comparable_unit,
     "@use 'sass:math';\na {\n  color: math.hypot(1deg, 2deg, math.acos(2));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 error!(
     hypot_no_args,
@@ -569,22 +569,22 @@ error!(
 test!(
     atan2_first_nan,
     "@use 'sass:math';\na {\n  color: math.atan2((0/0), 0);\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     atan2_second_nan,
     "@use 'sass:math';\na {\n  color: math.atan2(0, (0/0));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     atan2_both_nan,
     "@use 'sass:math';\na {\n  color: math.atan2((0/0), (0/0));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     atan2_nan_with_same_units,
     "@use 'sass:math';\na {\n  color: math.atan2(math.acos(2), 3deg);\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     div_two_integers,
@@ -604,17 +604,17 @@ test!(
 test!(
     cos_nan,
     "@use 'sass:math';\na {\n  color: math.cos((0/0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     sin_nan,
     "@use 'sass:math';\na {\n  color: math.sin((0/0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     tan_nan,
     "@use 'sass:math';\na {\n  color: math.tan((0/0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     log_returns_whole_number_for_simple_base,

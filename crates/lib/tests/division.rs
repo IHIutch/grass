@@ -195,7 +195,7 @@ test!(
 test!(
     zero_div_zero_is_nan,
     "a {\n  color: (0 / 0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     divide_two_calculations,

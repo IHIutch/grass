@@ -14,17 +14,17 @@ test!(
 test!(
     percentage_nan,
     "a {\n  color: percentage((0/0));\n}\n",
-    "a {\n  color: NaN%;\n}\n"
+    "a {\n  color: calc(NaN * 1%);\n}\n"
 );
 test!(
     percentage_infinity,
     "a {\n  color: percentage((1/0));\n}\n",
-    "a {\n  color: Infinity%;\n}\n"
+    "a {\n  color: calc(infinity * 1%);\n}\n"
 );
 test!(
     percentage_neg_infinity,
     "a {\n  color: percentage((-1/0));\n}\n",
-    "a {\n  color: -Infinity%;\n}\n"
+    "a {\n  color: calc(-infinity * 1%);\n}\n"
 );
 test!(
     integer_division,
@@ -89,17 +89,17 @@ test!(
 test!(
     abs_nan,
     "a {\n  color: abs((0/0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     abs_infinity,
     "a {\n  color: abs((1/0));\n}\n",
-    "a {\n  color: Infinity;\n}\n"
+    "a {\n  color: calc(infinity);\n}\n"
 );
 test!(
     abs_neg_infinity,
     "a {\n  color: abs((-1/0));\n}\n",
-    "a {\n  color: Infinity;\n}\n"
+    "a {\n  color: calc(infinity);\n}\n"
 );
 test!(
     comparable_unitless,

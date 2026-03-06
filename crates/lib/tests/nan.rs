@@ -16,12 +16,12 @@ error!(
 test!(
     unitless_nan_percentage_number,
     "a {\n  color: percentage((0/0));\n}\n",
-    "a {\n  color: NaN%;\n}\n"
+    "a {\n  color: calc(NaN * 1%);\n}\n"
 );
 test!(
     unitless_nan_abs_number,
     "a {\n  color: abs((0/0));\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 error!(
     unitless_nan_round_number,
@@ -51,7 +51,7 @@ error!(
 test!(
     unitless_nan_min_first_arg,
     "$n: (0/0);\na {\n  color: min($n, 1px);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     unitless_nan_min_last_arg,
@@ -66,7 +66,7 @@ test!(
 test!(
     unitless_nan_max_first_arg,
     "$n: (0/0);\na {\n  color: max($n, 1px);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     unitless_nan_max_last_arg,
@@ -113,7 +113,7 @@ error!(
 test!(
     unitful_nan_abs,
     "@use \"sass:math\";\na {\n  color: abs(math.acos(2));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 error!(
     #[cfg(feature = "random")]
@@ -164,15 +164,15 @@ error!(
 test!(
     nan_unary_negative,
     "a {\n  color: -(0/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     nan_unary_plus,
     "a {\n  color: +(0/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     nan_unary_div,
     "a {\n  color: /(0/0);\n}\n",
-    "a {\n  color: /NaN;\n}\n"
+    "a {\n  color: /calc(NaN);\n}\n"
 );

@@ -11,6 +11,7 @@ use crate::{
         Combinator, ComplexSelector, ComplexSelectorComponent, CompoundSelector, Namespace, Pseudo,
         SelectorList, SimpleSelector,
     },
+    unit::Unit,
     utils::hex_char_for,
     value::{
         fuzzy_equals, ArgList, CalculationArg, CalculationName, SassCalculation, SassFunction,
@@ -557,6 +558,27 @@ impl<'a> Serializer<'a> {
                 self.span,
             )
                 .into());
+        }
+
+        if !self.inspect {
+            let f = number.num.0;
+            if f.is_nan() {
+                if number.unit == Unit::None {
+                    self.buffer.extend_from_slice(b"calc(NaN)");
+                } else {
+                    write!(&mut self.buffer, "calc(NaN * 1{})", number.unit)?;
+                }
+                return Ok(());
+            }
+            if f.is_infinite() {
+                let sign = if f.is_sign_negative() { "-" } else { "" };
+                if number.unit == Unit::None {
+                    write!(&mut self.buffer, "calc({}infinity)", sign)?;
+                } else {
+                    write!(&mut self.buffer, "calc({}infinity * 1{})", sign, number.unit)?;
+                }
+                return Ok(());
+            }
         }
 
         self.write_float(number.num.0);

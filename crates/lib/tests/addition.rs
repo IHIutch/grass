@@ -422,17 +422,17 @@ test!(
 test!(
     num_plus_nan,
     "a {\n  color: 1 + (0/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     nan_plus_num,
     "a {\n  color: (0/0) + 1;\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     nan_plus_nan,
     "a {\n  color: (0/0) + (0/0);\n}\n",
-    "a {\n  color: NaN;\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(null_plus_null, "a {\n  color: null + null;\n}\n", "");
 error!(

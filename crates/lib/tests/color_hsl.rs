@@ -305,7 +305,7 @@ test!(
 test!(
     adjust_hue_nan_get_hue,
     "a {\n  color: hue(adjust-hue(hsla(200, 50%, 50%), (0/0)));\n}\n",
-    "a {\n  color: NaNdeg;\n}\n"
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 test!(
     hsl_special_two_arg_var_first,
