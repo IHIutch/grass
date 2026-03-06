@@ -142,9 +142,8 @@ test!(
     "a {\n  color: :not(a):matches(:not(a));\n}\n"
 );
 error!(
-    #[ignore = "https://github.com/sass/dart-sass/issues/966"]
     disallows_parent_selector_as_first_arg,
-    "a {\n  color: selector-nest(\"&\");\n}\n", "Error: Parent selectors aren't allowed here."
+    "a {\n  color: selector-nest(\"&\");\n}\n", "Error: $selectors: Parent selectors aren't allowed here."
 );
 error!(
     disallows_parent_not_at_start_of_compound_selector_attribute,

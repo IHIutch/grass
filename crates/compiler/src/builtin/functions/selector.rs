@@ -71,10 +71,22 @@ pub(crate) fn selector_nest(args: ArgumentResult, visitor: &mut Visitor) -> Sass
         return Err(("$selectors: At least one selector must be passed.", span).into());
     }
 
-    Ok(selectors
+    let parsed_selectors = selectors
         .into_iter()
         .map(|sel| sel.node.to_selector(visitor, "selectors", true, span))
-        .collect::<SassResult<Vec<Selector>>>()?
+        .collect::<SassResult<Vec<Selector>>>()?;
+
+    if let Some(first) = parsed_selectors.first() {
+        if first.contains_parent_selector() {
+            return Err((
+                "$selectors: Parent selectors aren't allowed here.",
+                span,
+            )
+                .into());
+        }
+    }
+
+    Ok(parsed_selectors
         .into_iter()
         .try_fold(
             Selector::new(span),
