@@ -251,7 +251,6 @@ test!(
     "result {\n  root_default: initial;\n  root_implicit: initial;\n  root_explicit: inner;\n  local_explicit: inner;\n}\n"
 );
 test!(
-    #[ignore = "we currently emit the empty unknown-at-rule"]
     inside_style_inside_unknown_at_rule,
     "@unknown {
         .foo {

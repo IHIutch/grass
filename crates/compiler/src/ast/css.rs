@@ -60,7 +60,12 @@ impl CssStmt {
                 style.value.node.is_blank() && !style.value.node.is_empty_list()
             }
             CssStmt::Media(media_rule, ..) => media_rule.body.iter().all(CssStmt::is_invisible),
-            CssStmt::UnknownAtRule(..) | CssStmt::Import(..) | CssStmt::Comment(..) => false,
+            CssStmt::UnknownAtRule(rule, ..) => {
+                rule.has_body
+                    && !rule.body.is_empty()
+                    && rule.body.iter().all(CssStmt::is_invisible)
+            }
+            CssStmt::Import(..) | CssStmt::Comment(..) => false,
             CssStmt::Supports(supports_rule, ..) => {
                 supports_rule.body.iter().all(CssStmt::is_invisible)
             }

@@ -1534,7 +1534,10 @@ impl<'a> Visitor<'a> {
             stmt,
             true,
             |visitor| {
-                if !visitor.style_rule_exists() || visitor.flags.in_keyframes() {
+                if children.is_empty()
+                    || !visitor.style_rule_exists()
+                    || visitor.flags.in_keyframes()
+                {
                     for stmt in children {
                         let result = visitor.visit_stmt(stmt)?;
                         debug_assert!(result.is_none());
