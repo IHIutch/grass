@@ -3506,7 +3506,7 @@ impl<'a> Visitor<'a> {
         // todo: _mediaQueries
         let selector = self
             .extender
-            .add_selector(parsed_selector, &self.media_queries);
+            .add_selector(parsed_selector, &self.media_queries)?;
 
         let rule = CssStmt::RuleSet {
             selector: selector.clone(),

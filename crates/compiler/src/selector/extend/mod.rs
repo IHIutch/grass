@@ -206,7 +206,7 @@ impl ExtensionStore {
             extender.originals.extend(selector.components.iter());
         }
 
-        Ok(extender.extend_list(selector, Some(&extensions), &None))
+        extender.extend_list(selector, Some(&extensions), &None)
     }
 
     fn with_mode(mode: ExtendMode, span: Span) -> Self {
@@ -222,13 +222,13 @@ impl ExtensionStore {
         list: SelectorList,
         extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
-    ) -> SelectorList {
+    ) -> SassResult<SelectorList> {
         // This could be written more simply using Vec<Vec<T>>, but we want to avoid
         // any allocations in the common case where no extends apply.
         let mut extended: Option<Vec<ComplexSelector>> = None;
         for (i, complex) in list.components.iter().enumerate() {
             if let Some(result) =
-                self.extend_complex(complex.clone(), extensions, media_query_context)
+                self.extend_complex(complex.clone(), extensions, media_query_context)?
             {
                 if extended.is_none() {
                     extended = Some(if i == 0 {
@@ -248,13 +248,13 @@ impl ExtensionStore {
 
         let extended = match extended {
             Some(v) => v,
-            None => return list,
+            None => return Ok(list),
         };
 
-        SelectorList {
+        Ok(SelectorList {
             components: self.trim(extended, &|complex| self.originals.contains(complex)),
             span: self.span,
-        }
+        })
     }
 
     /// Extends `complex` using `extensions`, and returns the contents of a
@@ -264,7 +264,7 @@ impl ExtensionStore {
         complex: ComplexSelector,
         extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
-    ) -> Option<Vec<ComplexSelector>> {
+    ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // The complex selectors that each compound selector in `complex.components`
         // can expand to.
         //
@@ -291,7 +291,7 @@ impl ExtensionStore {
         for (i, component) in complex.components.iter().enumerate() {
             if let ComplexSelectorComponent::Compound(component) = component {
                 if let Some(extended) =
-                    self.extend_compound(component, extensions, media_query_context, is_original)
+                    self.extend_compound(component, extensions, media_query_context, is_original)?
                 {
                     if extended_not_expanded.is_none() {
                         extended_not_expanded = Some(
@@ -327,11 +327,14 @@ impl ExtensionStore {
             }
         }
 
-        let extended_not_expanded = extended_not_expanded?;
+        let extended_not_expanded = match extended_not_expanded {
+            Some(v) => v,
+            None => return Ok(None),
+        };
 
         let mut first = true;
 
-        Some(
+        Ok(Some(
             paths(extended_not_expanded)
                 .into_iter()
                 .flat_map(move |path| {
@@ -362,7 +365,7 @@ impl ExtensionStore {
                     .collect::<Vec<ComplexSelector>>()
                 })
                 .collect(),
-        )
+        ))
     }
 
     /// Extends `compound` using `extensions`, and returns the contents of a
@@ -376,7 +379,7 @@ impl ExtensionStore {
         extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
         in_original: bool,
-    ) -> Option<Vec<ComplexSelector>> {
+    ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // If there's more than one target and they all need to match, we track
         // which targets are actually extended.
         let mut targets_used: HashSet<SimpleSelector> = HashSet::new();
@@ -391,7 +394,7 @@ impl ExtensionStore {
                 extensions,
                 media_query_context,
                 &mut targets_used,
-            ) {
+            )? {
                 Some(extended) => {
                     if options.is_none() {
                         let mut new_options = Vec::new();
@@ -415,7 +418,10 @@ impl ExtensionStore {
             }
         }
 
-        let options = options?;
+        let options = match options {
+            Some(v) => v,
+            None => return Ok(None),
+        };
 
         // If `self.mode` isn't `ExtendMode::Normal` and we didn't use all the targets in
         // `extensions`, extension fails for `compound`.
@@ -424,23 +430,20 @@ impl ExtensionStore {
             && targets_used.len() != extensions.map_or(self.extensions.len(), HashMap::len)
             && self.mode != ExtendMode::Normal
         {
-            return None;
+            return Ok(None);
         }
 
         // Optimize for the simple case of a single simple selector that doesn't
         // need any unification.
         if options.len() == 1 {
-            return Some(
-                options
-                    .first()?
-                    .clone()
-                    .into_iter()
-                    .map(|state| {
-                        state.assert_compatible_media_context(media_query_context);
-                        state.extender
-                    })
-                    .collect(),
-            );
+            let mut result = Vec::new();
+            if let Some(states) = options.first() {
+                for state in states {
+                    state.assert_compatible_media_context(media_query_context)?;
+                    result.push(state.extender.clone());
+                }
+            }
+            return Ok(Some(result));
         }
 
         // Find all paths through `options`. In this case, each path represents a
@@ -469,7 +472,7 @@ impl ExtensionStore {
         //     ]
         let mut first = self.mode != ExtendMode::Replace;
 
-        let unified_paths = paths(options).into_iter().map(|path| {
+        let unified_paths_iter = paths(options).into_iter().map(|path| {
             let complexes: Vec<Vec<ComplexSelectorComponent>> = if first {
                 // The first path is always the original selector. We can't just
                 // return `compound` directly because pseudo selectors may be
@@ -511,32 +514,41 @@ impl ExtensionStore {
                     )]);
                 }
 
-                unify_complex(Vec::from(to_unify))?
+                match unify_complex(Vec::from(to_unify)) {
+                    Some(v) => v,
+                    None => return Ok(None),
+                }
             };
 
             let mut line_break = false;
 
             for state in path {
-                state.assert_compatible_media_context(media_query_context);
+                state.assert_compatible_media_context(media_query_context)?;
                 line_break = line_break || state.extender.line_break;
             }
 
-            Some(
+            Ok(Some(
                 complexes
                     .into_iter()
                     .map(|components| ComplexSelector::new(components, line_break))
                     .collect::<Vec<ComplexSelector>>(),
-            )
+            ))
         });
 
-        let unified_paths: Vec<ComplexSelector> = unified_paths.flatten().flatten().collect();
+        let mut unified_paths: Vec<ComplexSelector> = Vec::new();
+        for result in unified_paths_iter {
+            let result: SassResult<Option<Vec<ComplexSelector>>> = result;
+            if let Some(complexes) = result? {
+                unified_paths.extend(complexes);
+            }
+        }
 
-        Some(if in_original && self.mode != ExtendMode::Replace {
+        Ok(Some(if in_original && self.mode != ExtendMode::Replace {
             let original = unified_paths.first().cloned();
             self.trim(unified_paths, &|complex| Some(complex) == original.as_ref())
         } else {
             self.trim(unified_paths, &|_| false)
-        })
+        }))
     }
 
     fn extend_simple(
@@ -545,7 +557,7 @@ impl ExtensionStore {
         extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
         targets_used: &mut HashSet<SimpleSelector>,
-    ) -> Option<Vec<Vec<Extension>>> {
+    ) -> SassResult<Option<Vec<Vec<Extension>>>> {
         if let SimpleSelector::Pseudo(Pseudo {
             selector: Some(..), ..
         }) = &simple
@@ -555,8 +567,8 @@ impl ExtensionStore {
             } else {
                 unreachable!()
             };
-            if let Some(extended) = self.extend_pseudo(simple, extensions, media_query_context) {
-                return Some(
+            if let Some(extended) = self.extend_pseudo(simple, extensions, media_query_context)? {
+                return Ok(Some(
                     extended
                         .into_iter()
                         .map(move |pseudo| {
@@ -571,12 +583,12 @@ impl ExtensionStore {
                             })
                         })
                         .collect(),
-                );
+                ));
             }
         }
 
-        self.without_pseudo(simple, extensions, targets_used, self.mode)
-            .map(|v| vec![v])
+        Ok(self.without_pseudo(simple, extensions, targets_used, self.mode)
+            .map(|v| vec![v]))
     }
 
     /// Extends `pseudo` using `extensions`, and returns a list of resulting
@@ -586,7 +598,7 @@ impl ExtensionStore {
         pseudo: Pseudo,
         extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
-    ) -> Option<Vec<Pseudo>> {
+    ) -> SassResult<Option<Vec<Pseudo>>> {
         let extended = self.extend_list(
             pseudo
                 .selector
@@ -595,10 +607,10 @@ impl ExtensionStore {
                 .unwrap_or_else(|| SelectorList::new(self.span)),
             extensions,
             media_query_context,
-        );
+        )?;
         /*todo: identical(extended, pseudo.selector)*/
         if Some(&extended) == pseudo.selector.as_deref() {
-            return None;
+            return Ok(None);
         }
 
         // For `:not()`, we usually want to get rid of any complex selectors because
@@ -707,15 +719,15 @@ impl ExtensionStore {
                 })
                 .collect::<Vec<Pseudo>>();
             if result.is_empty() {
-                None
+                Ok(None)
             } else {
-                Some(result)
+                Ok(Some(result))
             }
         } else {
-            Some(vec![pseudo.with_selector(Some(Box::new(SelectorList {
+            Ok(Some(vec![pseudo.with_selector(Some(Box::new(SelectorList {
                 components: complexes,
                 span: self.span,
-            })))])
+            })))]))
         }
     }
 
@@ -883,7 +895,7 @@ impl ExtensionStore {
         mut selector: SelectorList,
         // span: Span,
         media_query_context: &Option<Vec<CssMediaQuery>>,
-    ) -> ExtendedSelector {
+    ) -> SassResult<ExtendedSelector> {
         if !selector.is_invisible() {
             for complex in selector.components.clone() {
                 self.originals.insert(&complex);
@@ -891,16 +903,7 @@ impl ExtensionStore {
         }
 
         if !self.extensions.is_empty() {
-            selector = self.extend_list(selector, None, media_query_context);
-            /*
-              todo: when we have error handling
-                  } on SassException catch (error) {
-              throw SassException(
-                  "From ${error.span.message('')}\n"
-                  "${error.message}",
-                  span);
-            }
-              */
+            selector = self.extend_list(selector, None, media_query_context)?;
         }
         let extended_selector = ExtendedSelector::new(selector.clone());
         if let Some(media_query_context) = media_query_context.clone() {
@@ -908,7 +911,7 @@ impl ExtensionStore {
                 .insert(extended_selector.clone(), media_query_context);
         }
         self.register_selector(selector, &extended_selector);
-        extended_selector
+        Ok(extended_selector)
     }
 
     /// Registers the `SimpleSelector`s in `list` to point to `selector` in
@@ -963,19 +966,10 @@ impl ExtensionStore {
         let selectors = self.selectors.get(target).cloned();
         let existing_extensions = self.extensions_by_extender.get(target).cloned();
 
-        // Check that the extension doesn't cross media query boundaries.
-        if let Some(ref selectors) = selectors {
-            for selector in selectors.iter() {
-                let selector_media = self.media_contexts.get(selector);
-                if media_context.as_ref() != selector_media {
-                    return Err((
-                        "You may not @extend selectors across media queries.",
-                        span,
-                    )
-                        .into());
-                }
-            }
-        }
+        // Media context compatibility is checked during extension application
+        // in assert_compatible_media_context(), not here. An @extend defined
+        // outside any @media can extend selectors inside @media (dart-sass
+        // behavior).
 
         let mut new_extensions: Option<IndexMap<ComplexSelector, Extension>> = None;
 
@@ -1042,14 +1036,14 @@ impl ExtensionStore {
 
         if let Some(existing_extensions) = existing_extensions {
             let additional_extensions =
-                self.extend_existing_extensions(existing_extensions, &new_extensions_by_target);
+                self.extend_existing_extensions(existing_extensions, &new_extensions_by_target)?;
             if let Some(additional_extensions) = additional_extensions {
                 map_add_all_2(&mut new_extensions_by_target, additional_extensions);
             }
         }
 
         if let Some(selectors) = selectors {
-            self.extend_existing_selectors(selectors, &new_extensions_by_target);
+            self.extend_existing_selectors(selectors, &new_extensions_by_target)?;
         }
 
         Ok(())
@@ -1074,7 +1068,7 @@ impl ExtensionStore {
         &mut self,
         extensions: Vec<Extension>,
         new_extensions: &HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
-    ) -> Option<HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>> {
+    ) -> SassResult<Option<HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>> {
         let mut additional_extensions: Option<
             HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
         > = None;
@@ -1090,7 +1084,7 @@ impl ExtensionStore {
                 extension.extender.clone(),
                 Some(new_extensions),
                 &extension.media_context,
-            ) {
+            )? {
                 v
             } else {
                 continue;
@@ -1158,7 +1152,7 @@ impl ExtensionStore {
             self.extensions
                 .insert(extension.target.clone().unwrap(), sources);
         }
-        additional_extensions
+        Ok(additional_extensions)
     }
 
     /// Extend `extensions` using `new_extensions`.
@@ -1166,24 +1160,14 @@ impl ExtensionStore {
         &mut self,
         selectors: SelectorHashSet,
         new_extensions: &HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
-    ) {
+    ) -> SassResult<()> {
         for mut selector in selectors {
             let old_value = selector.clone().into_selector().0;
             selector.set_inner(self.extend_list(
                 old_value.clone(),
                 Some(new_extensions),
                 &self.media_contexts.get(&selector).cloned(),
-            ));
-            /*
-            todo: error handling
-            } on SassException catch (error) {
-            throw SassException(
-                "From ${selector.span.message('')}\n"
-                "${error.message}",
-                error.span);
-            }
-
-            */
+            )?);
 
             // If no extends actually happened (for example because unification
             // failed), we don't need to re-register the selector.
@@ -1193,6 +1177,7 @@ impl ExtensionStore {
             }
             self.register_selector(selector_as_selector, &selector);
         }
+        Ok(())
     }
 }
 

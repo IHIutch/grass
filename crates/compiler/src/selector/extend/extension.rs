@@ -1,6 +1,6 @@
 use codemap::Span;
 
-use crate::ast::CssMediaQuery;
+use crate::{ast::CssMediaQuery, error::SassResult};
 
 use super::{ComplexSelector, SimpleSelector};
 
@@ -60,17 +60,31 @@ impl Extension {
     }
 
     /// Asserts that the `media_context` for a selector is compatible with the
-    /// query context for this extender.
-    // todo: this should return a `Result`. it currently does not because the cascade effect
-    // from this returning a `Result` will make some code returning `Option`s much uglier (we can't
-    // use `?` to return both `Option` and `Result` from the same function)
-    #[allow(clippy::needless_return)]
-    pub fn assert_compatible_media_context(&self, media_context: &Option<Vec<CssMediaQuery>>) {
-        if &self.media_context == media_context {
-            return;
+    /// query context for this extender. An extension defined outside any @media
+    /// can extend selectors in any context; one defined inside @media can only
+    /// extend selectors in the same context.
+    pub fn assert_compatible_media_context(
+        &self,
+        media_context: &Option<Vec<CssMediaQuery>>,
+    ) -> SassResult<()> {
+        // If this extension has no media context, it can extend anything.
+        let expected = match &self.media_context {
+            Some(ctx) => ctx,
+            None => return Ok(()),
+        };
+
+        // If the target selector's media context matches, it's compatible.
+        if let Some(ctx) = media_context {
+            if expected == ctx {
+                return Ok(());
+            }
         }
 
-        // Err(("You may not @extend selectors across media queries.", self.span).into())
+        Err((
+            "You may not @extend selectors across media queries.",
+            self.span,
+        )
+            .into())
     }
 
     #[allow(clippy::missing_const_for_fn)]
