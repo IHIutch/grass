@@ -263,21 +263,24 @@ fn hue_to_channel(m1: f64, m2: f64, mut hue: f64) -> f64 {
     }
 }
 
-/// Convert sRGB [0,1] to HSL.
-/// Returns (hue [0,360], saturation [0,1], lightness [0,1]).
+/// Convert sRGB to HSL.
+/// Returns (hue, saturation, lightness). Handles out-of-gamut inputs
+/// where values may be outside [0,1].
 pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     let min = r.min(g.min(b));
     let max = r.max(g.max(b));
     let lightness = (min + max) / 2.0;
 
-    if (max - min).abs() < f64::EPSILON {
+    // Use a tolerance larger than f64::EPSILON to handle floating-point noise
+    // from color space conversion roundtrips (e.g., lab → xyz → srgb → hsl).
+    if (max - min).abs() < 1e-10 {
         return [0.0, 0.0, lightness];
     }
 
     let delta = max - min;
     let sum = max + min;
 
-    let saturation = delta / if sum > 1.0 { 2.0 - sum } else { sum };
+    let mut saturation = delta / if sum > 1.0 { 2.0 - sum } else { sum };
 
     let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
         4.0 + (r - g) / delta
@@ -288,6 +291,14 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     };
 
     hue *= 60.0;
+
+    // For out-of-gamut values, saturation can come out negative.
+    // Normalize by flipping sign and rotating hue by 180°.
+    if saturation < 0.0 {
+        saturation = -saturation;
+        hue += 180.0;
+    }
+
     if hue < 0.0 {
         hue += 360.0;
     }
@@ -450,11 +461,84 @@ pub fn convert(
         return channels;
     }
 
+    // Direct shortcuts to avoid XYZ roundtrip precision loss
+    if let Some(result) = convert_direct(channels, from, to) {
+        return result;
+    }
+
     // Step 1: Convert from source space to XYZ-D65
     let xyz_d65 = to_xyz_d65(channels, from);
 
     // Step 2: Convert from XYZ-D65 to target space
     from_xyz_d65(xyz_d65, to)
+}
+
+/// Direct conversion shortcuts between related color spaces.
+/// Returns None if no direct path exists.
+fn convert_direct(channels: [f64; 3], from: ColorSpace, to: ColorSpace) -> Option<[f64; 3]> {
+    let [c0, c1, c2] = channels;
+
+    match (from, to) {
+        // Legacy RGB ↔ sRGB
+        (ColorSpace::Rgb, ColorSpace::SRgb) => Some([c0 / 255.0, c1 / 255.0, c2 / 255.0]),
+        (ColorSpace::SRgb, ColorSpace::Rgb) => Some([c0 * 255.0, c1 * 255.0, c2 * 255.0]),
+
+        // sRGB ↔ HSL
+        (ColorSpace::SRgb, ColorSpace::Hsl) => Some(srgb_to_hsl(c0, c1, c2)),
+        (ColorSpace::Hsl, ColorSpace::SRgb) => Some(hsl_to_srgb(c0, c1, c2)),
+
+        // sRGB ↔ HWB
+        (ColorSpace::SRgb, ColorSpace::Hwb) => Some(srgb_to_hwb(c0, c1, c2)),
+        (ColorSpace::Hwb, ColorSpace::SRgb) => Some(hwb_to_srgb(c0, c1, c2)),
+
+        // HSL ↔ HWB (via sRGB)
+        (ColorSpace::Hsl, ColorSpace::Hwb) => {
+            let srgb = hsl_to_srgb(c0, c1, c2);
+            Some(srgb_to_hwb(srgb[0], srgb[1], srgb[2]))
+        }
+        (ColorSpace::Hwb, ColorSpace::Hsl) => {
+            let srgb = hwb_to_srgb(c0, c1, c2);
+            Some(srgb_to_hsl(srgb[0], srgb[1], srgb[2]))
+        }
+
+        // Legacy RGB ↔ HSL/HWB (via sRGB)
+        (ColorSpace::Rgb, ColorSpace::Hsl) => Some(srgb_to_hsl(c0 / 255.0, c1 / 255.0, c2 / 255.0)),
+        (ColorSpace::Hsl, ColorSpace::Rgb) => {
+            let srgb = hsl_to_srgb(c0, c1, c2);
+            Some([srgb[0] * 255.0, srgb[1] * 255.0, srgb[2] * 255.0])
+        }
+        (ColorSpace::Rgb, ColorSpace::Hwb) => Some(srgb_to_hwb(c0 / 255.0, c1 / 255.0, c2 / 255.0)),
+        (ColorSpace::Hwb, ColorSpace::Rgb) => {
+            let srgb = hwb_to_srgb(c0, c1, c2);
+            Some([srgb[0] * 255.0, srgb[1] * 255.0, srgb[2] * 255.0])
+        }
+
+        // sRGB ↔ sRGB-linear (gamma encode/decode)
+        (ColorSpace::SRgb, ColorSpace::SRgbLinear) => {
+            Some([srgb_decode(c0), srgb_decode(c1), srgb_decode(c2)])
+        }
+        (ColorSpace::SRgbLinear, ColorSpace::SRgb) => {
+            Some([srgb_encode(c0), srgb_encode(c1), srgb_encode(c2)])
+        }
+
+        // Lab ↔ LCH
+        (ColorSpace::Lab, ColorSpace::Lch) => Some(lab_to_lch(c0, c1, c2)),
+        (ColorSpace::Lch, ColorSpace::Lab) => Some(lch_to_lab(c0, c1, c2)),
+
+        // OKLab ↔ OKLch
+        (ColorSpace::Oklab, ColorSpace::Oklch) => Some(oklab_to_oklch(c0, c1, c2)),
+        (ColorSpace::Oklch, ColorSpace::Oklab) => Some(oklch_to_oklab(c0, c1, c2)),
+
+        // DisplayP3 ↔ DisplayP3Linear
+        (ColorSpace::DisplayP3, ColorSpace::DisplayP3Linear) => {
+            Some([display_p3_decode(c0), display_p3_decode(c1), display_p3_decode(c2)])
+        }
+        (ColorSpace::DisplayP3Linear, ColorSpace::DisplayP3) => {
+            Some([display_p3_encode(c0), display_p3_encode(c1), display_p3_encode(c2)])
+        }
+
+        _ => None,
+    }
 }
 
 /// Convert from any space to XYZ-D65.

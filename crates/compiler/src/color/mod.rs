@@ -236,19 +236,13 @@ impl Color {
     }
 
     pub fn from_hwb(hue: Number, white: Number, black: Number, alpha: Number) -> Color {
-        // Convert HWB to RGB immediately (legacy behavior)
         let h = hue.rem_euclid(360.0);
         let w = white.0 / 100.0;
         let b = black.0 / 100.0;
 
-        let srgb = conversion::hwb_to_srgb(h, w, b);
         Color {
-            space: ColorSpace::Rgb,
-            channels: [
-                Some(fuzzy_round(srgb[0] * 255.0)),
-                Some(fuzzy_round(srgb[1] * 255.0)),
-                Some(fuzzy_round(srgb[2] * 255.0)),
-            ],
+            space: ColorSpace::Hwb,
+            channels: [Some(h), Some(w), Some(b)],
             alpha: Some(alpha.0.clamp(0.0, 1.0)),
             format: ColorFormat::Infer,
         }
@@ -520,7 +514,12 @@ impl Color {
     /// Convert this color to a different color space.
     pub fn to_space(&self, target: ColorSpace) -> Self {
         if self.space == target {
-            return self.clone();
+            let mut result = self.clone();
+            // Ensure correct serialization format for to-space() results
+            if target == ColorSpace::Hsl || target == ColorSpace::Hwb {
+                result.format = ColorFormat::Hsl;
+            }
+            return result;
         }
 
         let c0 = self.channels[0].unwrap_or(0.0);
@@ -529,32 +528,91 @@ impl Color {
 
         let converted = conversion::convert([c0, c1, c2], self.space, target);
 
-        // Propagate missing channels: if a channel was None in source,
-        // the corresponding channel in target is also None (CSS Color 4 spec)
+        // Propagate missing channels: if a source channel was None and the
+        // target has an analogous channel, that target channel becomes None too.
+        // Analogous channels can be at different indices (e.g. HSL hue=0, LCH hue=2).
         let new_channels = [
-            if self.channels[0].is_none() && has_analogous_channel(self.space, 0, target, 0) {
+            if should_propagate_none(self.space, &self.channels, target, 0) {
                 None
             } else {
                 Some(converted[0])
             },
-            if self.channels[1].is_none() && has_analogous_channel(self.space, 1, target, 1) {
+            if should_propagate_none(self.space, &self.channels, target, 1) {
                 None
             } else {
                 Some(converted[1])
             },
-            if self.channels[2].is_none() && has_analogous_channel(self.space, 2, target, 2) {
+            if should_propagate_none(self.space, &self.channels, target, 2) {
                 None
             } else {
                 Some(converted[2])
             },
         ];
 
-        Color {
+        let mut new_channels = new_channels;
+
+        if target.is_legacy() {
+            // For legacy targets, `none` from analogous source channels
+            // is replaced with 0 instead of being propagated as `none`.
+            for (i, ch) in new_channels.iter_mut().enumerate() {
+                if should_replace_with_zero(self.space, &self.channels, target, i) {
+                    *ch = Some(0.0);
+                }
+            }
+        }
+
+        let mut result = Color {
             space: target,
             channels: new_channels,
             alpha: self.alpha,
             format: ColorFormat::Infer,
+        };
+
+        // In modern (non-legacy) spaces, set powerless channels to none.
+        // E.g. hue is powerless when chroma/saturation is 0.
+        if !target.is_legacy() {
+            for i in 0..3 {
+                if result.is_channel_powerless(i) && result.channels[i].is_some() {
+                    result.channels[i] = None;
+                }
+            }
         }
+
+        // For legacy target spaces, always use HSL format for HSL/HWB targets.
+        // For RGB targets, use HSL only when out of gamut.
+        if target == ColorSpace::Hsl || target == ColorSpace::Hwb {
+            result.format = ColorFormat::Hsl;
+        } else if target == ColorSpace::Rgb {
+            // Check if underlying sRGB values are significantly out of gamut.
+            let srgb = if target == ColorSpace::Rgb {
+                let ch = result.raw_channels();
+                [
+                    ch[0].unwrap_or(0.0) / 255.0,
+                    ch[1].unwrap_or(0.0) / 255.0,
+                    ch[2].unwrap_or(0.0) / 255.0,
+                ]
+            } else {
+                // HWB → sRGB
+                let ch = result.raw_channels();
+                conversion::hwb_to_srgb(
+                    ch[0].unwrap_or(0.0),
+                    ch[1].unwrap_or(0.0),
+                    ch[2].unwrap_or(0.0),
+                )
+            };
+
+            let out_of_gamut = srgb.iter().any(|v| *v < -0.0001 || *v > 1.0001);
+
+            if out_of_gamut {
+                // Convert to HSL and store in HSL space for hsl() format.
+                let hsl = conversion::srgb_to_hsl(srgb[0], srgb[1], srgb[2]);
+                result.space = ColorSpace::Hsl;
+                result.channels = [Some(hsl[0]), Some(hsl[1]), Some(hsl[2])];
+                result.format = ColorFormat::Hsl;
+            }
+        }
+
+        result
     }
 
     /// Whether a channel is missing (None/`none`).
@@ -753,11 +811,153 @@ fn delta_e_ok(a: &Color, b: &Color) -> f64 {
     (dl * dl + da * da + db * db).sqrt()
 }
 
-/// Check if a source channel has an analogous channel in the target space.
-/// For simplicity, same-index channels are considered analogous for now.
-fn has_analogous_channel(_from: ColorSpace, _from_idx: usize, _to: ColorSpace, _to_idx: usize) -> bool {
-    // TODO: implement proper analogous channel mapping per CSS Color 4 spec
-    true
+/// Channel analogy groups per CSS Color Level 4.
+///
+/// Two channels are "analogous" if they represent the same perceptual attribute.
+/// When converting between spaces, a `none` (missing) value propagates from a
+/// source channel to the analogous target channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelAnalogy {
+    RedX,         // RGB red ↔ XYZ x (index 0 in both families)
+    GreenY,       // RGB green ↔ XYZ y (index 1 in both families)
+    BlueZ,        // RGB blue ↔ XYZ z (index 2 in both families)
+    Hue,
+    Lightness,
+    Colorfulness, // chroma and saturation
+    OpponentA,    // Lab a ↔ OKLab a
+    OpponentB,    // Lab b ↔ OKLab b
+}
+
+/// Get the analogy group for channel `index` in `space`, if any.
+///
+/// Returns `None` for channels that have no analogous counterpart in other
+/// spaces (e.g. HWB whiteness/blackness).
+fn channel_analogy(space: ColorSpace, index: usize) -> Option<ChannelAnalogy> {
+    use ChannelAnalogy::*;
+    match space {
+        // RGB-family: red=0, green=1, blue=2
+        ColorSpace::Rgb
+        | ColorSpace::SRgb
+        | ColorSpace::SRgbLinear
+        | ColorSpace::DisplayP3
+        | ColorSpace::DisplayP3Linear
+        | ColorSpace::A98Rgb
+        | ColorSpace::ProphotoRgb
+        | ColorSpace::Rec2020 => match index {
+            0 => Some(RedX),
+            1 => Some(GreenY),
+            2 => Some(BlueZ),
+            _ => None,
+        },
+        // HSL: hue=0, saturation=1, lightness=2
+        ColorSpace::Hsl => match index {
+            0 => Some(Hue),
+            1 => Some(Colorfulness),
+            2 => Some(Lightness),
+            _ => None,
+        },
+        // HWB: hue=0, whiteness=1, blackness=2
+        // whiteness and blackness have no analogous channels
+        ColorSpace::Hwb => match index {
+            0 => Some(Hue),
+            _ => None,
+        },
+        // Lab: lightness=0, a=1, b=2
+        ColorSpace::Lab => match index {
+            0 => Some(Lightness),
+            1 => Some(OpponentA),
+            2 => Some(OpponentB),
+            _ => None,
+        },
+        // LCH: lightness=0, chroma=1, hue=2
+        ColorSpace::Lch => match index {
+            0 => Some(Lightness),
+            1 => Some(Colorfulness),
+            2 => Some(Hue),
+            _ => None,
+        },
+        // OKLab: lightness=0, a=1, b=2
+        ColorSpace::Oklab => match index {
+            0 => Some(Lightness),
+            1 => Some(OpponentA),
+            2 => Some(OpponentB),
+            _ => None,
+        },
+        // OKLch: lightness=0, chroma=1, hue=2
+        ColorSpace::Oklch => match index {
+            0 => Some(Lightness),
+            1 => Some(Colorfulness),
+            2 => Some(Hue),
+            _ => None,
+        },
+        // XYZ: x=0, y=1, z=2 — analogous to RGB red/green/blue
+        ColorSpace::XyzD50 | ColorSpace::XyzD65 => match index {
+            0 => Some(RedX),
+            1 => Some(GreenY),
+            2 => Some(BlueZ),
+            _ => None,
+        },
+    }
+}
+
+/// Check whether any missing (None) channel in the source has an analogous
+/// channel at `target_idx` in the target space.
+///
+/// Per dart-sass behavior, `none` is never propagated to legacy spaces
+/// (RGB, HSL, HWB). This matches the Sass spec's treatment of legacy colors.
+fn should_propagate_none(
+    from: ColorSpace,
+    from_channels: &[Option<f64>; 3],
+    to: ColorSpace,
+    to_idx: usize,
+) -> bool {
+    // Never propagate none to legacy color spaces
+    if to.is_legacy() {
+        return false;
+    }
+
+    let target_type = match channel_analogy(to, to_idx) {
+        Some(t) => t,
+        None => return false,
+    };
+
+    for (i, ch) in from_channels.iter().enumerate() {
+        if ch.is_none() {
+            if let Some(source_type) = channel_analogy(from, i) {
+                if source_type == target_type {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// For legacy target spaces: when a source channel is `none` and has an
+/// analogous channel in the target, replace the target channel with 0.
+/// This is dart-sass's behavior — legacy spaces don't support `none` but
+/// still respect the semantic of "missing" by using 0.
+fn should_replace_with_zero(
+    from: ColorSpace,
+    from_channels: &[Option<f64>; 3],
+    to: ColorSpace,
+    to_idx: usize,
+) -> bool {
+    let target_type = match channel_analogy(to, to_idx) {
+        Some(t) => t,
+        None => return false,
+    };
+
+    for (i, ch) in from_channels.iter().enumerate() {
+        if ch.is_none() {
+            if let Some(source_type) = channel_analogy(from, i) {
+                if source_type == target_type {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn fuzzy_is_zero(v: f64) -> bool {

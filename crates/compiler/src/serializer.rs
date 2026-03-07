@@ -456,11 +456,33 @@ impl<'a> Serializer<'a> {
             self.buffer.extend_from_slice(b"hsla(");
         }
 
-        self.write_float(color.hue().0);
+        // For HSL-stored colors, read raw channels to preserve out-of-gamut values.
+        // For HWB-stored colors, convert through sRGB to get HSL values.
+        let (hue, sat, light) = if color.color_space() == ColorSpace::Hsl {
+            let raw = color.raw_channels();
+            (
+                raw[0].unwrap_or(0.0),
+                raw[1].unwrap_or(0.0) * 100.0,
+                raw[2].unwrap_or(0.0) * 100.0,
+            )
+        } else if color.color_space() == ColorSpace::Hwb {
+            let raw = color.raw_channels();
+            let srgb = crate::color::conversion::hwb_to_srgb(
+                raw[0].unwrap_or(0.0),
+                raw[1].unwrap_or(0.0),
+                raw[2].unwrap_or(0.0),
+            );
+            let hsl = crate::color::conversion::srgb_to_hsl(srgb[0], srgb[1], srgb[2]);
+            (hsl[0], hsl[1] * 100.0, hsl[2] * 100.0)
+        } else {
+            (color.hue().0, color.saturation().0, color.lightness().0)
+        };
+
+        self.write_float(hue);
         self.buffer.extend_from_slice(b", ");
-        self.write_float(color.saturation().0);
+        self.write_float(sat);
         self.buffer.extend_from_slice(b"%, ");
-        self.write_float(color.lightness().0);
+        self.write_float(light);
         self.buffer.extend_from_slice(b"%");
 
         if !is_opaque {
@@ -622,7 +644,22 @@ impl<'a> Serializer<'a> {
         } else if color.format != ColorFormat::Infer {
             match &color.format {
                 ColorFormat::Rgb => self.write_rgb(color),
-                ColorFormat::Hsl => self.write_hsl(color),
+                ColorFormat::Hsl => {
+                    // For HWB-stored colors from to-space(), check named colors first.
+                    // HSL-stored colors always use hsl() format (matching dart-sass).
+                    if color.color_space() == ColorSpace::Hwb && fuzzy_equals(color.alpha().0, 1.0) {
+                        let red = color.red().0.round() as u8;
+                        let green = color.green().0.round() as u8;
+                        let blue = color.blue().0.round() as u8;
+                        if let Some(name) = NAMED_COLORS.get_by_rgba([red, green, blue]) {
+                            self.buffer.extend_from_slice(name.as_bytes());
+                        } else {
+                            self.write_hsl(color);
+                        }
+                    } else {
+                        self.write_hsl(color);
+                    }
+                }
                 ColorFormat::Literal(text) => self.buffer.extend_from_slice(text.as_bytes()),
                 ColorFormat::Infer => unreachable!(),
             }

@@ -142,7 +142,7 @@ impl ColorSpace {
             Self::Oklab => "oklab",
             Self::Oklch => "oklch",
             Self::XyzD50 => "xyz-d50",
-            Self::XyzD65 => "xyz-d65",
+            Self::XyzD65 => "xyz",
         }
     }
 

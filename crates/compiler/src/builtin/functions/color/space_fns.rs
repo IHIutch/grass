@@ -186,11 +186,21 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
                     channel_str.as_str(),
                     "saturation" | "lightness" | "whiteness" | "blackness"
                 );
+            let is_modern_lightness = !target_space.is_legacy()
+                && channels[i].name == "lightness";
             let unit = if channels[i].is_polar {
                 Unit::Deg
             } else if is_legacy_pct {
                 // Internal storage is [0, 1], display as [0%, 100%]
                 val *= Number(100.0);
+                Unit::Percent
+            } else if is_modern_lightness {
+                // Modern spaces: lightness returns as percentage
+                if matches!(target_space, ColorSpace::Oklab | ColorSpace::Oklch) {
+                    // OKLab/OKLch: internal [0,1] → display [0%,100%]
+                    val *= Number(100.0);
+                }
+                // Lab/LCH: internal [0,100] → display [0%,100%] (no scaling needed)
                 Unit::Percent
             } else {
                 Unit::None
