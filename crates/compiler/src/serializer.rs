@@ -144,6 +144,7 @@ pub(crate) struct Serializer<'a> {
     buffer: Vec<u8>,
     map: &'a CodeMap,
     span: Span,
+    in_calculation: bool,
 }
 
 impl<'a> Serializer<'a> {
@@ -157,6 +158,7 @@ impl<'a> Serializer<'a> {
             buffer: Vec::new(),
             map,
             span,
+            in_calculation: false,
         }
     }
 
@@ -355,6 +357,9 @@ impl<'a> Serializer<'a> {
         self.write_calculation_name(calculation.name);
         self.buffer.push(b'(');
 
+        let was_in_calculation = self.in_calculation;
+        self.in_calculation = true;
+
         if let Some((last, slice)) = calculation.args.split_last() {
             for arg in slice {
                 self.write_calculation_arg(arg)?;
@@ -364,6 +369,7 @@ impl<'a> Serializer<'a> {
             self.write_calculation_arg(last)?;
         }
 
+        self.in_calculation = was_in_calculation;
         self.buffer.push(b')');
 
         Ok(())
@@ -850,7 +856,13 @@ impl<'a> Serializer<'a> {
         if !self.inspect {
             let f = number.num.0;
             if f.is_nan() {
-                if number.unit == Unit::None {
+                if self.in_calculation {
+                    if number.unit == Unit::None {
+                        self.buffer.extend_from_slice(b"NaN");
+                    } else {
+                        write!(&mut self.buffer, "NaN * 1{}", number.unit)?;
+                    }
+                } else if number.unit == Unit::None {
                     self.buffer.extend_from_slice(b"calc(NaN)");
                 } else {
                     write!(&mut self.buffer, "calc(NaN * 1{})", number.unit)?;
@@ -859,7 +871,13 @@ impl<'a> Serializer<'a> {
             }
             if f.is_infinite() {
                 let sign = if f.is_sign_negative() { "-" } else { "" };
-                if number.unit == Unit::None {
+                if self.in_calculation {
+                    if number.unit == Unit::None {
+                        write!(&mut self.buffer, "{}infinity", sign)?;
+                    } else {
+                        write!(&mut self.buffer, "{}infinity * 1{}", sign, number.unit)?;
+                    }
+                } else if number.unit == Unit::None {
                     write!(&mut self.buffer, "calc({}infinity)", sign)?;
                 } else {
                     write!(&mut self.buffer, "calc({}infinity * 1{})", sign, number.unit)?;

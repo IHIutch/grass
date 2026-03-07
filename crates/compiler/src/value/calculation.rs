@@ -7,7 +7,7 @@ use crate::{
     common::BinaryOp,
     error::SassResult,
     serializer::inspect_number,
-    unit::Unit,
+    unit::{Unit, UNIT_CONVERSION_TABLE},
     value::{conversion_factor, Number, SassNumber, Value},
     Options,
 };
@@ -271,6 +271,27 @@ impl SassCalculation {
         }))
     }
 
+    /// Whether a unit can be converted at compile time (is in the conversion table)
+    /// Whether two units can be simplified in a multi-arg calculation
+    /// Units that are in a known compatibility group (like %, vw, em, px) but
+    /// can't actually be converted at compile time should NOT be simplified.
+    /// Completely unknown/fake units that are equal CAN be simplified.
+    fn can_simplify_units(a: &Unit, b: &Unit) -> bool {
+        if *a == Unit::None && *b == Unit::None {
+            return true;
+        }
+        // If both units have a known conversion factor, simplify
+        if UNIT_CONVERSION_TABLE.contains_key(a) && conversion_factor(a, b).is_some() {
+            return true;
+        }
+        // If both are the same unit and not %, simplify.
+        // % is "possibly compatible" with other units at runtime, so it can't be simplified.
+        if a == b && *a != Unit::Percent {
+            return true;
+        }
+        false
+    }
+
     fn coerce_to_rad(num: f64, unit: &Unit) -> f64 {
         if *unit == Unit::None {
             return num;
@@ -455,9 +476,9 @@ impl SassCalculation {
 
         match (&args[0], &args[1]) {
             (CalculationArg::Number(y), CalculationArg::Number(x)) => {
-                if (y.unit == Unit::None && x.unit == Unit::None)
-                    || y.unit.comparable(&x.unit)
-                {
+                let can_simplify = Self::can_simplify_units(&y.unit, &x.unit);
+
+                if can_simplify {
                     let x_val = if y.unit != Unit::None && x.unit != Unit::None {
                         x.num.convert(&x.unit, &y.unit).0
                     } else {
@@ -543,7 +564,9 @@ impl SassCalculation {
 
         for arg in &args[1..] {
             match arg {
-                CalculationArg::Number(n) if n.unit.comparable(&first_unit) => {
+                CalculationArg::Number(n)
+                    if Self::can_simplify_units(&n.unit, &first_unit) =>
+                {
                     let converted = n.num.convert(&n.unit, &first_unit).0;
                     sum += converted * converted;
                 }
@@ -612,12 +635,17 @@ impl SassCalculation {
                 if a.unit.comparable(&b.unit) =>
             {
                 let b_converted = b.num.convert(&b.unit, &a.unit).0;
-                // CSS rem: result sign matches dividend
-                // a rem b = a - b * trunc(a / b)
+                // CSS rem: result sign matches dividend (IEEE remainder)
                 let result = if b_converted == 0.0 {
                     f64::NAN
+                } else if b_converted.is_infinite() {
+                    if a.num.0.is_finite() {
+                        a.num.0
+                    } else {
+                        f64::NAN
+                    }
                 } else {
-                    a.num.0 - b_converted * (a.num.0 / b_converted).trunc()
+                    a.num.0 % b_converted
                 };
                 Ok(Value::Dimension(SassNumber {
                     num: Number(result),
