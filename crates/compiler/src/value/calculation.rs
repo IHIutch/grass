@@ -8,7 +8,7 @@ use crate::{
     error::SassResult,
     serializer::inspect_number,
     unit::Unit,
-    value::{SassNumber, Value},
+    value::{conversion_factor, Number, SassNumber, Value},
     Options,
 };
 
@@ -43,6 +43,23 @@ pub enum CalculationName {
     Min,
     Max,
     Clamp,
+    Abs,
+    Acos,
+    Asin,
+    Atan,
+    Atan2,
+    Cos,
+    Exp,
+    Hypot,
+    Log,
+    Mod,
+    Pow,
+    Rem,
+    Round,
+    Sign,
+    Sin,
+    Sqrt,
+    Tan,
 }
 
 impl fmt::Display for CalculationName {
@@ -52,6 +69,23 @@ impl fmt::Display for CalculationName {
             CalculationName::Min => f.write_str("min"),
             CalculationName::Max => f.write_str("max"),
             CalculationName::Clamp => f.write_str("clamp"),
+            CalculationName::Abs => f.write_str("abs"),
+            CalculationName::Acos => f.write_str("acos"),
+            CalculationName::Asin => f.write_str("asin"),
+            CalculationName::Atan => f.write_str("atan"),
+            CalculationName::Atan2 => f.write_str("atan2"),
+            CalculationName::Cos => f.write_str("cos"),
+            CalculationName::Exp => f.write_str("exp"),
+            CalculationName::Hypot => f.write_str("hypot"),
+            CalculationName::Log => f.write_str("log"),
+            CalculationName::Mod => f.write_str("mod"),
+            CalculationName::Pow => f.write_str("pow"),
+            CalculationName::Rem => f.write_str("rem"),
+            CalculationName::Round => f.write_str("round"),
+            CalculationName::Sign => f.write_str("sign"),
+            CalculationName::Sin => f.write_str("sin"),
+            CalculationName::Sqrt => f.write_str("sqrt"),
+            CalculationName::Tan => f.write_str("tan"),
         }
     }
 }
@@ -59,6 +93,17 @@ impl fmt::Display for CalculationName {
 impl CalculationName {
     pub(crate) fn in_min_or_max(self) -> bool {
         self == CalculationName::Min || self == CalculationName::Max
+    }
+
+    /// Whether this calculation function can be overridden by a user-defined function
+    pub(crate) fn is_overridable(self) -> bool {
+        !matches!(
+            self,
+            CalculationName::Calc
+                | CalculationName::Min
+                | CalculationName::Max
+                | CalculationName::Clamp
+        )
     }
 }
 
@@ -224,6 +269,460 @@ impl SassCalculation {
             name: CalculationName::Clamp,
             args,
         }))
+    }
+
+    fn coerce_to_rad(num: f64, unit: &Unit) -> f64 {
+        if *unit == Unit::None {
+            return num;
+        }
+        let factor = conversion_factor(unit, &Unit::Rad).unwrap();
+        num * factor
+    }
+
+    fn is_angle_unit(unit: &Unit) -> bool {
+        matches!(unit, Unit::Rad | Unit::Deg | Unit::Grad | Unit::Turn)
+    }
+
+    fn unsimplified_calc(name: CalculationName, args: Vec<CalculationArg>) -> Value {
+        Value::Calculation(SassCalculation { name, args })
+    }
+
+    pub fn abs(arg: CalculationArg, options: &Options, span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) => {
+                Ok(Value::Dimension(SassNumber {
+                    num: n.num.abs(),
+                    unit: n.unit.clone(),
+                    as_slash: None,
+                }))
+            }
+            _ => {
+                Self::verify_compatible_numbers(std::slice::from_ref(&arg), options, span)?;
+                Ok(Self::unsimplified_calc(CalculationName::Abs, vec![arg]))
+            }
+        }
+    }
+
+    pub fn exp(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) if n.unit == Unit::None => {
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(n.num.0.exp()))))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Exp, vec![arg])),
+        }
+    }
+
+    pub fn sign(arg: CalculationArg, options: &Options, span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) if !n.unit.is_complex() => {
+                let val = if n.num.0.is_nan() {
+                    f64::NAN
+                } else if n.num.0 == 0.0 {
+                    // preserve sign of zero
+                    n.num.0
+                } else if n.num.0 > 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(val))))
+            }
+            _ => {
+                Self::verify_compatible_numbers(std::slice::from_ref(&arg), options, span)?;
+                Ok(Self::unsimplified_calc(CalculationName::Sign, vec![arg]))
+            }
+        }
+    }
+
+    pub fn sin(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n)
+                if n.unit == Unit::None || Self::is_angle_unit(&n.unit) =>
+            {
+                let rad = Self::coerce_to_rad(n.num.0, &n.unit);
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(rad.sin()))))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Sin, vec![arg])),
+        }
+    }
+
+    pub fn cos(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n)
+                if n.unit == Unit::None || Self::is_angle_unit(&n.unit) =>
+            {
+                let rad = Self::coerce_to_rad(n.num.0, &n.unit);
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(rad.cos()))))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Cos, vec![arg])),
+        }
+    }
+
+    pub fn tan(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n)
+                if n.unit == Unit::None || Self::is_angle_unit(&n.unit) =>
+            {
+                let rad = Self::coerce_to_rad(n.num.0, &n.unit);
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(rad.tan()))))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Tan, vec![arg])),
+        }
+    }
+
+    pub fn asin(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) if n.unit == Unit::None => {
+                let val = if n.num > Number(1.0) || n.num < Number(-1.0) {
+                    f64::NAN
+                } else if n.num.0 == 0.0 {
+                    0.0
+                } else {
+                    n.num.0.asin().to_degrees()
+                };
+                Ok(Value::Dimension(SassNumber {
+                    num: Number(val),
+                    unit: Unit::Deg,
+                    as_slash: None,
+                }))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Asin, vec![arg])),
+        }
+    }
+
+    pub fn acos(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) if n.unit == Unit::None => {
+                let val = if n.num > Number(1.0) || n.num < Number(-1.0) {
+                    f64::NAN
+                } else if n.num.0 == 1.0 {
+                    0.0
+                } else {
+                    n.num.0.acos().to_degrees()
+                };
+                Ok(Value::Dimension(SassNumber {
+                    num: Number(val),
+                    unit: Unit::Deg,
+                    as_slash: None,
+                }))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Acos, vec![arg])),
+        }
+    }
+
+    pub fn atan(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) if n.unit == Unit::None => {
+                let val = if n.num.0 == 0.0 {
+                    0.0
+                } else {
+                    n.num.0.atan().to_degrees()
+                };
+                Ok(Value::Dimension(SassNumber {
+                    num: Number(val),
+                    unit: Unit::Deg,
+                    as_slash: None,
+                }))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Atan, vec![arg])),
+        }
+    }
+
+    pub fn sqrt(arg: CalculationArg, _options: &Options, _span: Span) -> SassResult<Value> {
+        let arg = Self::simplify(arg);
+        match arg {
+            CalculationArg::Number(ref n) if n.unit == Unit::None => {
+                Ok(Value::Dimension(SassNumber::new_unitless(n.num.sqrt())))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Sqrt, vec![arg])),
+        }
+    }
+
+    // --- Multi-arg functions ---
+
+    pub fn atan2(args: Vec<CalculationArg>, _options: &Options, _span: Span) -> SassResult<Value> {
+        let args = Self::simplify_arguments(args);
+        debug_assert!(args.len() == 2);
+
+        match (&args[0], &args[1]) {
+            (CalculationArg::Number(y), CalculationArg::Number(x)) => {
+                if (y.unit == Unit::None && x.unit == Unit::None)
+                    || y.unit.comparable(&x.unit)
+                {
+                    let x_val = if y.unit != Unit::None && x.unit != Unit::None {
+                        x.num.convert(&x.unit, &y.unit).0
+                    } else {
+                        x.num.0
+                    };
+                    return Ok(Value::Dimension(SassNumber {
+                        num: Number(y.num.0.atan2(x_val).to_degrees()),
+                        unit: Unit::Deg,
+                        as_slash: None,
+                    }));
+                }
+                Ok(Self::unsimplified_calc(CalculationName::Atan2, args))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Atan2, args)),
+        }
+    }
+
+    pub fn pow(args: Vec<CalculationArg>, _options: &Options, _span: Span) -> SassResult<Value> {
+        let args = Self::simplify_arguments(args);
+        debug_assert!(args.len() == 2);
+
+        match (&args[0], &args[1]) {
+            (CalculationArg::Number(base), CalculationArg::Number(exp))
+                if base.unit == Unit::None && exp.unit == Unit::None =>
+            {
+                Ok(Value::Dimension(SassNumber::new_unitless(
+                    base.num.pow(exp.num),
+                )))
+            }
+            _ => Ok(Self::unsimplified_calc(CalculationName::Pow, args)),
+        }
+    }
+
+    pub fn log(args: Vec<CalculationArg>, _options: &Options, _span: Span) -> SassResult<Value> {
+        let args = Self::simplify_arguments(args);
+        debug_assert!(args.len() == 1 || args.len() == 2);
+
+        if args.len() == 1 {
+            match &args[0] {
+                CalculationArg::Number(n) if n.unit == Unit::None => {
+                    let val = if n.num.0 < 0.0 && !n.num.0.is_nan() {
+                        f64::NAN
+                    } else if n.num.0 == 0.0 {
+                        f64::NEG_INFINITY
+                    } else {
+                        n.num.0.ln()
+                    };
+                    Ok(Value::Dimension(SassNumber::new_unitless(Number(val))))
+                }
+                _ => Ok(Self::unsimplified_calc(CalculationName::Log, args)),
+            }
+        } else {
+            match (&args[0], &args[1]) {
+                (CalculationArg::Number(val), CalculationArg::Number(base))
+                    if val.unit == Unit::None && base.unit == Unit::None =>
+                {
+                    let result = if base.num.0 == 0.0 {
+                        Number::zero()
+                    } else {
+                        val.num.log(base.num)
+                    };
+                    Ok(Value::Dimension(SassNumber::new_unitless(result)))
+                }
+                _ => Ok(Self::unsimplified_calc(CalculationName::Log, args)),
+            }
+        }
+    }
+
+    pub fn hypot(args: Vec<CalculationArg>, options: &Options, span: Span) -> SassResult<Value> {
+        let args = Self::simplify_arguments(args);
+
+        let first = match &args[0] {
+            CalculationArg::Number(n) => n,
+            _ => {
+                Self::verify_compatible_numbers(&args, options, span)?;
+                return Ok(Self::unsimplified_calc(CalculationName::Hypot, args));
+            }
+        };
+
+        let first_unit = first.unit.clone();
+        let mut sum = first.num.0 * first.num.0;
+        let mut all_numbers = true;
+
+        for arg in &args[1..] {
+            match arg {
+                CalculationArg::Number(n) if n.unit.comparable(&first_unit) => {
+                    let converted = n.num.convert(&n.unit, &first_unit).0;
+                    sum += converted * converted;
+                }
+                _ => {
+                    all_numbers = false;
+                    break;
+                }
+            }
+        }
+
+        if all_numbers {
+            Ok(Value::Dimension(SassNumber {
+                num: Number(sum.sqrt()),
+                unit: first_unit,
+                as_slash: None,
+            }))
+        } else {
+            Self::verify_compatible_numbers(&args, options, span)?;
+            Ok(Self::unsimplified_calc(CalculationName::Hypot, args))
+        }
+    }
+
+    pub fn calc_mod(
+        args: Vec<CalculationArg>,
+        options: &Options,
+        span: Span,
+    ) -> SassResult<Value> {
+        let args = Self::simplify_arguments(args);
+        debug_assert!(args.len() == 2);
+
+        match (&args[0], &args[1]) {
+            (CalculationArg::Number(a), CalculationArg::Number(b))
+                if a.unit.comparable(&b.unit) =>
+            {
+                let b_converted = b.num.convert(&b.unit, &a.unit).0;
+                // CSS mod: result sign matches divisor
+                // a mod b = a - b * floor(a / b)
+                let result = if b_converted == 0.0 {
+                    f64::NAN
+                } else {
+                    a.num.0 - b_converted * (a.num.0 / b_converted).floor()
+                };
+                Ok(Value::Dimension(SassNumber {
+                    num: Number(result),
+                    unit: a.unit.clone(),
+                    as_slash: None,
+                }))
+            }
+            _ => {
+                Self::verify_compatible_numbers(&args, options, span)?;
+                Ok(Self::unsimplified_calc(CalculationName::Mod, args))
+            }
+        }
+    }
+
+    pub fn calc_rem(
+        args: Vec<CalculationArg>,
+        options: &Options,
+        span: Span,
+    ) -> SassResult<Value> {
+        let args = Self::simplify_arguments(args);
+        debug_assert!(args.len() == 2);
+
+        match (&args[0], &args[1]) {
+            (CalculationArg::Number(a), CalculationArg::Number(b))
+                if a.unit.comparable(&b.unit) =>
+            {
+                let b_converted = b.num.convert(&b.unit, &a.unit).0;
+                // CSS rem: result sign matches dividend
+                // a rem b = a - b * trunc(a / b)
+                let result = if b_converted == 0.0 {
+                    f64::NAN
+                } else {
+                    a.num.0 - b_converted * (a.num.0 / b_converted).trunc()
+                };
+                Ok(Value::Dimension(SassNumber {
+                    num: Number(result),
+                    unit: a.unit.clone(),
+                    as_slash: None,
+                }))
+            }
+            _ => {
+                Self::verify_compatible_numbers(&args, options, span)?;
+                Ok(Self::unsimplified_calc(CalculationName::Rem, args))
+            }
+        }
+    }
+
+    pub fn round(
+        args: Vec<CalculationArg>,
+        strategy: Option<String>,
+        options: &Options,
+        span: Span,
+    ) -> SassResult<Value> {
+        if args.len() == 1 && strategy.is_none() {
+            // round(number) — single arg, nearest integer
+            let arg = Self::simplify(args.into_iter().next().unwrap());
+            match arg {
+                CalculationArg::Number(ref n) => {
+                    return Ok(Value::Dimension(SassNumber {
+                        num: n.num.round(),
+                        unit: n.unit.clone(),
+                        as_slash: None,
+                    }));
+                }
+                _ => {
+                    return Ok(Self::unsimplified_calc(
+                        CalculationName::Round,
+                        vec![arg],
+                    ));
+                }
+            }
+        }
+
+        let args = Self::simplify_arguments(args);
+        let strategy = strategy.as_deref().unwrap_or("nearest");
+
+        if args.len() == 2 {
+            match (&args[0], &args[1]) {
+                (CalculationArg::Number(number), CalculationArg::Number(step))
+                    if number.unit.comparable(&step.unit) =>
+                {
+                    let step_converted = step.num.convert(&step.unit, &number.unit).0;
+                    let result = Self::round_with_step(number.num.0, step_converted, strategy);
+                    return Ok(Value::Dimension(SassNumber {
+                        num: Number(result),
+                        unit: number.unit.clone(),
+                        as_slash: None,
+                    }));
+                }
+                _ => {}
+            }
+        }
+
+        Self::verify_compatible_numbers(&args, options, span)?;
+
+        let mut full_args = Vec::with_capacity(args.len() + 1);
+        if strategy != "nearest" {
+            full_args.push(CalculationArg::String(strategy.to_string()));
+        }
+        full_args.extend(args);
+        Ok(Self::unsimplified_calc(CalculationName::Round, full_args))
+    }
+
+    fn round_with_step(number: f64, step: f64, strategy: &str) -> f64 {
+        if step == 0.0 || number.is_infinite() {
+            return f64::NAN;
+        }
+        if step.is_infinite() {
+            return match strategy {
+                "nearest" | "to-zero" => {
+                    if number.is_sign_positive() == step.is_sign_positive() || number == 0.0 {
+                        if number == 0.0 { number } else { 0.0 * number.signum() }
+                    } else {
+                        // result is -0 or 0 depending
+                        f64::NEG_INFINITY * number.signum()
+                    }
+                }
+                "up" => {
+                    if number > 0.0 { f64::INFINITY } else { 0.0_f64.copysign(number) }
+                }
+                "down" => {
+                    if number < 0.0 { f64::NEG_INFINITY } else { 0.0_f64.copysign(number) }
+                }
+                _ => f64::NAN,
+            };
+        }
+        if number.is_nan() || step.is_nan() {
+            return f64::NAN;
+        }
+
+        let div = number / step;
+        match strategy {
+            "nearest" => div.round() * step,
+            "up" => div.ceil() * step,
+            "down" => div.floor() * step,
+            "to-zero" => div.trunc() * step,
+            _ => f64::NAN,
+        }
     }
 
     fn verify_length(args: &[CalculationArg], len: usize, span: Span) -> SassResult<()> {

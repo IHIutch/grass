@@ -1531,6 +1531,29 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     fn parse_calculation_value(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
         match parser.toks().peek() {
             Some(Token {
+                kind: sign @ ('+' | '-'),
+                ..
+            }) if !matches!(
+                parser.toks().peek_n(1),
+                Some(Token {
+                    kind: '.' | '0'..='9',
+                    ..
+                })
+            ) && parser.toks().peek_n(1).is_some_and(|t| {
+                t.kind.is_ascii_alphabetic() || t.kind == '_'
+            }) => {
+                let start = parser.toks().cursor();
+                parser.toks_mut().next();
+                let value = ValueParser::parse_calculation_value(parser)?;
+                if sign == '-' {
+                    let span = parser.toks_mut().span_from(start);
+                    Ok(AstExpr::UnaryOp(UnaryOp::Neg, Arc::new(value.node), span)
+                        .span(span))
+                } else {
+                    Ok(value)
+                }
+            }
+            Some(Token {
                 kind: '+' | '-' | '.' | '0'..='9',
                 ..
             }) => ValueParser::parse_number(parser),
@@ -1573,11 +1596,53 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 }
 
                 if !parser.toks().next_char_is('(') {
-                    return Err(("Expected \"(\" or \".\".", parser.toks().current_span()).into());
+                    let lowercase = ident.to_ascii_lowercase();
+                    match lowercase.as_str() {
+                        "pi" => {
+                            return Ok(AstExpr::Number {
+                                n: Number(std::f64::consts::PI),
+                                unit: Unit::None,
+                            }
+                            .span(parser.toks_mut().span_from(start)));
+                        }
+                        "e" => {
+                            return Ok(AstExpr::Number {
+                                n: Number(std::f64::consts::E),
+                                unit: Unit::None,
+                            }
+                            .span(parser.toks_mut().span_from(start)));
+                        }
+                        "infinity" => {
+                            return Ok(AstExpr::Number {
+                                n: Number(f64::INFINITY),
+                                unit: Unit::None,
+                            }
+                            .span(parser.toks_mut().span_from(start)));
+                        }
+                        "nan" => {
+                            return Ok(AstExpr::Number {
+                                n: Number(f64::NAN),
+                                unit: Unit::None,
+                            }
+                            .span(parser.toks_mut().span_from(start)));
+                        }
+                        _ => {
+                            let span = parser.toks_mut().span_from(start);
+                            return Ok(AstExpr::String(
+                                StringExpr(
+                                    Interpolation::new_plain(ident),
+                                    QuoteKind::None,
+                                ),
+                                span,
+                            )
+                            .span(span));
+                        }
+                    }
                 }
 
                 let lowercase = ident.to_ascii_lowercase();
-                let calculation = ValueParser::try_parse_calculation(parser, &lowercase, start)?;
+                let calculation =
+                    ValueParser::try_parse_calculation_inner(parser, &lowercase, start, true)?;
 
                 if let Some(calc) = calculation {
                     Ok(calc)
@@ -1725,6 +1790,15 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         name: &str,
         start: usize,
     ) -> SassResult<Option<Spanned<AstExpr>>> {
+        Self::try_parse_calculation_inner(parser, name, start, false)
+    }
+
+    fn try_parse_calculation_inner(
+        parser: &mut P,
+        name: &str,
+        start: usize,
+        _in_calculation: bool,
+    ) -> SassResult<Option<Spanned<AstExpr>>> {
         debug_assert!(parser.toks().next_char_is('('));
 
         Ok(Some(match name {
@@ -1767,6 +1841,95 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     args,
                 }
                 .span(parser.toks_mut().span_from(start))
+            }
+            "abs" | "sign" => {
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(1), start) {
+                    Ok(args) => AstExpr::Calculation {
+                        name: if name == "abs" {
+                            CalculationName::Abs
+                        } else {
+                            CalculationName::Sign
+                        },
+                        args,
+                    }
+                    .span(parser.toks_mut().span_from(start)),
+                    Err(..) => {
+                        parser.toks_mut().set_cursor(before_args);
+                        return Ok(None);
+                    }
+                }
+            }
+            "acos" | "asin" | "atan" | "cos" | "exp" | "sin" | "sqrt" | "tan" => {
+                let calc_name = match name {
+                    "acos" => CalculationName::Acos,
+                    "asin" => CalculationName::Asin,
+                    "atan" => CalculationName::Atan,
+                    "cos" => CalculationName::Cos,
+                    "exp" => CalculationName::Exp,
+                    "sin" => CalculationName::Sin,
+                    "sqrt" => CalculationName::Sqrt,
+                    "tan" => CalculationName::Tan,
+                    _ => unreachable!(),
+                };
+                let args = ValueParser::parse_calculation_arguments(parser, Some(1), start)?;
+                AstExpr::Calculation {
+                    name: calc_name,
+                    args,
+                }
+                .span(parser.toks_mut().span_from(start))
+            }
+            "atan2" | "mod" | "rem" => {
+                let calc_name = match name {
+                    "atan2" => CalculationName::Atan2,
+                    "mod" => CalculationName::Mod,
+                    "rem" => CalculationName::Rem,
+                    _ => unreachable!(),
+                };
+                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
+                AstExpr::Calculation {
+                    name: calc_name,
+                    args,
+                }
+                .span(parser.toks_mut().span_from(start))
+            }
+            "pow" => {
+                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
+                AstExpr::Calculation {
+                    name: CalculationName::Pow,
+                    args,
+                }
+                .span(parser.toks_mut().span_from(start))
+            }
+            "log" => {
+                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
+                AstExpr::Calculation {
+                    name: CalculationName::Log,
+                    args,
+                }
+                .span(parser.toks_mut().span_from(start))
+            }
+            "hypot" => {
+                let args = ValueParser::parse_calculation_arguments(parser, None, start)?;
+                AstExpr::Calculation {
+                    name: CalculationName::Hypot,
+                    args,
+                }
+                .span(parser.toks_mut().span_from(start))
+            }
+            "round" => {
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(3), start) {
+                    Ok(args) => AstExpr::Calculation {
+                        name: CalculationName::Round,
+                        args,
+                    }
+                    .span(parser.toks_mut().span_from(start)),
+                    Err(..) => {
+                        parser.toks_mut().set_cursor(before_args);
+                        return Ok(None);
+                    }
+                }
             }
             _ => return Ok(None),
         }))

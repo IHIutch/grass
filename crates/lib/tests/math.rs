@@ -147,9 +147,9 @@ error!(
     percentage_non_number_arg,
     "a {\n  color: percentage(a);\n}\n", "Error: $number: a is not a number."
 );
-error!(
+test!(
     round_non_number_arg,
-    "a {\n  color: round(a);\n}\n", "Error: $number: a is not a number."
+    "a {\n  color: round(a);\n}\n", "a {\n  color: round(a);\n}\n"
 );
 error!(
     ceil_non_number_arg,
@@ -159,9 +159,9 @@ error!(
     floor_non_number_arg,
     "a {\n  color: floor(a);\n}\n", "Error: $number: a is not a number."
 );
-error!(
+test!(
     abs_non_number_arg,
-    "a {\n  color: abs(a);\n}\n", "Error: $number: a is not a number."
+    "a {\n  color: abs(a);\n}\n", "a {\n  color: abs(a);\n}\n"
 );
 error!(
     comparable_non_number_arg_both,

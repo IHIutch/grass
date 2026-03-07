@@ -2659,7 +2659,41 @@ impl<'a> Visitor<'a> {
             AstExpr::True => Value::True,
             AstExpr::False => Value::False,
             AstExpr::Calculation { name, args } => {
-                self.visit_calculation_expr(name, args, self.empty_span)?
+                // Check if a user-defined function overrides this calculation
+                if name.is_overridable() {
+                    let ident = Identifier::from(name.to_string());
+                    if self.env.scopes.get_fn(ident).is_some() {
+                        let positional = args
+                            .into_iter()
+                            .map(|arg| self.visit_expr(arg))
+                            .collect::<SassResult<Vec<_>>>()?;
+
+                        let func = self.env.scopes.get_fn(ident).unwrap();
+
+                        let evaled = ArgumentResult {
+                            positional,
+                            named: BTreeMap::new(),
+                            separator: ListSeparator::Undecided,
+                            span: self.empty_span,
+                            touched: BTreeSet::new(),
+                        };
+
+                        let old_in_function = self.flags.in_function();
+                        self.flags.set(ContextFlags::IN_FUNCTION, true);
+                        let value = self.run_function_callable_with_maybe_evaled(
+                            func,
+                            MaybeEvaledArguments::Evaled(evaled),
+                            self.empty_span,
+                        )?;
+                        self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
+
+                        value
+                    } else {
+                        self.visit_calculation_expr(name, args, self.empty_span)?
+                    }
+                } else {
+                    self.visit_calculation_expr(name, args, self.empty_span)?
+                }
             }
             AstExpr::CssIf(css_if) => self.visit_css_if((*css_if).clone())?,
             AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
@@ -2704,7 +2738,17 @@ impl<'a> Visitor<'a> {
             },
             AstExpr::String(string_expr, _span) => {
                 debug_assert!(string_expr.1 == QuoteKind::None);
-                CalculationArg::Interpolation(self.perform_interpolation(string_expr.0, false)?)
+                let text = self.perform_interpolation(string_expr.0.clone(), false)?;
+                if string_expr.0.contents.len() == 1
+                    && matches!(
+                        string_expr.0.contents.first(),
+                        Some(crate::ast::InterpolationPart::String(_))
+                    )
+                {
+                    CalculationArg::String(text)
+                } else {
+                    CalculationArg::Interpolation(text)
+                }
             }
             AstExpr::BinaryOp(binop) => SassCalculation::operate_internal(
                 binop.op,
@@ -2720,7 +2764,8 @@ impl<'a> Visitor<'a> {
             | AstExpr::Variable { .. }
             | AstExpr::CssIf(..)
             | AstExpr::FunctionCall { .. }
-            | AstExpr::If(..) => {
+            | AstExpr::If(..)
+            | AstExpr::UnaryOp(..) => {
                 let result = self.visit_expr(expr)?;
                 match result {
                     Value::Dimension(SassNumber {
@@ -2787,6 +2832,97 @@ impl<'a> Visitor<'a> {
                     Some(args.remove(0))
                 };
                 SassCalculation::clamp(min, value, max, self.options, span)
+            }
+            CalculationName::Abs => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::abs(args.remove(0), self.options, span)
+            }
+            CalculationName::Exp => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::exp(args.remove(0), self.options, span)
+            }
+            CalculationName::Sign => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::sign(args.remove(0), self.options, span)
+            }
+            CalculationName::Sin => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::sin(args.remove(0), self.options, span)
+            }
+            CalculationName::Cos => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::cos(args.remove(0), self.options, span)
+            }
+            CalculationName::Tan => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::tan(args.remove(0), self.options, span)
+            }
+            CalculationName::Asin => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::asin(args.remove(0), self.options, span)
+            }
+            CalculationName::Acos => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::acos(args.remove(0), self.options, span)
+            }
+            CalculationName::Atan => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::atan(args.remove(0), self.options, span)
+            }
+            CalculationName::Sqrt => {
+                debug_assert_eq!(args.len(), 1);
+                SassCalculation::sqrt(args.remove(0), self.options, span)
+            }
+            CalculationName::Atan2 => {
+                debug_assert_eq!(args.len(), 2);
+                SassCalculation::atan2(args, self.options, span)
+            }
+            CalculationName::Pow => {
+                debug_assert_eq!(args.len(), 2);
+                SassCalculation::pow(args, self.options, span)
+            }
+            CalculationName::Log => {
+                debug_assert!(args.len() == 1 || args.len() == 2);
+                SassCalculation::log(args, self.options, span)
+            }
+            CalculationName::Hypot => {
+                SassCalculation::hypot(args, self.options, span)
+            }
+            CalculationName::Mod => {
+                debug_assert_eq!(args.len(), 2);
+                SassCalculation::calc_mod(args, self.options, span)
+            }
+            CalculationName::Rem => {
+                debug_assert_eq!(args.len(), 2);
+                SassCalculation::calc_rem(args, self.options, span)
+            }
+            CalculationName::Round => {
+                // round() can have 1, 2, or 3 args
+                // With 3 args: first might be a strategy keyword
+                // With 1 arg: simple round to integer
+                // With 2 args: round(number, step)
+                let strategy = if args.len() == 3 {
+                    // Check if first arg is a strategy keyword
+                    let s = match &args[0] {
+                        CalculationArg::String(s)
+                        | CalculationArg::Interpolation(s) => Some(s.clone()),
+                        _ => None,
+                    };
+                    if let Some(s) = s {
+                        let s_lower = s.to_ascii_lowercase();
+                        if matches!(s_lower.as_str(), "nearest" | "up" | "down" | "to-zero") {
+                            args.remove(0);
+                            Some(s_lower)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                SassCalculation::round(args, strategy, self.options, span)
             }
         }
     }

@@ -325,12 +325,30 @@ impl<'a> Serializer<'a> {
     }
 
     fn write_calculation_name(&mut self, name: CalculationName) {
-        match name {
-            CalculationName::Calc => self.buffer.extend_from_slice(b"calc"),
-            CalculationName::Min => self.buffer.extend_from_slice(b"min"),
-            CalculationName::Max => self.buffer.extend_from_slice(b"max"),
-            CalculationName::Clamp => self.buffer.extend_from_slice(b"clamp"),
-        }
+        let s = match name {
+            CalculationName::Calc => b"calc" as &[u8],
+            CalculationName::Min => b"min",
+            CalculationName::Max => b"max",
+            CalculationName::Clamp => b"clamp",
+            CalculationName::Abs => b"abs",
+            CalculationName::Acos => b"acos",
+            CalculationName::Asin => b"asin",
+            CalculationName::Atan => b"atan",
+            CalculationName::Atan2 => b"atan2",
+            CalculationName::Cos => b"cos",
+            CalculationName::Exp => b"exp",
+            CalculationName::Hypot => b"hypot",
+            CalculationName::Log => b"log",
+            CalculationName::Mod => b"mod",
+            CalculationName::Pow => b"pow",
+            CalculationName::Rem => b"rem",
+            CalculationName::Round => b"round",
+            CalculationName::Sign => b"sign",
+            CalculationName::Sin => b"sin",
+            CalculationName::Sqrt => b"sqrt",
+            CalculationName::Tan => b"tan",
+        };
+        self.buffer.extend_from_slice(s);
     }
 
     fn visit_calculation(&mut self, calculation: &SassCalculation) -> SassResult<()> {
