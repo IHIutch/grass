@@ -666,6 +666,8 @@ impl SassCalculation {
         options: &Options,
         span: Span,
     ) -> SassResult<Value> {
+        let strategy_str = strategy.as_deref().unwrap_or("nearest");
+
         if args.len() == 1 && strategy.is_none() {
             // round(number) — single arg, nearest integer
             let arg = Self::simplify(args.into_iter().next().unwrap());
@@ -687,7 +689,21 @@ impl SassCalculation {
         }
 
         let args = Self::simplify_arguments(args);
-        let strategy = strategy.as_deref().unwrap_or("nearest");
+
+        if args.len() == 1 {
+            // round(strategy, number) — single number with strategy
+            match &args[0] {
+                CalculationArg::Number(n) => {
+                    let result = Self::round_with_step(n.num.0, 1.0, strategy_str);
+                    return Ok(Value::Dimension(SassNumber {
+                        num: Number(result),
+                        unit: n.unit.clone(),
+                        as_slash: None,
+                    }));
+                }
+                _ => {}
+            }
+        }
 
         if args.len() == 2 {
             match (&args[0], &args[1]) {
@@ -695,7 +711,8 @@ impl SassCalculation {
                     if number.unit.comparable(&step.unit) =>
                 {
                     let step_converted = step.num.convert(&step.unit, &number.unit).0;
-                    let result = Self::round_with_step(number.num.0, step_converted, strategy);
+                    let result =
+                        Self::round_with_step(number.num.0, step_converted, strategy_str);
                     return Ok(Value::Dimension(SassNumber {
                         num: Number(result),
                         unit: number.unit.clone(),
@@ -709,46 +726,71 @@ impl SassCalculation {
         Self::verify_compatible_numbers(&args, options, span)?;
 
         let mut full_args = Vec::with_capacity(args.len() + 1);
-        if strategy != "nearest" {
-            full_args.push(CalculationArg::String(strategy.to_string()));
+        if let Some(s) = strategy {
+            full_args.push(CalculationArg::String(s));
         }
         full_args.extend(args);
         Ok(Self::unsimplified_calc(CalculationName::Round, full_args))
     }
 
     fn round_with_step(number: f64, step: f64, strategy: &str) -> f64 {
-        if step == 0.0 || number.is_infinite() {
+        if number.is_nan() || step.is_nan() || step == 0.0 {
             return f64::NAN;
         }
+        if number.is_infinite() {
+            // round(strategy, ±infinity, finite) = ±infinity
+            // round(strategy, ±infinity, ±infinity) = NaN
+            return if step.is_infinite() {
+                f64::NAN
+            } else {
+                number
+            };
+        }
         if step.is_infinite() {
+            // Rounding a finite number to a multiple of infinity.
+            // The multiples of infinity are: ..., -infinity, 0, infinity, ...
+            // So the "nearest" and "to-zero" result is 0 with appropriate sign.
             return match strategy {
-                "nearest" | "to-zero" => {
-                    if number.is_sign_positive() == step.is_sign_positive() || number == 0.0 {
-                        if number == 0.0 { number } else { 0.0 * number.signum() }
+                "nearest" | "to-zero" => 0.0_f64.copysign(number),
+                "up" => {
+                    if number > 0.0 {
+                        f64::INFINITY
                     } else {
-                        // result is -0 or 0 depending
-                        f64::NEG_INFINITY * number.signum()
+                        0.0_f64.copysign(number)
                     }
                 }
-                "up" => {
-                    if number > 0.0 { f64::INFINITY } else { 0.0_f64.copysign(number) }
-                }
                 "down" => {
-                    if number < 0.0 { f64::NEG_INFINITY } else { 0.0_f64.copysign(number) }
+                    if number < 0.0 {
+                        f64::NEG_INFINITY
+                    } else {
+                        0.0_f64.copysign(number)
+                    }
                 }
                 _ => f64::NAN,
             };
         }
-        if number.is_nan() || step.is_nan() {
-            return f64::NAN;
-        }
 
+        // CSS spec: negative step generally acts as abs(step), but for
+        // to-zero it reverses direction (toward zero becomes away from zero)
+        let negative_step = step < 0.0;
+        let step = step.abs();
         let div = number / step;
         match strategy {
             "nearest" => div.round() * step,
             "up" => div.ceil() * step,
             "down" => div.floor() * step,
-            "to-zero" => div.trunc() * step,
+            "to-zero" => {
+                if negative_step {
+                    // Away from zero: ceil for positive, floor for negative
+                    if div > 0.0 {
+                        div.ceil() * step
+                    } else {
+                        div.floor() * step
+                    }
+                } else {
+                    div.trunc() * step
+                }
+            }
             _ => f64::NAN,
         }
     }

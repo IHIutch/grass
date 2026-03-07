@@ -2897,28 +2897,24 @@ impl<'a> Visitor<'a> {
                 SassCalculation::calc_rem(args, self.options, span)
             }
             CalculationName::Round => {
-                // round() can have 1, 2, or 3 args
-                // With 3 args: first might be a strategy keyword
-                // With 1 arg: simple round to integer
-                // With 2 args: round(number, step)
-                let strategy = if args.len() == 3 {
-                    // Check if first arg is a strategy keyword
+                // round() can have 1-3 args. With 2-3 args, first might be a strategy keyword.
+                let strategy = if args.len() >= 2 {
                     let s = match &args[0] {
                         CalculationArg::String(s)
-                        | CalculationArg::Interpolation(s) => Some(s.clone()),
+                        | CalculationArg::Interpolation(s) => {
+                            let lower = s.to_ascii_lowercase();
+                            if matches!(lower.as_str(), "nearest" | "up" | "down" | "to-zero") {
+                                Some(lower)
+                            } else {
+                                None
+                            }
+                        }
                         _ => None,
                     };
-                    if let Some(s) = s {
-                        let s_lower = s.to_ascii_lowercase();
-                        if matches!(s_lower.as_str(), "nearest" | "up" | "down" | "to-zero") {
-                            args.remove(0);
-                            Some(s_lower)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
+                    if s.is_some() {
+                        args.remove(0);
                     }
+                    s
                 } else {
                     None
                 };
