@@ -638,11 +638,9 @@ impl<'a> Visitor<'a> {
         }
 
         let env = Environment::new();
-        let mut extension_store = ExtensionStore::new(self.empty_span);
 
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
-            mem::swap(&mut visitor.extender, &mut extension_store);
             let old_style_rule = visitor.style_rule_ignoring_at_root.take();
             let old_media_queries = visitor.media_queries.take();
             let old_declaration_name = visitor.declaration_name.take();
@@ -663,13 +661,7 @@ impl<'a> Visitor<'a> {
 
             visitor.visit_stylesheet(stylesheet)?;
 
-            // visitor.importer = old_importer;
-            // visitor.stylesheet = old_stylesheet;
-            // visitor.root = old_root;
             visitor.parent = old_parent;
-            // visitor.end_of_imports = old_end_of_imports;
-            // visitor.out_of_order_imports = old_out_of_order_imports;
-            mem::swap(&mut visitor.extender, &mut extension_store);
             visitor.style_rule_ignoring_at_root = old_style_rule;
             visitor.media_queries = old_media_queries;
             visitor.declaration_name = old_declaration_name;
@@ -690,8 +682,9 @@ impl<'a> Visitor<'a> {
             Ok(())
         })?;
 
-        extension_store.check_unsatisfied_extends()?;
-
+        // Extension store is shared with the root — unsatisfied extends are
+        // checked globally in finish(), matching dart-sass's _combineCss flow.
+        let extension_store = ExtensionStore::new(self.empty_span);
         let module = env.to_module(extension_store);
 
         self.modules.insert(url, Arc::clone(&module));
