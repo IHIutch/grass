@@ -33,7 +33,7 @@ use crate::{
     },
     selector::{
         ComplexSelectorComponent, ExtendRule, ExtendedSelector, ExtensionStore, SelectorList,
-        SelectorParser,
+        SelectorParser, SimpleSelector,
     },
     utils::{to_sentence, trim_ascii},
     value::{
@@ -157,6 +157,7 @@ pub struct Visitor<'a> {
     /// resolved relative to this path
     pub current_import_path: PathBuf,
     pub(crate) is_plain_css: bool,
+    plain_css_style_rule_depth: u32,
     pub(crate) modules: BTreeMap<PathBuf, Arc<RefCell<Module>>>,
     pub(crate) active_modules: BTreeSet<PathBuf>,
     css_tree: CssTree,
@@ -202,6 +203,7 @@ impl<'a> Visitor<'a> {
             current_import_path,
             configuration: Rc::new(RefCell::new(Configuration::empty())),
             is_plain_css: false,
+            plain_css_style_rule_depth: 0,
             import_nodes: Vec::new(),
             modules: BTreeMap::new(),
             active_modules: BTreeSet::new(),
@@ -216,7 +218,11 @@ impl<'a> Visitor<'a> {
     pub(crate) fn visit_stylesheet(&mut self, mut style_sheet: StyleSheet) -> SassResult<()> {
         self.active_modules.insert(style_sheet.url.clone());
         let was_in_plain_css = self.is_plain_css;
+        let old_plain_css_depth = self.plain_css_style_rule_depth;
         self.is_plain_css = style_sheet.is_plain_css;
+        if style_sheet.is_plain_css {
+            self.plain_css_style_rule_depth = 0;
+        }
         mem::swap(&mut self.current_import_path, &mut style_sheet.url);
 
         for stmt in style_sheet.body {
@@ -226,6 +232,7 @@ impl<'a> Visitor<'a> {
 
         mem::swap(&mut self.current_import_path, &mut style_sheet.url);
         self.is_plain_css = was_in_plain_css;
+        self.plain_css_style_rule_depth = old_plain_css_depth;
 
         self.active_modules.remove(&style_sheet.url);
 
@@ -535,11 +542,13 @@ impl<'a> Visitor<'a> {
 
         let children = supports_rule.body;
 
+        let nest_at_rule = self.is_plain_css && self.plain_css_style_rule_depth > 1;
+
         self.with_parent(
             css_supports_rule,
             true,
             |visitor| {
-                if !visitor.style_rule_exists() {
+                if !visitor.style_rule_exists() || nest_at_rule {
                     for stmt in children {
                         let result = visitor.visit_stmt(stmt)?;
                         debug_assert!(result.is_none());
@@ -574,7 +583,11 @@ impl<'a> Visitor<'a> {
 
                 Ok(())
             },
-            CssStmt::is_style_rule,
+            if nest_at_rule {
+                (|_: &CssStmt| false) as fn(&CssStmt) -> bool
+            } else {
+                CssStmt::is_style_rule as fn(&CssStmt) -> bool
+            },
         )?;
 
         Ok(())
@@ -1323,7 +1336,9 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<SelectorList> {
         let sel_toks = Lexer::new_from_string(selector_text, span);
 
-        SelectorParser::new(sel_toks, allows_parent, allows_placeholder, span).parse()
+        let mut parser = SelectorParser::new(sel_toks, allows_parent, allows_placeholder, span);
+        parser.plain_css = self.is_plain_css;
+        parser.parse()
     }
 
     fn visit_extend_rule(&mut self, extend_rule: AstExtendRule) -> SassResult<Option<Value>> {
@@ -1422,22 +1437,32 @@ impl<'a> Visitor<'a> {
         }
 
         let queries1 = self.visit_media_queries(media_rule.query, media_rule.query_span)?;
-        // todo: superfluous clone?
-        let queries2 = self.media_queries.clone();
-        let merged_queries = queries2
-            .as_ref()
-            .and_then(|queries2| Self::merge_media_queries(queries2, &queries1));
 
-        let merged_sources = match &merged_queries {
-            Some(merged_queries) if merged_queries.is_empty() => return Ok(None),
-            Some(..) => {
-                let mut set = IndexSet::new();
-                set.extend(self.media_query_sources.clone().unwrap());
-                set.extend(self.media_queries.clone().unwrap());
-                set.extend(queries1.clone());
-                set
-            }
-            None => IndexSet::new(),
+        let nest_at_rule = self.is_plain_css && self.plain_css_style_rule_depth > 1;
+
+        // In nested CSS, don't merge media queries — they stay as written
+        let (merged_queries, merged_sources) = if nest_at_rule {
+            (None, IndexSet::new())
+        } else {
+            // todo: superfluous clone?
+            let queries2 = self.media_queries.clone();
+            let merged = queries2
+                .as_ref()
+                .and_then(|queries2| Self::merge_media_queries(queries2, &queries1));
+
+            let sources = match &merged {
+                Some(merged_queries) if merged_queries.is_empty() => return Ok(None),
+                Some(..) => {
+                    let mut set = IndexSet::new();
+                    set.extend(self.media_query_sources.clone().unwrap());
+                    set.extend(self.media_queries.clone().unwrap());
+                    set.extend(queries1.clone());
+                    set
+                }
+                None => IndexSet::new(),
+            };
+
+            (merged, sources)
         };
 
         let children = media_rule.body;
@@ -1460,7 +1485,7 @@ impl<'a> Visitor<'a> {
                     Some(merged_queries.unwrap_or(queries1)),
                     Some(merged_sources.clone()),
                     |visitor| {
-                        if !visitor.style_rule_exists() {
+                        if !visitor.style_rule_exists() || nest_at_rule {
                             for stmt in children {
                                 let result = visitor.visit_stmt(stmt)?;
                                 debug_assert!(result.is_none());
@@ -1497,17 +1522,20 @@ impl<'a> Visitor<'a> {
                     },
                 )
             },
-            |stmt| match stmt {
-                CssStmt::RuleSet { .. } => true,
-                // todo: node.queries.every(mergedSources.contains))
-                CssStmt::Media(media_rule, ..) => {
-                    !merged_sources.is_empty()
-                        && media_rule
-                            .query
-                            .iter()
-                            .all(|query| merged_sources.contains(query))
+            {
+                let merged_sources = merged_sources.clone();
+                move |stmt: &CssStmt| match stmt {
+                    CssStmt::RuleSet { .. } => !nest_at_rule,
+                    // todo: node.queries.every(mergedSources.contains))
+                    CssStmt::Media(media_rule, ..) => {
+                        !merged_sources.is_empty()
+                            && media_rule
+                                .query
+                                .iter()
+                                .all(|query| merged_sources.contains(query))
+                    }
+                    _ => false,
                 }
-                _ => false,
             },
         )?;
 
@@ -1570,6 +1598,8 @@ impl<'a> Visitor<'a> {
             false,
         );
 
+        let nest_at_rule = self.is_plain_css && self.plain_css_style_rule_depth > 1;
+
         self.with_parent(
             stmt,
             true,
@@ -1577,6 +1607,7 @@ impl<'a> Visitor<'a> {
                 if children.is_empty()
                     || !visitor.style_rule_exists()
                     || visitor.flags.in_keyframes()
+                    || nest_at_rule
                 {
                     for stmt in children {
                         let result = visitor.visit_stmt(stmt)?;
@@ -1612,7 +1643,11 @@ impl<'a> Visitor<'a> {
 
                 Ok(())
             },
-            CssStmt::is_style_rule,
+            if nest_at_rule {
+                (|_: &CssStmt| false) as fn(&CssStmt) -> bool
+            } else {
+                CssStmt::is_style_rule as fn(&CssStmt) -> bool
+            },
         )?;
 
         self.flags.set(ContextFlags::IN_KEYFRAMES, was_in_keyframes);
@@ -3278,18 +3313,46 @@ impl<'a> Visitor<'a> {
 
         let mut parsed_selector = self.parse_selector_from_string(
             &selector_text,
-            !self.is_plain_css,
+            true, // allows_parent: always true (CSS nesting uses &)
             !self.is_plain_css,
             ruleset.selector_span,
         )?;
 
-        parsed_selector = parsed_selector.resolve_parent_selectors(
-            self.style_rule_ignoring_at_root
-                .as_ref()
-                // todo: this clone should be superfluous(?)
-                .map(|x| x.as_selector_list().clone()),
-            !self.flags.at_root_excluding_style_rule(),
-        )?;
+        // In plain CSS, reject & with suffix (&b) but allow & alone, &.class, .b&, etc.
+        if self.is_plain_css {
+            for complex in &parsed_selector.components {
+                for component in &complex.components {
+                    if let ComplexSelectorComponent::Compound(compound) = component {
+                        for simple in &compound.components {
+                            if let SimpleSelector::Parent(Some(_)) = simple {
+                                return Err((
+                                    "Parent selectors can't have suffixes in plain CSS.",
+                                    ruleset.selector_span,
+                                )
+                                    .into());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // In plain CSS, skip parent resolution for nested rules (depth > 0)
+        // and for selectors containing & at any depth. At depth 0 without &,
+        // still resolve to handle @import context (e.g., a {@import "plain.css"}).
+        let skip_resolution = self.is_plain_css
+            && (self.plain_css_style_rule_depth > 0
+                || parsed_selector.contains_parent_selector());
+
+        if !skip_resolution {
+            parsed_selector = parsed_selector.resolve_parent_selectors(
+                self.style_rule_ignoring_at_root
+                    .as_ref()
+                    // todo: this clone should be superfluous(?)
+                    .map(|x| x.as_selector_list().clone()),
+                !self.flags.at_root_excluding_style_rule(),
+            )?;
+        }
 
         // todo: _mediaQueries
         let selector = self
@@ -3310,6 +3373,14 @@ impl<'a> Visitor<'a> {
         let old_style_rule_ignoring_at_root = self.style_rule_ignoring_at_root.take();
         self.style_rule_ignoring_at_root = Some(selector);
 
+        if self.is_plain_css {
+            self.plain_css_style_rule_depth += 1;
+        }
+
+        // When resolution was skipped, the selector stays as-is, so the rule
+        // must be a child of its parent (CSS nesting), not walked up.
+        let nest_in_parent = skip_resolution;
+
         self.with_parent(
             rule,
             true,
@@ -3321,8 +3392,16 @@ impl<'a> Visitor<'a> {
 
                 Ok(())
             },
-            CssStmt::is_style_rule,
+            if nest_in_parent {
+                (|_: &CssStmt| false) as fn(&CssStmt) -> bool
+            } else {
+                CssStmt::is_style_rule as fn(&CssStmt) -> bool
+            },
         )?;
+
+        if self.is_plain_css {
+            self.plain_css_style_rule_depth -= 1;
+        }
 
         self.style_rule_ignoring_at_root = old_style_rule_ignoring_at_root;
         self.flags.set(

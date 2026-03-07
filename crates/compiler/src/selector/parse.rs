@@ -40,6 +40,10 @@ pub(crate) struct SelectorParser {
     /// Whether this parser allows placeholder selectors beginning with `%`.
     allows_placeholder: bool,
 
+    /// Whether `&` can appear at any position in a compound selector (CSS nesting).
+    /// When false, `&` must be at the beginning of a compound selector (SCSS behavior).
+    pub(crate) plain_css: bool,
+
     pub toks: Lexer,
 
     span: Span,
@@ -61,6 +65,7 @@ impl SelectorParser {
             toks,
             allows_parent,
             allows_placeholder,
+            plain_css: false,
             span,
         }
     }
@@ -150,8 +155,10 @@ impl SelectorParser {
                     components.push(ComplexSelectorComponent::Compound(
                         self.parse_compound_selector()?,
                     ));
-                    if let Some(Token { kind: '&', .. }) = self.toks.peek() {
-                        return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());
+                    if !self.plain_css {
+                        if let Some(Token { kind: '&', .. }) = self.toks.peek() {
+                            return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());
+                        }
                     }
                 }
                 Some(..) => {
@@ -161,8 +168,10 @@ impl SelectorParser {
                     components.push(ComplexSelectorComponent::Compound(
                         self.parse_compound_selector()?,
                     ));
-                    if let Some(Token { kind: '&', .. }) = self.toks.peek() {
-                        return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());
+                    if !self.plain_css {
+                        if let Some(Token { kind: '&', .. }) = self.toks.peek() {
+                            return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());
+                        }
                     }
                 }
                 None => break,
@@ -180,11 +189,14 @@ impl SelectorParser {
         let mut components = vec![self.parse_simple_selector(None)?];
 
         while let Some(Token { kind, .. }) = self.toks.peek() {
-            if !is_simple_selector_start(kind) {
+            if kind == '&' && self.plain_css {
+                // Allow & at any position in a compound selector (CSS nesting)
+                components.push(self.parse_simple_selector(None)?);
+            } else if is_simple_selector_start(kind) {
+                components.push(self.parse_simple_selector(Some(false))?);
+            } else {
                 break;
             }
-
-            components.push(self.parse_simple_selector(Some(false))?);
         }
 
         Ok(CompoundSelector { components })

@@ -249,3 +249,71 @@ error!(
     "Error: Nested declarations aren't allowed in plain CSS.",
     grass::Options::default().input_syntax(InputSyntax::Css)
 );
+
+// CSS nesting tests
+test!(
+    css_nesting_one_level,
+    "a {b {c: d}}",
+    "a {\n  b {\n    c: d;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_two_levels,
+    "a {b {c {d: e}}}",
+    "a {\n  b {\n    c {\n      d: e;\n    }\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_parent_only,
+    "a {& {b: c}}",
+    "a {\n  & {\n    b: c;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_parent_start,
+    "a {&.b {c: d}}",
+    "a {\n  &.b {\n    c: d;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_parent_mid,
+    "a {.b&.c {d: e}}",
+    "a {\n  .b&.c {\n    d: e;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_parent_end,
+    "a {.b& {c: d}}",
+    "a {\n  .b& {\n    c: d;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_with_declaration_before,
+    "a {\n  b: c;\n  d {e: f}\n}",
+    "a {\n  b: c;\n  d {\n    e: f;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_with_declaration_after,
+    "a {\n  b {c: d}\n  e: f;\n}",
+    "a {\n  b {\n    c: d;\n  }\n  e: f;\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_combinator,
+    "a {+ b {c: d}}",
+    "a {\n  + b {\n    c: d;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+test!(
+    css_nesting_multiple_complex,
+    "a, b {c, d {e: f}}",
+    "a, b {\n  c, d {\n    e: f;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);
+error!(
+    css_nesting_parent_suffix_error,
+    "a {&b {c: d}}",
+    "Error: Parent selectors can't have suffixes in plain CSS.",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);

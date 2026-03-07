@@ -222,7 +222,12 @@ impl<'a> Serializer<'a> {
                 self.buffer.extend_from_slice(name.ident.as_bytes());
             }
             SimpleSelector::Attribute(attr) => write!(&mut self.buffer, "{}", attr).unwrap(),
-            SimpleSelector::Parent(..) => unreachable!("It should not be possible to format `&`."),
+            SimpleSelector::Parent(suffix) => {
+                self.buffer.push(b'&');
+                if let Some(s) = suffix {
+                    self.buffer.extend_from_slice(s.as_bytes());
+                }
+            }
         }
     }
 

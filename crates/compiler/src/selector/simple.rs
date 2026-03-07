@@ -82,7 +82,13 @@ impl fmt::Display for SimpleSelector {
             Self::Pseudo(pseudo) => write!(f, "{}", pseudo),
             Self::Type(name) => write!(f, "{}", name),
             Self::Attribute(attr) => write!(f, "{}", attr),
-            Self::Parent(..) => unreachable!("It should not be possible to format `&`."),
+            Self::Parent(suffix) => {
+                write!(f, "&")?;
+                if let Some(s) = suffix {
+                    write!(f, "{}", s)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -129,7 +135,7 @@ impl SimpleSelector {
                 name != "not" && selector.as_ref().is_some_and(|sel| sel.is_invisible())
             }
             Self::Placeholder(..) => true,
-            Self::Parent(..) => unreachable!("parent selectors should be resolved at this point"),
+            Self::Parent(..) => false,
         }
     }
 
