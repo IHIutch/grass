@@ -449,7 +449,9 @@ impl Environment {
                     }
                 }
 
-                self.global_modules.push(module);
+                if !self.global_modules.iter().any(|m| Arc::ptr_eq(m, &module)) {
+                    self.global_modules.push(module);
+                }
             }
         }
 

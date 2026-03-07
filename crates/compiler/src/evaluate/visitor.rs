@@ -600,10 +600,13 @@ impl<'a> Visitor<'a> {
         // todo: different errors based on this
         _names_in_errors: bool,
     ) -> SassResult<Arc<RefCell<Module>>> {
-        let url = stylesheet.url.clone();
+        let url = self
+            .options
+            .fs
+            .canonicalize(&stylesheet.url)
+            .unwrap_or_else(|_| stylesheet.url.clone());
 
-        // todo: use canonical url for modules
-        if let Some(already_loaded) = self.modules.get(&stylesheet.url) {
+        if let Some(already_loaded) = self.modules.get(&url) {
             let current_configuration =
                 configuration.unwrap_or_else(|| Rc::clone(&self.configuration));
 
