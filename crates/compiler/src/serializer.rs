@@ -423,8 +423,7 @@ impl<'a> Serializer<'a> {
     }
 
     /// Write RGB color with fractional channel values (from space conversions).
-    fn write_rgb_fractional(&mut self, color: &Color) {
-        let raw = color.raw_channels();
+    fn write_rgb_fractional(&mut self, color: &Color, rgb: &[f64; 3]) {
         let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
 
         if is_opaque {
@@ -433,11 +432,11 @@ impl<'a> Serializer<'a> {
             self.buffer.extend_from_slice(b"rgba(");
         }
 
-        self.write_float(raw[0].unwrap_or(0.0));
+        self.write_float(rgb[0]);
         self.buffer.extend_from_slice(b", ");
-        self.write_float(raw[1].unwrap_or(0.0));
+        self.write_float(rgb[1]);
         self.buffer.extend_from_slice(b", ");
-        self.write_float(raw[2].unwrap_or(0.0));
+        self.write_float(rgb[2]);
 
         if !is_opaque {
             self.buffer.extend_from_slice(b", ");
@@ -591,22 +590,32 @@ impl<'a> Serializer<'a> {
             return;
         }
 
-        // Check if RGB channels have fractional values (from space conversions)
-        // Only applies when the color is stored in RGB space
-        if color.color_space() == ColorSpace::Rgb {
-            let raw = color.raw_channels();
-            let has_fractional = raw.iter().any(|c| {
-                if let Some(v) = c {
-                    let rounded = v.round();
-                    (v - rounded).abs() > 1e-10
-                } else {
-                    false
-                }
+        // Check raw RGB channels for out-of-gamut or fractional values.
+        {
+            let rgb = color.to_rgb_channels_raw();
+            let out_of_gamut = rgb.iter().any(|v| *v < -0.0001 || *v > 255.0001);
+            if out_of_gamut {
+                self.write_hsl(color);
+                return;
+            }
+            let has_fractional = rgb.iter().any(|v| {
+                let rounded = v.round();
+                (v - rounded).abs() > 1e-10
             });
-
             if has_fractional {
-                // Use rgb() with fractional values
-                self.write_rgb_fractional(color);
+                match color.color_space() {
+                    // HWB always serializes fractional RGB as hsl()
+                    ColorSpace::Hwb => self.write_hsl(color),
+                    // HSL with explicit Hsl format (from hsl() literal) → hsl()
+                    // HSL with Infer format (from adjust/change) → rgb() with fractional values
+                    ColorSpace::Hsl if color.format == ColorFormat::Hsl => self.write_hsl(color),
+                    _ => self.write_rgb_fractional(color, &rgb),
+                }
+                return;
+            }
+            // HWB-stored colors with non-opaque alpha always serialize as hsla()
+            if color.color_space() == ColorSpace::Hwb && !fuzzy_equals(color.alpha().0, 1.0) {
+                self.write_hsl(color);
                 return;
             }
         }

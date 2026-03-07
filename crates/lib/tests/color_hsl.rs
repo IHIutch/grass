@@ -107,32 +107,32 @@ test!(
 test!(
     adjust_hue_positive,
     "a {\n  color: adjust-hue(hsl(120, 30%, 90%), 60deg);\n}\n",
-    "a {\n  color: #deeded;\n}\n"
+    "a {\n  color: hsl(180, 30%, 90%);\n}\n"
 );
 test!(
     adjust_hue_negative,
     "a {\n  color: adjust-hue(hsl(120, 30%, 90%), -60deg);\n}\n",
-    "a {\n  color: #ededde;\n}\n"
+    "a {\n  color: hsl(60, 30%, 90%);\n}\n"
 );
 test!(
     adjust_hue_3_hex,
     "a {\n  color: adjust-hue(#811, 45deg);\n}\n",
-    "a {\n  color: #886a11;\n}\n"
+    "a {\n  color: rgb(136, 106.25, 17);\n}\n"
 );
 test!(
     adjust_hue_named_args,
     "a {\n  color: adjust-hue($color: hsl(120, 30%, 90%), $degrees: 60deg);\n}\n",
-    "a {\n  color: #deeded;\n}\n"
+    "a {\n  color: hsl(180, 30%, 90%);\n}\n"
 );
 test!(
     lighten_named_args,
     "a {\n  color: lighten($color: hsl(0, 0%, 0%), $amount: 30%);\n}\n",
-    "a {\n  color: #4d4d4d;\n}\n"
+    "a {\n  color: hsl(0, 0%, 30%);\n}\n"
 );
 test!(
     lighten_basic,
     "a {\n  color: lighten(hsl(0, 0%, 0%), 30%);\n}\n",
-    "a {\n  color: #4d4d4d;\n}\n"
+    "a {\n  color: hsl(0, 0%, 30%);\n}\n"
 );
 test!(
     lighten_3_hex,
@@ -146,14 +146,14 @@ test!(
     "a {
         color: lighten(crimson, 10%);
     }",
-    "a {\n  color: #ed365b;\n}\n"
+    "a {\n  color: rgb(236.75, 54.25, 90.75);\n}\n"
 );
 test!(
     lighten_no_percent,
     "a {
         color: lighten(crimson, 10);
     }",
-    "a {\n  color: #ed365b;\n}\n"
+    "a {\n  color: rgb(236.75, 54.25, 90.75);\n}\n"
 );
 test!(
     channels_after_lighten,
@@ -178,12 +178,12 @@ error!(
 test!(
     darken_named_args,
     "a {\n  color: darken($color: hsl(25, 100%, 80%), $amount: 30%);\n}\n",
-    "a {\n  color: #ff6a00;\n}\n"
+    "a {\n  color: hsl(25, 100%, 50%);\n}\n"
 );
 test!(
     darken_basic,
     "a {\n  color: darken(hsl(25, 100%, 80%), 30%);\n}\n",
-    "a {\n  color: #ff6a00;\n}\n"
+    "a {\n  color: hsl(25, 100%, 50%);\n}\n"
 );
 test!(
     darken_3_hex,
@@ -195,7 +195,7 @@ test!(
 test!(
     saturate_named_args,
     "a {\n  color: saturate($color: hsl(25, 100%, 80%), $amount: 30%);\n}\n",
-    "a {\n  color: #ffc499;\n}\n"
+    "a {\n  color: hsl(25, 100%, 80%);\n}\n"
 );
 test!(
     saturation_cannot_go_above_100,
@@ -210,32 +210,32 @@ test!(
 test!(
     saturate_basic,
     "a {\n  color: saturate(hsl(120, 30%, 90%), 20%);\n}\n",
-    "a {\n  color: #d9f2d9;\n}\n"
+    "a {\n  color: hsl(120, 50%, 90%);\n}\n"
 );
 test!(
     saturate_3_hex,
     "a {\n  color: saturate(#855, 20%);\n}\n",
-    "a {\n  color: #9e3f3f;\n}\n"
+    "a {\n  color: rgb(158.1, 62.9, 62.9);\n}\n"
 );
 test!(
     desaturate_named_args,
     "a {\n  color: desaturate($color: hsl(25, 100%, 80%), $amount: 30%);\n}\n",
-    "a {\n  color: #f0c6a8;\n}\n"
+    "a {\n  color: hsl(25, 70%, 80%);\n}\n"
 );
 test!(
     desaturate_basic,
     "a {\n  color: desaturate(hsl(120, 30%, 90%), 20%);\n}\n",
-    "a {\n  color: #e3e8e3;\n}\n"
+    "a {\n  color: hsl(120, 10%, 90%);\n}\n"
 );
 test!(
     desaturate_3_hex,
     "a {\n  color: desaturate(#855, 20%);\n}\n",
-    "a {\n  color: #726b6b;\n}\n"
+    "a {\n  color: rgb(113.9, 107.1, 107.1);\n}\n"
 );
 test!(
     desaturate_correctly_calculates_hue,
     "a {\n  color: desaturate(plum, 14%);\n}\n",
-    "a {\n  color: #d4a9d4;\n}\n"
+    "a {\n  color: rgb(211.97, 169.03, 211.97);\n}\n"
 );
 test!(
     negative_values_in_hsl,
@@ -300,7 +300,7 @@ test!(
 test!(
     adjust_hue_nan,
     "a {\n  color: adjust-hue(hsla(200, 50%, 50%), (0/0));\n}\n",
-    "a {\n  color: #404040;\n}\n"
+    "a {\n  color: hsl(NaN, 50%, 50%);\n}\n"
 );
 test!(
     adjust_hue_nan_get_hue,
@@ -334,12 +334,12 @@ test!(
 test!(
     darken_all_channels_equal,
     "a {\n  color: darken(#fff, 10);\n}\n",
-    "a {\n  color: #e6e6e6;\n}\n"
+    "a {\n  color: rgb(229.5, 229.5, 229.5);\n}\n"
 );
 test!(
     darken_green_channel_max,
     "a {\n  color: darken(rgb(50, 200, 100), 10);\n}\n",
-    "a {\n  color: #289f50;\n}\n"
+    "a {\n  color: rgb(39.8, 159.2, 79.6);\n}\n"
 );
 test!(
     hue_adjust_color_over_360,
@@ -349,7 +349,7 @@ test!(
 test!(
     adjust_hue_rad,
     "a {\n  color: adjust-hue(red, 60rad);\n}\n",
-    "a {\n  color: #00b4ff;\n}\n"
+    "a {\n  color: rgb(0, 179.576224164, 255);\n}\n"
 );
 test!(
     hsl_hue_rad,

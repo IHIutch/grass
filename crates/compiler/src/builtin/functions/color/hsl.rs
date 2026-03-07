@@ -10,6 +10,27 @@ use super::{
     ParsedChannels,
 };
 
+/// Parse an optional $space argument from the argument list.
+fn parse_space_arg(args: &mut ArgumentResult, pos: usize, span: Span) -> SassResult<Option<ColorSpace>> {
+    match args.get(pos, "space") {
+        Some(space_val) => match &space_val.node {
+            Value::String(s, _) => {
+                let space = ColorSpace::from_name(s).ok_or_else(|| {
+                    (format!("$space: Unknown color space \"{}\".", s), span)
+                })?;
+                Ok(Some(space))
+            }
+            Value::Null => Ok(None),
+            v => Err((
+                format!("$space: {} is not a string.", v.inspect(span)?),
+                span,
+            )
+                .into()),
+        },
+        None => Ok(None),
+    }
+}
+
 fn hsl_3_args(
     name: &'static str,
     mut args: ArgumentResult,
@@ -284,16 +305,31 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 }
 
 pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
-    args.max_args(1)?;
+    args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
-    Ok(Value::Color(Arc::new(color.complement())))
+        .assert_color_with_name("color", span)?;
+
+    let target_space = parse_space_arg(&mut args, 1, span)?;
+
+    if let Some(space) = target_space {
+        Ok(Value::Color(Arc::new(color.complement_in_space(space))))
+    } else if !color.color_space().is_legacy() {
+        Err((
+            "$color: To use color.complement() with a non-legacy color, you must provide a $space.",
+            span,
+        )
+            .into())
+    } else {
+        Ok(Value::Color(Arc::new(color.complement())))
+    }
 }
 
 pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
-    args.max_args(2)?;
+    args.max_args(3)?;
     let span = args.span();
+
     let weight = args
         .get(1, "weight")
         .map::<SassResult<_>, _>(|weight| {
@@ -307,16 +343,34 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
         })
         .transpose()?;
 
+    let target_space = parse_space_arg(&mut args, 2, span)?;
+
     match args.get_err(0, "color")? {
-        Value::Color(c) => Ok(Value::Color(Arc::new(
-            c.invert(weight.unwrap_or_else(Number::one)),
-        ))),
+        Value::Color(c) => {
+            if let Some(space) = target_space {
+                Ok(Value::Color(Arc::new(
+                    c.invert_in_space(space, weight.unwrap_or_else(Number::one)),
+                )))
+            } else if !c.color_space().is_legacy() {
+                // Modern colors require $space
+                // TODO: include the actual color value in the error message
+                Err((
+                    "$color: To use color.invert() with a non-legacy color, you must provide a $space.",
+                    span,
+                )
+                    .into())
+            } else {
+                Ok(Value::Color(Arc::new(
+                    c.invert(weight.unwrap_or_else(Number::one)),
+                )))
+            }
+        }
         Value::Dimension(SassNumber {
             num: n,
             unit: u,
             as_slash: _,
         }) => {
-            if weight.is_some() {
+            if weight.is_some() || target_space.is_some() {
                 return Err((
                     "Only one argument may be passed to the plain-CSS invert() function.",
                     args.span(),

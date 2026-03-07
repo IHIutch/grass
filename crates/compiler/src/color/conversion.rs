@@ -1,3 +1,6 @@
+// Color space conversion matrices require full-precision constants from specifications.
+#![allow(clippy::excessive_precision)]
+
 //! Color space conversion functions.
 //!
 //! All conversions go through a common linear space (linear sRGB or XYZ-D65)

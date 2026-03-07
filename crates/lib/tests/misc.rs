@@ -85,7 +85,7 @@ test!(
 test!(
     no_space_between_colon_and_style_variable,
     "$base-color: #036;\na {\n  color:lighten($base-color, 5%);\n}",
-    "a {\n  color: #004080;\n}\n"
+    "a {\n  color: rgb(0, 63.75, 127.5);\n}\n"
 );
 test!(
     semicolon_after_closing_brace,

@@ -273,12 +273,12 @@ test!(
 test!(
     grayscale_1,
     "a {\n  color: grayscale(plum);\n}\n",
-    "a {\n  color: #bfbfbf;\n}\n"
+    "a {\n  color: rgb(190.5, 190.5, 190.5);\n}\n"
 );
 test!(
     grayscale_2,
     "a {\n  color: grayscale(red);\n}\n",
-    "a {\n  color: gray;\n}\n"
+    "a {\n  color: rgb(127.5, 127.5, 127.5);\n}\n"
 );
 test!(
     grayscale_number,
@@ -328,7 +328,7 @@ test!(
 test!(
     change_color_lum_alpha,
     "a {\n  color: change-color(hsl(25, 100%, 80%), $lightness: 40%, $alpha: 0.8);\n}\n",
-    "a {\n  color: rgba(204, 85, 0, 0.8);\n}\n"
+    "a {\n  color: hsla(25, 100%, 40%, 0.8);\n}\n"
 );
 test!(
     adjust_color_blue,
@@ -343,17 +343,17 @@ test!(
 test!(
     adjust_color_lum_alpha,
     "a {\n  color: adjust-color(hsl(25, 100%, 80%), $lightness: -30%, $alpha: -0.4);\n}\n",
-    "a {\n  color: rgba(255, 106, 0, 0.6);\n}\n"
+    "a {\n  color: hsla(25, 100%, 50%, 0.6);\n}\n"
 );
 test!(
     scale_color_lightness,
     "a {\n  color: scale-color(hsl(120, 70%, 80%), $lightness: 50%);\n}\n",
-    "a {\n  color: #d4f7d4;\n}\n"
+    "a {\n  color: hsl(120, 70%, 90%);\n}\n"
 );
 test!(
     scale_color_neg_lightness_and_pos_saturation,
     "a {\n  color: scale-color(turquoise, $saturation: 24%, $lightness: -48%);\n}\n",
-    "a {\n  color: #10867a;\n}\n"
+    "a {\n  color: rgb(15.8934486486, 133.8665513514, 122.0692410811);\n}\n"
 );
 error!(
     scale_color_named_arg_hue,
@@ -367,12 +367,12 @@ test!(
 test!(
     change_color_named_arg_hue,
     "a {\n  color: change-color(blue, $hue: 150);\n}\n",
-    "a {\n  color: #00ff80;\n}\n"
+    "a {\n  color: rgb(0, 255, 127.5);\n}\n"
 );
 test!(
     adjust_color_named_arg_hue,
     "a {\n  color: adjust-color(blue, $hue: 150);\n}\n",
-    "a {\n  color: #ff8000;\n}\n"
+    "a {\n  color: rgb(255, 127.5, 0);\n}\n"
 );
 test!(
     change_color_negative_hue,
@@ -382,7 +382,7 @@ test!(
 test!(
     scale_color_alpha,
     "a {\n  color: scale-color(hsl(200, 70%, 80%), $saturation: -90%, $alpha: -30%);\n}\n",
-    "a {\n  color: rgba(200, 205, 208, 0.7);\n}\n"
+    "a {\n  color: hsla(200, 7%, 80%, 0.7);\n}\n"
 );
 test!(
     scale_color_alpha_over_1,
@@ -441,7 +441,7 @@ test!(
   color: change-color(hsl(25, 100%, 80%), $lightness: 40%, $alpha: 0.8);
 }
 ",
-    "p {\n  color: #102005;\n  color: rgba(16, 32, 48, 0.325);\n  color: #782005;\n  color: rgba(204, 85, 0, 0.8);\n}\n"
+    "p {\n  color: #102005;\n  color: rgba(16, 32, 48, 0.325);\n  color: #782005;\n  color: hsla(25, 100%, 40%, 0.8);\n}\n"
 );
 test!(
     transparent_from_function,
@@ -626,7 +626,7 @@ test!(
         color: blue(change-color(red, $lightness: 95%));
         color: green(change-color(red, $lightness: 95%));
     }",
-    "a {\n  color: 0deg;\n  color: 100%;\n  color: 50%;\n  color: #ffe6e6;\n  color: 255;\n  color: 230;\n  color: 230;\n}\n"
+    "a {\n  color: 0deg;\n  color: 100%;\n  color: 50%;\n  color: rgb(255, 229.5, 229.5);\n  color: 255;\n  color: 229;\n  color: 229;\n}\n"
 );
 test!(
     slash_list_alpha,
@@ -702,7 +702,7 @@ test!(
 test!(
     change_color_hwb_hue,
     "a {\n  color: change-color(red, $whiteness: 50%, $hue: 230);\n}\n",
-    "a {\n  color: #8095ff;\n}\n"
+    "a {\n  color: rgb(127.5, 148.75, 255);\n}\n"
 );
 test!(
     aqua_alias,

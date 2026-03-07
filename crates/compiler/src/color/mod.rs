@@ -70,7 +70,21 @@ impl Eq for Color {}
 impl Color {
     /// Get the RGB channel values [red, green, blue] in 0-255 range.
     /// Converts from native space if necessary.
-    fn to_rgb_channels(&self) -> [f64; 3] {
+    pub(crate) fn to_rgb_channels(&self) -> [f64; 3] {
+        let raw = self.to_rgb_channels_raw();
+        match self.space {
+            ColorSpace::Rgb => raw,
+            ColorSpace::Hsl | ColorSpace::Hwb => [
+                fuzzy_round(raw[0]),
+                fuzzy_round(raw[1]),
+                fuzzy_round(raw[2]),
+            ],
+            _ => raw,
+        }
+    }
+
+    /// Raw RGB channel values without rounding, for out-of-gamut/fractional detection.
+    pub(crate) fn to_rgb_channels_raw(&self) -> [f64; 3] {
         let c0 = self.channels[0].unwrap_or(0.0);
         let c1 = self.channels[1].unwrap_or(0.0);
         let c2 = self.channels[2].unwrap_or(0.0);
@@ -79,19 +93,11 @@ impl Color {
             ColorSpace::Rgb => [c0, c1, c2],
             ColorSpace::Hsl => {
                 let srgb = conversion::hsl_to_srgb(c0, c1, c2);
-                [
-                    fuzzy_round(srgb[0] * 255.0),
-                    fuzzy_round(srgb[1] * 255.0),
-                    fuzzy_round(srgb[2] * 255.0),
-                ]
+                [srgb[0] * 255.0, srgb[1] * 255.0, srgb[2] * 255.0]
             }
             ColorSpace::Hwb => {
                 let srgb = conversion::hwb_to_srgb(c0, c1, c2);
-                [
-                    fuzzy_round(srgb[0] * 255.0),
-                    fuzzy_round(srgb[1] * 255.0),
-                    fuzzy_round(srgb[2] * 255.0),
-                ]
+                [srgb[0] * 255.0, srgb[1] * 255.0, srgb[2] * 255.0]
             }
             _ => {
                 // Modern spaces: convert through XYZ to sRGB, scale to 0-255
@@ -237,8 +243,15 @@ impl Color {
 
     pub fn from_hwb(hue: Number, white: Number, black: Number, alpha: Number) -> Color {
         let h = hue.rem_euclid(360.0);
-        let w = white.0 / 100.0;
-        let b = black.0 / 100.0;
+        let mut w = white.0 / 100.0;
+        let mut b = black.0 / 100.0;
+
+        // When whiteness + blackness > 1, normalize proportionally (CSS Color 4 spec)
+        let sum = w + b;
+        if sum > 1.0 {
+            w /= sum;
+            b /= sum;
+        }
 
         Color {
             space: ColorSpace::Hwb,
@@ -285,6 +298,30 @@ impl Color {
             self.blue() * weight1 + other.blue() * weight2,
             self.alpha() * weight + other.alpha() * (Number::one() - weight),
         )
+    }
+
+    /// Simple linear interpolation mix in a given color space.
+    /// Both colors must already be in the target space.
+    /// weight is the proportion of self (1.0 = 100% self, 0.0 = 100% other).
+    fn mix_in_space(&self, other: &Color, weight: Number, space: ColorSpace) -> Color {
+        let w1 = weight.0;
+        let w2 = 1.0 - w1;
+
+        let channels: [Option<f64>; 3] = std::array::from_fn(|i| {
+            let v1 = self.channels[i].unwrap_or(0.0);
+            let v2 = other.channels[i].unwrap_or(0.0);
+            Some(v1 * w1 + v2 * w2)
+        });
+
+        let a1 = self.alpha.unwrap_or(1.0);
+        let a2 = other.alpha.unwrap_or(1.0);
+
+        Color {
+            space,
+            channels,
+            alpha: Some(a1 * w1 + a2 * w2),
+            format: ColorFormat::Infer,
+        }
     }
 }
 
@@ -396,29 +433,47 @@ impl Color {
         (hue % Number(360.0), saturation, lightness, self.alpha())
     }
 
+    /// If this color was created from an HSL function call, preserve that format.
+    fn hsl_format_if_preserved(&self) -> ColorFormat {
+        match &self.format {
+            ColorFormat::Hsl => ColorFormat::Hsl,
+            _ => ColorFormat::Infer,
+        }
+    }
+
     pub fn adjust_hue(&self, degrees: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        Color::from_hsla(hue + degrees, saturation, luminance, alpha)
+        let mut c = Color::from_hsla(hue + degrees, saturation, luminance, alpha);
+        c.format = self.hsl_format_if_preserved();
+        c
     }
 
     pub fn lighten(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        Color::from_hsla(hue, saturation, luminance + amount, alpha)
+        let mut c = Color::from_hsla(hue, saturation, luminance + amount, alpha);
+        c.format = self.hsl_format_if_preserved();
+        c
     }
 
     pub fn darken(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        Color::from_hsla(hue, saturation, luminance - amount, alpha)
+        let mut c = Color::from_hsla(hue, saturation, luminance - amount, alpha);
+        c.format = self.hsl_format_if_preserved();
+        c
     }
 
     pub fn saturate(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        Color::from_hsla(hue, (saturation + amount).clamp(0.0, 1.0), luminance, alpha)
+        let mut c = Color::from_hsla(hue, (saturation + amount).clamp(0.0, 1.0), luminance, alpha);
+        c.format = self.hsl_format_if_preserved();
+        c
     }
 
     pub fn desaturate(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        Color::from_hsla(hue, (saturation - amount).clamp(0.0, 1.0), luminance, alpha)
+        let mut c = Color::from_hsla(hue, (saturation - amount).clamp(0.0, 1.0), luminance, alpha);
+        c.format = self.hsl_format_if_preserved();
+        c
     }
 
     pub fn invert(&self, weight: Number) -> Self {
@@ -441,9 +496,94 @@ impl Color {
         inverse.mix(self, weight)
     }
 
+    /// Invert a color in a given color space.
+    ///
+    /// Channel inversion rules:
+    /// - Hue (polar): rotate by 180°
+    /// - Chroma/saturation: unchanged (magnitude, not position)
+    /// - HWB whiteness/blackness: swap with each other
+    /// - All other channels: reflect around midpoint (max + min - value)
+    pub fn invert_in_space(&self, space: ColorSpace, weight: Number) -> Self {
+        let in_space = self.to_space(space);
+
+        let channels_def = space.channels();
+        let mut inverted_channels: [Option<f64>; 3] = [None; 3];
+
+        // HWB is special: whiteness and blackness swap
+        if space == ColorSpace::Hwb {
+            inverted_channels[0] = in_space.channels[0].map(|h| (h + 180.0) % 360.0);
+            inverted_channels[1] = in_space.channels[2]; // w' = old b
+            inverted_channels[2] = in_space.channels[1]; // b' = old w
+        } else {
+            for (i, ch_def) in channels_def.iter().enumerate() {
+                let val = in_space.channels[i];
+                inverted_channels[i] = val.map(|v| {
+                    if ch_def.is_polar {
+                        (v + 180.0) % 360.0
+                    } else if ch_def.name == "chroma" || ch_def.name == "saturation" {
+                        v
+                    } else {
+                        ch_def.max + ch_def.min - v
+                    }
+                });
+            }
+        }
+
+        let inverse = Color {
+            space,
+            channels: inverted_channels,
+            alpha: in_space.alpha,
+            format: ColorFormat::Infer,
+        };
+
+        if weight == Number::one() {
+            // Convert back to original space
+            if space != self.color_space() {
+                inverse.to_space(self.color_space())
+            } else {
+                inverse
+            }
+        } else {
+            // Mix the inverse with the original, then convert back
+            let mixed = inverse.mix_in_space(&in_space, weight, space);
+            if space != self.color_space() {
+                mixed.to_space(self.color_space())
+            } else {
+                mixed
+            }
+        }
+    }
+
     pub fn complement(&self) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        Color::from_hsla(hue + Number(180.0), saturation, luminance, alpha)
+        let mut c = Color::from_hsla(hue + Number(180.0), saturation, luminance, alpha);
+        c.format = self.hsl_format_if_preserved();
+        c
+    }
+
+    /// Complement a color in a given color space (rotate hue by 180 degrees).
+    pub fn complement_in_space(&self, space: ColorSpace) -> Self {
+        let in_space = self.to_space(space);
+        let hue_idx = space.hue_channel_index();
+
+        if let Some(idx) = hue_idx {
+            let mut channels = in_space.channels;
+            channels[idx] = channels[idx].map(|h| (h + 180.0) % 360.0);
+            let result = Color {
+                space,
+                channels,
+                alpha: in_space.alpha,
+                format: ColorFormat::Infer,
+            };
+            if space != self.color_space() {
+                result.to_space(self.color_space())
+            } else {
+                result
+            }
+        } else {
+            // Non-polar space: no hue to rotate. Return unchanged.
+            self.clone()
+        }
     }
 }
 

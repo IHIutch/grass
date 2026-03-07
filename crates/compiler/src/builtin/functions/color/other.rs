@@ -471,6 +471,8 @@ fn update_components(
         Number(fuzzy_round(update_value(current, param, 255.0, update).0))
     }
 
+    let original_space = color.color_space();
+    let original_format = color.format.clone();
     let color = if has_rgb {
         Arc::new(Color::from_rgba(
             update_rgb(color.red(), red, update),
@@ -479,7 +481,7 @@ fn update_components(
             update_value(color.alpha(), alpha, 1.0, update),
         ))
     } else if has_wb {
-        Arc::new(Color::from_hwb(
+        let mut result = Color::from_hwb(
             if update == UpdateComponents::Change {
                 hue.unwrap_or_else(|| color.hue())
             } else {
@@ -488,10 +490,15 @@ fn update_components(
             update_value(color.whiteness(), whiteness, 1.0, update) * Number(100.0),
             update_value(color.blackness(), blackness, 1.0, update) * Number(100.0),
             update_value(color.alpha(), alpha, 1.0, update),
-        ))
+        );
+        // If original color was in a different space, convert back
+        if original_space != ColorSpace::Hwb {
+            result = result.to_space(original_space);
+        }
+        Arc::new(result)
     } else if hue.is_some() || has_sl {
         let (this_hue, this_saturation, this_lightness, this_alpha) = color.as_hsla();
-        Arc::new(Color::from_hsla(
+        let mut result = Color::from_hsla(
             if update == UpdateComponents::Change {
                 hue.unwrap_or(this_hue)
             } else {
@@ -500,7 +507,13 @@ fn update_components(
             update_value(this_saturation, saturation, 1.0, update),
             update_value(this_lightness, lightness, 1.0, update),
             update_value(this_alpha, alpha, 1.0, update),
-        ))
+        );
+        if original_space != ColorSpace::Hsl {
+            result = result.to_space(original_space);
+        } else {
+            result.format = original_format.clone();
+        }
+        Arc::new(result)
     } else if alpha.is_some() {
         Arc::new(color.with_alpha(update_value(color.alpha(), alpha, 1.0, update)))
     } else {

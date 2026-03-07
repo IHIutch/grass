@@ -44,13 +44,11 @@ fn hwb_inner(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
         .get_err(1, "whiteness")?
         .assert_number_with_name("whiteness", span)?;
     whiteness.assert_unit(&Unit::Percent, "whiteness", span)?;
-    whiteness.assert_bounds("whiteness", 0.0, 100.0, args.span())?;
 
     let blackness = args
         .get_err(2, "blackness")?
         .assert_number_with_name("blackness", span)?;
     blackness.assert_unit(&Unit::Percent, "blackness", span)?;
-    blackness.assert_bounds("blackness", 0.0, 100.0, args.span())?;
 
     let alpha = args
         .default_arg(3, "alpha", Value::Dimension(SassNumber::new_unitless(1.0)))
