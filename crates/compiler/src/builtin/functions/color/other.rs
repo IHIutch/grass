@@ -481,14 +481,26 @@ fn update_components(
             update_value(color.alpha(), alpha, 1.0, update),
         ))
     } else if has_wb {
+        // When the color is already in HWB space, use raw channel values to avoid
+        // precision loss from HWB→RGB→whiteness/blackness roundtrip conversion.
+        let (current_hue, current_w, current_b) = if color.color_space() == ColorSpace::Hwb {
+            let ch = color.raw_channels();
+            (
+                Number(ch[0].unwrap_or(0.0)),
+                Number(ch[1].unwrap_or(0.0)),
+                Number(ch[2].unwrap_or(0.0)),
+            )
+        } else {
+            (color.hue(), color.whiteness(), color.blackness())
+        };
         let mut result = Color::from_hwb(
             if update == UpdateComponents::Change {
-                hue.unwrap_or_else(|| color.hue())
+                hue.unwrap_or(current_hue)
             } else {
-                color.hue() + hue.unwrap_or_else(Number::zero)
+                current_hue + hue.unwrap_or_else(Number::zero)
             },
-            update_value(color.whiteness(), whiteness, 1.0, update) * Number(100.0),
-            update_value(color.blackness(), blackness, 1.0, update) * Number(100.0),
+            update_value(current_w, whiteness, 1.0, update) * Number(100.0),
+            update_value(current_b, blackness, 1.0, update) * Number(100.0),
             update_value(color.alpha(), alpha, 1.0, update),
         );
         // If original color was in a different space, convert back

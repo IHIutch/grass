@@ -957,21 +957,21 @@ impl Color {
 
     /// CSS Color 4 local-MINDE gamut mapping algorithm.
     ///
-    /// This maps an out-of-gamut color to the closest in-gamut color using
-    /// perceptual uniformity in OKLch. It bisects on chroma while checking
-    /// deltaEOK to ensure perceptual accuracy.
+    /// Ported from dart-sass `local_minde.dart`. Bisects on OKLch chroma using
+    /// deltaEOK to find the closest perceptually-accurate in-gamut color.
     pub fn to_gamut_local_minde(&self) -> Self {
-        // If already in gamut, return as-is
         if self.is_in_gamut() {
             return self.clone();
         }
 
         let origin = self.to_space(ColorSpace::Oklch);
         let l = origin.channels[0].unwrap_or(0.0);
-        let c = origin.channels[1].unwrap_or(0.0);
-        let h = origin.channels[2].unwrap_or(0.0);
+        let h = origin.channels[2];
+        let alpha = origin.alpha;
 
-        // Handle edge cases: if lightness is at or beyond bounds
+        const JND: f64 = 0.02;
+        const EPSILON: f64 = 0.0001;
+
         if l >= 1.0 {
             let white = Color::for_space(
                 self.space,
@@ -991,66 +991,45 @@ impl Color {
             return black.to_gamut_clip();
         }
 
-        const EPSILON: f64 = 0.02;
-        const DELTA_E_THRESHOLD: f64 = 0.02;
+        // Early check: if clipping is close enough perceptually, just clip
+        let mut clipped = self.to_gamut_clip();
+        if delta_e_ok(&clipped, self) < JND {
+            return clipped;
+        }
 
-        let mut min_chroma = 0.0_f64;
-        let mut max_chroma = c;
-        let mut current_chroma;
+        let mut min = 0.0_f64;
+        let mut max = origin.channels[1].unwrap_or(0.0);
+        let mut min_in_gamut = true;
 
-        // Bisect on chroma
-        loop {
-            current_chroma = (min_chroma + max_chroma) / 2.0;
-
-            // Create color with reduced chroma in OKLch
-            let candidate_oklch = Color::for_space(
+        while max - min > EPSILON {
+            let chroma = (min + max) / 2.0;
+            let current = Color::for_space(
                 ColorSpace::Oklch,
-                [Some(l), Some(current_chroma), Some(h)],
-                self.alpha,
+                [Some(l), Some(chroma), h],
+                alpha,
                 ColorFormat::Infer,
-            );
+            )
+            .to_space(self.space);
 
-            // Convert to target space
-            let candidate = candidate_oklch.to_space(self.space);
-
-            // Check if in gamut
-            if candidate.is_in_gamut() {
-                // Check if we're close enough to the boundary
-                if max_chroma - min_chroma < EPSILON {
-                    return candidate;
-                }
-                // Try higher chroma
-                min_chroma = current_chroma;
-            } else {
-                // Clip the candidate
-                let clipped = candidate.to_gamut_clip();
-
-                // Calculate deltaEOK between clipped and candidate
-                let delta = delta_e_ok(&clipped, &candidate);
-
-                if delta - DELTA_E_THRESHOLD < EPSILON {
-                    if max_chroma - min_chroma < EPSILON {
-                        return clipped;
-                    }
-                    // Clipped is close enough perceptually, try higher chroma
-                    min_chroma = current_chroma;
-                } else {
-                    // Too much perceptual difference, reduce chroma
-                    max_chroma = current_chroma;
-                }
+            if min_in_gamut && current.is_in_gamut() {
+                min = chroma;
+                continue;
             }
 
-            // Safety: if chroma range is tiny, return clipped
-            if max_chroma - min_chroma < EPSILON / 100.0 {
-                let final_oklch = Color::for_space(
-                    ColorSpace::Oklch,
-                    [Some(l), Some(current_chroma), Some(h)],
-                    self.alpha,
-                    ColorFormat::Infer,
-                );
-                return final_oklch.to_space(self.space).to_gamut_clip();
+            clipped = current.to_gamut_clip();
+            let e = delta_e_ok(&clipped, &current);
+
+            if e < JND {
+                if JND - e < EPSILON {
+                    return clipped;
+                }
+                min_in_gamut = false;
+                min = chroma;
+            } else {
+                max = chroma;
             }
         }
+        clipped
     }
 }
 
