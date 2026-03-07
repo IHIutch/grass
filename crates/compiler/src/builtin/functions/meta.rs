@@ -275,6 +275,89 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
     }
 }
 
+pub(crate) fn get_mixin(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(2)?;
+    let name: Identifier = match args.get_err(0, "name")? {
+        Value::String(s, _) => s.into(),
+        v => {
+            return Err((
+                format!("$name: {} is not a string.", v.inspect(args.span())?),
+                args.span(),
+            )
+                .into())
+        }
+    };
+    let module = match args.default_arg(1, "module", Value::Null) {
+        Value::String(s, ..) => Some(s),
+        Value::Null => None,
+        v => {
+            return Err((
+                format!("$module: {} is not a string.", v.inspect(args.span())?),
+                args.span(),
+            )
+                .into())
+        }
+    };
+
+    let mixin = if let Some(module_name) = module {
+        let spanned = Spanned {
+            node: module_name.into(),
+            span: args.span(),
+        };
+        Some(visitor.env.get_mixin(
+            Spanned {
+                node: name,
+                span: args.span(),
+            },
+            Some(spanned),
+        )?)
+    } else {
+        visitor
+            .env
+            .get_mixin(
+                Spanned {
+                    node: name,
+                    span: args.span(),
+                },
+                None,
+            )
+            .ok()
+    };
+
+    use crate::ast::SassMixin;
+
+    match mixin {
+        Some(mixin) => Ok(Value::MixinRef(Box::new(SassMixin { name, mixin }))),
+        None => Err((format!("Mixin not found: {}", name), args.span()).into()),
+    }
+}
+
+pub(crate) fn accepts_content(
+    mut args: ArgumentResult,
+    _visitor: &mut Visitor,
+) -> SassResult<Value> {
+    args.max_args(1)?;
+    use crate::ast::Mixin;
+    let mixin = match args.get_err(0, "mixin")? {
+        Value::MixinRef(m) => *m,
+        v => {
+            return Err((
+                format!(
+                    "$mixin: {} is not a mixin reference.",
+                    v.inspect(args.span())?
+                ),
+                args.span(),
+            )
+                .into())
+        }
+    };
+    match mixin.mixin {
+        Mixin::UserDefined(m, _) => Ok(Value::bool(m.has_content)),
+        Mixin::Builtin(_) => Ok(Value::False),
+        Mixin::BuiltinWithContent(_) => Ok(Value::True),
+    }
+}
+
 pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     let span = args.span();
     let func = match args.get_err(0, "function")? {

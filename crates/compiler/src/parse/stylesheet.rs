@@ -4,8 +4,13 @@ use std::{
     ffi::OsString,
     mem,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
+
+static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use codemap::{Span, Spanned};
 
@@ -1123,6 +1128,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             args,
             body,
             has_content,
+            id: MIXIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }))
     }
 

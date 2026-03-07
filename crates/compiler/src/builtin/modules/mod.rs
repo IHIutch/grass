@@ -8,7 +8,7 @@ use std::{
 use codemap::{Span, Spanned};
 
 use crate::{
-    ast::{ArgumentResult, AstForwardRule, BuiltinMixin, Mixin},
+    ast::{ArgumentResult, AstForwardRule, BuiltinMixin, Mixin, SassMixin},
     builtin::Builtin,
     common::Identifier,
     error::SassResult,
@@ -423,6 +423,18 @@ impl Module {
         scope.mixins.insert(name.into(), Mixin::Builtin(mixin));
     }
 
+    pub fn insert_builtin_mixin_with_content(
+        &mut self,
+        name: &'static str,
+        mixin: BuiltinMixin,
+    ) {
+        let scope = self.scope();
+
+        scope
+            .mixins
+            .insert(name.into(), Mixin::BuiltinWithContent(mixin));
+    }
+
     pub fn insert_builtin_var(&mut self, name: &'static str, value: Value) {
         let ident = name.into();
 
@@ -483,6 +495,26 @@ impl Module {
                     (
                         Value::String(key.to_string(), QuoteKind::Quoted).span(span),
                         Value::FunctionRef(Box::new(value)),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn mixins(&self, span: Span) -> SassMap {
+        SassMap::new_with(
+            self.scope()
+                .mixins
+                .iter()
+                .into_iter()
+                .filter(|(key, _)| !key.as_str().starts_with('-'))
+                .map(|(key, value)| {
+                    (
+                        Value::String(key.to_string(), QuoteKind::Quoted).span(span),
+                        Value::MixinRef(Box::new(SassMixin {
+                            name: key,
+                            mixin: value,
+                        })),
                     )
                 })
                 .collect::<Vec<_>>(),

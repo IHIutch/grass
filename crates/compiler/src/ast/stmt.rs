@@ -166,6 +166,8 @@ pub struct AstMixin {
     pub body: Vec<AstStmt>,
     /// Whether the mixin contains a `@content` rule.
     pub has_content: bool,
+    /// Unique identity for equality comparison (first-class mixins).
+    pub id: u64,
 }
 
 #[derive(Debug, Clone)]

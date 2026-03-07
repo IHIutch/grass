@@ -89,7 +89,7 @@ fn unwrap_paren(cond: IfCondition) -> IfCondition {
     }
 }
 
-trait UserDefinedCallable {
+pub(crate) trait UserDefinedCallable {
     fn name(&self) -> Identifier;
     fn arguments(&self) -> &ArgumentDeclaration;
 }
@@ -1791,7 +1791,7 @@ impl<'a> Visitor<'a> {
         v
     }
 
-    fn with_content<T>(
+    pub(crate) fn with_content<T>(
         &mut self,
         content: Option<Arc<CallableContentBlock>>,
         callback: impl FnOnce(&mut Self) -> T,
@@ -1811,11 +1811,32 @@ impl<'a> Visitor<'a> {
         match mixin {
             Mixin::Builtin(mixin) => {
                 if include_stmt.content.is_some() {
-                    return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
+                    return Err((
+                        "Mixin doesn't accept a content block.",
+                        include_stmt.span,
+                    )
+                        .into());
                 }
 
                 let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
                 mixin(args, self)?;
+
+                Ok(None)
+            }
+            Mixin::BuiltinWithContent(mixin) => {
+                let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
+
+                if let Some(content) = include_stmt.content {
+                    let callable_content = Arc::new(CallableContentBlock {
+                        content,
+                        env: self.env.new_closure(),
+                    });
+                    self.with_content(Some(callable_content), |visitor| {
+                        mixin(args, visitor)
+                    })?;
+                } else {
+                    mixin(args, self)?;
+                }
 
                 Ok(None)
             }
@@ -2307,7 +2328,7 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn run_user_defined_callable<
+    pub(crate) fn run_user_defined_callable<
         F: UserDefinedCallable,
         V: fmt::Debug,
         R: FnOnce(F, &mut Self) -> SassResult<V>,

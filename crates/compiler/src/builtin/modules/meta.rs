@@ -5,10 +5,13 @@ use std::sync::Arc;
 use crate::ast::{Configuration, ConfiguredValue};
 use crate::builtin::builtin_imports::*;
 
+use crate::ast::Mixin;
+use crate::ContextFlags;
 use crate::builtin::{
     meta::{
-        call, content_exists, feature_exists, function_exists, get_function,
-        global_variable_exists, inspect, keywords, mixin_exists, type_of, variable_exists,
+        accepts_content, call, content_exists, feature_exists, function_exists, get_function,
+        get_mixin, global_variable_exists, inspect, keywords, mixin_exists, type_of,
+        variable_exists,
     },
     modules::Module,
 };
@@ -164,6 +167,85 @@ fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Val
     Ok(Value::String(calc.name.to_string(), QuoteKind::Quoted))
 }
 
+fn module_mixins(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+
+    let module = Identifier::from(
+        args.get_err(0, "module")?
+            .assert_string_with_name("module", args.span())?
+            .0,
+    );
+
+    Ok(Value::Map(
+        (*(*visitor.env.modules).borrow().get(module, args.span())?)
+            .borrow()
+            .mixins(args.span()),
+    ))
+}
+
+fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
+    let span = args.span();
+    let mixin = match args.get_err(0, "mixin")? {
+        Value::MixinRef(m) => *m,
+        v => {
+            return Err((
+                format!(
+                    "$mixin: {} is not a mixin reference.",
+                    v.inspect(span)?
+                ),
+                span,
+            )
+                .into())
+        }
+    };
+    args.remove_positional(0);
+
+    let has_content = visitor.env.content.is_some();
+
+    match mixin.mixin {
+        Mixin::Builtin(func) => {
+            if has_content {
+                return Err(("Mixin doesn't accept a content block.", span).into());
+            }
+            func(args, visitor)?;
+            Ok(())
+        }
+        Mixin::BuiltinWithContent(func) => {
+            func(args, visitor)?;
+            Ok(())
+        }
+        Mixin::UserDefined(mixin_def, env) => {
+            if has_content && !mixin_def.has_content {
+                return Err(("Mixin doesn't accept a content block.", span).into());
+            }
+
+            let old_in_mixin = visitor.flags.in_mixin();
+            visitor.flags.set(ContextFlags::IN_MIXIN, true);
+
+            let content = visitor.env.content.take();
+
+            visitor.run_user_defined_callable::<_, (), _>(
+                MaybeEvaledArguments::Evaled(args),
+                mixin_def,
+                &env,
+                span,
+                |mixin, visitor| {
+                    visitor.with_content(content, |visitor| {
+                        for stmt in mixin.body {
+                            let result = visitor.visit_stmt(stmt)?;
+                            debug_assert!(result.is_none());
+                        }
+                        Ok(())
+                    })
+                },
+            )?;
+
+            visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
+            Ok(())
+        }
+    }
+}
+
 pub(crate) fn declare(f: &mut Module) {
     f.insert_builtin("feature-exists", feature_exists);
     f.insert_builtin("inspect", inspect);
@@ -180,6 +262,10 @@ pub(crate) fn declare(f: &mut Module) {
     f.insert_builtin("call", call);
     f.insert_builtin("calc-args", calc_args);
     f.insert_builtin("calc-name", calc_name);
+    f.insert_builtin("get-mixin", get_mixin);
+    f.insert_builtin("module-mixins", module_mixins);
+    f.insert_builtin("accepts-content", accepts_content);
 
     f.insert_builtin_mixin("load-css", load_css);
+    f.insert_builtin_mixin_with_content("apply", apply);
 }

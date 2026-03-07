@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::{
     ast::ArgumentResult,
+    common::Identifier,
     error::SassResult,
     evaluate::{Environment, Visitor},
 };
@@ -14,6 +15,8 @@ pub(crate) use crate::ast::AstMixin as UserDefinedMixin;
 pub(crate) enum Mixin {
     UserDefined(UserDefinedMixin, Environment),
     Builtin(BuiltinMixin),
+    /// A builtin mixin that accepts a `@content` block
+    BuiltinWithContent(BuiltinMixin),
 }
 
 impl fmt::Debug for Mixin {
@@ -26,7 +29,38 @@ impl fmt::Debug for Mixin {
                 .field("body", &u.body)
                 .field("has_content", &u.has_content)
                 .finish(),
-            Self::Builtin(..) => f.debug_struct("BuiltinMixin").finish(),
+            Self::Builtin(..) | Self::BuiltinWithContent(..) => {
+                f.debug_struct("BuiltinMixin").finish()
+            }
         }
+    }
+}
+
+/// A named mixin reference, analogous to `SassFunction`.
+/// Returned by `meta.get-mixin()`.
+#[derive(Clone, Debug)]
+pub(crate) struct SassMixin {
+    pub name: Identifier,
+    pub mixin: Mixin,
+}
+
+impl PartialEq for SassMixin {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.mixin, &other.mixin) {
+            (Mixin::UserDefined(a, _), Mixin::UserDefined(b, _)) => a.id == b.id,
+            (
+                Mixin::Builtin(a) | Mixin::BuiltinWithContent(a),
+                Mixin::Builtin(b) | Mixin::BuiltinWithContent(b),
+            ) => *a as usize == *b as usize,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SassMixin {}
+
+impl SassMixin {
+    pub fn name(&self) -> Identifier {
+        self.name
     }
 }

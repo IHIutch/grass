@@ -3,6 +3,7 @@ use std::{cmp::Ordering, sync::Arc};
 use codemap::{Span, Spanned};
 
 use crate::{
+    ast::SassMixin,
     color::Color,
     common::{BinaryOp, Brackets, ListSeparator, QuoteKind},
     error::SassResult,
@@ -30,6 +31,7 @@ mod sass_function;
 mod sass_number;
 
 #[derive(Debug, Clone)]
+#[allow(private_interfaces)]
 pub enum Value {
     True,
     False,
@@ -42,6 +44,8 @@ pub enum Value {
     ArgList(ArgList),
     /// Returned by `get-function()`
     FunctionRef(Box<SassFunction>),
+    /// Returned by `meta.get-mixin()`
+    MixinRef(Box<SassMixin>),
     Calculation(SassCalculation),
 }
 
@@ -81,6 +85,13 @@ impl PartialEq for Value {
             Value::FunctionRef(fn1) => {
                 if let Value::FunctionRef(fn2) = other {
                     fn1 == fn2
+                } else {
+                    false
+                }
+            }
+            Value::MixinRef(m1) => {
+                if let Value::MixinRef(m2) = other {
+                    m1 == m2
                 } else {
                     false
                 }
@@ -269,6 +280,7 @@ impl Value {
             Value::Dimension(..) => "number",
             Value::List(..) => "list",
             Value::FunctionRef(..) => "function",
+            Value::MixinRef(..) => "mixin",
             Value::ArgList(..) => "arglist",
             Value::True | Value::False => "bool",
             Value::Null => "null",

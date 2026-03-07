@@ -33,7 +33,7 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     .into())
             }
         },
-        Value::Map(..) | Value::FunctionRef(..) => {
+        Value::Map(..) | Value::FunctionRef(..) | Value::MixinRef(..) => {
             return Err((
                 format!("{} isn't a valid CSS value.", left.inspect(span)?),
                 span,
@@ -123,7 +123,7 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                 ),
                 QuoteKind::None,
             ),
-            Value::Map(..) | Value::FunctionRef(..) => {
+            Value::Map(..) | Value::FunctionRef(..) | Value::MixinRef(..) => {
                 return Err((
                     format!("{} isn't a valid CSS value.", right.inspect(span)?),
                     span,
@@ -264,7 +264,7 @@ pub(crate) fn sub(left: Value, right: Value, options: &Options, span: Span) -> S
                 ),
                 QuoteKind::None,
             ),
-            Value::Map(..) | Value::FunctionRef(..) => {
+            Value::Map(..) | Value::FunctionRef(..) | Value::MixinRef(..) => {
                 return Err((
                     format!("{} isn't a valid CSS value.", right.inspect(span)?),
                     span,
