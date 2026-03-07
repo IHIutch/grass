@@ -781,3 +781,75 @@ error!(
     "a {\n  color: mix(red, blue, (1/0));\n}\n",
     "Error: $weight: Expected Infinity to be within 0 and 100."
 );
+
+// color.mix() with $method parameter
+test!(
+    mix_method_xyz,
+    "@use \"sass:color\";\na {\n  color: color.mix(red, green, $method: xyz);\n}\n",
+    "a {\n  color: rgb(187.5160306784, 92.3735312967, 0);\n}\n"
+);
+test!(
+    mix_method_oklch_shorter_hue,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 0.1 30), oklch(0.5 0.1 230), $method: oklch);\n}\n",
+    "a {\n  color: oklch(50% 0.1 310deg);\n}\n"
+);
+test!(
+    mix_method_oklch_longer_hue,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 0.1 30), oklch(0.5 0.1 230), $method: oklch longer hue);\n}\n",
+    "a {\n  color: oklch(50% 0.1 130deg);\n}\n"
+);
+test!(
+    mix_method_oklch_explicit_shorter,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 0.1 30), oklch(0.5 0.1 230), $method: oklch shorter hue);\n}\n",
+    "a {\n  color: oklch(50% 0.1 310deg);\n}\n"
+);
+test!(
+    mix_method_missing_channel_one_none,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 none 30), oklch(0.5 0.1 230), $method: oklch);\n}\n",
+    "a {\n  color: oklch(50% 0.1 310deg);\n}\n"
+);
+test!(
+    mix_method_missing_channel_both_none,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 none 30), oklch(0.5 none 230), $method: oklch);\n}\n",
+    "a {\n  color: oklch(50% none 310deg);\n}\n"
+);
+test!(
+    mix_method_alpha,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 0.1 30 / 0.4), oklch(0.8 0.2 200 / 0.8), $method: oklch);\n}\n",
+    "a {\n  color: oklch(70% 0.1666666667 115deg / 0.6);\n}\n"
+);
+test!(
+    mix_method_weight_25,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 0.1 30), oklch(0.5 0.1 230), 25%, $method: oklch);\n}\n",
+    "a {\n  color: oklch(50% 0.1 270deg);\n}\n"
+);
+test!(
+    mix_method_legacy_with_method,
+    "@use \"sass:color\";\na {\n  color: color.mix(red, green, $method: oklch);\n}\n",
+    "a {\n  color: hsl(42.7171999454, 267.6278571926%, 18.772156262%);\n}\n"
+);
+test!(
+    mix_method_legacy_with_method_oklch_result,
+    "@use \"sass:color\";\na {\n  color: color.mix(red, blue, $method: oklch);\n}\n",
+    "a {\n  color: hsl(298.0621910541, 159.4931345486%, 29.2910601787%);\n}\n"
+);
+error!(
+    mix_method_non_legacy_without_method,
+    "@use \"sass:color\";\na {\n  color: color.mix(oklch(0.5 0.1 30), oklch(0.5 0.1 230));\n}\n",
+    "Error: $color1: To use color.mix() with non-legacy color oklch(50% 0.1 30deg), you must provide a $method."
+);
+error!(
+    mix_method_quoted_string,
+    "@use \"sass:color\";\na {\n  color: color.mix(red, green, $method: \"oklch\");\n}\n",
+    "Error: $method: Expected \"oklch\" to be an unquoted string."
+);
+error!(
+    mix_method_unknown_space,
+    "@use \"sass:color\";\na {\n  color: color.mix(red, green, $method: banana);\n}\n",
+    "Error: $method: Unknown color space \"banana\"."
+);
+error!(
+    mix_method_hue_on_rectangular,
+    "@use \"sass:color\";\na {\n  color: color.mix(red, green, $method: lab shorter hue);\n}\n",
+    "Error: $method: Hue interpolation method \"HueInterpolationMethod.shorter hue\" may not be set for rectangular color space lab."
+);

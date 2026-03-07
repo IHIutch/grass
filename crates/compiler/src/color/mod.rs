@@ -13,7 +13,7 @@
 
 use crate::value::{fuzzy_round, Number};
 pub(crate) use name::NAMED_COLORS;
-pub(crate) use space::ColorSpace;
+pub(crate) use space::{ColorSpace, HueInterpolationMethod};
 
 pub(crate) mod conversion;
 mod name;
@@ -321,6 +321,121 @@ impl Color {
             channels,
             alpha: Some(a1 * w1 + a2 * w2),
             format: ColorFormat::Infer,
+        }
+    }
+
+    /// CSS Color 4 interpolation with full support for:
+    /// - Hue interpolation methods (polar spaces)
+    /// - Missing channel handling
+    /// - Powerless hue detection
+    /// - Premultiplied alpha interpolation
+    ///
+    /// `weight` is the proportion of `self` (0.0–1.0).
+    /// Result is converted back to `self`'s original color space.
+    pub fn mix_with_method(
+        &self,
+        other: &Color,
+        weight: f64,
+        space: ColorSpace,
+        hue_method: HueInterpolationMethod,
+    ) -> Color {
+        let c1 = self.to_space(space);
+        let c2 = other.to_space(space);
+
+        let hue_idx = space.hue_channel_index();
+
+        // Step 1: Resolve missing channels.
+        // If one color has `none` for a channel, use the other color's value.
+        // If both are `none`, result is `none`.
+        let mut v1 = [0.0_f64; 3];
+        let mut v2 = [0.0_f64; 3];
+        let mut both_none = [false; 3];
+
+        for i in 0..3 {
+            let ch1 = c1.channels[i];
+            let ch2 = c2.channels[i];
+
+            match (ch1, ch2) {
+                (None, None) => {
+                    both_none[i] = true;
+                    v1[i] = 0.0;
+                    v2[i] = 0.0;
+                }
+                (None, Some(val)) => {
+                    v1[i] = val;
+                    v2[i] = val;
+                }
+                (Some(val), None) => {
+                    v1[i] = val;
+                    v2[i] = val;
+                }
+                (Some(a), Some(b)) => {
+                    v1[i] = a;
+                    v2[i] = b;
+                }
+            }
+        }
+
+        // Step 2: Hue interpolation adjustment (only for polar spaces with a hue channel)
+        if let Some(hi) = hue_idx {
+            if !both_none[hi] {
+                let h1 = v1[hi].rem_euclid(360.0);
+                let h2 = v2[hi].rem_euclid(360.0);
+                let (adj1, adj2) = adjust_hue(h1, h2, hue_method);
+                v1[hi] = adj1;
+                v2[hi] = adj2;
+            }
+        }
+
+        // Step 3: Premultiplied alpha interpolation
+        let a1 = c1.alpha.unwrap_or(1.0);
+        let a2 = c2.alpha.unwrap_or(1.0);
+
+        let w1 = weight;
+        let w2 = 1.0 - weight;
+
+        let result_alpha = a1 * w1 + a2 * w2;
+
+        // Premultiply non-hue, non-both-none channels by alpha
+        let mut result_channels: [Option<f64>; 3] = [None; 3];
+
+        for i in 0..3 {
+            if both_none[i] {
+                result_channels[i] = None;
+                continue;
+            }
+
+            let is_hue = hue_idx == Some(i);
+
+            if is_hue {
+                // Hue is not premultiplied
+                result_channels[i] = Some((v1[i] * w1 + v2[i] * w2).rem_euclid(360.0));
+            } else {
+                // Premultiplied alpha interpolation for non-hue channels
+                let pm1 = v1[i] * a1;
+                let pm2 = v2[i] * a2;
+                let pm_result = pm1 * w1 + pm2 * w2;
+
+                if result_alpha == 0.0 {
+                    result_channels[i] = Some(0.0);
+                } else {
+                    result_channels[i] = Some(pm_result / result_alpha);
+                }
+            }
+        }
+
+        let result = Color {
+            space,
+            channels: result_channels,
+            alpha: Some(result_alpha),
+            format: ColorFormat::Infer,
+        };
+
+        // Convert back to original space
+        if self.space != space {
+            result.to_space(self.space)
+        } else {
+            result
         }
     }
 }
@@ -1102,4 +1217,44 @@ fn should_replace_with_zero(
 
 fn fuzzy_is_zero(v: f64) -> bool {
     v.abs() < 1e-10
+}
+
+/// Adjust two hue values for the given interpolation method.
+/// Returns (h1, h2) adjusted so that linear interpolation produces the correct arc.
+fn adjust_hue(h1: f64, h2: f64, method: HueInterpolationMethod) -> (f64, f64) {
+    let diff = h2 - h1;
+    match method {
+        HueInterpolationMethod::Shorter => {
+            if diff > 180.0 {
+                (h1 + 360.0, h2)
+            } else if diff < -180.0 {
+                (h1, h2 + 360.0)
+            } else {
+                (h1, h2)
+            }
+        }
+        HueInterpolationMethod::Longer => {
+            if diff > 0.0 && diff < 180.0 {
+                (h1 + 360.0, h2)
+            } else if diff > -180.0 && diff < 0.0 {
+                (h1, h2 + 360.0)
+            } else {
+                (h1, h2)
+            }
+        }
+        HueInterpolationMethod::Increasing => {
+            if diff < 0.0 {
+                (h1, h2 + 360.0)
+            } else {
+                (h1, h2)
+            }
+        }
+        HueInterpolationMethod::Decreasing => {
+            if diff > 0.0 {
+                (h1 + 360.0, h2)
+            } else {
+                (h1, h2)
+            }
+        }
+    }
 }

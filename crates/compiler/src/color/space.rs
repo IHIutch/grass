@@ -1,5 +1,18 @@
 use std::fmt;
 
+/// Hue interpolation method for polar color spaces (CSS Color 4 §12.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HueInterpolationMethod {
+    /// Default: take the shorter arc.
+    Shorter,
+    /// Take the longer arc.
+    Longer,
+    /// Always go in the increasing (positive) direction.
+    Increasing,
+    /// Always go in the decreasing (negative) direction.
+    Decreasing,
+}
+
 /// All CSS Color Level 4 color spaces supported by Sass.
 ///
 /// Legacy spaces (RGB, HSL, HWB) use commas in their function syntax and

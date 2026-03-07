@@ -384,14 +384,16 @@ pub(crate) fn blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
 }
 
 pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
-    args.max_args(3)?;
+    args.max_args(4)?;
+    let span = args.span();
+
     let color1 = args
         .get_err(0, "color1")?
-        .assert_color_with_name("color1", args.span())?;
+        .assert_color_with_name("color1", span)?;
 
     let color2 = args
         .get_err(1, "color2")?
-        .assert_color_with_name("color2", args.span())?;
+        .assert_color_with_name("color2", span)?;
 
     let weight = match args.default_arg(
         2,
@@ -399,7 +401,7 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         Value::Dimension(SassNumber::new_unitless(50.0)),
     ) {
         Value::Dimension(mut num) => {
-            num.assert_bounds("weight", 0.0, 100.0, args.span())?;
+            num.assert_bounds("weight", 0.0, 100.0, span)?;
             num.num /= Number(100.0);
             num.num
         }
@@ -407,14 +409,169 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             return Err((
                 format!(
                     "$weight: {} is not a number.",
-                    v.to_css_string(args.span(), visitor.options.is_compressed())?
+                    v.to_css_string(span, visitor.options.is_compressed())?
                 ),
-                args.span(),
+                span,
             )
                 .into())
         }
     };
-    Ok(Value::Color(Arc::new(color1.mix(&color2, weight))))
+
+    // Parse $method parameter
+    let method = args.get(3, "method");
+
+    let method_value = match method {
+        None => None,
+        Some(v) => match v.node {
+            Value::Null => None,
+            other => Some(other),
+        },
+    };
+
+    match method_value {
+        None => {
+            // No method: legacy behavior, but both colors must be legacy
+            if !color1.color_space().is_legacy() {
+                return Err((
+                    format!(
+                        "$color1: To use color.mix() with non-legacy color {}, you must provide a $method.",
+                        Value::Color(color1.clone()).inspect(span)?
+                    ),
+                    span,
+                ).into());
+            }
+            if !color2.color_space().is_legacy() {
+                return Err((
+                    format!(
+                        "$color2: To use color.mix() with non-legacy color {}, you must provide a $method.",
+                        Value::Color(color2.clone()).inspect(span)?
+                    ),
+                    span,
+                ).into());
+            }
+            Ok(Value::Color(Arc::new(color1.mix(&color2, weight))))
+        }
+        Some(method_val) => {
+            let (space, hue_method) = parse_interpolation_method(method_val, span)?;
+            Ok(Value::Color(Arc::new(
+                color1.mix_with_method(&color2, weight.0, space, hue_method),
+            )))
+        }
+    }
+}
+
+fn parse_interpolation_method(
+    value: Value,
+    span: Span,
+) -> SassResult<(ColorSpace, crate::color::HueInterpolationMethod)> {
+    use crate::color::HueInterpolationMethod;
+
+    let parts: Vec<String> = match &value {
+        Value::String(s, QuoteKind::None) => vec![s.clone()],
+        Value::String(_, QuoteKind::Quoted) => {
+            return Err((
+                format!(
+                    "$method: Expected {} to be an unquoted string.",
+                    value.inspect(span)?
+                ),
+                span,
+            ).into());
+        }
+        Value::List(items, ListSeparator::Space, _) => {
+            let mut parts = Vec::new();
+            for item in items {
+                match item {
+                    Value::String(s, QuoteKind::None) => parts.push(s.clone()),
+                    _ => {
+                        return Err((
+                            format!(
+                                "$method: Expected {} to be an unquoted string.",
+                                value.inspect(span)?
+                            ),
+                            span,
+                        ).into());
+                    }
+                }
+            }
+            parts
+        }
+        _ => {
+            return Err((
+                format!(
+                    "$method: {} is not a string.",
+                    value.inspect(span)?
+                ),
+                span,
+            ).into());
+        }
+    };
+
+    if parts.is_empty() {
+        return Err(("$method: Must not be empty.", span).into());
+    }
+
+    let space = match ColorSpace::from_name(&parts[0]) {
+        Some(s) => s,
+        None => {
+            return Err((
+                format!("$method: Unknown color space \"{}\".", parts[0]),
+                span,
+            ).into());
+        }
+    };
+
+    let hue_method = if parts.len() == 1 {
+        HueInterpolationMethod::Shorter
+    } else if parts.len() == 3 && parts[2].eq_ignore_ascii_case("hue") {
+        let method = match parts[1].to_ascii_lowercase().as_str() {
+            "shorter" => HueInterpolationMethod::Shorter,
+            "longer" => HueInterpolationMethod::Longer,
+            "increasing" => HueInterpolationMethod::Increasing,
+            "decreasing" => HueInterpolationMethod::Decreasing,
+            _ => {
+                return Err((
+                    format!(
+                        "$method: Unknown hue interpolation method \"{}\".",
+                        parts[1]
+                    ),
+                    span,
+                ).into());
+            }
+        };
+
+        if !space.is_polar() {
+            let method_name = format!("HueInterpolationMethod.{} hue", parts[1].to_ascii_lowercase());
+            return Err((
+                format!(
+                    "$method: Hue interpolation method \"{}\" may not be set for rectangular color space {}.",
+                    method_name,
+                    space.name()
+                ),
+                span,
+            ).into());
+        }
+
+        method
+    } else if parts.len() == 2 {
+        // Could be "oklch shorter" without "hue" or some other invalid format
+        return Err((
+            format!(
+                "$method: Expected \"{}\" to end with \"hue\".",
+                parts.join(" ")
+            ),
+            span,
+        ).into());
+    } else {
+        return Err((
+            format!(
+                "$method: Expected \"{}\" to be a valid interpolation method.",
+                parts.join(" ")
+            ),
+            span,
+        ).into());
+    };
+
+    Ok((space, hue_method))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
