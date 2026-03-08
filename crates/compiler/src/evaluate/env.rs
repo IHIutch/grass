@@ -240,9 +240,13 @@ impl Environment {
 
     pub fn forward_module(&mut self, module: Arc<RefCell<Module>>, rule: AstForwardRule) {
         let view = ForwardedModule::if_necessary(module, rule);
-        (*self.forwarded_modules).borrow_mut().push(view);
 
-        // todo: assertnoconflicts
+        // TODO: Implement assertNoConflicts to detect when two forwarded modules
+        // define the same variable/function/mixin from different sources.
+        // dart-sass uses variableIdentity() with _modulesByVariable chain for this.
+        // See: https://github.com/sass/dart-sass/blob/main/lib/src/environment.dart
+
+        (*self.forwarded_modules).borrow_mut().push(view);
     }
 
     pub fn insert_mixin(&mut self, name: Identifier, mixin: Mixin) {

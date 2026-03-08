@@ -368,14 +368,14 @@ impl SimpleSelector {
         // :host and :host-context can only unify with other pseudos that are
         // themselves host/host-context or have a selector argument
         if let Self::Pseudo(ref p) = self {
-            if p.is_host_selector() {
-                if !compound.iter().all(|simple| {
+            if p.is_host_selector()
+                && !compound.iter().all(|simple| {
                     matches!(simple, Self::Pseudo(p2) if
                         p2.is_host_selector() || p2.selector.is_some()
                     )
-                }) {
-                    return None;
-                }
+                })
+            {
+                return None;
             }
         }
 
