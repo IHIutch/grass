@@ -206,8 +206,16 @@ impl SimpleSelector {
     /// Returns `None` if unification is impossible—for example, if there are
     /// multiple ID selectors.
     fn unify_default(self, mut compound: Vec<Self>) -> Option<Vec<Self>> {
-        if compound.len() == 1 && compound[0].is_universal() {
-            return compound.swap_remove(0).unify(vec![self]);
+        if compound.len() == 1 {
+            if compound[0].is_universal() {
+                return compound.swap_remove(0).unify(vec![self]);
+            }
+            // Delegate to :host/:host-context unification
+            if let Self::Pseudo(ref p) = compound[0] {
+                if p.is_host_selector() {
+                    return compound.swap_remove(0).unify(vec![self]);
+                }
+            }
         }
         if compound.contains(&self) {
             return Some(compound);
@@ -230,6 +238,15 @@ impl SimpleSelector {
     }
 
     fn unify_universal(self, mut compound: Vec<Self>) -> Option<Vec<Self>> {
+        // Universal selector can't unify with :host or :host-context
+        if compound.len() == 1 {
+            if let Self::Pseudo(ref p) = compound[0] {
+                if p.is_host_selector() {
+                    return None;
+                }
+            }
+        }
+
         if let Self::Universal(..) | Self::Type(..) = compound[0] {
             let mut unified = vec![self.unify_universal_and_element(&compound[0])?];
             unified.extend(compound.into_iter().skip(1));
@@ -315,6 +332,14 @@ impl SimpleSelector {
             unified.extend(compound.into_iter().skip(1));
             Some(unified)
         } else {
+            // Delegate to :host/:host-context unification
+            if compound.len() == 1 {
+                if let Self::Pseudo(ref p) = compound[0] {
+                    if p.is_host_selector() {
+                        return compound.swap_remove(0).unify(vec![self]);
+                    }
+                }
+            }
             let mut unified = vec![self];
             unified.append(&mut compound);
             Some(unified)
@@ -325,6 +350,46 @@ impl SimpleSelector {
         if compound.len() == 1 && compound[0].is_universal() {
             return compound.remove(0).unify(vec![self]);
         }
+
+        // Delegate to :host/:host-context when it's the only thing in compound
+        // and self is not itself a host selector (to avoid infinite delegation)
+        if compound.len() == 1 {
+            if let Self::Pseudo(ref cp) = compound[0] {
+                if cp.is_host_selector() {
+                    if let Self::Pseudo(ref sp) = self {
+                        if !sp.is_host_selector() {
+                            return compound.swap_remove(0).unify(vec![self]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // :host and :host-context can only unify with other pseudos that are
+        // themselves host/host-context or have a selector argument
+        if let Self::Pseudo(ref p) = self {
+            if p.is_host_selector() {
+                if !compound.iter().all(|simple| {
+                    matches!(simple, Self::Pseudo(p2) if
+                        p2.is_host_selector() || p2.selector.is_some()
+                    )
+                }) {
+                    return None;
+                }
+            }
+        }
+
+        // If compound contains a :host/:host-context, self must be compatible
+        if compound.iter().any(|s| {
+            matches!(s, Self::Pseudo(p) if p.is_host_selector())
+        }) {
+            if let Self::Pseudo(ref p) = self {
+                if !p.is_host_selector() && p.selector.is_none() {
+                    return None;
+                }
+            }
+        }
+
         if compound.contains(&self) {
             return Some(compound);
         }
@@ -363,6 +428,26 @@ impl SimpleSelector {
     }
 
     pub fn is_super_selector_of_compound(&self, compound: &CompoundSelector) -> bool {
+        // Universal selectors match all elements, so they're superselectors of
+        // any compound (within namespace constraints)
+        if let SimpleSelector::Universal(ns) = self {
+            return match ns {
+                // *|* and * match all elements
+                Namespace::Asterisk | Namespace::None => true,
+                // c|* or |* only match elements in their specific namespace
+                Namespace::Other(_) | Namespace::Empty => {
+                    compound.components.iter().any(|their_simple| match their_simple {
+                        SimpleSelector::Type(QualifiedName {
+                            namespace: other_ns,
+                            ..
+                        })
+                        | SimpleSelector::Universal(other_ns) => ns == other_ns,
+                        _ => false,
+                    })
+                }
+            };
+        }
+
         compound.components.iter().any(|their_simple| {
             if self == their_simple {
                 return true;
@@ -614,6 +699,11 @@ impl Pseudo {
             }),
             _ => unreachable!(),
         }
+    }
+
+    /// Whether this is a `:host` or `:host-context` pseudo-class.
+    pub fn is_host_selector(&self) -> bool {
+        self.is_class && (self.name == "host" || self.name == "host-context")
     }
 
     #[allow(clippy::missing_const_for_fn)]

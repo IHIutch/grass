@@ -159,7 +159,7 @@ test!(
     "%-a .foo {a: b}
     * {@extend .foo} -a {@extend %-a}
     ",
-    "-a .foo, -a * {\n  a: b;\n}\n"
+    "-a * {\n  a: b;\n}\n"
 );
 test!(
     universal_unification_simple_target_2,
@@ -201,7 +201,7 @@ test!(
     "%-a *|*.foo {a: b}
     * {@extend .foo} -a {@extend %-a}
     ",
-    "-a *|*.foo, -a * {\n  a: b;\n}\n"
+    "-a * {\n  a: b;\n}\n"
 );
 test!(
     universal_unification_universal_target_without_namespace_4,
