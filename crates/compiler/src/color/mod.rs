@@ -292,12 +292,20 @@ impl Color {
         let weight1 = (combined_weight1 + Number::one()) / Number(2.0);
         let weight2 = Number::one() - weight1;
 
-        Color::from_rgba(
-            self.red() * weight1 + other.red() * weight2,
-            self.green() * weight1 + other.green() * weight2,
-            self.blue() * weight1 + other.blue() * weight2,
-            self.alpha() * weight + other.alpha() * (Number::one() - weight),
-        )
+        Color {
+            space: ColorSpace::Rgb,
+            channels: [
+                Some((self.red() * weight1 + other.red() * weight2).0.clamp(0.0, 255.0)),
+                Some((self.green() * weight1 + other.green() * weight2).0.clamp(0.0, 255.0)),
+                Some((self.blue() * weight1 + other.blue() * weight2).0.clamp(0.0, 255.0)),
+            ],
+            alpha: Some(
+                (self.alpha() * weight + other.alpha() * (Number::one() - weight))
+                    .clamp(0.0, 1.0)
+                    .0,
+            ),
+            format: ColorFormat::Infer,
+        }
     }
 
     /// Simple linear interpolation mix in a given color space.
@@ -597,18 +605,22 @@ impl Color {
         }
 
         let rgb = self.to_rgb_channels();
-        let red = Number(255.0) - Number(rgb[0]).round();
-        let green = Number(255.0) - Number(rgb[1]).round();
-        let blue = Number(255.0) - Number(rgb[2]).round();
+        let red = 255.0 - rgb[0];
+        let green = 255.0 - rgb[1];
+        let blue = 255.0 - rgb[2];
+
+        let format = self.hsl_format_if_preserved();
 
         let inverse = Color {
             space: ColorSpace::Rgb,
-            channels: [Some(red.0), Some(green.0), Some(blue.0)],
+            channels: [Some(red), Some(green), Some(blue)],
             alpha: self.alpha,
-            format: ColorFormat::Infer,
+            format: format.clone(),
         };
 
-        inverse.mix(self, weight)
+        let mut result = inverse.mix(self, weight);
+        result.format = format;
+        result
     }
 
     /// Invert a color in a given color space.

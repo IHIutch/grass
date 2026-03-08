@@ -242,7 +242,7 @@ test!(
 test!(
     invert_weight_percent_turquoise,
     "a {\n  color: invert(turquoise, 23%);\n}\n",
-    "a {\n  color: #5db4ab;\n}\n"
+    "a {\n  color: rgb(93.21, 179.61, 170.97);\n}\n"
 );
 test!(
     invert_weight_no_unit,
@@ -298,22 +298,22 @@ test!(
 test!(
     mix_no_weight,
     "a {\n  color: mix(#f00, #00f);\n}\n",
-    "a {\n  color: purple;\n}\n"
+    "a {\n  color: rgb(127.5, 0, 127.5);\n}\n"
 );
 test!(
     mix_weight_25,
     "a {\n  color: mix(#f00, #00f, 25%);\n}\n",
-    "a {\n  color: #4000bf;\n}\n"
+    "a {\n  color: rgb(63.75, 0, 191.25);\n}\n"
 );
 test!(
     mix_opacity,
     "a {\n  color: mix(rgba(255, 0, 0, 0.5), #00f);\n}\n",
-    "a {\n  color: rgba(64, 0, 191, 0.75);\n}\n"
+    "a {\n  color: rgba(63.75, 0, 191.25, 0.75);\n}\n"
 );
 test!(
     mix_sanity_check,
     "a {\n  color: mix(black, white);\n}\n",
-    "a {\n  color: gray;\n}\n"
+    "a {\n  color: rgb(127.5, 127.5, 127.5);\n}\n"
 );
 test!(
     change_color_blue,
@@ -894,4 +894,37 @@ test!(
     is_in_gamut_oklch_out_of_range,
     "@use \"sass:color\";\na {\n  b: color.is-in-gamut(oklch(120% 0.2 30deg));\n}\n",
     "a {\n  b: true;\n}\n"
+);
+test!(
+    mix_red_blue_fractional,
+    "@use \"sass:color\";\na {\n  b: color.mix(red, blue);\n}\n",
+    "a {\n  b: rgb(127.5, 0, 127.5);\n}\n"
+);
+test!(
+    scale_fractional_rgb,
+    "@use \"sass:color\";\na {\n  b: color.scale(#ffff00, $red: -50%);\n}\n",
+    "a {\n  b: rgb(127.5, 255, 0);\n}\n"
+);
+test!(
+    adjust_oklch_clamp_lightness,
+    "@use \"sass:color\";\na {\n  b: color.adjust(oklch(90% 0.2 30), $lightness: 20%);\n}\n",
+    "a {\n  b: oklch(100% 0.2 30deg);\n}\n"
+);
+// Note: dart-sass outputs oklch(50% 0.8 30deg) directly, but grass uses
+// color-mix() serialization for out-of-range perceptual values (separate issue)
+test!(
+    #[ignore = "out-of-range chroma serialization uses color-mix instead of oklch"]
+    adjust_oklch_no_clamp_chroma,
+    "@use \"sass:color\";\na {\n  b: color.adjust(oklch(50% 0.3 30), $chroma: 0.5);\n}\n",
+    "a {\n  b: oklch(50% 0.8 30deg);\n}\n"
+);
+test!(
+    adjust_lab_clamp_lightness,
+    "@use \"sass:color\";\na {\n  b: color.adjust(lab(90 50 50), $lightness: 30);\n}\n",
+    "a {\n  b: lab(100% 50 50);\n}\n"
+);
+test!(
+    invert_hsl_preserves_format,
+    "@use \"sass:color\";\na {\n  b: color.invert(hsl(200, 100%, 50%));\n}\n",
+    "a {\n  b: hsl(20, 100%, 50%);\n}\n"
 );

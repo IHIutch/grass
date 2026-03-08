@@ -2,7 +2,6 @@ use crate::{
     builtin::{builtin_imports::*, color::angle_value},
     color::{space::ColorSpace, ColorFormat},
     utils::to_sentence,
-    value::fuzzy_round,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -205,7 +204,18 @@ fn update_modern(
                     let current = new_channels[i].unwrap_or(0.0);
                     let new_val = match update {
                         UpdateComponents::Change => adj_val,
-                        UpdateComponents::Adjust => current + adj_val,
+                        UpdateComponents::Adjust => {
+                            let val = current + adj_val;
+                            // dart-sass clamps lightness in perceptual spaces for adjust()
+                            if working_space.is_perceptual()
+                                && !channel_defs[i].is_polar
+                                && i == 0
+                            {
+                                val.clamp(channel_defs[i].min, channel_defs[i].max)
+                            } else {
+                                val
+                            }
+                        }
                         UpdateComponents::Scale => {
                             let max = channel_defs[i].max;
                             let min = channel_defs[i].min;
@@ -468,18 +478,20 @@ fn update_components(
     }
 
     fn update_rgb(current: Number, param: Option<Number>, update: UpdateComponents) -> Number {
-        Number(fuzzy_round(update_value(current, param, 255.0, update).0))
+        update_value(current, param, 255.0, update)
     }
 
     let original_space = color.color_space();
     let original_format = color.format.clone();
     let color = if has_rgb {
-        Arc::new(Color::from_rgba(
+        let mut c = Color::from_rgba_fn(
             update_rgb(color.red(), red, update),
             update_rgb(color.green(), green, update),
             update_rgb(color.blue(), blue, update),
             update_value(color.alpha(), alpha, 1.0, update),
-        ))
+        );
+        c.format = ColorFormat::Infer;
+        Arc::new(c)
     } else if has_wb {
         // When the color is already in HWB space, use raw channel values to avoid
         // precision loss from HWB→RGB→whiteness/blackness roundtrip conversion.
