@@ -58,16 +58,16 @@ error!(
 error!(
     parent_in_second_arg,
     "a {\n  color: selector-append(\"c\", \"&\");\n}\n",
-    "Error: $selectors: Parent selectors aren't allowed here."
+    "Error: Parent selectors aren't allowed here."
 );
 error!(
     malformed_selector_in_first_arg,
-    "a {\n  color: selector-append(\"[c\", \".d\");\n}\n", "Error: $selectors: expected more input."
+    "a {\n  color: selector-append(\"[c\", \".d\");\n}\n", "Error: expected more input."
 );
 error!(
     invalid_type_in_first_arg,
     "a {\n  color: selector-append(\"c\", 1);\n}\n",
-    "Error: $selectors: 1 is not a valid selector: it must be a string,"
+    "Error: 1 is not a valid selector: it must be a string,"
 );
 error!(
     no_args,

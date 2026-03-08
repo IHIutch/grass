@@ -59,8 +59,7 @@ pub(crate) fn selector_parse(mut args: ArgumentResult, visitor: &mut Visitor) ->
     args.max_args(1)?;
     Ok(args
         .get_err(0, "selector")?
-        .to_selector(visitor, "selector", false, args.span())
-        .map_err(|_| ("$selector: expected selector.", args.span()))?
+        .to_selector(visitor, "selector", false, args.span())?
         .into_value())
 }
 
@@ -73,13 +72,13 @@ pub(crate) fn selector_nest(args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
     let parsed_selectors = selectors
         .into_iter()
-        .map(|sel| sel.node.to_selector(visitor, "selectors", true, span))
+        .map(|sel| sel.node.to_selector_unnamed(visitor, true, span))
         .collect::<SassResult<Vec<Selector>>>()?;
 
     if let Some(first) = parsed_selectors.first() {
         if first.contains_parent_selector() {
             return Err((
-                "$selectors: Parent selectors aren't allowed here.",
+                "Parent selectors aren't allowed here.",
                 span,
             )
                 .into());
@@ -106,7 +105,7 @@ pub(crate) fn selector_append(args: ArgumentResult, visitor: &mut Visitor) -> Sa
 
     let mut parsed_selectors = selectors
         .into_iter()
-        .map(|s| s.node.to_selector(visitor, "selectors", false, span))
+        .map(|s| s.node.to_selector_unnamed(visitor, false, span))
         .collect::<SassResult<Vec<Selector>>>()?;
 
     let first = parsed_selectors.remove(0);
@@ -186,13 +185,13 @@ pub(crate) fn selector_replace(
     args.max_args(3)?;
     let selector =
         args.get_err(0, "selector")?
-            .to_selector(visitor, "selector", true, args.span())?;
+            .to_selector(visitor, "selector", false, args.span())?;
     let target =
         args.get_err(1, "original")?
-            .to_selector(visitor, "original", true, args.span())?;
+            .to_selector(visitor, "original", false, args.span())?;
     let source =
         args.get_err(2, "replacement")?
-            .to_selector(visitor, "replacement", true, args.span())?;
+            .to_selector(visitor, "replacement", false, args.span())?;
     Ok(ExtensionStore::replace(selector.0, source.0, target.0, args.span())?.to_sass_list())
 }
 

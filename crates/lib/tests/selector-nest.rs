@@ -143,35 +143,35 @@ test!(
 );
 error!(
     disallows_parent_selector_as_first_arg,
-    "a {\n  color: selector-nest(\"&\");\n}\n", "Error: $selectors: Parent selectors aren't allowed here."
+    "a {\n  color: selector-nest(\"&\");\n}\n", "Error: Parent selectors aren't allowed here."
 );
 error!(
     disallows_parent_not_at_start_of_compound_selector_attribute,
     "a {\n  color: selector-nest(\"[d]&\");\n}\n",
-    "Error: $selectors: \"&\" may only used at the beginning of a compound selector."
+    "Error: \"&\" may only used at the beginning of a compound selector."
 );
 error!(
     disallows_parent_not_at_start_of_compound_selector_type,
     "a {\n  color: selector-nest(\"d&\");\n}\n",
-    "Error: $selectors: \"&\" may only used at the beginning of a compound selector."
+    "Error: \"&\" may only used at the beginning of a compound selector."
 );
 error!(
     improperly_terminated_attribute_selector_first_arg,
-    "a {\n  color: selector-nest(\"[d\");\n}\n", "Error: $selectors: expected more input."
+    "a {\n  color: selector-nest(\"[d\");\n}\n", "Error: expected more input."
 );
 error!(
     improperly_terminated_attribute_selector_second_arg,
-    "a {\n  color: selector-nest(\"c\", \"[d\");\n}\n", "Error: $selectors: expected more input."
+    "a {\n  color: selector-nest(\"c\", \"[d\");\n}\n", "Error: expected more input."
 );
 error!(
     unquoted_integer_first_arg,
     "a {\n  color: selector-nest(1);\n}\n",
-    "Error: $selectors: 1 is not a valid selector: it must be a string,"
+    "Error: 1 is not a valid selector: it must be a string,"
 );
 error!(
     unquoted_integer_second_arg,
     "a {\n  color: selector-nest(\"c\", 1);\n}\n",
-    "Error: $selectors: 1 is not a valid selector: it must be a string,"
+    "Error: 1 is not a valid selector: it must be a string,"
 );
 error!(
     empty_args,

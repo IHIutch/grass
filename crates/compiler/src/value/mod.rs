@@ -490,6 +490,24 @@ impl Value {
         })?))
     }
 
+    pub fn to_selector_unnamed(
+        self,
+        visitor: &mut Visitor,
+        allows_parent: bool,
+        span: Span,
+    ) -> SassResult<Selector> {
+        let string = match self.clone().selector_string()? {
+            Some(v) => v,
+            None => return Err((format!("{} is not a valid selector: it must be a string,\n a list of strings, or a list of lists of strings.", self.inspect(span)?), span).into()),
+        };
+        Ok(Selector(visitor.parse_selector_from_string(
+            &string,
+            allows_parent,
+            true,
+            span,
+        )?))
+    }
+
     fn selector_string(self) -> SassResult<Option<String>> {
         Ok(Some(match self {
             Value::String(text, ..) => text,
