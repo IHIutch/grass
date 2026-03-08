@@ -9,7 +9,6 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd sync               # Sync with git
 ```
 
 ## Non-Interactive Shell Commands
@@ -133,7 +132,6 @@ For more details, see README.md and docs/QUICKSTART.md.
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
@@ -146,6 +144,30 @@ For more details, see README.md and docs/QUICKSTART.md.
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Issue Tracking Discipline — MANDATORY
+
+**🚨 ALWAYS update issues. This is NOT optional. Every task must have a corresponding issue update.**
+
+Updating issues is a **blocking requirement** — not a cleanup step you do at the end. If you wrote code, you MUST update issues before responding to the user. No exceptions.
+
+### At every step:
+
+- **Before starting work**: Claim an issue (`bd update <id> --claim`) or create one if none exists. Never write code without a tracked issue.
+- **With every commit**: Update the relevant issue's notes with what was done, what remains, and current test counts.
+- **After fixing tests**: Update the issue **description** (not just notes) to reflect the new failure count. Run sass-spec to get accurate numbers.
+- **When partially completing an issue**: Add notes summarizing what's fixed, what's still broken, and what blocks the rest — so the next session can pick up without re-exploring.
+- **When closing**: Include a close reason summarizing total impact (e.g., "Fixed 35 sass-spec tests: ...").
+- **When discovering new work**: Create linked issues immediately (`bd create ... --deps discovered-from:<id>`).
+
+### At session boundaries:
+
+- **Session start**: Run `bd list --status=open` and verify issue descriptions still reflect reality. Update counts and priorities if they've drifted.
+- **Session end**: All issues touched during the session must have current, accurate descriptions and notes before pushing.
+
+### What "update" means:
+
+An issue update is NOT just adding notes. It means the issue's **title, description, and status** accurately reflect the current state of the world. If an issue says "~1,259 failures" and you fixed 135 of them, the title and description must be updated to say "~1,124 failures".
 
 <!-- END BEADS INTEGRATION -->
 
