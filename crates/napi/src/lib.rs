@@ -3,7 +3,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use napi_derive::napi;
 
-use grass_compiler::{from_path, from_string, Options, OutputStyle};
+use grass_compiler::{from_path, from_string_with_file_name, Options, OutputStyle};
 
 #[napi(object)]
 pub struct CompileOptions {
@@ -62,7 +62,9 @@ pub fn compile_string(
 ) -> napi::Result<CompileResult> {
     let opts = build_options(options);
 
-    let css = from_string(source, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let css = from_string_with_file_name(source, cwd.join("stdin"), &opts)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     Ok(CompileResult { css })
 }

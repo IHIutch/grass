@@ -158,7 +158,7 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
     Ok(stylesheet)
 }
 
-fn from_string_with_file_name<P: AsRef<Path>>(
+pub fn from_string_with_file_name<P: AsRef<Path>>(
     input: String,
     file_name: P,
     options: &Options,
