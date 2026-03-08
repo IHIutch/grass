@@ -2,6 +2,7 @@
 *.css
 !input.scss
 !crates/static/_index.scss
+node_modules/
 
 # devops
 /target

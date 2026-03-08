@@ -8,5 +8,8 @@
   },
   "dependencies": {
     "grass-wasm": "file:../crates/lib/pkg-node"
+  },
+  "devDependencies": {
+    "sass-embedded": "^1.97.3"
   }
 }

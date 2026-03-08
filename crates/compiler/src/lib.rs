@@ -259,3 +259,134 @@ pub fn from_string<S: Into<String>>(input: S, options: &Options) -> Result<Strin
 pub fn from_string_js(input: String) -> std::result::Result<String, String> {
     from_string(input, &Options::default()).map_err(|e| e.to_string())
 }
+
+#[cfg(feature = "wasm-exports")]
+mod wasm_fs {
+    use std::{
+        io::{self, Error, ErrorKind},
+        path::{Path, PathBuf},
+    };
+
+    use wasm_bindgen::prelude::*;
+
+    use crate::Fs;
+
+    #[wasm_bindgen]
+    extern "C" {
+        pub type JsFsCallbacks;
+
+        #[wasm_bindgen(method, catch)]
+        fn is_file(this: &JsFsCallbacks, path: &str) -> Result<bool, JsValue>;
+
+        #[wasm_bindgen(method, catch)]
+        fn is_dir(this: &JsFsCallbacks, path: &str) -> Result<bool, JsValue>;
+
+        #[wasm_bindgen(method, catch)]
+        fn read(this: &JsFsCallbacks, path: &str) -> Result<Vec<u8>, JsValue>;
+
+        #[wasm_bindgen(method, catch)]
+        fn canonicalize(this: &JsFsCallbacks, path: &str) -> Result<String, JsValue>;
+    }
+
+    pub struct JsFs {
+        callbacks: JsFsCallbacks,
+    }
+
+    impl std::fmt::Debug for JsFs {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("JsFs").finish()
+        }
+    }
+
+    impl JsFs {
+        pub fn new(callbacks: JsFsCallbacks) -> Self {
+            Self { callbacks }
+        }
+    }
+
+    impl Fs for JsFs {
+        fn is_file(&self, path: &Path) -> bool {
+            self.callbacks
+                .is_file(&path.to_string_lossy())
+                .unwrap_or(false)
+        }
+
+        fn is_dir(&self, path: &Path) -> bool {
+            self.callbacks
+                .is_dir(&path.to_string_lossy())
+                .unwrap_or(false)
+        }
+
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.callbacks
+                .read(&path.to_string_lossy())
+                .map_err(|e| {
+                    Error::new(
+                        ErrorKind::NotFound,
+                        e.as_string().unwrap_or_else(|| "read error".to_string()),
+                    )
+                })
+        }
+
+        fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+            self.callbacks
+                .canonicalize(&path.to_string_lossy())
+                .map(PathBuf::from)
+                .map_err(|e| {
+                    Error::new(
+                        ErrorKind::Other,
+                        e.as_string()
+                            .unwrap_or_else(|| "canonicalize error".to_string()),
+                    )
+                })
+        }
+    }
+}
+
+#[cfg(feature = "wasm-exports")]
+#[wasm_bindgen(js_name = compile)]
+pub fn compile_js(
+    input: String,
+    load_paths: Vec<String>,
+    style: &str,
+    quiet: bool,
+    fs_callbacks: wasm_fs::JsFsCallbacks,
+) -> std::result::Result<String, String> {
+    let js_fs = wasm_fs::JsFs::new(fs_callbacks);
+
+    let mut options = Options::default().fs(&js_fs).quiet(quiet);
+
+    if style == "compressed" {
+        options = options.style(OutputStyle::Compressed);
+    }
+
+    for lp in &load_paths {
+        options = options.load_path(lp);
+    }
+
+    from_string(input, &options).map_err(|e| e.to_string())
+}
+
+#[cfg(feature = "wasm-exports")]
+#[wasm_bindgen(js_name = compile_file)]
+pub fn compile_file_js(
+    path: String,
+    load_paths: Vec<String>,
+    style: &str,
+    quiet: bool,
+    fs_callbacks: wasm_fs::JsFsCallbacks,
+) -> std::result::Result<String, String> {
+    let js_fs = wasm_fs::JsFs::new(fs_callbacks);
+
+    let mut options = Options::default().fs(&js_fs).quiet(quiet);
+
+    if style == "compressed" {
+        options = options.style(OutputStyle::Compressed);
+    }
+
+    for lp in &load_paths {
+        options = options.load_path(lp);
+    }
+
+    from_path(&path, &options).map_err(|e| e.to_string())
+}
