@@ -1,3 +1,7 @@
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::{
     fs::OpenOptions,
     io::{stdin, stdout, Read, Write},

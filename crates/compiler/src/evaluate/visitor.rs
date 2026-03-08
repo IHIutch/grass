@@ -176,6 +176,8 @@ pub struct Visitor<'a> {
     /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
     /// Avoids redundant filesystem probing for the same import path from the same context.
     import_path_cache: HashMap<(PathBuf, PathBuf, bool), Option<PathBuf>>,
+    /// Cache for canonicalized paths to avoid repeated syscalls.
+    canonicalize_cache: HashMap<PathBuf, PathBuf>,
 }
 
 impl<'a> Visitor<'a> {
@@ -216,7 +218,23 @@ impl<'a> Visitor<'a> {
             import_cache: HashMap::new(),
             files_seen: HashSet::new(),
             import_path_cache: HashMap::new(),
+            canonicalize_cache: HashMap::new(),
         }
+    }
+
+    /// Cached version of `fs.canonicalize()` to avoid repeated syscalls.
+    fn canonicalize(&mut self, path: &Path) -> PathBuf {
+        if let Some(cached) = self.canonicalize_cache.get(path) {
+            return cached.clone();
+        }
+        let result = self
+            .options
+            .fs
+            .canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf());
+        self.canonicalize_cache
+            .insert(path.to_path_buf(), result.clone());
+        result
     }
 
     pub(crate) fn visit_stylesheet(&mut self, mut style_sheet: StyleSheet) -> SassResult<()> {
@@ -604,11 +622,7 @@ impl<'a> Visitor<'a> {
         // todo: different errors based on this
         _names_in_errors: bool,
     ) -> SassResult<Arc<RefCell<Module>>> {
-        let url = self
-            .options
-            .fs
-            .canonicalize(&stylesheet.url)
-            .unwrap_or_else(|_| stylesheet.url.clone());
+        let url = self.canonicalize(&stylesheet.url);
 
         if let Some(already_loaded) = self.modules.get(&url) {
             let current_configuration =
@@ -746,11 +760,7 @@ impl<'a> Visitor<'a> {
         // todo: decide on naming convention for style_sheet vs stylesheet
         let stylesheet = self.load_style_sheet(url.to_string_lossy().as_ref(), false, span)?;
 
-        let canonical_url = self
-            .options
-            .fs
-            .canonicalize(&stylesheet.url)
-            .unwrap_or_else(|_| stylesheet.url.clone());
+        let canonical_url = self.canonicalize(&stylesheet.url);
 
         if self.active_modules.contains(&canonical_url) {
             return Err(("Module loop: this module is already being loaded.", span).into());
@@ -968,7 +978,7 @@ impl<'a> Visitor<'a> {
         span: Span,
     ) -> SassResult<StyleSheet> {
         if let Some(name) = self.find_import(url.as_ref(), for_import) {
-            let name = self.options.fs.canonicalize(&name).unwrap_or(name);
+            let name = self.canonicalize(&name);
             if let Some(style_sheet) = self.import_cache.get(&name) {
                 return Ok(style_sheet.clone());
             }
