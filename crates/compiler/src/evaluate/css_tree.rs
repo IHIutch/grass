@@ -1,6 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::BTreeMap,
+    collections::HashMap,
 };
 
 use crate::ast::CssStmt;
@@ -9,8 +9,8 @@ use crate::ast::CssStmt;
 pub(super) struct CssTree {
     // None is tombstone
     stmts: Vec<RefCell<Option<CssStmt>>>,
-    pub parent_to_child: BTreeMap<CssTreeIdx, Vec<CssTreeIdx>>,
-    pub child_to_parent: BTreeMap<CssTreeIdx, CssTreeIdx>,
+    pub parent_to_child: HashMap<CssTreeIdx, Vec<CssTreeIdx>>,
+    pub child_to_parent: HashMap<CssTreeIdx, CssTreeIdx>,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
@@ -23,8 +23,8 @@ impl CssTree {
     pub fn new() -> Self {
         let mut tree = Self {
             stmts: Vec::new(),
-            parent_to_child: BTreeMap::new(),
-            child_to_parent: BTreeMap::new(),
+            parent_to_child: HashMap::new(),
+            child_to_parent: HashMap::new(),
         };
 
         tree.stmts.push(RefCell::new(None));

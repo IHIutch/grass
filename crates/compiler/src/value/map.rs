@@ -1,4 +1,4 @@
-use std::{slice::Iter, vec::IntoIter};
+use std::{slice::Iter, sync::Arc, vec::IntoIter};
 
 use codemap::Spanned;
 
@@ -7,15 +7,22 @@ use crate::{
     value::Value,
 };
 
+/// A Sass map type. The inner Vec is Arc-wrapped so that cloning a SassMap
+/// (which happens on every variable lookup) is O(1) instead of deep-copying
+/// all keys and values. Mutations use Arc::make_mut for copy-on-write.
 #[derive(Debug, Clone, Default)]
-pub struct SassMap(Vec<(Spanned<Value>, Value)>);
+pub struct SassMap(Arc<Vec<(Spanned<Value>, Value)>>);
 
 impl PartialEq for SassMap {
     fn eq(&self, other: &Self) -> bool {
+        // Fast path: same Arc pointer means same data
+        if Arc::ptr_eq(&self.0, &other.0) {
+            return true;
+        }
         if self.0.len() != other.0.len() {
             return false;
         }
-        for (key, value) in &self.0 {
+        for (key, value) in self.0.iter() {
             if !other
                 .0
                 .iter()
@@ -31,16 +38,16 @@ impl PartialEq for SassMap {
 impl Eq for SassMap {}
 
 impl SassMap {
-    pub const fn new() -> SassMap {
-        SassMap(Vec::new())
+    pub fn new() -> SassMap {
+        SassMap(Arc::new(Vec::new()))
     }
 
-    pub const fn new_with(elements: Vec<(Spanned<Value>, Value)>) -> SassMap {
-        SassMap(elements)
+    pub fn new_with(elements: Vec<(Spanned<Value>, Value)>) -> SassMap {
+        SassMap(Arc::new(elements))
     }
 
     pub fn get(self, key: &Value) -> Option<Value> {
-        for (k, v) in self.0 {
+        for (k, v) in self.into_vec() {
             if &k.node == key {
                 return Some(v);
             }
@@ -50,7 +57,7 @@ impl SassMap {
     }
 
     pub fn get_ref(&self, key: &Value) -> Option<&Value> {
-        for (k, v) in &self.0 {
+        for (k, v) in self.0.iter() {
             if &k.node == key {
                 return Some(v);
             }
@@ -60,7 +67,7 @@ impl SassMap {
     }
 
     pub fn remove(&mut self, key: &Value) {
-        self.0.retain(|(ref k, ..)| k.not_equals(key));
+        Arc::make_mut(&mut self.0).retain(|(ref k, ..)| k.not_equals(key));
     }
 
     pub fn merge(&mut self, other: SassMap) {
@@ -74,11 +81,17 @@ impl SassMap {
     }
 
     pub fn keys(self) -> Vec<Value> {
-        self.0.into_iter().map(|(k, ..)| k.node).collect()
+        self.into_vec()
+            .into_iter()
+            .map(|(k, ..)| k.node)
+            .collect()
     }
 
     pub fn values(self) -> Vec<Value> {
-        self.0.into_iter().map(|(.., v)| v).collect()
+        self.into_vec()
+            .into_iter()
+            .map(|(.., v)| v)
+            .collect()
     }
 
     pub fn contains(&self, key: &Value) -> bool {
@@ -86,7 +99,7 @@ impl SassMap {
     }
 
     pub fn as_list(self) -> Vec<Value> {
-        self.0
+        self.into_vec()
             .into_iter()
             .map(|(k, v)| Value::List(vec![k.node, v], ListSeparator::Space, Brackets::None))
             .collect()
@@ -94,18 +107,24 @@ impl SassMap {
 
     /// Returns true if the key already exists
     pub fn insert(&mut self, key: Spanned<Value>, value: Value) -> bool {
-        for (ref k, ref mut v) in &mut self.0 {
+        let inner = Arc::make_mut(&mut self.0);
+        for (ref k, ref mut v) in inner.iter_mut() {
             if k.node == key.node {
                 *v = value;
                 return true;
             }
         }
-        self.0.push((key, value));
+        inner.push((key, value));
         false
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Unwrap the Arc, cloning the inner Vec only if there are other references.
+    fn into_vec(self) -> Vec<(Spanned<Value>, Value)> {
+        Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
     }
 }
 
@@ -114,6 +133,6 @@ impl IntoIterator for SassMap {
     type IntoIter = IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.into_vec().into_iter()
     }
 }
