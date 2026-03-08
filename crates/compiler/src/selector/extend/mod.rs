@@ -1002,9 +1002,9 @@ impl ExtensionStore {
 
             sources.insert(complex.clone(), state.clone());
 
-            for component in complex.components.clone() {
+            for component in &complex.components {
                 if let ComplexSelectorComponent::Compound(component) = component {
-                    for simple in component.components {
+                    for simple in &component.components {
                         self.extensions_by_extender
                             .entry(simple.clone())
                             .or_insert_with(Vec::new)
@@ -1021,7 +1021,7 @@ impl ExtensionStore {
             if selectors.is_some() || existing_extensions.is_some() {
                 new_extensions
                     .get_or_insert_with(IndexMap::new)
-                    .insert(complex.clone(), state.clone());
+                    .insert(complex.clone(), state);
             }
         }
 
@@ -1120,11 +1120,11 @@ impl ExtensionStore {
                 } else {
                     sources.insert(complex.clone(), with_extender.clone());
 
-                    for component in complex.components.clone() {
+                    for component in &complex.components {
                         if let ComplexSelectorComponent::Compound(component) = component {
-                            for simple in component.components {
+                            for simple in &component.components {
                                 self.extensions_by_extender
-                                    .entry(simple)
+                                    .entry(simple.clone())
                                     .or_insert_with(Vec::new)
                                     .push(with_extender.clone());
                             }
@@ -1136,7 +1136,7 @@ impl ExtensionStore {
                             .get_or_insert_with(HashMap::new)
                             .entry(extension.target.clone().unwrap())
                             .or_insert_with(IndexMap::new)
-                            .insert(complex.clone(), with_extender.clone());
+                            .insert(complex.clone(), with_extender);
                     }
                 }
             }

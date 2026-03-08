@@ -1,0 +1,22 @@
+{
+  "name": "ihiutch-grass-napi",
+  "version": "0.13.13",
+  "description": "Native Node.js binding for the grass Sass compiler",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "grass",
+    "triples": {
+      "defaults": true,
+      "additional": ["aarch64-apple-darwin"]
+    }
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build-debug": "napi build --platform"
+  }
+}

@@ -23,6 +23,15 @@ pub trait Fs: std::fmt::Debug {
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         Ok(path.to_path_buf())
     }
+
+    /// Given a list of candidate file paths, return the first one that exists.
+    /// This allows batch resolution in a single call, reducing overhead for
+    /// implementations that cross a boundary (e.g. WASM-JS).
+    ///
+    /// The default implementation falls back to per-path `is_file()` checks.
+    fn resolve_first_existing(&self, candidates: &[PathBuf]) -> Option<PathBuf> {
+        candidates.iter().find(|p| self.is_file(p)).cloned()
+    }
 }
 
 /// Use [`std::fs`] to read any files from disk.

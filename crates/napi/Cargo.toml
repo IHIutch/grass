@@ -1,0 +1,18 @@
+[package]
+name = "grass_napi"
+version = "0.13.4"
+edition = "2021"
+description = "Native Node.js binding for the grass Sass compiler"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+grass_compiler = { path = "../compiler", features = ["random"] }
+napi = { version = "2", features = ["napi4"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

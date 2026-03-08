@@ -162,6 +162,13 @@ impl<'a> Serializer<'a> {
         }
     }
 
+    pub fn with_capacity(options: &'a Options<'a>, map: &'a CodeMap, inspect: bool, span: Span, capacity: usize) -> Self {
+        Self {
+            buffer: Vec::with_capacity(capacity),
+            ..Self::new(options, map, inspect, span)
+        }
+    }
+
     fn omit_spaces_around_complex_component(&self, component: &ComplexSelectorComponent) -> bool {
         self.options.is_compressed()
             && matches!(component, ComplexSelectorComponent::Combinator(..))
@@ -901,11 +908,10 @@ impl<'a> Serializer<'a> {
             return;
         }
 
-        // todo: can optimize away intermediate buffer
-        let mut buffer = String::with_capacity(3);
+        let start = self.buffer.len();
 
         if float < 0.0 {
-            buffer.push('-');
+            self.buffer.push(b'-');
         }
 
         let num = float.abs();
@@ -927,39 +933,40 @@ impl<'a> Serializer<'a> {
                     .to_string();
                 let num_digits = digits.len();
                 if exp + 1 > num_digits {
-                    buffer.push_str(&digits);
+                    self.buffer.extend_from_slice(digits.as_bytes());
                     for _ in 0..(exp + 1 - num_digits) {
-                        buffer.push('0');
+                        self.buffer.push(b'0');
                     }
                 } else {
-                    buffer.push_str(&digits[..exp + 1]);
+                    self.buffer.extend_from_slice(&digits.as_bytes()[..exp + 1]);
                 }
             } else {
-                buffer.push_str(
-                    format!("{:.10}", num)
-                        .trim_end_matches('0')
-                        .trim_end_matches('.'),
-                );
+                let formatted = format!("{:.10}", num);
+                let trimmed = formatted
+                    .trim_end_matches('0')
+                    .trim_end_matches('.');
+                self.buffer.extend_from_slice(trimmed.as_bytes());
             }
         } else if self.options.is_compressed() && num < 1.0 {
-            buffer.push_str(
-                format!("{:.10}", num)[1..]
-                    .trim_end_matches('0')
-                    .trim_end_matches('.'),
-            );
+            let formatted = format!("{:.10}", num);
+            let trimmed = formatted[1..]
+                .trim_end_matches('0')
+                .trim_end_matches('.');
+            self.buffer.extend_from_slice(trimmed.as_bytes());
         } else {
-            buffer.push_str(
-                format!("{:.10}", num)
-                    .trim_end_matches('0')
-                    .trim_end_matches('.'),
-            );
+            let formatted = format!("{:.10}", num);
+            let trimmed = formatted
+                .trim_end_matches('0')
+                .trim_end_matches('.');
+            self.buffer.extend_from_slice(trimmed.as_bytes());
         }
 
-        if buffer.is_empty() || buffer == "-" || buffer == "-0" {
-            buffer = "0".to_owned();
+        // Check if we only wrote a sign or "-0"
+        let written = &self.buffer[start..];
+        if written.is_empty() || written == b"-" || written == b"-0" {
+            self.buffer.truncate(start);
+            self.buffer.push(b'0');
         }
-
-        self.buffer.append(&mut buffer.into_bytes());
     }
 
     pub fn visit_group(

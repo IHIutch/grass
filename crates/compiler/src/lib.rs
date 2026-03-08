@@ -200,7 +200,7 @@ fn from_string_with_file_name<P: AsRef<Path>>(
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     };
 
-    let mut serializer = Serializer::new(options, &map, false, empty_span);
+    let mut serializer = Serializer::with_capacity(options, &map, false, empty_span, 64 * 1024);
 
     let mut prev_was_group_end = false;
     let mut prev_requires_semicolon = false;
@@ -286,6 +286,9 @@ mod wasm_fs {
 
         #[wasm_bindgen(method, catch)]
         fn canonicalize(this: &JsFsCallbacks, path: &str) -> Result<String, JsValue>;
+
+        #[wasm_bindgen(method, catch)]
+        fn resolve_first_existing(this: &JsFsCallbacks, candidates: Vec<String>) -> Result<JsValue, JsValue>;
     }
 
     pub struct JsFs {
@@ -339,6 +342,24 @@ mod wasm_fs {
                             .unwrap_or_else(|| "canonicalize error".to_string()),
                     )
                 })
+        }
+
+        fn resolve_first_existing(&self, candidates: &[PathBuf]) -> Option<PathBuf> {
+            let str_candidates: Vec<String> = candidates
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            match self.callbacks.resolve_first_existing(str_candidates) {
+                Ok(val) => {
+                    if val.is_null() || val.is_undefined() {
+                        None
+                    } else {
+                        val.as_string().map(PathBuf::from)
+                    }
+                }
+                // Fallback: JS side doesn't implement this method
+                Err(_) => candidates.iter().find(|p| self.is_file(p)).cloned(),
+            }
         }
     }
 }

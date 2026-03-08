@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::OsStr,
     fmt,
     iter::FromIterator,
@@ -173,6 +173,9 @@ pub struct Visitor<'a> {
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
     files_seen: BTreeSet<PathBuf>,
+    /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
+    /// Avoids redundant filesystem probing for the same import path from the same context.
+    import_path_cache: HashMap<(PathBuf, PathBuf, bool), Option<PathBuf>>,
 }
 
 impl<'a> Visitor<'a> {
@@ -212,6 +215,7 @@ impl<'a> Visitor<'a> {
             map,
             import_cache: BTreeMap::new(),
             files_seen: BTreeSet::new(),
+            import_path_cache: HashMap::new(),
         }
     }
 
@@ -849,7 +853,25 @@ impl<'a> Visitor<'a> {
     /// <https://sass-lang.com/documentation/at-rules/import#finding-the-file>
     /// <https://sass-lang.com/documentation/at-rules/import#load-paths>
     #[allow(clippy::cognitive_complexity, clippy::redundant_clone)]
-    pub fn find_import(&self, path: &Path, for_import: bool) -> Option<PathBuf> {
+    pub fn find_import(&mut self, path: &Path, for_import: bool) -> Option<PathBuf> {
+        // Cache key must include the import context (parent dir of current file)
+        // because the same relative path resolves differently from different files
+        let context_dir = self
+            .current_import_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf();
+        let cache_key = (context_dir, path.to_path_buf(), for_import);
+        if let Some(result) = self.import_path_cache.get(&cache_key) {
+            return result.clone();
+        }
+
+        let result = self.find_import_uncached(path, for_import);
+        self.import_path_cache.insert(cache_key, result.clone());
+        result
+    }
+
+    fn find_import_uncached(&self, path: &Path, for_import: bool) -> Option<PathBuf> {
         let path_buf = if path.is_absolute() {
             path.into()
         } else {
@@ -859,22 +881,26 @@ impl<'a> Visitor<'a> {
                 .join(path)
         };
 
-        macro_rules! try_path {
-            ($path:expr) => {
-                let path = $path;
-                let dirname = path.parent().unwrap_or_else(|| Path::new(""));
-                let basename = path.file_name().unwrap_or_else(|| OsStr::new(".."));
+        // Build candidate list for a single path (original + partial with _ prefix)
+        fn path_candidates(path: PathBuf) -> Vec<PathBuf> {
+            let dirname = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+            let basename = path.file_name().unwrap_or_else(|| OsStr::new(".."));
+            let partial = dirname.join(format!("_{}", basename.to_str().unwrap()));
+            vec![path, partial]
+        }
 
-                let partial = dirname.join(format!("_{}", basename.to_str().unwrap()));
-
-                if self.options.fs.is_file(&path) {
-                    return Some(path.to_path_buf());
-                }
-
-                if self.options.fs.is_file(&partial) {
-                    return Some(partial);
-                }
-            };
+        // Build candidate list for a path with all extensions
+        fn path_with_extension_candidates(path: &Path, for_import: bool) -> Vec<PathBuf> {
+            let mut candidates = Vec::with_capacity(12);
+            if for_import {
+                candidates.extend(path_candidates(path.with_extension("import.sass")));
+                candidates.extend(path_candidates(path.with_extension("import.scss")));
+                candidates.extend(path_candidates(path.with_extension("import.css")));
+            }
+            candidates.extend(path_candidates(path.with_extension("sass")));
+            candidates.extend(path_candidates(path.with_extension("scss")));
+            candidates.extend(path_candidates(path.with_extension("css")));
+            candidates
         }
 
         if path_buf.extension() == Some(OsStr::new("scss"))
@@ -882,41 +908,40 @@ impl<'a> Visitor<'a> {
             || path_buf.extension() == Some(OsStr::new("css"))
         {
             let extension = path_buf.extension().unwrap();
+            let mut candidates = Vec::new();
             if for_import {
-                try_path!(path_buf.with_extension(format!(".import{}", extension.to_str().unwrap())));
+                candidates.extend(path_candidates(
+                    path_buf.with_extension(format!(".import{}", extension.to_str().unwrap())),
+                ));
             }
-            try_path!(path_buf);
-            // todo: consider load paths
-            return None;
+            candidates.extend(path_candidates(path_buf));
+            return self.options.fs.resolve_first_existing(&candidates);
         }
 
-        macro_rules! try_path_with_extensions {
-            ($path:expr) => {
-                let path = $path;
-                if for_import {
-                    try_path!(path.with_extension("import.sass"));
-                    try_path!(path.with_extension("import.scss"));
-                    try_path!(path.with_extension("import.css"));
-                }
-                try_path!(path.with_extension("sass"));
-                try_path!(path.with_extension("scss"));
-                try_path!(path.with_extension("css"));
-            };
-        }
-
-        try_path_with_extensions!(path_buf.clone());
+        // Build all candidates for the base path
+        let mut candidates = path_with_extension_candidates(&path_buf, for_import);
 
         if self.options.fs.is_dir(&path_buf) {
-            try_path_with_extensions!(path_buf.join("index"));
+            candidates.extend(path_with_extension_candidates(&path_buf.join("index"), for_import));
         }
 
+        // Check base path candidates in one batch
+        if let Some(found) = self.options.fs.resolve_first_existing(&candidates) {
+            return Some(found);
+        }
+
+        // Check load paths
         for load_path in &self.options.load_paths {
-            let path_buf = load_path.join(path);
+            let lp_buf = load_path.join(path);
 
-            try_path_with_extensions!(&path_buf);
+            let mut candidates = path_with_extension_candidates(&lp_buf, for_import);
 
-            if self.options.fs.is_dir(&path_buf) {
-                try_path_with_extensions!(path_buf.join("index"));
+            if self.options.fs.is_dir(&lp_buf) {
+                candidates.extend(path_with_extension_candidates(&lp_buf.join("index"), for_import));
+            }
+
+            if let Some(found) = self.options.fs.resolve_first_existing(&candidates) {
+                return Some(found);
             }
         }
 

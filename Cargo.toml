@@ -4,6 +4,7 @@ members = [
     "crates/compiler",
     "crates/include_sass",
     "crates/lib",
+    "crates/napi",
 ]
 
 [profile.release]
