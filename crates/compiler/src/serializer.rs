@@ -742,6 +742,30 @@ impl<'a> Serializer<'a> {
         let is_opaque = fuzzy_equals(alpha.0, 1.0);
         let has_missing_alpha = color.has_missing_alpha();
 
+        // Out-of-range perceptual colors serialize as color-mix() unless
+        // they have missing channels (which suppress the fallback).
+        if space.is_perceptual() {
+            let has_any_missing = color.has_missing_channel(0)
+                || color.has_missing_channel(1)
+                || color.has_missing_channel(2)
+                || color.has_missing_alpha();
+
+            if !has_any_missing {
+                let channel_defs = space.channels();
+                let out_of_range = channel_defs.iter().enumerate().any(|(i, def)| {
+                    if def.is_polar {
+                        return false;
+                    }
+                    let val = color.channel_value(i).0;
+                    val < def.min || val > def.max
+                });
+                if out_of_range {
+                    self.write_color_mix_fallback(color);
+                    return;
+                }
+            }
+        }
+
         match space {
             // Lab-family: lab(L a b) / lch(L C H)
             ColorSpace::Lab | ColorSpace::Lch | ColorSpace::Oklab | ColorSpace::Oklch => {
@@ -782,6 +806,37 @@ impl<'a> Serializer<'a> {
                 }
                 self.buffer.push(b')');
             }
+        }
+    }
+
+    /// Serialize an out-of-range perceptual color as `color-mix(in <space>, color(xyz ...) 100%, black)`.
+    fn write_color_mix_fallback(&mut self, color: &Color) {
+        let space = color.color_space();
+        let alpha = color.alpha();
+        let is_opaque = fuzzy_equals(alpha.0, 1.0);
+
+        let xyz = color.to_space(ColorSpace::XyzD65);
+
+        self.buffer.extend_from_slice(b"color-mix(in ");
+        self.buffer.extend_from_slice(space.name().as_bytes());
+        if self.options.is_compressed() {
+            self.buffer.extend_from_slice(b",color(xyz ");
+        } else {
+            self.buffer.extend_from_slice(b", color(xyz ");
+        }
+        self.write_float(xyz.channel_value(0).0);
+        self.buffer.push(b' ');
+        self.write_float(xyz.channel_value(1).0);
+        self.buffer.push(b' ');
+        self.write_float(xyz.channel_value(2).0);
+        if !is_opaque {
+            self.buffer.extend_from_slice(b" / ");
+            self.write_float(alpha.0);
+        }
+        if self.options.is_compressed() {
+            self.buffer.extend_from_slice(b")100%,red)");
+        } else {
+            self.buffer.extend_from_slice(b") 100%, black)");
         }
     }
 

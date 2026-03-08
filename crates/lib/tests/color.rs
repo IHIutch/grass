@@ -853,3 +853,45 @@ error!(
     "@use \"sass:color\";\na {\n  color: color.mix(red, green, $method: lab shorter hue);\n}\n",
     "Error: $method: Hue interpolation method \"HueInterpolationMethod.shorter hue\" may not be set for rectangular color space lab."
 );
+
+// Out-of-range perceptual colors serialize as color-mix()
+test!(
+    oklch_out_of_range_lightness_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(oklch(50% 0.2 30deg), $lightness: 120%);\n}\n",
+    "a {\n  b: color-mix(in oklch, color(xyz 2.0602077969 1.6344741917 1.0169248199) 100%, black);\n}\n"
+);
+test!(
+    oklch_out_of_range_with_none_no_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(oklch(50% 0.2 none), $lightness: 120%);\n}\n",
+    "a {\n  b: oklch(120% 0.2 none);\n}\n"
+);
+test!(
+    lab_out_of_range_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(lab(50% 80 68), $lightness: 120%);\n}\n",
+    "a {\n  b: color-mix(in lab, color(xyz 2.1723280023 1.5729564638 0.6281767308) 100%, black);\n}\n"
+);
+test!(
+    lch_out_of_range_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(lch(50% 80 30deg), $lightness: 120%);\n}\n",
+    "a {\n  b: color-mix(in lch, color(xyz 2.0867101966 1.5819797171 1.0030360544) 100%, black);\n}\n"
+);
+test!(
+    oklab_out_of_range_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(oklab(0.5 0.2 0.1), $lightness: 120%);\n}\n",
+    "a {\n  b: color-mix(in oklab, color(xyz 2.1300875486 1.6198708696 1.0050848824) 100%, black);\n}\n"
+);
+test!(
+    display_p3_out_of_range_no_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(color(display-p3 0.5 0.5 0.5), $red: 1.5);\n}\n",
+    "a {\n  b: color(display-p3 1.5 0.5 0.5);\n}\n"
+);
+test!(
+    oklch_out_of_range_with_alpha_color_mix,
+    "@use \"sass:color\";\na {\n  b: color.change(oklch(50% 0.2 30deg), $lightness: 120%, $alpha: 0.5);\n}\n",
+    "a {\n  b: color-mix(in oklch, color(xyz 2.0602077969 1.6344741917 1.0169248199 / 0.5) 100%, black);\n}\n"
+);
+test!(
+    is_in_gamut_oklch_out_of_range,
+    "@use \"sass:color\";\na {\n  b: color.is-in-gamut(oklch(120% 0.2 30deg));\n}\n",
+    "a {\n  b: true;\n}\n"
+);

@@ -79,6 +79,13 @@ impl ColorSpace {
         )
     }
 
+    /// Whether this is a perceptual color space (Lab, LCH, OKLab, OKLch).
+    /// Perceptual spaces can represent colors outside the visible gamut and
+    /// require special serialization when out-of-range.
+    pub fn is_perceptual(self) -> bool {
+        matches!(self, Self::Lab | Self::Lch | Self::Oklab | Self::Oklch)
+    }
+
     /// Whether this space uses XYZ coordinates.
     pub fn is_xyz(self) -> bool {
         matches!(self, Self::XyzD50 | Self::XyzD65)

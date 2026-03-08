@@ -886,7 +886,12 @@ impl Color {
     }
 
     /// Check if all channels are within the gamut bounds for this space.
+    /// Perceptual spaces (lab, lch, oklab, oklch) are always considered in-gamut
+    /// per the CSS Color 4 spec — they can represent colors beyond the visible gamut.
     pub fn is_in_gamut(&self) -> bool {
+        if self.space.is_perceptual() {
+            return true;
+        }
         let channel_defs = self.space.channels();
         for (i, def) in channel_defs.iter().enumerate() {
             if let Some(val) = self.channels[i] {
