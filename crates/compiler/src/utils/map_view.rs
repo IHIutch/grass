@@ -174,7 +174,6 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for PrefixedM
         self.0
             .keys()
             .into_iter()
-            .filter(|key| key.as_str().starts_with(&self.1))
             .map(|key| Identifier::from(format!("{}{}", self.1, key)))
             .collect()
     }

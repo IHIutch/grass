@@ -28,6 +28,18 @@ pub(crate) struct Environment {
     pub imported_modules: Mutable<Vec<Mutable<Module>>>,
     #[allow(clippy::type_complexity)]
     pub nested_forwarded_modules: Option<Mutable<Vec<Mutable<Vec<Mutable<Module>>>>>>,
+    /// Cached source identity maps for conflict detection in @forward.
+    /// Maps member name → source module pointer for all previously forwarded members.
+    forwarded_member_sources: ForwardedMemberSources,
+}
+
+type SourcePtr = *const RefCell<Module>;
+
+#[derive(Debug, Clone, Default)]
+struct ForwardedMemberSources {
+    variables: HashMap<Identifier, SourcePtr>,
+    functions: HashMap<Identifier, SourcePtr>,
+    mixins: HashMap<Identifier, SourcePtr>,
 }
 
 impl Environment {
@@ -40,6 +52,7 @@ impl Environment {
             forwarded_modules: Arc::new(RefCell::new(Vec::new())),
             imported_modules: Arc::new(RefCell::new(Vec::new())),
             nested_forwarded_modules: None,
+            forwarded_member_sources: ForwardedMemberSources::default(),
         }
     }
 
@@ -52,6 +65,7 @@ impl Environment {
             forwarded_modules: Arc::clone(&self.forwarded_modules),
             imported_modules: Arc::clone(&self.imported_modules),
             nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Arc::clone),
+            forwarded_member_sources: self.forwarded_member_sources.clone(),
         }
     }
 
@@ -64,6 +78,7 @@ impl Environment {
             forwarded_modules: Arc::clone(&self.forwarded_modules),
             imported_modules: Arc::clone(&self.imported_modules),
             nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Arc::clone),
+            forwarded_member_sources: self.forwarded_member_sources.clone(),
         }
     }
 
@@ -238,15 +253,22 @@ impl Environment {
         Configuration::implicit(configuration)
     }
 
-    pub fn forward_module(&mut self, module: Arc<RefCell<Module>>, rule: AstForwardRule) {
+    pub fn forward_module(
+        &mut self,
+        module: Arc<RefCell<Module>>,
+        rule: AstForwardRule,
+    ) -> SassResult<()> {
+        let new_span = rule.span;
         let view = ForwardedModule::if_necessary(module, rule);
 
-        // TODO: Implement assertNoConflicts to detect when two forwarded modules
-        // define the same variable/function/mixin from different sources.
-        // dart-sass uses variableIdentity() with _modulesByVariable chain for this.
-        // See: https://github.com/sass/dart-sass/blob/main/lib/src/environment.dart
+        // Check for conflicts with previously forwarded modules.
+        // Uses dart-sass's approach: maintain maps of name → source identity
+        // for all previously forwarded members, and check the new module against
+        // them. This avoids O(n²) module-pair comparisons.
+        self.assert_no_conflicts(&view, new_span)?;
 
         (*self.forwarded_modules).borrow_mut().push(view);
+        Ok(())
     }
 
     pub fn insert_mixin(&mut self, name: Identifier, mixin: Mixin) {
@@ -416,6 +438,83 @@ impl Environment {
         self.scopes.global_functions()
     }
 
+    /// Check that `new_module` doesn't conflict with any already-forwarded modules,
+    /// then add its members to the cached source identity map.
+    fn assert_no_conflicts(
+        &mut self,
+        new_module: &Arc<RefCell<Module>>,
+        new_span: Span,
+    ) -> SassResult<()> {
+        let cache = &self.forwarded_member_sources;
+        let cache_empty = cache.variables.is_empty()
+            && cache.functions.is_empty()
+            && cache.mixins.is_empty();
+
+        if cache_empty {
+            // First forwarded module: no conflicts possible, but still need to
+            // collect sources for future checks. Use the scope keys directly
+            // (cheaper than full tree walk) since we only need names, not identities.
+            // We'll compute identities lazily on the first actual collision.
+            //
+            // Actually, we need identities to compare against future modules.
+            // Use the full tree walk.
+            let new_sources = collect_source_identities(new_module);
+            self.forwarded_member_sources = new_sources;
+            return Ok(());
+        }
+
+        // Batch-compute source identities for the new module.
+        let new_sources = collect_source_identities(new_module);
+
+        // Check against cached existing sources.
+        for (name, new_source) in &new_sources.variables {
+            if let Some(&existing_source) = self.forwarded_member_sources.variables.get(name) {
+                if *new_source != existing_source {
+                    return Err((
+                        format!("Two forwarded modules both define a variable named ${name}."),
+                        new_span,
+                    )
+                        .into());
+                }
+            }
+        }
+        for (name, new_source) in &new_sources.functions {
+            if let Some(&existing_source) = self.forwarded_member_sources.functions.get(name) {
+                if *new_source != existing_source {
+                    return Err((
+                        format!("Two forwarded modules both define a function named {name}."),
+                        new_span,
+                    )
+                        .into());
+                }
+            }
+        }
+        for (name, new_source) in &new_sources.mixins {
+            if let Some(&existing_source) = self.forwarded_member_sources.mixins.get(name) {
+                if *new_source != existing_source {
+                    return Err((
+                        format!("Two forwarded modules both define a mixin named {name}."),
+                        new_span,
+                    )
+                        .into());
+                }
+            }
+        }
+
+        // Merge new sources into the cache.
+        for (name, source) in new_sources.variables {
+            self.forwarded_member_sources.variables.entry(name).or_insert(source);
+        }
+        for (name, source) in new_sources.functions {
+            self.forwarded_member_sources.functions.entry(name).or_insert(source);
+        }
+        for (name, source) in new_sources.mixins {
+            self.forwarded_member_sources.mixins.entry(name).or_insert(source);
+        }
+
+        Ok(())
+    }
+
     fn get_variable_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<Value>> {
         self.from_one_module(name, "variable", span, |module| {
             (**module).borrow().get_var_no_err(name)
@@ -511,5 +610,159 @@ impl Environment {
         }
 
         Ok(value)
+    }
+}
+
+/// Batch-collect source identities for ALL members of a module in one tree walk.
+/// Returns maps of name → source_ptr for variables, functions, and mixins.
+/// Names are as they appear from outside the module (with prefixes applied).
+fn collect_source_identities(module: &Arc<RefCell<Module>>) -> ForwardedMemberSources {
+    let mut result = ForwardedMemberSources::default();
+    collect_inner(module, &mut result);
+    result
+}
+
+fn collect_inner(
+    module: &Arc<RefCell<Module>>,
+    result: &mut ForwardedMemberSources,
+) {
+    let borrowed = module.borrow();
+
+    match &*borrowed {
+        Module::Forwarded(fwd) => {
+            let has_prefix = fwd.forward_rule.prefix.is_some();
+            let has_filter = fwd.forward_rule.shown_variables.is_some()
+                || fwd.forward_rule.shown_mixins_and_functions.is_some()
+                || fwd.forward_rule.hidden_variables.as_ref().is_some_and(|s| !s.is_empty())
+                || fwd.forward_rule.hidden_mixins_and_functions.as_ref().is_some_and(|s| !s.is_empty());
+
+            let inner = Arc::clone(&fwd.inner);
+
+            if !has_prefix && !has_filter {
+                // Fast path: no prefix or show/hide — just pass through
+                drop(borrowed);
+                collect_inner(&inner, result);
+            } else {
+                let prefix = fwd.forward_rule.prefix.clone();
+
+                // Get visible keys (already prefixed by the scope's MapView chain)
+                let scope = borrowed.scope();
+                let visible_var_keys: HashSet<Identifier> =
+                    scope.variables.keys().into_iter().collect();
+                let visible_fn_keys: HashSet<Identifier> =
+                    scope.functions.keys().into_iter().collect();
+                let visible_mixin_keys: HashSet<Identifier> =
+                    scope.mixins.keys().into_iter().collect();
+
+                drop(borrowed);
+
+                // Recurse into the inner module (gets un-prefixed names)
+                let mut inner_result = ForwardedMemberSources::default();
+                collect_inner(&inner, &mut inner_result);
+
+                // Apply this forward's prefix and filter by visibility
+                for (inner_name, source) in inner_result.variables {
+                    let outer_name = match &prefix {
+                        Some(p) => Identifier::from(format!("{p}{inner_name}")),
+                        None => inner_name,
+                    };
+                    if visible_var_keys.contains(&outer_name) {
+                        result.variables.entry(outer_name).or_insert(source);
+                    }
+                }
+                for (inner_name, source) in inner_result.functions {
+                    let outer_name = match &prefix {
+                        Some(p) => Identifier::from(format!("{p}{inner_name}")),
+                        None => inner_name,
+                    };
+                    if visible_fn_keys.contains(&outer_name) {
+                        result.functions.entry(outer_name).or_insert(source);
+                    }
+                }
+                for (inner_name, source) in inner_result.mixins {
+                    let outer_name = match &prefix {
+                        Some(p) => Identifier::from(format!("{p}{inner_name}")),
+                        None => inner_name,
+                    };
+                    if visible_mixin_keys.contains(&outer_name) {
+                        result.mixins.entry(outer_name).or_insert(source);
+                    }
+                }
+            }
+        }
+        Module::Shadowed(shd) => {
+            let scope = borrowed.scope();
+            let visible_var_keys: HashSet<Identifier> =
+                scope.variables.keys().into_iter().collect();
+            let visible_fn_keys: HashSet<Identifier> =
+                scope.functions.keys().into_iter().collect();
+            let visible_mixin_keys: HashSet<Identifier> =
+                scope.mixins.keys().into_iter().collect();
+
+            let inner = Arc::clone(&shd.inner);
+            drop(borrowed);
+
+            let mut inner_result = ForwardedMemberSources::default();
+            collect_inner(&inner, &mut inner_result);
+
+            for (name, source) in inner_result.variables {
+                if visible_var_keys.contains(&name) {
+                    result.variables.entry(name).or_insert(source);
+                }
+            }
+            for (name, source) in inner_result.functions {
+                if visible_fn_keys.contains(&name) {
+                    result.functions.entry(name).or_insert(source);
+                }
+            }
+            for (name, source) in inner_result.mixins {
+                if visible_mixin_keys.contains(&name) {
+                    result.mixins.entry(name).or_insert(source);
+                }
+            }
+        }
+        Module::Environment { env, .. } => {
+            let source_ptr = Arc::as_ptr(module);
+
+            // Collect from forwarded modules first (they take precedence for identity)
+            let forwarded = env.forwarded_modules.borrow();
+            for fwd_module in forwarded.iter() {
+                collect_inner(fwd_module, result);
+            }
+            drop(forwarded);
+
+            // Add locally defined PUBLIC members (not already claimed by forwarded modules)
+            let local_vars = env.scopes.global_variables();
+            for name in (*local_vars).borrow().keys() {
+                if name.is_public() {
+                    result.variables.entry(*name).or_insert(source_ptr);
+                }
+            }
+            let local_fns = env.scopes.global_functions();
+            for name in (*local_fns).borrow().keys() {
+                if name.is_public() {
+                    result.functions.entry(*name).or_insert(source_ptr);
+                }
+            }
+            let local_mixins = env.scopes.global_mixins();
+            for name in (*local_mixins).borrow().keys() {
+                if name.is_public() {
+                    result.mixins.entry(*name).or_insert(source_ptr);
+                }
+            }
+        }
+        Module::Builtin { .. } => {
+            let source_ptr = Arc::as_ptr(module);
+            let scope = borrowed.scope();
+            for name in scope.variables.keys() {
+                result.variables.entry(name).or_insert(source_ptr);
+            }
+            for name in scope.functions.keys() {
+                result.functions.entry(name).or_insert(source_ptr);
+            }
+            for name in scope.mixins.keys() {
+                result.mixins.entry(name).or_insert(source_ptr);
+            }
+        }
     }
 }

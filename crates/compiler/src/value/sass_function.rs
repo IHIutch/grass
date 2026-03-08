@@ -7,6 +7,7 @@ use crate::{ast::AstFunctionDecl, builtin::Builtin, common::Identifier, evaluate
 /// The function name is stored in addition to the body
 /// for use in the builtin function `inspect()`
 #[derive(Clone, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum SassFunction {
     // todo: Cow<'static>?
     /// Builtin functions are those that have been implemented in Rust and are

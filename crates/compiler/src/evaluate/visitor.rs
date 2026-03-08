@@ -341,7 +341,7 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 |visitor, module, _| {
-                    visitor.env.forward_module(module, forward_rule.clone());
+                    visitor.env.forward_module(module, forward_rule.clone())?;
 
                     Ok(())
                 },
@@ -390,7 +390,7 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 move |visitor, module, _| {
-                    visitor.env.forward_module(module, forward_rule.clone());
+                    visitor.env.forward_module(module, forward_rule.clone())?;
 
                     Ok(())
                 },

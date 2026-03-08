@@ -34,8 +34,7 @@ mod string;
 /// blocklist of member names.
 #[derive(Debug, Clone)]
 pub(crate) struct ShadowedModule {
-    #[allow(dead_code)]
-    inner: Arc<RefCell<Module>>,
+    pub(crate) inner: Arc<RefCell<Module>>,
     scope: ModuleScope,
 }
 
@@ -109,10 +108,8 @@ impl ShadowedModule {
 #[derive(Debug, Clone)]
 pub(crate) struct ForwardedModule {
     scope: ModuleScope,
-    #[allow(dead_code)]
-    inner: Arc<RefCell<Module>>,
-    #[allow(dead_code)]
-    forward_rule: AstForwardRule,
+    pub(crate) inner: Arc<RefCell<Module>>,
+    pub(crate) forward_rule: AstForwardRule,
 }
 
 impl ForwardedModule {

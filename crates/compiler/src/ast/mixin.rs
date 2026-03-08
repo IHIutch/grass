@@ -12,6 +12,7 @@ pub(crate) type BuiltinMixin = fn(ArgumentResult, &mut Visitor) -> SassResult<()
 pub(crate) use crate::ast::AstMixin as UserDefinedMixin;
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Mixin {
     UserDefined(UserDefinedMixin, Environment),
     Builtin(BuiltinMixin),

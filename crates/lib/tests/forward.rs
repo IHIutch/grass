@@ -541,3 +541,101 @@ error!(
     "#,
     "Error: @forward rules must be written before any other rules."
 );
+
+#[test]
+fn forward_conflict_variable() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_other1.scss", r#"$a: from other1;"#);
+    fs.add_file("_other2.scss", r#"$a: from other2;"#);
+
+    let input = r#"
+        @forward "other1";
+        @forward "other2";
+    "#;
+
+    assert_err!(
+        input,
+        "Error: Two forwarded modules both define a variable named $a.",
+        grass::Options::default().fs(&fs)
+    );
+}
+
+#[test]
+fn forward_conflict_function() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_other1.scss", r#"@function a() { @return 1; }"#);
+    fs.add_file("_other2.scss", r#"@function a() { @return 2; }"#);
+
+    let input = r#"
+        @forward "other1";
+        @forward "other2";
+    "#;
+
+    assert_err!(
+        input,
+        "Error: Two forwarded modules both define a function named a.",
+        grass::Options::default().fs(&fs)
+    );
+}
+
+#[test]
+fn forward_conflict_mixin() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_other1.scss", r#"@mixin a() { color: red; }"#);
+    fs.add_file("_other2.scss", r#"@mixin a() { color: blue; }"#);
+
+    let input = r#"
+        @forward "other1";
+        @forward "other2";
+    "#;
+
+    assert_err!(
+        input,
+        "Error: Two forwarded modules both define a mixin named a.",
+        grass::Options::default().fs(&fs)
+    );
+}
+
+#[test]
+fn forward_diamond_no_conflict() {
+    // Diamond forwarding: same source module forwarded through two different paths
+    // should NOT be a conflict
+    let mut fs = TestFs::new();
+
+    fs.add_file("_source.scss", r#"$a: from source;"#);
+    fs.add_file("_path1.scss", r#"@forward "source";"#);
+    fs.add_file("_path2.scss", r#"@forward "source";"#);
+
+    let input = r#"
+        @forward "path1";
+        @forward "path2";
+    "#;
+
+    // Should not error — both forwarded modules trace back to the same source
+    assert_eq!(
+        "",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
+
+#[test]
+fn forward_conflict_with_prefix() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_other1.scss", r#"$a: from other1;"#);
+    fs.add_file("_other2.scss", r#"$b-a: from other2;"#);
+
+    let input = r#"
+        @forward "other1" as b-*;
+        @forward "other2";
+    "#;
+
+    assert_err!(
+        input,
+        "Error: Two forwarded modules both define a variable named $b-a.",
+        grass::Options::default().fs(&fs)
+    );
+}
