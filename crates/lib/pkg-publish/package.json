@@ -14,7 +14,7 @@
     "browser.d.ts",
     "workers.js",
     "workers.d.ts",
-    "grass_wasm.js",
+    "grass.js",
     "grass_bg.wasm"
   ],
   "type": "module",

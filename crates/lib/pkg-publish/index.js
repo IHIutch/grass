@@ -6,7 +6,7 @@ import {
   initSync,
   compile as wasmCompile,
   compile_file as wasmCompileFile,
-} from "./grass_wasm.js";
+} from "./grass.js";
 
 const require = createRequire(import.meta.url);
 
@@ -38,7 +38,7 @@ const fsCallbacks = {
     try { return statSync(path).isDirectory(); } catch { return false; }
   },
   read(path) {
-    return Array.from(readFileSync(path));
+    return readFileSync(path);
   },
   canonicalize(path) {
     return realpathSync(path);
