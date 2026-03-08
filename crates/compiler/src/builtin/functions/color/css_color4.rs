@@ -43,6 +43,10 @@ fn parse_channel_value(
                 }
             } else if num.unit == Unit::None || num.unit == Unit::Deg {
                 num.num.0
+            } else if num.has_compatible_units(&Unit::Deg) {
+                // Accept other angle units (turn, rad, grad) and convert to degrees
+                let factor = crate::value::conversion_factor(&num.unit, &Unit::Deg).unwrap();
+                num.num.0 * factor
             } else {
                 return Err((
                     format!(

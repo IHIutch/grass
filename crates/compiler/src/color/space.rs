@@ -168,7 +168,8 @@ impl ColorSpace {
 
     /// Parse a color space name from a CSS/Sass string.
     pub fn from_name(name: &str) -> Option<Self> {
-        match name {
+        let lower = name.to_ascii_lowercase();
+        match lower.as_str() {
             "rgb" => Some(Self::Rgb),
             "hsl" => Some(Self::Hsl),
             "hwb" => Some(Self::Hwb),
