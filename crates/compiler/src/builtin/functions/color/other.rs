@@ -233,19 +233,22 @@ fn update_modern(
         }
     }
 
-    // Normalize chroma (clamp negative to 0 with hue reflection) and hue (mod 360)
+    // Normalize negative chroma and hue to [0, 360)
     // This applies to LCH/OKLch spaces after change/adjust
     if let Some(hue_idx) = working_space.hue_channel_index() {
-        // Chroma channel: if negative, negate and rotate hue by 180°
-        // For LCH/OKLch, chroma is channel 1
+        // Chroma channel: Adjust clamps to 0; Change reflects (negate + rotate hue 180°)
         if working_space.is_perceptual() {
             let chroma_idx = 1; // Chroma is always channel 1 in LCH/OKLch
             if let Some(Some(chroma)) = new_channels.get(chroma_idx) {
                 if *chroma < 0.0 && chroma.is_finite() {
-                    new_channels[chroma_idx] = Some(-chroma);
-                    // Rotate hue by 180°
-                    if let Some(hue) = new_channels[hue_idx] {
-                        new_channels[hue_idx] = Some((hue + 180.0).rem_euclid(360.0));
+                    if update == UpdateComponents::Adjust {
+                        new_channels[chroma_idx] = Some(0.0);
+                    } else {
+                        // Change: chroma reflection
+                        new_channels[chroma_idx] = Some(-chroma);
+                        if let Some(hue) = new_channels[hue_idx] {
+                            new_channels[hue_idx] = Some((hue + 180.0).rem_euclid(360.0));
+                        }
                     }
                 }
             }
@@ -439,14 +442,9 @@ fn update_components(
                 num.assert_bounds("alpha", -100.0, 100.0, span)?;
                 Some(Some(num.num / Number(100.0)))
             } else {
-                // Adjust: alpha must be in [-1, 1]
-                if num.unit == Unit::Percent {
-                    num.assert_bounds("alpha", -100.0, 100.0, span)?;
-                    Some(Some(num.num / Number(100.0)))
-                } else {
-                    num.assert_bounds_with_unit("alpha", -1.0, 1.0, &Unit::None, span)?;
-                    Some(Some(num.num))
-                }
+                // Adjust: no bounds check on the argument itself; the result is clamped.
+                // Percent unit is stripped (deprecated but accepted).
+                Some(Some(num.num))
             }
         }
     } else {
@@ -561,9 +559,13 @@ fn update_components(
     let original_space = color.color_space();
     let original_format = color.format.clone();
     let color = if has_rgb {
-        let new_r = apply_update(color.red().0, &red, 255.0, update);
-        let new_g = apply_update(color.green().0, &green, 255.0, update);
-        let new_b = apply_update(color.blue().0, &blue, 255.0, update);
+        let clamp_rgb = update == UpdateComponents::Adjust;
+        let new_r = apply_update(color.red().0, &red, 255.0, update)
+            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
+        let new_g = apply_update(color.green().0, &green, 255.0, update)
+            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
+        let new_b = apply_update(color.blue().0, &blue, 255.0, update)
+            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
         let new_a = apply_update(color.alpha().0, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         Arc::new(Color::for_space(
@@ -625,7 +627,21 @@ fn update_components(
                 }
             }
         };
-        let new_sat = apply_update(this_saturation.0, &saturation, 1.0, update);
+        let mut new_sat = apply_update(this_saturation.0, &saturation, 1.0, update);
+        let mut new_hue = new_hue;
+        // For Adjust, clamp saturation to ≥0. For Change, reflect (negate + rotate hue 180°).
+        if let Some(s) = new_sat {
+            if s < 0.0 && s.is_finite() {
+                if update == UpdateComponents::Adjust {
+                    new_sat = Some(0.0);
+                } else {
+                    new_sat = Some(-s);
+                    if let Some(h) = new_hue {
+                        new_hue = Some((h + 180.0).rem_euclid(360.0));
+                    }
+                }
+            }
+        }
         let new_light = apply_update(this_lightness.0, &lightness, 1.0, update);
         let new_alpha = apply_update(this_alpha.0, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));

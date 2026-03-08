@@ -283,7 +283,13 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     let delta = max - min;
     let sum = max + min;
 
-    let mut saturation = delta / if sum > 1.0 { 2.0 - sum } else { sum };
+    let denominator = if sum > 1.0 { 2.0 - sum } else { sum };
+    // When lightness is 0 or 1 (denominator ≈ 0), saturation is 0
+    let mut saturation = if denominator.abs() < f64::EPSILON {
+        0.0
+    } else {
+        delta / denominator
+    };
 
     let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
         4.0 + (r - g) / delta

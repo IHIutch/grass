@@ -681,7 +681,7 @@ impl<'a> Serializer<'a> {
         // Check raw RGB channels for out-of-gamut or fractional values.
         {
             let rgb = color.to_rgb_channels_raw();
-            let out_of_gamut = rgb.iter().any(|v| *v < -0.0001 || *v > 255.0001 || !v.is_finite());
+            let out_of_gamut = rgb.iter().any(|v| *v < -0.0001 || *v > 255.0001);
             if out_of_gamut {
                 self.write_hsl(color);
                 return;
