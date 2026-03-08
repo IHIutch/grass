@@ -161,6 +161,13 @@ pub(crate) fn hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
 
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.hue() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
     Ok(Value::Dimension(SassNumber {
         num: color.hue(),
         unit: Unit::Deg,
@@ -173,6 +180,13 @@ pub(crate) fn saturation(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.saturation() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
 
     Ok(Value::Dimension(SassNumber {
         num: color.saturation(),
@@ -187,6 +201,13 @@ pub(crate) fn lightness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
 
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.lightness() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
     Ok(Value::Dimension(SassNumber {
         num: color.lightness(),
         unit: Unit::Percent,
@@ -199,6 +220,14 @@ pub(crate) fn adjust_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "adjust-hue() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
+
     let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span())?;
 
     Ok(Value::Color(Arc::new(color.adjust_hue(degrees))))
@@ -209,6 +238,13 @@ fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value>
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "lighten() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
 
     let mut amount = args
         .get_err(1, "amount")?
@@ -226,6 +262,13 @@ fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> 
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "darken() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
 
     let mut amount = args
         .get_err(1, "amount")?
@@ -266,6 +309,13 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
 
+    if !color.color_space().is_legacy() {
+        return Err((
+            "saturate() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
+
     Ok(Value::Color(Arc::new(color.saturate(amount.num))))
 }
 
@@ -274,6 +324,13 @@ fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "desaturate() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
 
     let mut amount = args
         .get_err(1, "amount")?

@@ -42,6 +42,13 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
 
         let color = color.assert_color_with_name("color", args.span())?;
 
+        if !color.color_space().is_legacy() {
+            return Err((
+                "color.alpha() is only supported for legacy colors. Please use color.channel() instead.",
+                args.span(),
+            ).into());
+        }
+
         Ok(Value::Dimension(SassNumber::new_unitless(color.alpha())))
     } else {
         let err = args.max_args(1);
@@ -89,6 +96,14 @@ fn opacify(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value>
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "opacify() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
+
     let amount = args
         .get_err(1, "amount")?
         .assert_number_with_name("amount", args.span())?;
@@ -103,6 +118,13 @@ fn transparentize(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "transparentize() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+            args.span(),
+        ).into());
+    }
 
     let amount = args
         .get_err(1, "amount")?

@@ -363,6 +363,13 @@ pub(crate) fn red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
 
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.red() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
     Ok(Value::Dimension(SassNumber::new_unitless(color.red())))
 }
 
@@ -372,6 +379,13 @@ pub(crate) fn green(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
 
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.green() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
     Ok(Value::Dimension(SassNumber::new_unitless(color.green())))
 }
 
@@ -380,6 +394,13 @@ pub(crate) fn blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.blue() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
 
     Ok(Value::Dimension(SassNumber::new_unitless(color.blue())))
 }

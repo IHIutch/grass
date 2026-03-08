@@ -14,6 +14,13 @@ pub(crate) fn blackness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
 
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.blackness() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
     Ok(Value::Dimension(SassNumber {
         num: color.blackness() * 100,
         unit: Unit::Percent,
@@ -27,6 +34,13 @@ pub(crate) fn whiteness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.whiteness() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
 
     Ok(Value::Dimension(SassNumber {
         num: color.whiteness() * 100,
