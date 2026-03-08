@@ -584,14 +584,14 @@ impl Color {
 
     pub fn lighten(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue, saturation, luminance + amount, alpha);
+        let mut c = Color::from_hsla(hue, saturation, (luminance + amount).clamp(0.0, 1.0), alpha);
         c.format = self.hsl_format_if_preserved();
         c
     }
 
     pub fn darken(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue, saturation, luminance - amount, alpha);
+        let mut c = Color::from_hsla(hue, saturation, (luminance - amount).clamp(0.0, 1.0), alpha);
         c.format = self.hsl_format_if_preserved();
         c
     }

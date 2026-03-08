@@ -660,9 +660,19 @@ fn update_components(
         Arc::new(result)
     } else if alpha.is_some() {
         let new_alpha = apply_update(color.alpha().0, &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0))
-            .unwrap_or(1.0);
-        Arc::new(color.with_alpha(Number(new_alpha)))
+            .map(|v| v.clamp(0.0, 1.0));
+        match new_alpha {
+            Some(a) => Arc::new(color.with_alpha(Number(a))),
+            None => {
+                // Alpha set to `none` (missing) — use for_space to create color with None alpha
+                Arc::new(Color::for_space(
+                    color.color_space(),
+                    color.raw_channels(),
+                    None,
+                    color.format.clone(),
+                ))
+            }
+        }
     } else {
         color
     };
