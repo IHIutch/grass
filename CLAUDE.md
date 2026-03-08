@@ -244,14 +244,41 @@ When modifying test expectations:
 ## Project Structure
 - `crates/compiler/` - core compiler (grass_compiler crate)
 - `crates/lib/` - public library + CLI binary (grass crate)
+- `crates/lib/pkg-publish/` - npm package (WASM + napi-rs fallback)
+- `crates/napi/` - napi-rs native Node.js addon (grass_napi crate)
 - `crates/include_sass/` - proc macro crate
 - `crates/lib/tests/` - integration tests organized by feature
+- `prototype/` - USWDS test project, benchmarks, perf baseline
 - `sass-spec/` - git submodule of the official Sass spec tests
 
 ## Workflow
 - Commit at logical intervals — each fix, feature, or refactor should be its own commit
 - Run `cargo test --features=macro` before every commit to ensure nothing is broken
 - Use `~/.cargo/bin/cargo` if `cargo` is not on PATH
+
+### Pre-Commit Performance Check
+
+**Before every commit that touches compiler code** (`crates/compiler/`), run the performance check:
+
+```bash
+# Build release binary first
+~/.cargo/bin/cargo build --release
+
+# Run perf check (compiles USWDS 3x, reports median, compares to baseline)
+cd prototype && ./perf-check.sh
+```
+
+This compiles USWDS with the release binary and compares against the saved baseline in `prototype/.perf-baseline`. If performance regresses by >5%, investigate before committing.
+
+To update the baseline after intentional changes:
+```bash
+echo "<new_median_ms>" > prototype/.perf-baseline
+```
+
+For a full cross-engine benchmark (native vs WASM vs sass-embedded):
+```bash
+cd prototype && node bench.js 2>/dev/null
+```
 
 ## Conventions
 - Tests use a `test!` macro comparing Sass input to expected CSS output
