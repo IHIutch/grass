@@ -6,7 +6,7 @@ use crate::builtin::{
         opacity::alpha,
         other::{adjust_color, change_color, ie_hex_str, scale_color},
         rgb::{blue, green, mix, red},
-        space_fns::{channel, is_in_gamut, is_legacy, is_missing, is_powerless, space, to_gamut, to_space},
+        space_fns::{channel, is_in_gamut, is_legacy, is_missing, is_powerless, same, space, to_gamut, to_space},
     },
     modules::Module,
 };
@@ -31,6 +31,7 @@ pub(crate) fn declare(f: &mut Module) {
     f.insert_builtin("mix", mix);
     f.insert_builtin("red", red);
     f.insert_builtin("saturation", saturation);
+    f.insert_builtin("same", same);
     f.insert_builtin("scale", scale_color);
     f.insert_builtin("space", space);
     f.insert_builtin("to-gamut", to_gamut);

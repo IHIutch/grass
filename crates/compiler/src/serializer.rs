@@ -742,8 +742,9 @@ impl<'a> Serializer<'a> {
         let is_opaque = fuzzy_equals(alpha.0, 1.0);
         let has_missing_alpha = color.has_missing_alpha();
 
-        // Out-of-range perceptual colors serialize as color-mix() unless
-        // they have missing channels (which suppress the fallback).
+        // Out-of-range perceptual colors serialize as color-mix() when
+        // lightness (channel 0) is out of range, unless they have missing channels.
+        // Other channels (a/b, chroma) are unbounded and don't trigger fallback.
         if space.is_perceptual() {
             let has_any_missing = color.has_missing_channel(0)
                 || color.has_missing_channel(1)
@@ -752,14 +753,10 @@ impl<'a> Serializer<'a> {
 
             if !has_any_missing {
                 let channel_defs = space.channels();
-                let out_of_range = channel_defs.iter().enumerate().any(|(i, def)| {
-                    if def.is_polar {
-                        return false;
-                    }
-                    let val = color.channel_value(i).0;
-                    val < def.min || val > def.max
-                });
-                if out_of_range {
+                let lightness = color.channel_value(0).0;
+                let lightness_oor =
+                    lightness < channel_defs[0].min || lightness > channel_defs[0].max;
+                if lightness_oor {
                     self.write_color_mix_fallback(color);
                     return;
                 }
@@ -849,6 +846,33 @@ impl<'a> Serializer<'a> {
             let space = color.color_space();
             let channel_defs = space.channels();
             let val = color.channel_value(index).0;
+
+            // Handle NaN and infinity with calc() wrapper
+            if val.is_nan() {
+                if channel_defs[index].is_polar {
+                    self.buffer
+                        .extend_from_slice(b"calc(NaN * 1deg)");
+                } else if channel_defs[index].name == "lightness" {
+                    self.buffer
+                        .extend_from_slice(b"calc(NaN * 1%)");
+                } else {
+                    self.buffer.extend_from_slice(b"calc(NaN)");
+                }
+                return;
+            }
+            if val.is_infinite() {
+                let sign = if val.is_sign_negative() { "-" } else { "" };
+                if channel_defs[index].is_polar {
+                    write!(&mut self.buffer, "calc({}infinity * 1deg)", sign)
+                        .unwrap();
+                } else if channel_defs[index].name == "lightness" {
+                    write!(&mut self.buffer, "calc({}infinity * 1%)", sign)
+                        .unwrap();
+                } else {
+                    write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
+                }
+                return;
+            }
 
             // Lightness channels in perceptual spaces serialize with %
             if channel_defs[index].name == "lightness" {

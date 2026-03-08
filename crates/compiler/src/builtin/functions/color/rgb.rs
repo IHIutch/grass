@@ -218,7 +218,8 @@ pub(crate) fn parse_channels(
         channels = list[0].clone();
         let inner_alpha_from_slash_list = list[1].clone();
 
-        if !inner_alpha_from_slash_list.is_special_function() {
+        let is_none = matches!(&inner_alpha_from_slash_list, Value::String(s, QuoteKind::None) if s == "none");
+        if !inner_alpha_from_slash_list.is_special_function() && !is_none {
             inner_alpha_from_slash_list
                 .clone()
                 .assert_number_with_name("alpha", span)?;
@@ -326,7 +327,7 @@ fn inner_rgb(
                 ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
                 ParsedChannels::List(list) => {
                     // Check if any channel is `none` — if so, use modern Color 4 path
-                    let has_none = list.iter().take(3).any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                    let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                     if has_none {
                         let has_alpha = list.len() > 3;
                         return super::css_color4::construct_color(ColorSpace::Rgb, &list, has_alpha, span, visitor);

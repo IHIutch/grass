@@ -121,10 +121,44 @@ pub(crate) fn construct_color(
         Some(1.0)
     };
 
+    // Apply dart-sass clamping rules for color construction:
+    // - Lightness: clamp to [min, max], NaN → min
+    // - Chroma (LCH/OKLCh): clamp negative to 0
+    // - Hue: normalize to [0, 360) via modulo
+    // - Alpha: clamp to [0, 1]
+    let mut channels_arr = [c0, c1, c2];
+    for (i, ch) in channels_arr.iter_mut().enumerate() {
+        if let Some(val) = ch {
+            if channel_defs[i].name == "lightness" {
+                // NaN → min, then clamp to [min, max]
+                *val = if val.is_nan() {
+                    channel_defs[i].min
+                } else {
+                    val.clamp(channel_defs[i].min, channel_defs[i].max)
+                };
+            } else if channel_defs[i].is_polar {
+                // Hue: normalize to [0, 360) unless NaN/infinite
+                if !val.is_nan() && val.is_finite() {
+                    *val = val.rem_euclid(360.0);
+                }
+            } else if (channel_defs[i].name == "chroma") && val.is_finite() && !val.is_nan() {
+                // Chroma: clamp negative to 0
+                if *val < 0.0 {
+                    *val = 0.0;
+                }
+            }
+        }
+    }
+
+    // Clamp alpha to [0, 1]
+    let alpha = alpha.map(|a| {
+        if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) }
+    });
+
     use crate::color::{Color, ColorFormat};
 
     Ok(Value::Color(Arc::new(Color::for_space(
-        space, [c0, c1, c2], alpha,
+        space, channels_arr, alpha,
         ColorFormat::Infer,
     ))))
 }

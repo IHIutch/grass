@@ -1,5 +1,6 @@
 use crate::builtin::builtin_imports::*;
 use crate::color::space::ColorSpace;
+use crate::value::number::fuzzy_equals;
 
 fn bool_to_value(b: bool) -> Value {
     if b { Value::True } else { Value::False }
@@ -419,4 +420,46 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         )
             .into()),
     }
+}
+
+/// `color.same($color1, $color2)` - check if two colors represent the same color
+/// Missing channels (none) are treated as 0. Colors in different spaces are
+/// compared by converting to the same space.
+pub(crate) fn same(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(2)?;
+    let span = args.span();
+    let color1 = args
+        .get_err(0, "color1")?
+        .assert_color_with_name("color1", span)?;
+    let color2 = args
+        .get_err(1, "color2")?
+        .assert_color_with_name("color2", span)?;
+
+    // Convert both colors to the same space for comparison.
+    // Use color1's space; if they differ, convert color2 to color1's space.
+    let space = color1.color_space();
+    let c1 = color1.as_ref().clone();
+    let c2 = if color2.color_space() != space {
+        color2.to_space(space)
+    } else {
+        color2.as_ref().clone()
+    };
+
+    // Compare channels: none is treated as 0
+    for i in 0..3 {
+        let v1 = c1.raw_channels()[i].unwrap_or(0.0);
+        let v2 = c2.raw_channels()[i].unwrap_or(0.0);
+        if !fuzzy_equals(v1, v2) {
+            return Ok(Value::False);
+        }
+    }
+
+    // Compare alpha: none is treated as 0
+    let a1 = c1.raw_alpha().unwrap_or(0.0);
+    let a2 = c2.raw_alpha().unwrap_or(0.0);
+    if !fuzzy_equals(a1, a2) {
+        return Ok(Value::False);
+    }
+
+    Ok(Value::True)
 }

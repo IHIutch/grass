@@ -106,8 +106,8 @@ fn inner_hsl(
         )? {
             ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
             ParsedChannels::List(list) => {
-                // Check if any channel is `none` — if so, use modern Color 4 path
-                let has_none = list.iter().take(3).any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                // Check if any channel or alpha is `none` — if so, use modern Color 4 path
+                let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 if has_none {
                     let has_alpha = list.len() > 3;
                     return construct_color(ColorSpace::Hsl, &list, has_alpha, span, visitor);
