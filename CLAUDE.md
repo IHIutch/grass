@@ -302,6 +302,41 @@ For a full cross-engine benchmark (native vs WASM vs sass-embedded):
 cd prototype && node bench.js 2>/dev/null
 ```
 
+## Session Discipline
+
+### Time-box investigations: 15 minutes max
+If a fix isn't converging after 15 minutes, **stop**. Commit what works, file the rest as a beads issue, and move on. A 100-minute commit should have been 3-4 separate commits.
+
+### Smaller commits, more often
+Commit each independent fix immediately. Don't bundle unrelated fixes into one commit. If you're fixing NaN handling AND adjust/change semantics AND none keyword support, those are 3 commits.
+
+### Abandon and document, don't revert silently
+When an approach doesn't work (e.g., you try a fix, discover it cascades, and revert), **file a beads issue** with what you learned so the next session doesn't repeat the exploration. Use `bd create --title="..." --description="Attempted X, failed because Y. Approach Z might work." -t task -p 3`.
+
+### Batch edits before building
+Make all obvious/mechanical edits before the first `cargo build`. If you're adding the same validation to 16 functions, edit all 16 files first, then build once. Don't build-edit-build-edit sequentially.
+
+### sass-spec test runner
+The sass-spec color test runner lives at `prototype/run-color-specs.py` (NOT `/tmp/`). It survives context compaction.
+
+```bash
+# Run all color tests (~38s)
+python3 prototype/run-color-specs.py
+
+# Run a specific category
+python3 prototype/run-color-specs.py hwb
+
+# Show failures
+python3 prototype/run-color-specs.py --failures --limit 20
+```
+
+### Known blocked test categories (skip list)
+These test failures are blocked by unimplemented features. Don't investigate them:
+- **calc()/var()/attr() passthrough** (~170 tests) — requires expression passthrough in color functions
+- **relative_color** (~60 tests) — `color(from ...)` syntax not yet implemented
+- **deprecation warnings** (~77 tests) — requires deprecation warning infrastructure
+- **pre-existing**: `module_functions_builtin` test failure — unrelated to color work
+
 ## Conventions
 - Tests use a `test!` macro comparing Sass input to expected CSS output
 - `#[ignore = "reason"]` marks known-failing tests with explanation
