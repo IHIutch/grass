@@ -1,3 +1,6 @@
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use napi_derive::napi;
 
 use grass_compiler::{from_path, from_string, Options, OutputStyle};

@@ -262,6 +262,7 @@ name = "grass_napi"
 version = "0.13.4"
 dependencies = [
  "grass_compiler",
+ "mimalloc",
  "napi",
  "napi-build",
  "napi-derive",
