@@ -610,6 +610,26 @@ impl Color {
         c
     }
 
+    /// Remove all color, producing a grayscale equivalent.
+    /// Always operates through HSL desaturation, then converts back to original space.
+    pub fn grayscale(&self) -> Self {
+        use crate::color::space::ColorSpace;
+
+        if self.space.is_legacy() {
+            self.desaturate(Number::one())
+        } else {
+            // Convert to HSL, desaturate, convert back to original space
+            let hsl = self.to_space(ColorSpace::Hsl);
+            let mut gray_hsl = Color {
+                space: ColorSpace::Hsl,
+                channels: [hsl.channels[0], Some(0.0), hsl.channels[2]],
+                alpha: hsl.alpha,
+                format: ColorFormat::Infer,
+            };
+            gray_hsl.to_space(self.space)
+        }
+    }
+
     pub fn invert(&self, weight: Number) -> Self {
         if weight.is_zero() {
             return self.clone();
@@ -779,11 +799,21 @@ impl Color {
 // ---- HWB getters ----
 impl Color {
     pub fn whiteness(&self) -> Number {
-        self.red().min(self.green()).min(self.blue()) / Number(255.0)
+        if self.space == ColorSpace::Hwb {
+            // Read directly from HWB channels to avoid precision loss
+            Number(self.channels[1].unwrap_or(0.0))
+        } else {
+            self.red().min(self.green()).min(self.blue()) / Number(255.0)
+        }
     }
 
     pub fn blackness(&self) -> Number {
-        Number(1.0) - (self.red().max(self.green()).max(self.blue()) / Number(255.0))
+        if self.space == ColorSpace::Hwb {
+            // Read directly from HWB channels to avoid precision loss
+            Number(self.channels[2].unwrap_or(0.0))
+        } else {
+            Number(1.0) - (self.red().max(self.green()).max(self.blue()) / Number(255.0))
+        }
     }
 }
 

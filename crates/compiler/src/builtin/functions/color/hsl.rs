@@ -301,7 +301,7 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
                 .into())
         }
     };
-    Ok(Value::Color(Arc::new(color.desaturate(Number::one()))))
+    Ok(Value::Color(Arc::new(color.grayscale())))
 }
 
 pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {

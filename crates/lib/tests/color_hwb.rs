@@ -25,22 +25,22 @@ test!(
 test!(
     blackness_approx_50_pct,
     "@use \"sass:color\";\na {\n  color: color.blackness(color.hwb(0, 0%, 50%));\n}\n",
-    "a {\n  color: 49.8039215686%;\n}\n"
+    "a {\n  color: 50%;\n}\n"
 );
 test!(
     blackness_approx_50_pct_and_whiteness,
     "@use \"sass:color\";\na {\n  color: color.blackness(color.hwb(0, 50%, 50%));\n}\n",
-    "a {\n  color: 49.8039215686%;\n}\n"
+    "a {\n  color: 50%;\n}\n"
 );
 test!(
     blackness_approx_70_pct_and_whiteness,
     "@use \"sass:color\";\na {\n  color: color.blackness(color.hwb(0, 70%, 70%));\n}\n",
-    "a {\n  color: 49.8039215686%;\n}\n"
+    "a {\n  color: 50%;\n}\n"
 );
 test!(
     blackness_approx_half_pct,
     "@use \"sass:color\";\na {\n  color: color.blackness(color.hwb(0, 0%, 0.5%));\n}\n",
-    "a {\n  color: 0.3921568627%;\n}\n"
+    "a {\n  color: 0.5%;\n}\n"
 );
 test!(
     hwb_half_blackness,
@@ -70,7 +70,7 @@ test!(
 test!(
     blackness_named,
     "@use \"sass:color\";\na {\n  color: color.blackness($color: color.hwb(0, 0%, 42%));\n}\n",
-    "a {\n  color: 41.9607843137%;\n}\n"
+    "a {\n  color: 42%;\n}\n"
 );
 test!(
     hwb_alpha_unitless,
