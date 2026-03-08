@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::ast::{Configuration, ConfiguredValue};
 use crate::builtin::builtin_imports::*;
@@ -35,18 +35,13 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
         v => return Err((format!("$with: {} is not a map.", v.inspect(span)?), span).into()),
     };
 
-    let mut configuration = Configuration::empty();
-
-    if let Some(with) = with {
-        visitor.emit_warning("`grass` does not currently support the $with parameter of load-css. This file will be imported the same way it would using `@import`.", args.span());
-
+    let configuration = if let Some(with) = with {
         let mut values = HashMap::new();
         for (key, value) in with {
             let name =
                 Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0);
 
             if values.contains_key(&name) {
-                // todo: write test for this
                 return Err((
                     format!("The variable {name} was configured twice.", name = name),
                     key.span,
@@ -57,28 +52,35 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
             values.insert(name, ConfiguredValue::explicit(value, args.span()));
         }
 
-        configuration = Configuration::explicit(values, args.span());
-    }
+        Some(Rc::new(RefCell::new(Configuration::explicit(values, args.span()))))
+    } else {
+        None
+    };
 
-    let _configuration = Arc::new(RefCell::new(configuration));
+    // Check if this is a builtin module — builtins can't be configured
+    if let Some(ref configuration) = configuration {
+        let is_builtin = matches!(
+            url.as_str(),
+            "sass:color"
+                | "sass:list"
+                | "sass:map"
+                | "sass:math"
+                | "sass:meta"
+                | "sass:selector"
+                | "sass:string"
+        );
+        if is_builtin && !configuration.borrow().is_implicit() {
+            return Err((
+                format!("Built-in module {} can't be configured.", url),
+                configuration.borrow().span.unwrap(),
+            )
+                .into());
+        }
+    }
 
     let style_sheet = visitor.load_style_sheet(url.as_ref(), false, args.span())?;
 
-    visitor.visit_stylesheet(style_sheet)?;
-
-    // todo: support the $with argument to load-css
-    // visitor.load_module(
-    //     url.as_ref(),
-    //     Some(Arc::clone(&configuration)),
-    //     true,
-    //     args.span(),
-    //     |visitor, module, stylesheet| {
-    //         // (*module).borrow()
-    //         Ok(())
-    //     },
-    // )?;
-
-    // Visitor::assert_configuration_is_empty(&configuration, true)?;
+    visitor.load_css_inner(style_sheet, configuration)?;
 
     Ok(())
 }

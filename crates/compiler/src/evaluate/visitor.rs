@@ -162,7 +162,7 @@ pub struct Visitor<'a> {
     pub(crate) active_modules: HashSet<PathBuf>,
     css_tree: CssTree,
     parent: Option<CssTreeIdx>,
-    configuration: Rc<RefCell<Configuration>>,
+    pub(crate) configuration: Rc<RefCell<Configuration>>,
     import_nodes: Vec<CssStmt>,
     pub options: &'a Options<'a>,
     pub(crate) map: &'a mut CodeMap,
@@ -708,6 +708,44 @@ impl<'a> Visitor<'a> {
         self.modules.insert(url, Arc::clone(&module));
 
         Ok(module)
+    }
+
+    /// Evaluate a stylesheet for `meta.load-css()`, applying the optional
+    /// `$with` configuration. CSS is emitted into the current parent context
+    /// (preserving nesting), but variables are evaluated in a fresh environment
+    /// so that `!default` declarations see the configuration.
+    pub(crate) fn load_css_inner(
+        &mut self,
+        stylesheet: StyleSheet,
+        configuration: Option<Rc<RefCell<Configuration>>>,
+    ) -> SassResult<()> {
+        // Use a fresh environment so at_root() returns true, which allows
+        // !default variable declarations to consume the $with configuration.
+        let env = Environment::new();
+
+        self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
+            let old_configuration = if let Some(ref config) = configuration {
+                Some(mem::replace(&mut visitor.configuration, Rc::clone(config)))
+            } else {
+                None
+            };
+            // NOTE: unlike execute(), we preserve parent, style_rule_ignoring_at_root,
+            // media_queries, etc. so CSS is emitted nested under the caller's context.
+
+            visitor.visit_stylesheet(stylesheet)?;
+
+            if let Some(old_config) = old_configuration {
+                visitor.configuration = old_config;
+            }
+
+            Ok(())
+        })?;
+
+        if let Some(configuration) = configuration {
+            Self::assert_configuration_is_empty(&configuration, true)?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn load_module(

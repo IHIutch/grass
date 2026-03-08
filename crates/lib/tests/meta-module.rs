@@ -71,3 +71,64 @@ fn load_css_non_map_with() {
     let input = "@use \"sass:meta\";\na {\n @include meta.load-css(foo, 2);\n}";
     assert_err!("Error: $with: 2 is not a map.", input);
 }
+
+#[test]
+fn load_css_with_single_variable() {
+    let input = "@use \"sass:meta\";\na {\n @include meta.load-css(load_css_with_single_variable, $with: (\"a\": configured));\n}";
+    tempfile!(
+        "load_css_with_single_variable.scss",
+        "$a: default !default;\nb { color: $a; }"
+    );
+    assert_eq!(
+        "a b {\n  color: configured;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
+}
+
+#[test]
+fn load_css_with_multiple_variables() {
+    let input = "@use \"sass:meta\";\na {\n @include meta.load-css(load_css_with_multiple_variables, $with: (\"x\": 1, \"y\": 2));\n}";
+    tempfile!(
+        "load_css_with_multiple_variables.scss",
+        "$x: default !default;\n$y: default !default;\nb { color: $x $y; }"
+    );
+    assert_eq!(
+        "a b {\n  color: 1 2;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
+}
+
+#[test]
+fn load_css_with_null_value() {
+    let input = "@use \"sass:meta\";\na {\n @include meta.load-css(load_css_with_null_value, $with: (\"a\": null));\n}";
+    tempfile!(
+        "load_css_with_null_value.scss",
+        "$a: default !default;\nb { color: $a; }"
+    );
+    assert_eq!(
+        "a b {\n  color: default;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
+}
+
+#[test]
+fn load_css_with_unconfigured_variable() {
+    let input = "@use \"sass:meta\";\na {\n @include meta.load-css(load_css_with_unconfigured_variable, $with: (\"b\": value));\n}";
+    tempfile!(
+        "load_css_with_unconfigured_variable.scss",
+        "$a: default !default;\nb { color: $a; }"
+    );
+    assert_err!(
+        "Error: $b was not declared with !default in the @used module.",
+        input
+    );
+}
+
+#[test]
+fn load_css_with_builtin_module() {
+    let input = "@use \"sass:meta\";\na {\n @include meta.load-css(\"sass:color\", $with: (\"a\": value));\n}";
+    assert_err!(
+        "Error: Built-in module sass:color can't be configured.",
+        input
+    );
+}
