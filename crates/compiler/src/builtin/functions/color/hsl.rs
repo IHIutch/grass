@@ -388,6 +388,21 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
             )
                 .into());
         }
+        // Check if hue is missing or powerless in the target space
+        let in_space = color.to_space(space);
+        let hue_idx = space.hue_channel_index().unwrap();
+        if in_space.has_missing_channel(hue_idx) || in_space.is_channel_powerless(hue_idx) {
+            // For the error message, show powerless channels as none
+            let display_color = in_space.with_powerless_as_missing();
+            return Err((
+                format!(
+                    "$hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                    Value::Color(Arc::new(display_color)).inspect(span)?
+                ),
+                span,
+            )
+                .into());
+        }
         Ok(Value::Color(Arc::new(color.complement_in_space(space))))
     } else if !color.color_space().is_legacy() {
         Err((
@@ -396,6 +411,20 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         )
             .into())
     } else {
+        // Legacy complement works in HSL space; check if hue is missing/powerless
+        let in_hsl = color.to_space(ColorSpace::Hsl);
+        let hue_idx = ColorSpace::Hsl.hue_channel_index().unwrap();
+        if in_hsl.has_missing_channel(hue_idx) || in_hsl.is_channel_powerless(hue_idx) {
+            let display_color = in_hsl.with_powerless_as_missing();
+            return Err((
+                format!(
+                    "$hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                    Value::Color(Arc::new(display_color)).inspect(span)?
+                ),
+                span,
+            )
+                .into());
+        }
         Ok(Value::Color(Arc::new(color.complement())))
     }
 }

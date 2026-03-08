@@ -990,6 +990,17 @@ impl Color {
             _ => false,
         }
     }
+    /// Return a copy with powerless channels set to none (missing).
+    /// Used for error message display.
+    pub fn with_powerless_as_missing(&self) -> Self {
+        let mut result = self.clone();
+        for i in 0..3 {
+            if self.is_channel_powerless(i) {
+                result.channels[i] = None;
+            }
+        }
+        result
+    }
 }
 
 // ---- Gamut mapping ----

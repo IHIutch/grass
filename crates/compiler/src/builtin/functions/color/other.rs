@@ -190,6 +190,24 @@ fn update_modern(
             .into());
     }
 
+    // Check for missing/powerless channels being modified
+    let display_color = color_in_space.with_powerless_as_missing();
+    for i in 0..3 {
+        if let Some(Some(_)) = channel_adjustments[i] {
+            if color_in_space.has_missing_channel(i) || color_in_space.is_channel_powerless(i) {
+                return Err((
+                    format!(
+                        "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                        channel_defs[i].name,
+                        Value::Color(Arc::new(display_color)).inspect(span)?
+                    ),
+                    span,
+                )
+                    .into());
+            }
+        }
+    }
+
     // Apply modifications to channels
     let mut new_channels = color_in_space.raw_channels();
 
@@ -364,7 +382,7 @@ fn update_components(
     let check_num = |num: Spanned<Value>,
                      name: &str,
                      mut max: f64,
-                     _assert_percent: bool,
+                     assert_percent: bool,
                      _check_percent: bool|
      -> SassResult<Number> {
         let span = num.span;
@@ -375,6 +393,9 @@ fn update_components(
             // Scale always requires percentage and bounds checking
             num.assert_unit(&Unit::Percent, name, span)?;
             num.assert_bounds(name, -max, max, span)?;
+        } else if assert_percent {
+            // HWB whiteness/blackness require % unit
+            num.assert_unit(&Unit::Percent, name, span)?;
         }
         // For Change and Adjust, no bounds checking — out-of-range values are allowed
 
@@ -559,6 +580,59 @@ fn update_components(
                     }
                 };
                 Some(val)
+            }
+        }
+    }
+
+    // Check for explicitly missing channels in legacy paths (powerless check only in $space/modern path)
+    {
+        let check_missing_channel = |color_in_space: &Color, channel_idx: usize, channel_name: &str, span: Span| -> SassResult<()> {
+            if color_in_space.has_missing_channel(channel_idx) {
+                return Err((
+                    format!(
+                        "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                        channel_name,
+                        Value::Color(Arc::new(color_in_space.clone())).inspect(span)?
+                    ),
+                    span,
+                )
+                    .into());
+            }
+            Ok(())
+        };
+
+        if has_rgb {
+            let in_rgb = color.to_space(ColorSpace::Rgb);
+            if red.is_some() && !matches!(red, Some(None)) {
+                check_missing_channel(&in_rgb, 0, "red", span)?;
+            }
+            if green.is_some() && !matches!(green, Some(None)) {
+                check_missing_channel(&in_rgb, 1, "green", span)?;
+            }
+            if blue.is_some() && !matches!(blue, Some(None)) {
+                check_missing_channel(&in_rgb, 2, "blue", span)?;
+            }
+        } else if has_wb || (hue.is_some() && has_wb) {
+            let in_hwb = color.to_space(ColorSpace::Hwb);
+            if hue.is_some() && !matches!(hue, Some(None)) {
+                check_missing_channel(&in_hwb, 0, "hue", span)?;
+            }
+            if whiteness.is_some() && !matches!(whiteness, Some(None)) {
+                check_missing_channel(&in_hwb, 1, "whiteness", span)?;
+            }
+            if blackness.is_some() && !matches!(blackness, Some(None)) {
+                check_missing_channel(&in_hwb, 2, "blackness", span)?;
+            }
+        } else if hue.is_some() || has_sl {
+            let in_hsl = color.to_space(ColorSpace::Hsl);
+            if hue.is_some() && !matches!(hue, Some(None)) {
+                check_missing_channel(&in_hsl, 0, "hue", span)?;
+            }
+            if saturation.is_some() && !matches!(saturation, Some(None)) {
+                check_missing_channel(&in_hsl, 1, "saturation", span)?;
+            }
+            if lightness.is_some() && !matches!(lightness, Some(None)) {
+                check_missing_channel(&in_hsl, 2, "lightness", span)?;
             }
         }
     }
