@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ast::{Configuration, ConfiguredValue};
@@ -40,7 +40,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
     if let Some(with) = with {
         visitor.emit_warning("`grass` does not currently support the $with parameter of load-css. This file will be imported the same way it would using `@import`.", args.span());
 
-        let mut values = BTreeMap::new();
+        let mut values = HashMap::new();
         for (key, value) in with {
             let name =
                 Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0);
@@ -231,7 +231,7 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
                 span,
                 |mixin, visitor| {
                     visitor.with_content(content, |visitor| {
-                        for stmt in mixin.body {
+                        for stmt in mixin.body.iter().cloned() {
                             let result = visitor.visit_stmt(stmt)?;
                             debug_assert!(result.is_none());
                         }

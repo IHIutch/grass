@@ -436,7 +436,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Each(AstEach {
             variables,
             list,
-            body,
+            body: Arc::new(body),
         }))
     }
 
@@ -550,7 +550,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             from,
             to,
             is_exclusive,
-            body,
+            body: Arc::new(body),
         }))
     }
 
@@ -589,7 +589,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 span: name_span,
             },
             arguments,
-            body: children,
+            body: Arc::new(children),
         }))
     }
 
@@ -979,7 +979,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let body = self.with_children(Self::parse_statement)?.node;
             content_block = Some(AstContentBlock {
                 args: content_args,
-                body,
+                body: Arc::new(body),
             });
             self.flags_mut()
                 .set(ContextFlags::IN_CONTENT_BLOCK, was_in_content_block);
@@ -1126,7 +1126,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Mixin(AstMixin {
             name,
             args,
-            body,
+            body: Arc::new(body),
             has_content,
             id: MIXIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }))
@@ -1420,7 +1420,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::While(AstWhile { condition, body }))
+        Ok(AstStmt::While(AstWhile { condition, body: Arc::new(body) }))
     }
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt> {
         let url = PathBuf::from(self.parse_url_string()?);

@@ -200,7 +200,7 @@ fn from_string_with_file_name<P: AsRef<Path>>(
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     };
 
-    let mut serializer = Serializer::with_capacity(options, &map, false, empty_span, 64 * 1024);
+    let mut serializer = Serializer::with_capacity(options, &map, false, empty_span, 256 * 1024);
 
     let mut prev_was_group_end = false;
     let mut prev_requires_semicolon = false;

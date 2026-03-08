@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
 };
@@ -207,9 +207,9 @@ pub(crate) struct ModuleScope {
 impl ModuleScope {
     pub fn new() -> Self {
         Self {
-            variables: Arc::new(BaseMapView(Arc::new(RefCell::new(BTreeMap::new())))),
-            mixins: Arc::new(BaseMapView(Arc::new(RefCell::new(BTreeMap::new())))),
-            functions: Arc::new(BaseMapView(Arc::new(RefCell::new(BTreeMap::new())))),
+            variables: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
+            mixins: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
+            functions: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
         }
     }
 }
@@ -234,11 +234,11 @@ pub(crate) enum Module {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Modules(pub BTreeMap<Identifier, Arc<RefCell<Module>>>);
+pub(crate) struct Modules(pub HashMap<Identifier, Arc<RefCell<Module>>>);
 
 impl Modules {
     pub fn new() -> Self {
-        Self(BTreeMap::new())
+        Self(HashMap::new())
     }
 
     pub fn insert(

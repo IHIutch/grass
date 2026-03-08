@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::HashMap,
     sync::Arc,
 };
 
@@ -17,9 +17,9 @@ use crate::{
 #[allow(clippy::type_complexity)]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Scopes {
-    pub(crate) variables: Arc<RefCell<Vec<Arc<RefCell<BTreeMap<Identifier, Value>>>>>>,
-    pub(crate) mixins: Arc<RefCell<Vec<Arc<RefCell<BTreeMap<Identifier, Mixin>>>>>>,
-    pub(crate) functions: Arc<RefCell<Vec<Arc<RefCell<BTreeMap<Identifier, SassFunction>>>>>>,
+    pub(crate) variables: Arc<RefCell<Vec<Arc<RefCell<HashMap<Identifier, Value>>>>>>,
+    pub(crate) mixins: Arc<RefCell<Vec<Arc<RefCell<HashMap<Identifier, Mixin>>>>>>,
+    pub(crate) functions: Arc<RefCell<Vec<Arc<RefCell<HashMap<Identifier, SassFunction>>>>>>,
     len: Arc<Cell<usize>>,
     pub last_variable_index: Option<(Identifier, usize)>,
 }
@@ -27,9 +27,9 @@ pub(crate) struct Scopes {
 impl Scopes {
     pub fn new() -> Self {
         Self {
-            variables: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(BTreeMap::new()))])),
-            mixins: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(BTreeMap::new()))])),
-            functions: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(BTreeMap::new()))])),
+            variables: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(HashMap::new()))])),
+            mixins: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(HashMap::new()))])),
+            functions: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(HashMap::new()))])),
             len: Arc::new(Cell::new(1)),
             last_variable_index: None,
         }
@@ -52,16 +52,16 @@ impl Scopes {
         }
     }
 
-    pub fn global_variables(&self) -> Arc<RefCell<BTreeMap<Identifier, Value>>> {
+    pub fn global_variables(&self) -> Arc<RefCell<HashMap<Identifier, Value>>> {
         debug_assert_eq!(self.len(), (*self.variables).borrow().len());
         Arc::clone(&(*self.variables).borrow()[0])
     }
 
-    pub fn global_functions(&self) -> Arc<RefCell<BTreeMap<Identifier, SassFunction>>> {
+    pub fn global_functions(&self) -> Arc<RefCell<HashMap<Identifier, SassFunction>>> {
         Arc::clone(&(*self.functions).borrow()[0])
     }
 
-    pub fn global_mixins(&self) -> Arc<RefCell<BTreeMap<Identifier, Mixin>>> {
+    pub fn global_mixins(&self) -> Arc<RefCell<HashMap<Identifier, Mixin>>> {
         Arc::clone(&(*self.mixins).borrow()[0])
     }
 
@@ -93,13 +93,13 @@ impl Scopes {
         (*self.len).set(len + 1);
         (*self.variables)
             .borrow_mut()
-            .push(Arc::new(RefCell::new(BTreeMap::new())));
+            .push(Arc::new(RefCell::new(HashMap::new())));
         (*self.mixins)
             .borrow_mut()
-            .push(Arc::new(RefCell::new(BTreeMap::new())));
+            .push(Arc::new(RefCell::new(HashMap::new())));
         (*self.functions)
             .borrow_mut()
-            .push(Arc::new(RefCell::new(BTreeMap::new())));
+            .push(Arc::new(RefCell::new(HashMap::new())));
     }
 
     pub fn exit_scope(&mut self) {

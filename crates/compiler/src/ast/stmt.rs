@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
     sync::Arc,
@@ -55,7 +55,7 @@ pub struct AstFor {
     pub from: Spanned<AstExpr>,
     pub to: Spanned<AstExpr>,
     pub is_exclusive: bool,
-    pub body: Vec<AstStmt>,
+    pub body: Arc<Vec<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +91,7 @@ impl AstStyle {
 pub struct AstEach {
     pub variables: Vec<Identifier>,
     pub list: AstExpr,
-    pub body: Vec<AstStmt>,
+    pub body: Arc<Vec<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ pub type CssMediaQuery = MediaQuery;
 #[derive(Debug, Clone)]
 pub struct AstWhile {
     pub condition: AstExpr,
-    pub body: Vec<AstStmt>,
+    pub body: Arc<Vec<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,7 +124,7 @@ pub struct AstVariableDecl {
 pub struct AstFunctionDecl {
     pub name: Spanned<Identifier>,
     pub arguments: ArgumentDeclaration,
-    pub body: Vec<AstStmt>,
+    pub body: Arc<Vec<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,7 +163,7 @@ pub struct AstLoudComment {
 pub struct AstMixin {
     pub name: Identifier,
     pub args: ArgumentDeclaration,
-    pub body: Vec<AstStmt>,
+    pub body: Arc<Vec<AstStmt>>,
     /// Whether the mixin contains a `@content` rule.
     pub has_content: bool,
     /// Unique identity for equality comparison (first-class mixins).
@@ -178,7 +178,7 @@ pub struct AstContentRule {
 #[derive(Debug, Clone)]
 pub struct AstContentBlock {
     pub args: ArgumentDeclaration,
-    pub body: Vec<AstStmt>,
+    pub body: Arc<Vec<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -368,7 +368,7 @@ impl Configuration {
         self.span.is_none()
     }
 
-    pub fn implicit(values: BTreeMap<Identifier, ConfiguredValue>) -> Self {
+    pub fn implicit(values: HashMap<Identifier, ConfiguredValue>) -> Self {
         Self {
             values: Arc::new(BaseMapView(Arc::new(RefCell::new(values)))),
             original_config: None,
@@ -376,7 +376,7 @@ impl Configuration {
         }
     }
 
-    pub fn explicit(values: BTreeMap<Identifier, ConfiguredValue>, span: Span) -> Self {
+    pub fn explicit(values: HashMap<Identifier, ConfiguredValue>, span: Span) -> Self {
         Self {
             values: Arc::new(BaseMapView(Arc::new(RefCell::new(values)))),
             original_config: None,
@@ -386,7 +386,7 @@ impl Configuration {
 
     pub fn empty() -> Self {
         Self {
-            values: Arc::new(BaseMapView(Arc::new(RefCell::new(BTreeMap::new())))),
+            values: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
             original_config: None,
             span: None,
         }

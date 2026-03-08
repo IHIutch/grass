@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
 };
@@ -48,7 +48,7 @@ impl<T> MapView for Arc<dyn MapView<Value = T>> {
 }
 
 #[derive(Debug)]
-pub(crate) struct BaseMapView<T>(pub Arc<RefCell<BTreeMap<Identifier, T>>>);
+pub(crate) struct BaseMapView<T>(pub Arc<RefCell<HashMap<Identifier, T>>>);
 
 impl<T> Clone for BaseMapView<T> {
     fn clone(&self) -> Self {
@@ -87,11 +87,15 @@ impl<T: fmt::Debug + Clone> MapView for BaseMapView<T> {
     }
 
     fn keys(&self) -> Vec<Identifier> {
-        (*self.0).borrow().keys().copied().collect()
+        let mut keys: Vec<_> = (*self.0).borrow().keys().copied().collect();
+        keys.sort();
+        keys
     }
 
     fn iter(&self) -> Vec<(Identifier, Self::Value)> {
-        (*self.0).borrow().clone().into_iter().collect()
+        let mut entries: Vec<_> = (*self.0).borrow().clone().into_iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        entries
     }
 }
 
@@ -300,13 +304,15 @@ impl<V: fmt::Debug + Clone> MapView for MergedMapView<V> {
     }
 
     fn keys(&self) -> Vec<Identifier> {
-        self.1.iter().copied().collect()
+        let mut keys: Vec<_> = self.1.iter().copied().collect();
+        keys.sort();
+        keys
     }
 
     fn iter(&self) -> Vec<(Identifier, Self::Value)> {
-        self.1
-            .iter()
-            .copied()
+        let mut keys: Vec<_> = self.1.iter().copied().collect();
+        keys.sort();
+        keys.into_iter()
             .map(|name| (name, self.get(name).unwrap()))
             .collect()
     }

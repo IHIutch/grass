@@ -10,7 +10,7 @@ use crate::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 
@@ -222,7 +222,7 @@ impl Environment {
     }
 
     pub fn to_implicit_configuration(&self) -> Configuration {
-        let mut configuration = BTreeMap::new();
+        let mut configuration = HashMap::new();
 
         let variables = (*self.scopes.variables).borrow();
 
@@ -400,15 +400,15 @@ impl Environment {
         &mut self.scopes
     }
 
-    pub fn global_vars(&self) -> Arc<RefCell<BTreeMap<Identifier, Value>>> {
+    pub fn global_vars(&self) -> Arc<RefCell<HashMap<Identifier, Value>>> {
         self.scopes.global_variables()
     }
 
-    pub fn global_mixins(&self) -> Arc<RefCell<BTreeMap<Identifier, Mixin>>> {
+    pub fn global_mixins(&self) -> Arc<RefCell<HashMap<Identifier, Mixin>>> {
         self.scopes.global_mixins()
     }
 
-    pub fn global_functions(&self) -> Arc<RefCell<BTreeMap<Identifier, SassFunction>>> {
+    pub fn global_functions(&self) -> Arc<RefCell<HashMap<Identifier, SassFunction>>> {
         self.scopes.global_functions()
     }
 

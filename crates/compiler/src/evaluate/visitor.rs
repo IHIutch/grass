@@ -158,8 +158,8 @@ pub struct Visitor<'a> {
     pub current_import_path: PathBuf,
     pub(crate) is_plain_css: bool,
     plain_css_style_rule_depth: u32,
-    pub(crate) modules: BTreeMap<PathBuf, Arc<RefCell<Module>>>,
-    pub(crate) active_modules: BTreeSet<PathBuf>,
+    pub(crate) modules: HashMap<PathBuf, Arc<RefCell<Module>>>,
+    pub(crate) active_modules: HashSet<PathBuf>,
     css_tree: CssTree,
     parent: Option<CssTreeIdx>,
     configuration: Rc<RefCell<Configuration>>,
@@ -168,11 +168,11 @@ pub struct Visitor<'a> {
     pub(crate) map: &'a mut CodeMap,
     // todo: remove
     empty_span: Span,
-    import_cache: BTreeMap<PathBuf, StyleSheet>,
+    import_cache: HashMap<PathBuf, StyleSheet>,
     /// As a simple heuristic, we don't cache the results of an import unless it
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
-    files_seen: BTreeSet<PathBuf>,
+    files_seen: HashSet<PathBuf>,
     /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
     /// Avoids redundant filesystem probing for the same import path from the same context.
     import_path_cache: HashMap<(PathBuf, PathBuf, bool), Option<PathBuf>>,
@@ -208,13 +208,13 @@ impl<'a> Visitor<'a> {
             is_plain_css: false,
             plain_css_style_rule_depth: 0,
             import_nodes: Vec::new(),
-            modules: BTreeMap::new(),
-            active_modules: BTreeSet::new(),
+            modules: HashMap::new(),
+            active_modules: HashSet::new(),
             options,
             empty_span,
             map,
-            import_cache: BTreeMap::new(),
-            files_seen: BTreeSet::new(),
+            import_cache: HashMap::new(),
+            files_seen: HashSet::new(),
             import_path_cache: HashMap::new(),
         }
     }
@@ -389,7 +389,7 @@ impl<'a> Visitor<'a> {
         config: Rc<RefCell<Configuration>>,
         forward_rule: &AstForwardRule,
     ) -> SassResult<Rc<RefCell<Configuration>>> {
-        let mut new_values = BTreeMap::from_iter((*config).borrow().values.iter());
+        let mut new_values = HashMap::from_iter((*config).borrow().values.iter());
 
         for variable in &forward_rule.configuration {
             if variable.is_guarded {
@@ -771,7 +771,7 @@ impl<'a> Visitor<'a> {
         let configuration = if use_rule.configuration.is_empty() {
             Rc::new(RefCell::new(Configuration::empty()))
         } else {
-            let mut values = BTreeMap::new();
+            let mut values = HashMap::new();
 
             for var in use_rule.configuration {
                 let value = self.visit_expr(var.expr.node)?;
@@ -1134,7 +1134,7 @@ impl<'a> Visitor<'a> {
                 &content.env.clone(),
                 span,
                 |content, visitor| {
-                    for stmt in content.content.body.clone() {
+                    for stmt in content.content.body.iter().cloned() {
                         let result = visitor.visit_stmt(stmt)?;
                         debug_assert!(result.is_none());
                     }
@@ -1885,7 +1885,7 @@ impl<'a> Visitor<'a> {
                     include_stmt.name.span,
                     |mixin, visitor| {
                         visitor.with_content(callable_content, |visitor| {
-                            for stmt in mixin.body {
+                            for stmt in mixin.body.iter().cloned() {
                                 let result = visitor.visit_stmt(stmt)?;
                                 debug_assert!(result.is_none());
                             }
@@ -1933,7 +1933,7 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            for stmt in each_stmt.body.clone() {
+            for stmt in each_stmt.body.iter().cloned() {
                 let val = self.visit_stmt(stmt)?;
                 if val.is_some() {
                     result = val;
@@ -2004,7 +2004,7 @@ impl<'a> Visitor<'a> {
                 }),
             );
 
-            for stmt in for_stmt.body.clone() {
+            for stmt in for_stmt.body.iter().cloned() {
                 let val = self.visit_stmt(stmt)?;
                 if val.is_some() {
                     result = val;
@@ -2028,7 +2028,7 @@ impl<'a> Visitor<'a> {
                 .visit_expr(while_stmt.condition.clone())?
                 .is_truthy()
             {
-                for stmt in while_stmt.body.clone() {
+                for stmt in while_stmt.body.iter().cloned() {
                     let val = visitor.visit_stmt(stmt)?;
                     if val.is_some() {
                         result = val;
@@ -2505,7 +2505,7 @@ impl<'a> Visitor<'a> {
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
                 .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
-                    for stmt in function.body.clone() {
+                    for stmt in function.body.iter().cloned() {
                         let result = visitor.visit_stmt(stmt)?;
 
                         if let Some(val) = result {
