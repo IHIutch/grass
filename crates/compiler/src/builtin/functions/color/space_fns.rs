@@ -31,7 +31,14 @@ pub(crate) fn to_space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         .get_err(1, "space")?;
 
     let space_str = match &space_name {
-        Value::String(s, _) => s.clone(),
+        Value::String(s, QuoteKind::Quoted) => {
+            return Err((
+                format!("$space: Expected {} to be an unquoted string.", s),
+                span,
+            )
+                .into());
+        }
+        Value::String(s, QuoteKind::None) => s.clone(),
         v => {
             return Err((
                 format!(
@@ -76,7 +83,14 @@ pub(crate) fn is_missing(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         .get_err(1, "channel")?;
 
     let channel_str = match &channel_name {
-        Value::String(s, _) => s.clone(),
+        Value::String(s, QuoteKind::None) => {
+            return Err((
+                format!("$channel: Expected {} to be a quoted string.", s),
+                span,
+            )
+                .into());
+        }
+        Value::String(s, QuoteKind::Quoted) => s.clone(),
         v => {
             return Err((
                 format!(
@@ -124,7 +138,14 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         .get_err(1, "channel")?;
 
     let channel_str = match &channel_name {
-        Value::String(s, _) => s.clone(),
+        Value::String(s, QuoteKind::None) => {
+            return Err((
+                format!("$channel: Expected {} to be a quoted string.", s),
+                span,
+            )
+                .into());
+        }
+        Value::String(s, QuoteKind::Quoted) => s.clone(),
         v => {
             return Err((
                 format!(
@@ -236,7 +257,14 @@ pub(crate) fn is_in_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> Sa
     let target_space = match args.get(1, "space") {
         Some(space_val) => {
             let space_str = match &space_val.node {
-                Value::String(s, _) => s.clone(),
+                Value::String(s, QuoteKind::Quoted) => {
+                    return Err((
+                        format!("$space: Expected {} to be an unquoted string.", s),
+                        span,
+                    )
+                        .into());
+                }
+                Value::String(s, QuoteKind::None) => s.clone(),
                 Value::Null => color.color_space().name().to_owned(),
                 v => {
                     return Err((
@@ -279,7 +307,14 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     let target_space = match args.get(1, "space") {
         Some(space_val) => {
             let space_str = match &space_val.node {
-                Value::String(s, _) => s.clone(),
+                Value::String(s, QuoteKind::Quoted) => {
+                    return Err((
+                        format!("$space: Expected {} to be an unquoted string.", s),
+                        span,
+                    )
+                        .into());
+                }
+                Value::String(s, QuoteKind::None) => s.clone(),
                 Value::Null => color.color_space().name().to_owned(),
                 v => {
                     return Err((
@@ -304,7 +339,14 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 
     let method = args.get_err(2, "method")?;
     let method_str = match &method {
-        Value::String(s, _) => s.clone(),
+        Value::String(s, QuoteKind::Quoted) => {
+            return Err((
+                format!("$method: Expected {} to be an unquoted string.", s),
+                span,
+            )
+                .into());
+        }
+        Value::String(s, QuoteKind::None) => s.clone(),
         v => {
             return Err((
                 format!(
@@ -360,7 +402,14 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         .get_err(1, "channel")?;
 
     let channel_str = match &channel_name {
-        Value::String(s, _) => s.clone(),
+        Value::String(s, QuoteKind::None) => {
+            return Err((
+                format!("$channel: Expected {} to be a quoted string.", s),
+                span,
+            )
+                .into());
+        }
+        Value::String(s, QuoteKind::Quoted) => s.clone(),
         v => {
             return Err((
                 format!(
@@ -376,7 +425,14 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
     let target_space = match args.get(2, "space") {
         Some(space_val) => {
             let space_str = match &space_val.node {
-                Value::String(s, _) => s.clone(),
+                Value::String(s, QuoteKind::Quoted) => {
+                    return Err((
+                        format!("$space: Expected {} to be an unquoted string.", s),
+                        span,
+                    )
+                        .into());
+                }
+                Value::String(s, QuoteKind::None) => s.clone(),
                 Value::Null => color.color_space().name().to_owned(),
                 v => {
                     return Err((

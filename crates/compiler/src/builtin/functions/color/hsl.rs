@@ -14,7 +14,14 @@ use super::{
 fn parse_space_arg(args: &mut ArgumentResult, pos: usize, span: Span) -> SassResult<Option<ColorSpace>> {
     match args.get(pos, "space") {
         Some(space_val) => match &space_val.node {
-            Value::String(s, _) => {
+            Value::String(s, QuoteKind::Quoted) => {
+                return Err((
+                    format!("$space: Expected {} to be an unquoted string.", s),
+                    span,
+                )
+                    .into());
+            }
+            Value::String(s, QuoteKind::None) => {
                 let space = ColorSpace::from_name(s).ok_or_else(|| {
                     (format!("$space: Unknown color space \"{}\".", s), span)
                 })?;
@@ -314,6 +321,16 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     let target_space = parse_space_arg(&mut args, 1, span)?;
 
     if let Some(space) = target_space {
+        if !space.is_polar() {
+            return Err((
+                format!(
+                    "$space: Color space {} doesn't have a hue channel.",
+                    space.name()
+                ),
+                span,
+            )
+                .into());
+        }
         Ok(Value::Color(Arc::new(color.complement_in_space(space))))
     } else if !color.color_space().is_legacy() {
         Err((

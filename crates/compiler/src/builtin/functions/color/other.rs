@@ -320,7 +320,14 @@ fn update_components(
     if let Some(space_val) = space_arg {
         // Explicit $space parameter
         let space_str = match &space_val.node {
-            Value::String(s, _) => s.clone(),
+            Value::String(s, QuoteKind::Quoted) => {
+                return Err((
+                    format!("$space: Expected {} to be an unquoted string.", s),
+                    span,
+                )
+                    .into());
+            }
+            Value::String(s, QuoteKind::None) => s.clone(),
             v => {
                 return Err((
                     format!(

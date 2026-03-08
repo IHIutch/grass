@@ -141,12 +141,13 @@ pub(crate) fn construct_color(
                     val.clamp(channel_defs[i].min, channel_defs[i].max)
                 };
             } else if channel_defs[i].is_polar {
-                // Hue: normalize to [0, 360) unless NaN/infinite
-                if !val.is_nan() && val.is_finite() {
+                // Hue: normalize to [0, 360) via modulo. NaN stays NaN.
+                // Infinity becomes NaN (infinity % 360 = NaN per IEEE 754).
+                if !val.is_nan() {
                     *val = val.rem_euclid(360.0);
                 }
-            } else if (channel_defs[i].name == "chroma") && val.is_finite() && !val.is_nan() {
-                // Chroma: clamp negative to 0
+            } else if channel_defs[i].name == "chroma" && !val.is_nan() {
+                // Chroma: clamp negative to 0 (including -infinity)
                 if *val < 0.0 {
                     *val = 0.0;
                 }

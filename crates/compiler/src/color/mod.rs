@@ -211,8 +211,8 @@ impl Color {
     /// hue in degrees, saturation and lightness in [0, 1].
     pub fn from_hsla(hue: Number, saturation: Number, lightness: Number, alpha: Number) -> Self {
         let hue = hue % Number(360.0);
-        // Preserve NaN saturation (serialized as calc(NaN * 1%)), clamp finite to non-negative
-        let sat = if saturation.0.is_nan() { saturation.0 } else { saturation.0.max(0.0) };
+        // NaN saturation → 0 (dart-sass behavior), clamp finite to non-negative
+        let sat = if saturation.0.is_nan() { 0.0 } else { saturation.0.max(0.0) };
         // NaN alpha clamps to 0, per CSS spec
         let alpha_val = if alpha.0.is_nan() { 0.0 } else { alpha.clamp(0.0, 1.0).0 };
         Color {
