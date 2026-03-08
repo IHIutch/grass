@@ -21,3 +21,10 @@ codegen-units = 1
 panic = 'abort'
 strip = true
 
+# WASM-optimized: max speed, no debug info
+[profile.wasm]
+inherits = 'release'
+opt-level = 3
+debug = false
+strip = true
+
