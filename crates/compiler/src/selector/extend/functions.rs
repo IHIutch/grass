@@ -19,19 +19,16 @@ pub(crate) fn unify_complex(
         return Some(complexes);
     }
 
-    let mut unified_base: Option<Vec<SimpleSelector>> = None;
+    let mut unified_base: Option<CompoundSelector> = None;
 
     for complex in &complexes {
         let base = complex.last()?;
 
         if let ComplexSelectorComponent::Compound(base) = base {
-            if let Some(mut some_unified_base) = unified_base.clone() {
-                for simple in base.components.clone() {
-                    some_unified_base = simple.unify(some_unified_base.clone())?;
-                }
-                unified_base = Some(some_unified_base);
+            if let Some(existing) = unified_base {
+                unified_base = Some(existing.unify(base.clone())?);
             } else {
-                unified_base = Some(base.components.clone());
+                unified_base = Some(base.clone());
             }
         } else {
             return None;
@@ -49,9 +46,7 @@ pub(crate) fn unify_complex(
     complexes_without_bases
         .last_mut()
         .unwrap()
-        .push(ComplexSelectorComponent::Compound(CompoundSelector {
-            components: unified_base?,
-        }));
+        .push(ComplexSelectorComponent::Compound(unified_base?));
 
     Some(weave(complexes_without_bases))
 }

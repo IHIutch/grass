@@ -879,7 +879,7 @@ test!(
     ".foo > .bar {a: b}
     .bip > .baz {@extend .bar}
     ",
-    ".foo > .bar, .bip.foo > .baz {\n  a: b;\n}\n"
+    ".foo > .bar, .foo.bip > .baz {\n  a: b;\n}\n"
 );
 test!(
     complex_extender_with_sibling_selector,
@@ -965,7 +965,7 @@ test!(
     ".a ~ > + .b > x {a: b}
     .c > + .d > y {@extend x}
     ",
-    ".a ~ > + .b > x, .a .c ~ > + .d.b > y, .c .a ~ > + .d.b > y {\n  a: b;\n}\n"
+    ".a ~ > + .b > x, .a .c ~ > + .b.d > y, .c .a ~ > + .b.d > y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_double_tilde_1,
@@ -986,7 +986,7 @@ test!(
     ".a ~ x {a: b}
     .b ~ y {@extend x}
     ",
-    ".a ~ x, .a ~ .b ~ y, .b ~ .a ~ y, .b.a ~ y {\n  a: b;\n}\n"
+    ".a ~ x, .a ~ .b ~ y, .b ~ .a ~ y, .a.b ~ y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_double_tilde_4,
@@ -1014,7 +1014,7 @@ test!(
     ".a + x {a: b}
     .b ~ y {@extend x}
     ",
-    ".a + x, .b ~ .a + y, .b.a + y {\n  a: b;\n}\n"
+    ".a + x, .b ~ .a + y, .a.b + y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_tilde_plus_4,
@@ -1042,7 +1042,7 @@ test!(
     ".a ~ x {a: b}
     .b + y {@extend x}
     ",
-    ".a ~ x, .a ~ .b + y, .b.a + y {\n  a: b;\n}\n"
+    ".a ~ x, .a ~ .b + y, .a.b + y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_angle_sibling_1,
@@ -1077,7 +1077,7 @@ test!(
     ".a.b > x {a: b}
     .b > y {@extend x}
     ",
-    ".a.b > x, .b.a > y {\n  a: b;\n}\n"
+    ".a.b > x, .a.b > y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_double_angle_2,
@@ -1091,7 +1091,7 @@ test!(
     ".a > x {a: b}
     .b > y {@extend x}
     ",
-    ".a > x, .b.a > y {\n  a: b;\n}\n"
+    ".a > x, .a.b > y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_double_angle_4,
@@ -1105,7 +1105,7 @@ test!(
     ".a.b + x {a: b}
     .b + y {@extend x}
     ",
-    ".a.b + x, .b.a + y {\n  a: b;\n}\n"
+    ".a.b + x, .a.b + y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_double_plus_2,
@@ -1119,7 +1119,7 @@ test!(
     ".a + x {a: b}
     .b + y {@extend x}
     ",
-    ".a + x, .b.a + y {\n  a: b;\n}\n"
+    ".a + x, .a.b + y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_double_plus_4,
@@ -1217,19 +1217,19 @@ test!(
     ".a > .b + x {a: b}
     .c > .d + y {@extend x}
     ",
-    ".a > .b + x, .c.a > .d.b + y {\n  a: b;\n}\n"
+    ".a > .b + x, .a.c > .b.d + y {\n  a: b;\n}\n"
 );
 test!(
     nested_combinator_unification_2,
     ".a > .b + x {a: b}
     .c > y {@extend x}
     ",
-    ".a > .b + x, .c.a > .b + y {\n  a: b;\n}\n"
+    ".a > .b + x, .a.c > .b + y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_with_newlines,
     ".a >\n.b\n+ x {a: b}\n.c\n> .d +\ny {@extend x}\n",
-    ".a > .b + x, .c.a > .d.b + y {\n  a: b;\n}\n"
+    ".a > .b + x, .a.c > .b.d + y {\n  a: b;\n}\n"
 );
 test!(
     basic_extend_loop,
@@ -1723,7 +1723,7 @@ test!(
     .foo-4:root > .bar-4 .x-4 { test: 4; }
     .baz-4:root .bang-4 .y-4 {@extend .x-4}    
     ",
-    ":root .foo-1, :root .bar-1 .baz-1 {\n  test: 1;\n}\n\n.foo-2:root .bar-2, .baz-2.foo-2:root .bang-2 {\n  test: 2;\n}\n\nhtml:root .bar-3 {\n  test: 3;\n}\n\n.foo-4:root > .bar-4 .x-4, .baz-4.foo-4:root > .bar-4 .bang-4 .y-4 {\n  test: 4;\n}\n"
+    ":root .foo-1, :root .bar-1 .baz-1 {\n  test: 1;\n}\n\n.foo-2:root .bar-2, .foo-2.baz-2:root .bang-2 {\n  test: 2;\n}\n\nhtml:root .bar-3 {\n  test: 3;\n}\n\n.foo-4:root > .bar-4 .x-4, .foo-4.baz-4:root > .bar-4 .bang-4 .y-4 {\n  test: 4;\n}\n"
 );
 test!(
     compound_unification_in_not,

@@ -165,14 +165,15 @@ impl ForwardedModule {
             return map;
         }
 
+        if let Some(prefix) = prefix {
+            map = Arc::new(PrefixedMapView(map, prefix.to_owned()));
+        }
+
+        // Apply show/hide after prefix, since show/hide names are in prefixed form
         if let Some(safelist) = safelist {
             map = Arc::new(LimitedMapView::safelist(map, safelist));
         } else if let Some(blocklist) = blocklist {
             map = Arc::new(LimitedMapView::blocklist(map, blocklist));
-        }
-
-        if let Some(prefix) = prefix {
-            map = Arc::new(PrefixedMapView(map, prefix.to_owned()));
         }
 
         map

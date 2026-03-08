@@ -212,12 +212,34 @@ impl CompoundSelector {
     ///
     /// If no such selector can be produced, returns `None`.
     pub fn unify(self, other: Self) -> Option<Self> {
-        let mut components = other.components;
-        for simple in self.components {
-            components = simple.unify(std::mem::take(&mut components))?;
+        let mut result = self.components;
+        let mut pseudo_result: Vec<SimpleSelector> = Vec::new();
+        let mut pseudo_element_found = false;
+
+        for simple in other.components {
+            if pseudo_element_found && matches!(simple, SimpleSelector::Pseudo(..)) {
+                // Once we've seen a pseudo-element, subsequent pseudo selectors
+                // go into a separate list to preserve their position after the
+                // pseudo-element in the final result.
+                pseudo_result = simple.unify(std::mem::take(&mut pseudo_result))?;
+            } else {
+                if matches!(
+                    simple,
+                    SimpleSelector::Pseudo(Pseudo {
+                        is_class: false,
+                        ..
+                    })
+                ) {
+                    pseudo_element_found = true;
+                }
+                result = simple.unify(std::mem::take(&mut result))?;
+            }
         }
 
-        Some(Self { components })
+        result.extend(pseudo_result);
+        Some(Self {
+            components: result,
+        })
     }
 
     /// Adds a `SimpleSelector::Parent` to the beginning of `compound`, or returns `None` if
