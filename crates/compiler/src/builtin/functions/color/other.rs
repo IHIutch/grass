@@ -118,9 +118,15 @@ fn update_modern(
 ) -> SassResult<Value> {
     let channel_defs = working_space.channels();
 
-    // Convert color to working space
+    // Convert color to working space.
+    // When convert_back is true ($space was explicit), use powerless_missing
+    // to match dart-sass's legacyMissing: true behavior.
     let color_in_space = if color.color_space() != working_space {
-        color.to_space(working_space)
+        if convert_back {
+            color.to_space_powerless_missing(working_space)
+        } else {
+            color.to_space(working_space)
+        }
     } else {
         color.as_ref().clone()
     };
@@ -239,9 +245,9 @@ fn update_modern(
                             let min = channel_defs[i].min;
                             current
                                 + if adj_val > 0.0 {
-                                    (max - current) * adj_val
+                                    (max - current).max(0.0) * adj_val
                                 } else {
-                                    (current - min) * adj_val
+                                    (current - min).max(0.0) * adj_val
                                 }
                         }
                     };

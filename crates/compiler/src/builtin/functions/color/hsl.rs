@@ -284,9 +284,17 @@ fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> 
 fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
     if args.len() == 1 {
-        let amount = args
-            .get_err(0, "amount")?
-            .assert_number_with_name("amount", args.span())?;
+        let val = args.get_err(0, "amount")?;
+
+        // Pass through special functions like var() and calc()
+        if val.is_special_function() {
+            return Ok(Value::String(
+                format!("saturate({})", val.to_css_string(args.span(), false)?),
+                QuoteKind::None,
+            ));
+        }
+
+        let amount = val.assert_number_with_name("amount", args.span())?;
 
         return Ok(Value::String(
             format!(
@@ -358,6 +366,12 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             ))
         }
         v => {
+            if v.is_special_function() {
+                return Ok(Value::String(
+                    format!("grayscale({})", v.to_css_string(args.span(), false)?),
+                    QuoteKind::None,
+                ));
+            }
             return Err((
                 format!("$color: {} is not a color.", v.inspect(args.span())?),
                 args.span(),
@@ -388,11 +402,10 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
             )
                 .into());
         }
-        // Check if hue is missing or powerless in the target space
-        let in_space = color.to_space(space);
+        // Check if hue is missing in the target space (powerless→None for legacy via conversion)
+        let in_space = color.to_space_powerless_missing(space);
         let hue_idx = space.hue_channel_index().unwrap();
-        if in_space.has_missing_channel(hue_idx) || in_space.is_channel_powerless(hue_idx) {
-            // For the error message, show powerless channels as none
+        if in_space.has_missing_channel(hue_idx) {
             let display_color = in_space.with_powerless_as_missing();
             return Err((
                 format!(
@@ -411,15 +424,14 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         )
             .into())
     } else {
-        // Legacy complement works in HSL space; check if hue is missing/powerless
+        // Legacy complement works in HSL space; check if hue is explicitly missing
         let in_hsl = color.to_space(ColorSpace::Hsl);
         let hue_idx = ColorSpace::Hsl.hue_channel_index().unwrap();
-        if in_hsl.has_missing_channel(hue_idx) || in_hsl.is_channel_powerless(hue_idx) {
-            let display_color = in_hsl.with_powerless_as_missing();
+        if in_hsl.has_missing_channel(hue_idx) {
             return Err((
                 format!(
                     "$hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                    Value::Color(Arc::new(display_color)).inspect(span)?
+                    Value::Color(Arc::new(in_hsl)).inspect(span)?
                 ),
                 span,
             )
@@ -451,18 +463,59 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     match args.get_err(0, "color")? {
         Value::Color(c) => {
             if let Some(space) = target_space {
+                // Convert with powerless→None for legacy spaces (matches dart-sass legacyMissing: true)
+                let in_space = c.to_space_powerless_missing(space);
+                let channel_defs = space.channels();
+                // Only check channels passed through _invertChannel (not preserved/swapped ones).
+                // HWB: only hue (channels 1&2 are swapped, preserving missing).
+                // HSL/LCH/OKLch: hue + lightness (saturation/chroma preserved).
+                // Others: all channels.
+                for i in 0..3 {
+                    let skip = if space == ColorSpace::Hwb {
+                        i != 0 // only check hue for HWB
+                    } else {
+                        channel_defs[i].name == "chroma" || channel_defs[i].name == "saturation"
+                    };
+                    if !skip && in_space.has_missing_channel(i) {
+                        let display_color = in_space.with_powerless_as_missing();
+                        return Err((
+                            format!(
+                                "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                                channel_defs[i].name,
+                                Value::Color(Arc::new(display_color)).inspect(span)?
+                            ),
+                            span,
+                        )
+                            .into());
+                    }
+                }
                 Ok(Value::Color(Arc::new(
                     c.invert_in_space(space, weight.unwrap_or_else(Number::one)),
                 )))
             } else if !c.color_space().is_legacy() {
                 // Modern colors require $space
-                // TODO: include the actual color value in the error message
                 Err((
                     "$color: To use color.invert() with a non-legacy color, you must provide a $space.",
                     span,
                 )
                     .into())
             } else {
+                // Legacy invert works in RGB space — check for missing channels
+                let in_rgb = c.to_space(ColorSpace::Rgb);
+                let rgb_defs = ColorSpace::Rgb.channels();
+                for i in 0..3 {
+                    if in_rgb.has_missing_channel(i) {
+                        return Err((
+                            format!(
+                                "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                                rgb_defs[i].name,
+                                Value::Color(Arc::new(in_rgb)).inspect(span)?
+                            ),
+                            span,
+                        )
+                            .into());
+                    }
+                }
                 Ok(Value::Color(Arc::new(
                     c.invert(weight.unwrap_or_else(Number::one)),
                 )))
@@ -485,11 +538,27 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                 QuoteKind::None,
             ))
         }
-        v => Err((
-            format!("$color: {} is not a color.", v.inspect(args.span())?),
-            args.span(),
-        )
-            .into()),
+        v => {
+            // Pass through special functions like var() and calc()
+            if v.is_special_function() {
+                if weight.is_some() || target_space.is_some() {
+                    return Err((
+                        "Only one argument may be passed to the plain-CSS invert() function.",
+                        args.span(),
+                    )
+                        .into());
+                }
+                return Ok(Value::String(
+                    format!("invert({})", v.to_css_string(span, false)?),
+                    QuoteKind::None,
+                ));
+            }
+            Err((
+                format!("$color: {} is not a color.", v.inspect(args.span())?),
+                args.span(),
+            )
+                .into())
+        }
     }
 }
 

@@ -2807,15 +2807,17 @@ impl<'a> Visitor<'a> {
         let func = match self.env.get_fn(name, func_call.namespace, func_call.span)? {
             Some(func) => func,
             None => {
+                // When a namespace is specified (e.g., color.foo()), don't fall through
+                // to global builtins — the function must exist in the module.
+                if func_call.namespace.is_some() {
+                    return Err(("Undefined function.", func_call.span).into());
+                }
+
                 if let Some(f) = self.options.custom_fns.get(name.as_str()) {
                     SassFunction::Builtin(f.clone(), name)
                 } else if let Some(f) = GLOBAL_FUNCTIONS.get(name.as_str()) {
                     SassFunction::Builtin(f.clone(), name)
                 } else {
-                    if func_call.namespace.is_some() {
-                        return Err(("Undefined function.", func_call.span).into());
-                    }
-
                     SassFunction::Plain { name }
                 }
             }

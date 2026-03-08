@@ -691,7 +691,12 @@ impl Color {
             space,
             channels: inverted_channels,
             alpha: in_space.alpha,
-            format: ColorFormat::Infer,
+            // Preserve the format when staying in the same space
+            format: if space == self.color_space() {
+                in_space.format.clone()
+            } else {
+                ColorFormat::Infer
+            },
         };
 
         if weight == Number::one() {
@@ -920,6 +925,24 @@ impl Color {
             }
         }
 
+        result
+    }
+
+    /// Convert to target space, setting powerless channels to None even in
+    /// legacy spaces. Matches dart-sass's `toSpace(space, legacyMissing: true)`.
+    /// Used by invert() and complement() with $space to detect powerless
+    /// channels that become meaningless after conversion.
+    pub fn to_space_powerless_missing(&self, target: ColorSpace) -> Self {
+        let mut result = self.to_space(target);
+        // For legacy targets, to_space() doesn't set powerless→None.
+        // Do it here when the color was actually converted (not identity).
+        if target.is_legacy() && self.space != target {
+            for i in 0..3 {
+                if result.is_channel_powerless(i) && result.channels[i].is_some() {
+                    result.channels[i] = None;
+                }
+            }
+        }
         result
     }
 
