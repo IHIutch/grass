@@ -2752,21 +2752,20 @@ impl<'a> Visitor<'a> {
         span: Span,
     ) -> SassResult<CalculationArg> {
         Ok(match expr {
-            AstExpr::Paren(inner) => match &*inner {
-                AstExpr::FunctionCall(FunctionCallExpr { ref name, .. })
-                    if name.as_str().eq_ignore_ascii_case("var") =>
-                {
-                    let result =
-                        self.visit_calculation_value((*inner).clone(), in_min_or_max, span)?;
+            AstExpr::Paren(inner) => {
+                let result =
+                    self.visit_calculation_value((*inner).clone(), in_min_or_max, span)?;
 
-                    if let CalculationArg::String(text) = result {
+                match result {
+                    CalculationArg::String(text) => {
                         CalculationArg::String(format!("({})", text))
-                    } else {
-                        result
                     }
+                    CalculationArg::Interpolation(text) => {
+                        CalculationArg::String(format!("({})", text))
+                    }
+                    other => other,
                 }
-                _ => self.visit_calculation_value((*inner).clone(), in_min_or_max, span)?,
-            },
+            }
             AstExpr::String(string_expr, _span) => {
                 debug_assert!(string_expr.1 == QuoteKind::None);
                 let text = self.perform_interpolation(string_expr.0.clone(), false)?;
