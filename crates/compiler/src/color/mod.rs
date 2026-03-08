@@ -191,14 +191,18 @@ impl Color {
         blue: Number,
         alpha: Number,
     ) -> Self {
+        // NaN clamps to min (0) for RGB channels and alpha, per CSS spec
+        fn nan_clamp(v: f64, min: f64, max: f64) -> f64 {
+            if v.is_nan() { min } else { v.clamp(min, max) }
+        }
         Color {
             space: ColorSpace::Rgb,
             channels: [
-                Some(red.0.clamp(0.0, 255.0)),
-                Some(green.0.clamp(0.0, 255.0)),
-                Some(blue.0.clamp(0.0, 255.0)),
+                Some(nan_clamp(red.0, 0.0, 255.0)),
+                Some(nan_clamp(green.0, 0.0, 255.0)),
+                Some(nan_clamp(blue.0, 0.0, 255.0)),
             ],
-            alpha: Some(alpha.clamp(0.0, 1.0).0),
+            alpha: Some(nan_clamp(alpha.0, 0.0, 1.0)),
             format: ColorFormat::Rgb,
         }
     }
@@ -207,14 +211,18 @@ impl Color {
     /// hue in degrees, saturation and lightness in [0, 1].
     pub fn from_hsla(hue: Number, saturation: Number, lightness: Number, alpha: Number) -> Self {
         let hue = hue % Number(360.0);
+        // Preserve NaN saturation (serialized as calc(NaN * 1%)), clamp finite to non-negative
+        let sat = if saturation.0.is_nan() { saturation.0 } else { saturation.0.max(0.0) };
+        // NaN alpha clamps to 0, per CSS spec
+        let alpha_val = if alpha.0.is_nan() { 0.0 } else { alpha.clamp(0.0, 1.0).0 };
         Color {
             space: ColorSpace::Hsl,
             channels: [
                 Some(hue.0),
-                Some(saturation.0.max(0.0)), // saturation clamped to non-negative
+                Some(sat),
                 Some(lightness.0),
             ],
-            alpha: Some(alpha.clamp(0.0, 1.0).0),
+            alpha: Some(alpha_val),
             format: ColorFormat::Infer,
         }
     }
@@ -253,10 +261,13 @@ impl Color {
             b /= sum;
         }
 
+        // NaN alpha clamps to 0, per CSS spec
+        let alpha_val = if alpha.0.is_nan() { 0.0 } else { alpha.0.clamp(0.0, 1.0) };
+
         Color {
             space: ColorSpace::Hwb,
             channels: [Some(h), Some(w), Some(b)],
-            alpha: Some(alpha.0.clamp(0.0, 1.0)),
+            alpha: Some(alpha_val),
             format: ColorFormat::Infer,
         }
     }

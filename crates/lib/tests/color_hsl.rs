@@ -300,7 +300,7 @@ test!(
 test!(
     adjust_hue_nan,
     "a {\n  color: adjust-hue(hsla(200, 50%, 50%), (0/0));\n}\n",
-    "a {\n  color: hsl(NaN, 50%, 50%);\n}\n"
+    "a {\n  color: hsl(calc(NaN), 50%, 50%);\n}\n"
 );
 test!(
     adjust_hue_nan_get_hue,

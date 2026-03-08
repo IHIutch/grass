@@ -445,6 +445,31 @@ impl<'a> Serializer<'a> {
         Ok(())
     }
 
+    /// Write a potentially degenerate (NaN/Infinity) value in legacy color syntax.
+    /// Wraps NaN/Infinity in calc() wrappers per CSS spec.
+    /// `has_percent`: if true, uses `calc(NaN * 1%)` instead of `calc(NaN)`.
+    fn write_legacy_degenerate_or_float(&mut self, val: f64, has_percent: bool) {
+        if val.is_nan() {
+            if has_percent {
+                self.buffer.extend_from_slice(b"calc(NaN * 1%)");
+            } else {
+                self.buffer.extend_from_slice(b"calc(NaN)");
+            }
+        } else if val.is_infinite() {
+            let sign = if val.is_sign_negative() { "-" } else { "" };
+            if has_percent {
+                write!(&mut self.buffer, "calc({}infinity * 1%)", sign).unwrap();
+            } else {
+                write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
+            }
+        } else {
+            self.write_float(val);
+            if has_percent {
+                self.buffer.push(b'%');
+            }
+        }
+    }
+
     fn write_rgb(&mut self, color: &Color) {
         let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
 
@@ -526,16 +551,17 @@ impl<'a> Serializer<'a> {
             (color.hue().0, color.saturation().0, color.lightness().0)
         };
 
-        self.write_float(hue);
+        self.write_legacy_degenerate_or_float(hue, false);
         self.buffer.extend_from_slice(b", ");
-        self.write_float(sat);
-        self.buffer.extend_from_slice(b"%, ");
-        self.write_float(light);
-        self.buffer.extend_from_slice(b"%");
+        self.write_legacy_degenerate_or_float(sat, true);
+        self.buffer.extend_from_slice(b", ");
+        self.write_legacy_degenerate_or_float(light, true);
 
         if !is_opaque {
             self.buffer.extend_from_slice(b", ");
-            self.write_float(color.alpha().0);
+            let alpha = color.alpha().0;
+            // NaN alpha clamps to 0 in legacy colors
+            self.write_float(if alpha.is_nan() { 0.0 } else { alpha });
         }
 
         self.buffer.push(b')');
@@ -639,10 +665,23 @@ impl<'a> Serializer<'a> {
             return;
         }
 
+        // Check for degenerate (NaN/Infinity) channel values in HSL/HWB colors.
+        // These must be serialized via write_hsl to get calc() wrappers.
+        if matches!(color.color_space(), ColorSpace::Hsl | ColorSpace::Hwb) {
+            let raw = color.raw_channels();
+            let has_degenerate = raw.iter().any(|ch| {
+                ch.map_or(false, |v| !v.is_finite())
+            });
+            if has_degenerate {
+                self.write_hsl(color);
+                return;
+            }
+        }
+
         // Check raw RGB channels for out-of-gamut or fractional values.
         {
             let rgb = color.to_rgb_channels_raw();
-            let out_of_gamut = rgb.iter().any(|v| *v < -0.0001 || *v > 255.0001);
+            let out_of_gamut = rgb.iter().any(|v| *v < -0.0001 || *v > 255.0001 || !v.is_finite());
             if out_of_gamut {
                 self.write_hsl(color);
                 return;

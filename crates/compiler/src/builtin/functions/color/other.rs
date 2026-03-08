@@ -233,6 +233,32 @@ fn update_modern(
         }
     }
 
+    // Normalize chroma (clamp negative to 0 with hue reflection) and hue (mod 360)
+    // This applies to LCH/OKLch spaces after change/adjust
+    if let Some(hue_idx) = working_space.hue_channel_index() {
+        // Chroma channel: if negative, negate and rotate hue by 180°
+        // For LCH/OKLch, chroma is channel 1
+        if working_space.is_perceptual() {
+            let chroma_idx = 1; // Chroma is always channel 1 in LCH/OKLch
+            if let Some(Some(chroma)) = new_channels.get(chroma_idx) {
+                if *chroma < 0.0 && chroma.is_finite() {
+                    new_channels[chroma_idx] = Some(-chroma);
+                    // Rotate hue by 180°
+                    if let Some(hue) = new_channels[hue_idx] {
+                        new_channels[hue_idx] = Some((hue + 180.0).rem_euclid(360.0));
+                    }
+                }
+            }
+        }
+
+        // Normalize hue to [0, 360)
+        if let Some(Some(hue)) = new_channels.get(hue_idx) {
+            if hue.is_finite() {
+                new_channels[hue_idx] = Some(hue.rem_euclid(360.0));
+            }
+        }
+    }
+
     // Apply alpha modification
     let new_alpha = if let Some(adj) = alpha_adjustment {
         let current = color_in_space.alpha().0;
@@ -321,48 +347,26 @@ fn update_components(
 
     // Legacy path: existing behavior for RGB/HSL/HWB colors
 
+    // For change, `none` sets a channel to missing. Use Option<Option<Number>>:
+    // None = not provided, Some(None) = `none`, Some(Some(val)) = numeric value
+    type ChannelArg = Option<Option<Number>>;
+
     let check_num = |num: Spanned<Value>,
                      name: &str,
                      mut max: f64,
-                     assert_percent: bool,
-                     check_percent: bool|
+                     _assert_percent: bool,
+                     _check_percent: bool|
      -> SassResult<Number> {
         let span = num.span;
         let mut num = num.node.assert_number_with_name(name, span)?;
 
         if update == UpdateComponents::Scale {
             max = 100.0;
-        }
-
-        if assert_percent || update == UpdateComponents::Scale {
+            // Scale always requires percentage and bounds checking
             num.assert_unit(&Unit::Percent, name, span)?;
-            num.assert_bounds(
-                name,
-                if update == UpdateComponents::Change {
-                    0.0
-                } else {
-                    -max
-                },
-                max,
-                span,
-            )?;
-        } else {
-            num.assert_bounds_with_unit(
-                name,
-                if update == UpdateComponents::Change {
-                    0.0
-                } else {
-                    -max
-                },
-                max,
-                if check_percent {
-                    &Unit::Percent
-                } else {
-                    &Unit::None
-                },
-                span,
-            )?;
+            num.assert_bounds(name, -max, max, span)?;
         }
+        // For Change and Adjust, no bounds checking — out-of-range values are allowed
 
         // todo: hack to check if rgb channel
         if max == 100.0 {
@@ -377,9 +381,19 @@ fn update_components(
                    max: f64,
                    assert_percent: bool,
                    check_percent: bool|
-     -> SassResult<Option<Number>> {
+     -> SassResult<ChannelArg> {
         Ok(match args.get(usize::MAX, name) {
-            Some(v) => Some(check_num(v, name, max, assert_percent, check_percent)?),
+            Some(v) => {
+                // Check for `none` keyword (only valid for Change)
+                if update == UpdateComponents::Change {
+                    if let Value::String(s, QuoteKind::None) = &v.node {
+                        if s == "none" {
+                            return Ok(Some(None)); // Set to missing
+                        }
+                    }
+                }
+                Some(Some(check_num(v, name, max, assert_percent, check_percent)?))
+            }
             None => None,
         })
     };
@@ -387,14 +401,77 @@ fn update_components(
     let red = get_arg(&mut args, "red", 255.0, false, false)?;
     let green = get_arg(&mut args, "green", 255.0, false, false)?;
     let blue = get_arg(&mut args, "blue", 255.0, false, false)?;
-    let alpha = get_arg(&mut args, "alpha", 1.0, false, false)?;
 
-    let hue = if update == UpdateComponents::Scale {
-        None
+    // Alpha has bounds checking even for change/adjust (unlike channels)
+    // Also supports `none` for Change
+    let alpha: ChannelArg = if let Some(v) = args.get(usize::MAX, "alpha") {
+        // Check for `none` keyword — set alpha to missing
+        if update == UpdateComponents::Change {
+            if let Value::String(s, QuoteKind::None) = &v.node {
+                if s == "none" {
+                    Some(None)
+                } else {
+                    let num = v.node.assert_number_with_name("alpha", span)?;
+                    let min = 0.0;
+                    if num.unit == Unit::Percent {
+                        num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
+                        Some(Some(num.num / Number(100.0)))
+                    } else {
+                        num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
+                        Some(Some(num.num))
+                    }
+                }
+            } else {
+                let num = v.node.assert_number_with_name("alpha", span)?;
+                let min = 0.0;
+                if num.unit == Unit::Percent {
+                    num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
+                    Some(Some(num.num / Number(100.0)))
+                } else {
+                    num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
+                    Some(Some(num.num))
+                }
+            }
+        } else {
+            let num = v.node.assert_number_with_name("alpha", span)?;
+            if update == UpdateComponents::Scale {
+                num.assert_unit(&Unit::Percent, "alpha", span)?;
+                num.assert_bounds("alpha", -100.0, 100.0, span)?;
+                Some(Some(num.num / Number(100.0)))
+            } else {
+                // Adjust: alpha must be in [-1, 1]
+                if num.unit == Unit::Percent {
+                    num.assert_bounds("alpha", -100.0, 100.0, span)?;
+                    Some(Some(num.num / Number(100.0)))
+                } else {
+                    num.assert_bounds_with_unit("alpha", -1.0, 1.0, &Unit::None, span)?;
+                    Some(Some(num.num))
+                }
+            }
+        }
     } else {
-        args.get(usize::MAX, "hue")
-            .map(|v| angle_value(v.node, "hue", v.span))
-            .transpose()?
+        None
+    };
+
+    let hue: ChannelArg = if update == UpdateComponents::Scale {
+        None
+    } else if let Some(v) = args.get(usize::MAX, "hue") {
+        // Check for `none` keyword
+        if update == UpdateComponents::Change {
+            if let Value::String(s, QuoteKind::None) = &v.node {
+                if s == "none" {
+                    Some(None)
+                } else {
+                    Some(Some(angle_value(v.node, "hue", v.span)?))
+                }
+            } else {
+                Some(Some(angle_value(v.node, "hue", v.span)?))
+            }
+        } else {
+            Some(Some(angle_value(v.node, "hue", v.span)?))
+        }
+    } else {
+        None
     };
 
     let saturation = get_arg(&mut args, "saturation", 100.0, false, true)?;
@@ -452,46 +529,49 @@ fn update_components(
             .into());
     }
 
-    fn update_value(
-        current: Number,
-        param: Option<Number>,
+    // Apply an update operation to a channel value.
+    // ChannelArg: None=not provided, Some(None)=set to missing, Some(Some(val))=numeric
+    fn apply_update(
+        current: f64,
+        param: &ChannelArg,
         max: f64,
         update: UpdateComponents,
-    ) -> Number {
-        let param = match param {
-            Some(p) => p,
-            None => return current,
-        };
-
-        match update {
-            UpdateComponents::Change => param,
-            UpdateComponents::Adjust => (param + current).clamp(0.0, max),
-            UpdateComponents::Scale => {
-                current
-                    + if param > Number(0.0) {
-                        Number(max) - current
-                    } else {
+    ) -> Option<f64> {
+        match param {
+            None => Some(current),          // Not provided, keep current
+            Some(None) => None,             // `none` keyword, set to missing
+            Some(Some(p)) => {
+                let val = match update {
+                    UpdateComponents::Change => p.0,
+                    UpdateComponents::Adjust => p.0 + current,
+                    UpdateComponents::Scale => {
                         current
-                    } * param
+                            + if p.0 > 0.0 {
+                                (max - current) * p.0
+                            } else {
+                                current * p.0
+                            }
+                    }
+                };
+                Some(val)
             }
         }
-    }
-
-    fn update_rgb(current: Number, param: Option<Number>, update: UpdateComponents) -> Number {
-        update_value(current, param, 255.0, update)
     }
 
     let original_space = color.color_space();
     let original_format = color.format.clone();
     let color = if has_rgb {
-        let mut c = Color::from_rgba_fn(
-            update_rgb(color.red(), red, update),
-            update_rgb(color.green(), green, update),
-            update_rgb(color.blue(), blue, update),
-            update_value(color.alpha(), alpha, 1.0, update),
-        );
-        c.format = ColorFormat::Infer;
-        Arc::new(c)
+        let new_r = apply_update(color.red().0, &red, 255.0, update);
+        let new_g = apply_update(color.green().0, &green, 255.0, update);
+        let new_b = apply_update(color.blue().0, &blue, 255.0, update);
+        let new_a = apply_update(color.alpha().0, &alpha, 1.0, update)
+            .map(|v| v.clamp(0.0, 1.0));
+        Arc::new(Color::for_space(
+            ColorSpace::Rgb,
+            [new_r, new_g, new_b],
+            new_a,
+            ColorFormat::Infer,
+        ))
     } else if has_wb {
         // When the color is already in HWB space, use raw channel values to avoid
         // precision loss from HWB→RGB→whiteness/blackness roundtrip conversion.
@@ -505,15 +585,27 @@ fn update_components(
         } else {
             (color.hue(), color.whiteness(), color.blackness())
         };
-        let mut result = Color::from_hwb(
-            if update == UpdateComponents::Change {
-                hue.unwrap_or(current_hue)
-            } else {
-                current_hue + hue.unwrap_or_else(Number::zero)
-            },
-            update_value(current_w, whiteness, 1.0, update) * Number(100.0),
-            update_value(current_b, blackness, 1.0, update) * Number(100.0),
-            update_value(color.alpha(), alpha, 1.0, update),
+        let new_hue = match &hue {
+            None => Some(current_hue.0),
+            Some(None) => None, // none keyword
+            Some(Some(h)) => {
+                if update == UpdateComponents::Change {
+                    Some(h.0)
+                } else {
+                    Some(current_hue.0 + h.0)
+                }
+            }
+        };
+        let new_w = apply_update(current_w.0, &whiteness, 1.0, update);
+        let new_b = apply_update(current_b.0, &blackness, 1.0, update);
+        let new_alpha = apply_update(color.alpha().0, &alpha, 1.0, update)
+            .map(|v| v.clamp(0.0, 1.0));
+        // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
+        let mut result = Color::for_space(
+            ColorSpace::Hwb,
+            [new_hue, new_w, new_b],
+            new_alpha,
+            ColorFormat::Infer,
         );
         // If original color was in a different space, convert back
         if original_space != ColorSpace::Hwb {
@@ -522,15 +614,27 @@ fn update_components(
         Arc::new(result)
     } else if hue.is_some() || has_sl {
         let (this_hue, this_saturation, this_lightness, this_alpha) = color.as_hsla();
-        let mut result = Color::from_hsla(
-            if update == UpdateComponents::Change {
-                hue.unwrap_or(this_hue)
-            } else {
-                this_hue + hue.unwrap_or_else(Number::zero)
-            },
-            update_value(this_saturation, saturation, 1.0, update),
-            update_value(this_lightness, lightness, 1.0, update),
-            update_value(this_alpha, alpha, 1.0, update),
+        let new_hue = match &hue {
+            None => Some(this_hue.0),
+            Some(None) => None,
+            Some(Some(h)) => {
+                if update == UpdateComponents::Change {
+                    Some(h.0)
+                } else {
+                    Some(this_hue.0 + h.0)
+                }
+            }
+        };
+        let new_sat = apply_update(this_saturation.0, &saturation, 1.0, update);
+        let new_light = apply_update(this_lightness.0, &lightness, 1.0, update);
+        let new_alpha = apply_update(this_alpha.0, &alpha, 1.0, update)
+            .map(|v| v.clamp(0.0, 1.0));
+        // Use Color::for_space to avoid from_hsla's clamping of out-of-range values
+        let mut result = Color::for_space(
+            ColorSpace::Hsl,
+            [new_hue, new_sat, new_light],
+            new_alpha,
+            ColorFormat::Infer,
         );
         if original_space != ColorSpace::Hsl {
             result = result.to_space(original_space);
@@ -539,7 +643,10 @@ fn update_components(
         }
         Arc::new(result)
     } else if alpha.is_some() {
-        Arc::new(color.with_alpha(update_value(color.alpha(), alpha, 1.0, update)))
+        let new_alpha = apply_update(color.alpha().0, &alpha, 1.0, update)
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(1.0);
+        Arc::new(color.with_alpha(Number(new_alpha)))
     } else {
         color
     };
