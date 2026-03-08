@@ -566,6 +566,10 @@ pub struct StyleSheet {
     pub uses: Vec<usize>,
     /// Array of indices into `body`
     pub forwards: Vec<usize>,
+    /// Variables declared with `!global` anywhere in the stylesheet.
+    /// These create variable slots in the module scope even if never executed,
+    /// defaulting to `null`. This matches dart-sass's `_globalVariables` behavior.
+    pub pre_declared_global_variables: HashSet<Identifier>,
 }
 
 impl StyleSheet {
@@ -576,6 +580,71 @@ impl StyleSheet {
             is_plain_css,
             uses: Vec::new(),
             forwards: Vec::new(),
+            pre_declared_global_variables: HashSet::new(),
         }
+    }
+
+    /// Walk the entire AST to find all `!global` variable declarations
+    /// and record their names. In dart-sass, these create variable slots
+    /// in the module scope even if the declaration is never executed.
+    pub fn collect_pre_declared_global_variables(&mut self) {
+        let mut globals = HashSet::new();
+        collect_globals_from_stmts(&self.body, &mut globals);
+        self.pre_declared_global_variables = globals;
+    }
+}
+
+fn collect_globals_from_stmts(stmts: &[AstStmt], globals: &mut HashSet<Identifier>) {
+    for stmt in stmts {
+        collect_globals_from_stmt(stmt, globals);
+    }
+}
+
+fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut HashSet<Identifier>) {
+    match stmt {
+        AstStmt::VariableDecl(decl) => {
+            if decl.is_global {
+                globals.insert(decl.name);
+            }
+        }
+        AstStmt::If(if_stmt) => {
+            for clause in &if_stmt.if_clauses {
+                collect_globals_from_stmts(&clause.body, globals);
+            }
+            if let Some(else_clause) = &if_stmt.else_clause {
+                collect_globals_from_stmts(else_clause, globals);
+            }
+        }
+        AstStmt::For(for_stmt) => collect_globals_from_stmts(&for_stmt.body, globals),
+        AstStmt::Each(each_stmt) => collect_globals_from_stmts(&each_stmt.body, globals),
+        AstStmt::While(while_stmt) => collect_globals_from_stmts(&while_stmt.body, globals),
+        AstStmt::RuleSet(rule_set) => collect_globals_from_stmts(&rule_set.body, globals),
+        AstStmt::Media(media) => collect_globals_from_stmts(&media.body, globals),
+        AstStmt::Supports(supports) => collect_globals_from_stmts(&supports.body, globals),
+        AstStmt::AtRootRule(at_root) => collect_globals_from_stmts(&at_root.body, globals),
+        AstStmt::UnknownAtRule(unknown) => {
+            if let Some(body) = &unknown.body {
+                collect_globals_from_stmts(body, globals);
+            }
+        }
+        AstStmt::Include(include) => {
+            if let Some(content) = &include.content {
+                collect_globals_from_stmts(&content.body, globals);
+            }
+        }
+        AstStmt::Mixin(mixin) => collect_globals_from_stmts(&mixin.body, globals),
+        AstStmt::FunctionDecl(func) => collect_globals_from_stmts(&func.body, globals),
+        AstStmt::Style(_)
+        | AstStmt::Return(_)
+        | AstStmt::LoudComment(_)
+        | AstStmt::SilentComment(_)
+        | AstStmt::ContentRule(_)
+        | AstStmt::Warn(_)
+        | AstStmt::ErrorRule(_)
+        | AstStmt::Extend(_)
+        | AstStmt::Debug(_)
+        | AstStmt::ImportRule(_)
+        | AstStmt::Use(_)
+        | AstStmt::Forward(_) => {}
     }
 }

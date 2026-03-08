@@ -75,7 +75,12 @@ impl Environment {
             modules: Arc::new(RefCell::new(Modules::new())),
             global_modules: Vec::new(),
             content: self.content.as_ref().map(Arc::clone),
-            forwarded_modules: Arc::clone(&self.forwarded_modules),
+            // Create a new forwarded_modules list for the import context.
+            // The imported file's @forward rules will push to this new list,
+            // and import_forwards() will process them back into the parent env.
+            // Sharing the parent's list would cause @forward to leak directly
+            // into the parent, bypassing import_forwards' scoping and shadowing.
+            forwarded_modules: Arc::new(RefCell::new(Vec::new())),
             imported_modules: Arc::clone(&self.imported_modules),
             nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Arc::clone),
             forwarded_member_sources: self.forwarded_member_sources.clone(),
@@ -402,10 +407,25 @@ impl Environment {
             return Ok(());
         }
 
-        let mut index = self
-            .scopes
-            .find_var(name.node)
-            .unwrap_or(self.scopes.len() - 1);
+        let index = self.scopes.find_var(name.node);
+
+        // If the variable isn't found in any local scope, check nested forwarded
+        // modules. An @import in a nested scope makes forwarded members available,
+        // and assigning to them should update the original module's variable.
+        if index.is_none() {
+            if let Some(ref nfm) = self.nested_forwarded_modules {
+                for modules in nfm.borrow().iter().rev() {
+                    for module in modules.borrow().iter().rev() {
+                        if module.borrow().var_exists(name.node) {
+                            module.borrow_mut().update_var(name, value)?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut index = index.unwrap_or(self.scopes.len() - 1);
 
         if !in_semi_global_scope && index == 0 {
             index = self.scopes.len() - 1;
@@ -424,6 +444,23 @@ impl Environment {
 
     pub fn scopes_mut(&mut self) -> &mut Scopes {
         &mut self.scopes
+    }
+
+    /// Enter a new scope, managing both variable scopes and nested forwarded modules.
+    pub fn scope_enter(&mut self) {
+        self.scopes.enter_new_scope();
+        if let Some(ref nfm) = self.nested_forwarded_modules {
+            nfm.borrow_mut()
+                .push(Arc::new(RefCell::new(Vec::new())));
+        }
+    }
+
+    /// Exit the current scope, managing both variable scopes and nested forwarded modules.
+    pub fn scope_exit(&mut self) {
+        self.scopes.exit_scope();
+        if let Some(ref nfm) = self.nested_forwarded_modules {
+            nfm.borrow_mut().pop();
+        }
     }
 
     pub fn global_vars(&self) -> Arc<RefCell<HashMap<Identifier, Value>>> {

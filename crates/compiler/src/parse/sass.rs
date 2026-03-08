@@ -16,6 +16,7 @@ pub(crate) struct SassParser<'a> {
     pub next_indentation: Option<usize>,
     pub spaces: Option<bool>,
     pub next_indentation_end: Option<usize>,
+    pub consume_newlines: bool,
 }
 
 impl<'a> BaseParser for SassParser<'a> {
@@ -29,11 +30,14 @@ impl<'a> BaseParser for SassParser<'a> {
 
     fn whitespace_without_comments(&mut self) {
         while let Some(next) = self.toks.peek() {
-            if next.kind != '\t' && next.kind != ' ' {
+            if next.kind == '\t'
+                || next.kind == ' '
+                || (self.consume_newlines && (next.kind == '\n' || next.kind == '\r'))
+            {
+                self.toks.next();
+            } else {
                 break;
             }
-
-            self.toks.next();
         }
     }
 
@@ -77,6 +81,10 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         true
     }
 
+    fn set_consume_newlines(&mut self, consume: bool) {
+        self.consume_newlines = consume;
+    }
+
     fn path(&self) -> &'a Path {
         self.path
     }
@@ -116,7 +124,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         Ok(buffer)
     }
 
-    fn expect_statement_separator(&mut self, _name: Option<&str>) -> SassResult<()> {
+    fn expect_statement_separator(&mut self, name: Option<&str>) -> SassResult<()> {
         if !self.at_end_of_statement() {
             self.expect_newline()?;
         }
@@ -126,9 +134,13 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         }
 
         // todo: position: _nextIndentationEnd!.position
-        // todo: error message, "Nothing may be indented ${name == null ? 'here' : 'beneath a $name'}."
 
-        Err(("Nothing may be indented here", self.toks.current_span()).into())
+        let message = match name {
+            Some(name) => format!("Nothing may be indented beneath a {name}."),
+            None => "Nothing may be indented here.".to_string(),
+        };
+
+        Err((message, self.toks.current_span()).into())
     }
 
     fn at_end_of_statement(&self) -> bool {
@@ -363,6 +375,7 @@ impl<'a> SassParser<'a> {
             next_indentation: None,
             next_indentation_end: None,
             spaces: None,
+            consume_newlines: false,
         }
     }
 

@@ -150,6 +150,40 @@ impl ExtensionStore {
         Ok(())
     }
 
+    /// Returns a snapshot of the current extension target keys.
+    /// Used to later check only extensions added after this point.
+    pub fn snapshot_extension_targets(&self) -> HashSet<SimpleSelector> {
+        self.extensions.keys().cloned().collect()
+    }
+
+    /// Check that extensions added since the given snapshot are satisfied.
+    /// Only checks extension targets that were NOT present in the snapshot.
+    pub fn check_unsatisfied_extends_since(
+        &self,
+        before: &HashSet<SimpleSelector>,
+    ) -> SassResult<()> {
+        for (target, sources) in &self.extensions {
+            // Skip targets that existed before the module was executed
+            if before.contains(target) {
+                continue;
+            }
+            if self.selectors.contains_key(target) {
+                continue;
+            }
+            for extension in sources.values() {
+                if !extension.is_optional && !extension.is_original {
+                    return Err((
+                        "The target selector was not found.\nUse \"@extend ${target} !optional\" to avoid this error."
+                            .replace("${target}", &target.to_string()),
+                        extension.span,
+                    )
+                        .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn replace(
         selector: SelectorList,
         source: SelectorList,

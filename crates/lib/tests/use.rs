@@ -902,4 +902,22 @@ fn use_module_with_extend() {
     );
 }
 
+#[test]
+fn use_path_with_dotdot_normalization() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("foo/baz/qux/other.scss", "$variable: value;");
+
+    let input = r#"
+        @use "foo/bar/../baz/qux/other";
+        a { b: other.$variable }
+    "#;
+
+    assert_eq!(
+        "a {\n  b: value;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs))
+            .expect(input)
+    );
+}
+
 // todo: refactor these tests to use testfs where possible

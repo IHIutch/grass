@@ -45,6 +45,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     #[allow(clippy::type_complexity)]
     const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr>>> = None;
 
+    /// Sets whether the indented-syntax parser should consume newlines as
+    /// whitespace. No-op for SCSS and CSS parsers.
+    fn set_consume_newlines(&mut self, _consume: bool) {}
+
     fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation> {
         self.almost_any_value(false)
     }
@@ -222,6 +226,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 _ => break,
             }
         }
+
+        style_sheet.collect_pre_declared_global_variables();
 
         Ok(style_sheet)
     }
@@ -1423,13 +1429,18 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::While(AstWhile { condition, body: Arc::new(body) }))
     }
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+        self.set_consume_newlines(true);
+        self.whitespace()?;
         let url = PathBuf::from(self.parse_url_string()?);
+        self.set_consume_newlines(false);
         self.whitespace()?;
 
         let prefix = if self.scan_identifier("as", false)? {
+            self.set_consume_newlines(true);
             self.whitespace()?;
             let prefix = self.parse_identifier(true, false)?;
             self.expect_char('*')?;
+            self.set_consume_newlines(false);
             self.whitespace()?;
             Some(prefix)
         } else {
@@ -1442,11 +1453,15 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let mut hidden_variables: Option<HashSet<Identifier>> = None;
 
         if self.scan_identifier("show", false)? {
+            self.set_consume_newlines(true);
             let members = self.parse_member_list()?;
+            self.set_consume_newlines(false);
             shown_mixins_and_functions = Some(members.0);
             shown_variables = Some(members.1);
         } else if self.scan_identifier("hide", false)? {
+            self.set_consume_newlines(true);
             let members = self.parse_member_list()?;
+            self.set_consume_newlines(false);
             hidden_mixins_and_functions = Some(members.0);
             hidden_variables = Some(members.1);
         }
@@ -1498,6 +1513,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let mut variables = HashSet::new();
 
         loop {
+            self.set_consume_newlines(true);
             self.whitespace()?;
 
             // todo: withErrorMessage("Expected variable, mixin, or function name"
@@ -1507,6 +1523,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 identifiers.insert(Identifier::from(self.parse_identifier(true, false)?));
             }
 
+            self.set_consume_newlines(false);
             self.whitespace()?;
 
             if !self.scan_char(',') {
@@ -1529,12 +1546,15 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         url_span: Span,
     ) -> SassResult<Option<String>> {
         if self.scan_identifier("as", false)? {
+            self.set_consume_newlines(true);
             self.whitespace()?;
-            return Ok(if self.scan_char('*') {
+            let result = if self.scan_char('*') {
                 None
             } else {
                 Some(self.parse_identifier(false, false)?)
-            });
+            };
+            self.set_consume_newlines(false);
+            return Ok(result);
         }
 
         let base_name = url
@@ -1589,6 +1609,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let mut variable_names = HashSet::new();
         let mut configuration = Vec::new();
+        self.set_consume_newlines(true);
         self.whitespace()?;
         self.expect_char('(')?;
 
@@ -1610,6 +1631,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     is_guarded = true;
                     self.whitespace()?;
                 } else {
+                    self.set_consume_newlines(false);
                     return Err(
                         ("Invalid flag name.", self.toks_mut().span_from(flag_start)).into(),
                     );
@@ -1618,6 +1640,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
             let span = self.toks_mut().span_from(var_start);
             if variable_names.contains(&name) {
+                self.set_consume_newlines(false);
                 return Err(("The same variable may only be configured once.", span).into());
             }
 
@@ -1641,21 +1664,28 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         self.expect_char(')')?;
+        self.set_consume_newlines(false);
 
         Ok(Some(configuration))
     }
 
     fn parse_use_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+        self.set_consume_newlines(true);
+        self.whitespace()?;
         let url_start = self.toks().cursor();
         let url = self.parse_url_string()?;
         let url_span = self.toks().span_from(url_start);
+        self.set_consume_newlines(false);
         self.whitespace()?;
 
         let path = PathBuf::from(url);
 
         let namespace = self.use_namespace(path.as_ref(), start, url_span)?;
+        self.set_consume_newlines(false);
         self.whitespace()?;
         let configuration = self.parse_configuration(false)?;
+        self.set_consume_newlines(false);
+        self.whitespace()?;
 
         self.expect_statement_separator(Some("@use rule"))?;
 
@@ -2745,10 +2775,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             span: self.toks_mut().span_from(start),
         };
 
-        if is_global {
-            // todo
-            // _globalVariables.putIfAbsent(name, () => declaration)
-        }
+        // Note: global variable pre-declaration is handled by
+        // StyleSheet::collect_pre_declared_global_variables() after parsing.
 
         Ok(declaration)
     }

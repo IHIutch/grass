@@ -396,12 +396,31 @@ impl Module {
     }
 
     pub fn update_var(&mut self, name: Spanned<Identifier>, value: Value) -> SassResult<()> {
+        // For Environment modules, check forwarded modules first.
+        // When a midstream module shadows an upstream variable (via @forward),
+        // assignment through the midstream's namespace should go to the upstream
+        // (forwarded) variable, matching dart-sass's _modulesByVariable behavior.
+        if let Self::Environment { env, scope, .. } = self {
+            for module in env.forwarded_modules.borrow().iter() {
+                if module.borrow().var_exists(name.node) {
+                    module.borrow_mut().update_var(name, value)?;
+                    return Ok(());
+                }
+            }
+
+            if scope.variables.insert(name.node, value).is_none() {
+                return Err(("Undefined variable.", name.span).into());
+            }
+
+            return Ok(());
+        }
+
         let scope = match self {
             Self::Builtin { .. } => {
                 return Err(("Cannot modify built-in variable.", name.span).into())
             }
-            Self::Environment { scope, .. }
-            | Self::Forwarded(ForwardedModule { scope, .. })
+            Self::Environment { .. } => unreachable!(),
+            Self::Forwarded(ForwardedModule { scope, .. })
             | Self::Shadowed(ShadowedModule { scope, .. }) => scope.clone(),
         };
 

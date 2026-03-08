@@ -175,7 +175,7 @@ pub struct Visitor<'a> {
     files_seen: HashSet<PathBuf>,
     /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
     /// Avoids redundant filesystem probing for the same import path from the same context.
-    import_path_cache: HashMap<(PathBuf, PathBuf, bool), Option<PathBuf>>,
+    import_path_cache: HashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: HashMap<PathBuf, PathBuf>,
 }
@@ -655,7 +655,14 @@ impl<'a> Visitor<'a> {
             return Ok(Arc::clone(already_loaded));
         }
 
-        let env = Environment::new();
+        let mut env = Environment::new();
+
+        // Pre-declare global variable slots for any `!global` declarations found
+        // during parsing. This ensures the module exposes the same members
+        // regardless of control flow, defaulting to `null` if never assigned.
+        for name in &stylesheet.pre_declared_global_variables {
+            env.scopes.insert_var(0, *name, Value::Null);
+        }
 
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
@@ -677,7 +684,17 @@ impl<'a> Visitor<'a> {
                 .set(ContextFlags::AT_ROOT_EXCLUDING_STYLE_RULE, false);
             visitor.flags.set(ContextFlags::IN_KEYFRAMES, false);
 
+            // Snapshot extension targets before executing this module so we can
+            // check that any new @extend rules added by the module are satisfied
+            // within the module's own scope (dart-sass checks per-module).
+            let extensions_before = visitor.extender.snapshot_extension_targets();
+
             visitor.visit_stylesheet(stylesheet)?;
+
+            // Check that extends added by this module are satisfied.
+            // This catches cross-module unsatisfied extends that would
+            // otherwise be silently ignored when checked globally in finish().
+            visitor.extender.check_unsatisfied_extends_since(&extensions_before)?;
 
             visitor.parent = old_parent;
             visitor.style_rule_ignoring_at_root = old_style_rule;
@@ -901,7 +918,12 @@ impl<'a> Visitor<'a> {
     /// <https://sass-lang.com/documentation/at-rules/import#finding-the-file>
     /// <https://sass-lang.com/documentation/at-rules/import#load-paths>
     #[allow(clippy::cognitive_complexity, clippy::redundant_clone)]
-    pub fn find_import(&mut self, path: &Path, for_import: bool) -> Option<PathBuf> {
+    pub fn find_import(
+        &mut self,
+        path: &Path,
+        for_import: bool,
+        span: Span,
+    ) -> SassResult<Option<PathBuf>> {
         // Cache key must include the import context (parent dir of current file)
         // because the same relative path resolves differently from different files
         let context_dir = self
@@ -914,20 +936,52 @@ impl<'a> Visitor<'a> {
             return result.clone();
         }
 
-        let result = self.find_import_uncached(path, for_import);
+        let result = self.find_import_uncached(path, for_import, span);
         self.import_path_cache.insert(cache_key, result.clone());
         result
     }
 
-    fn find_import_uncached(&self, path: &Path, for_import: bool) -> Option<PathBuf> {
+    /// Normalize a path by resolving `.` and `..` components without
+    /// touching the filesystem (unlike `std::fs::canonicalize`).
+    fn normalize_path(path: &Path) -> PathBuf {
+        use std::path::Component;
+        let mut result = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::ParentDir => {
+                    if !result.pop() {
+                        result.push(component);
+                    }
+                }
+                Component::CurDir => {}
+                _ => result.push(component),
+            }
+        }
+        result
+    }
+
+    fn find_import_uncached(
+        &self,
+        path: &Path,
+        for_import: bool,
+        span: Span,
+    ) -> SassResult<Option<PathBuf>> {
         let path_buf = if path.is_absolute() {
-            path.into()
+            Self::normalize_path(path)
         } else {
-            self.current_import_path
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .join(path)
+            Self::normalize_path(
+                &self
+                    .current_import_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(path),
+            )
         };
+
+        let context_dir = self
+            .current_import_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""));
 
         // Build candidate list for a single path (original + partial with _ prefix)
         fn path_candidates(path: PathBuf) -> Vec<PathBuf> {
@@ -937,19 +991,115 @@ impl<'a> Visitor<'a> {
             vec![path, partial]
         }
 
-        // Build candidate list for a path with all extensions
-        fn path_with_extension_candidates(path: &Path, for_import: bool) -> Vec<PathBuf> {
-            let mut candidates = Vec::with_capacity(12);
+        // Build non-css candidates for conflict detection.
+        // Order: partial first within each extension, sass before scss.
+        // Returns (import_candidates, regular_candidates) — import candidates
+        // take priority; conflicts are checked within each group separately.
+        fn non_css_candidates_for_conflict(
+            path: &Path,
+            for_import: bool,
+        ) -> (Vec<PathBuf>, Vec<PathBuf>) {
+            let mut import_candidates = Vec::new();
             if for_import {
-                candidates.extend(path_candidates(path.with_extension("import.sass")));
-                candidates.extend(path_candidates(path.with_extension("import.scss")));
-                candidates.extend(path_candidates(path.with_extension("import.css")));
+                let sass_import = path.with_extension("import.sass");
+                let scss_import = path.with_extension("import.scss");
+                let dirname = sass_import
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .to_path_buf();
+                let sass_basename =
+                    sass_import.file_name().unwrap_or_else(|| OsStr::new(".."));
+                let scss_basename =
+                    scss_import.file_name().unwrap_or_else(|| OsStr::new(".."));
+                import_candidates.push(dirname.join(format!(
+                    "_{}",
+                    sass_basename.to_str().unwrap()
+                )));
+                import_candidates.push(sass_import);
+                import_candidates.push(dirname.join(format!(
+                    "_{}",
+                    scss_basename.to_str().unwrap()
+                )));
+                import_candidates.push(scss_import);
             }
-            candidates.extend(path_candidates(path.with_extension("sass")));
-            candidates.extend(path_candidates(path.with_extension("scss")));
-            candidates.extend(path_candidates(path.with_extension("css")));
-            candidates
+
+            let sass_path = path.with_extension("sass");
+            let scss_path = path.with_extension("scss");
+            let dirname = sass_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf();
+            let sass_basename = sass_path.file_name().unwrap_or_else(|| OsStr::new(".."));
+            let scss_basename = scss_path.file_name().unwrap_or_else(|| OsStr::new(".."));
+            let mut regular_candidates = Vec::with_capacity(4);
+            // Order: _other.sass, other.sass, _other.scss, other.scss
+            regular_candidates
+                .push(dirname.join(format!("_{}", sass_basename.to_str().unwrap())));
+            regular_candidates.push(sass_path);
+            regular_candidates
+                .push(dirname.join(format!("_{}", scss_basename.to_str().unwrap())));
+            regular_candidates.push(scss_path);
+
+            (import_candidates, regular_candidates)
         }
+
+        // Check for load conflicts among candidates in a directory.
+        // Returns an error if multiple files match, otherwise returns
+        // the first match (or None).
+        let check_conflicts =
+            |candidates: &[PathBuf], context_dir: &Path, span: Span| -> SassResult<Option<PathBuf>> {
+                let existing: Vec<&PathBuf> = candidates
+                    .iter()
+                    .filter(|p| self.options.fs.is_file(p))
+                    .collect();
+
+                if existing.len() > 1 {
+                    let mut msg = "It's not clear which file to import. Found:\n".to_string();
+                    for p in &existing {
+                        let rel = p
+                            .strip_prefix(context_dir)
+                            .unwrap_or(p);
+                        msg.push_str(&format!("  {}\n", rel.display()));
+                    }
+                    // Remove trailing newline
+                    msg.pop();
+                    return Err((msg, span).into());
+                }
+
+                Ok(existing.into_iter().next().cloned())
+            };
+
+        // Resolve candidates with conflict detection: check import candidates first
+        // (if for_import), then regular candidates. Import candidates take priority
+        // and never conflict with regular candidates.
+        let resolve_with_conflicts = |base_path: &Path,
+                                       for_import: bool,
+                                       context_dir: &Path,
+                                       span: Span|
+         -> SassResult<Option<PathBuf>> {
+            let (import_candidates, regular_candidates) =
+                non_css_candidates_for_conflict(base_path, for_import);
+
+            // Check import candidates first (they take priority)
+            if !import_candidates.is_empty() {
+                if let Some(found) = check_conflicts(&import_candidates, context_dir, span)? {
+                    return Ok(Some(found));
+                }
+            }
+
+            // Then check regular candidates
+            if let Some(found) = check_conflicts(&regular_candidates, context_dir, span)? {
+                return Ok(Some(found));
+            }
+
+            // Fall back to CSS candidates (no conflict check needed for CSS)
+            let mut css_candidates = Vec::new();
+            if for_import {
+                css_candidates.extend(path_candidates(base_path.with_extension("import.css")));
+            }
+            css_candidates.extend(path_candidates(base_path.with_extension("css")));
+            Ok(self.options.fs.resolve_first_existing(&css_candidates))
+        };
 
         if path_buf.extension() == Some(OsStr::new("scss"))
             || path_buf.extension() == Some(OsStr::new("sass"))
@@ -963,37 +1113,46 @@ impl<'a> Visitor<'a> {
                 ));
             }
             candidates.extend(path_candidates(path_buf));
-            return self.options.fs.resolve_first_existing(&candidates);
+            return Ok(self.options.fs.resolve_first_existing(&candidates));
         }
 
-        // Build all candidates for the base path
-        let mut candidates = path_with_extension_candidates(&path_buf, for_import);
+        // Check base path with conflict detection
+        if let Some(found) = resolve_with_conflicts(&path_buf, for_import, context_dir, span)? {
+            return Ok(Some(found));
+        }
 
+        // Also check index files
         if self.options.fs.is_dir(&path_buf) {
-            candidates.extend(path_with_extension_candidates(&path_buf.join("index"), for_import));
-        }
-
-        // Check base path candidates in one batch
-        if let Some(found) = self.options.fs.resolve_first_existing(&candidates) {
-            return Some(found);
+            if let Some(found) =
+                resolve_with_conflicts(&path_buf.join("index"), for_import, context_dir, span)?
+            {
+                return Ok(Some(found));
+            }
         }
 
         // Check load paths
         for load_path in &self.options.load_paths {
-            let lp_buf = load_path.join(path);
+            let lp_buf = Self::normalize_path(&load_path.join(path));
 
-            let mut candidates = path_with_extension_candidates(&lp_buf, for_import);
-
-            if self.options.fs.is_dir(&lp_buf) {
-                candidates.extend(path_with_extension_candidates(&lp_buf.join("index"), for_import));
+            if let Some(found) =
+                resolve_with_conflicts(&lp_buf, for_import, context_dir, span)?
+            {
+                return Ok(Some(found));
             }
 
-            if let Some(found) = self.options.fs.resolve_first_existing(&candidates) {
-                return Some(found);
+            if self.options.fs.is_dir(&lp_buf) {
+                if let Some(found) = resolve_with_conflicts(
+                    &lp_buf.join("index"),
+                    for_import,
+                    context_dir,
+                    span,
+                )? {
+                    return Ok(Some(found));
+                }
             }
         }
 
-        None
+        Ok(None)
     }
 
     fn parse_file(
@@ -1015,7 +1174,7 @@ impl<'a> Visitor<'a> {
         for_import: bool,
         span: Span,
     ) -> SassResult<StyleSheet> {
-        if let Some(name) = self.find_import(url.as_ref(), for_import) {
+        if let Some(name) = self.find_import(url.as_ref(), for_import, span)? {
             let name = self.canonicalize(&name);
             if let Some(style_sheet) = self.import_cache.get(&name) {
                 return Ok(style_sheet.clone());
@@ -1074,6 +1233,14 @@ impl<'a> Visitor<'a> {
         // need to put its CSS into an intermediate [ModifiableCssStylesheet] so
         // that we can hermetically resolve `@extend`s before injecting it.
         if stylesheet.uses.is_empty() && stylesheet.forwards.is_empty() {
+            // Pre-declare global variable slots from the imported stylesheet.
+            // Even if `!global` declarations are inside unreachable branches,
+            // they create variable slots that default to `null`.
+            for name in &stylesheet.pre_declared_global_variables {
+                if !self.env.scopes.global_var_exists(*name) {
+                    self.env.scopes.insert_var(0, *name, Value::Null);
+                }
+            }
             self.visit_stylesheet(stylesheet)?;
             return Ok(());
         }
@@ -1849,13 +2016,13 @@ impl<'a> Visitor<'a> {
             return v;
         }
 
-        self.env.scopes_mut().enter_new_scope();
+        self.env.scope_enter();
 
         let v = callback(self);
 
         self.flags
             .set(ContextFlags::IN_SEMI_GLOBAL_SCOPE, was_in_semi_global_scope);
-        self.env.scopes_mut().exit_scope();
+        self.env.scope_exit();
 
         v
     }
@@ -1960,7 +2127,7 @@ impl<'a> Visitor<'a> {
         let list = self.visit_expr(each_stmt.list)?.as_list();
 
         // todo: not setting semi_global: true maybe means we can't assign to global scope when declared as global
-        self.env.scopes_mut().enter_new_scope();
+        self.env.scope_enter();
 
         let mut result = None;
 
@@ -1990,7 +2157,7 @@ impl<'a> Visitor<'a> {
             }
         }
 
-        self.env.scopes_mut().exit_scope();
+        self.env.scope_exit();
 
         Ok(result)
     }
@@ -2037,7 +2204,7 @@ impl<'a> Visitor<'a> {
         }
 
         // todo: self.with_scopes
-        self.env.scopes_mut().enter_new_scope();
+        self.env.scope_enter();
 
         let mut result = None;
 
@@ -2063,7 +2230,7 @@ impl<'a> Visitor<'a> {
             i += direction;
         }
 
-        self.env.scopes_mut().exit_scope();
+        self.env.scope_exit();
 
         Ok(result)
     }
@@ -2099,7 +2266,7 @@ impl<'a> Visitor<'a> {
         }
 
         // todo: self.with_scope
-        self.env.scopes_mut().enter_new_scope();
+        self.env.scope_enter();
 
         let mut result = None;
 
@@ -2113,7 +2280,7 @@ impl<'a> Visitor<'a> {
             }
         }
 
-        self.env.scopes_mut().exit_scope();
+        self.env.scope_exit();
 
         Ok(result)
     }
