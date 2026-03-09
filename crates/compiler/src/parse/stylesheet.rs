@@ -3116,6 +3116,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn parse_media_in_parens(&mut self, buf: &mut Interpolation) -> SassResult<()> {
         self.expect_char_with_message('(', "media condition in parentheses")?;
         buf.add_char('(');
+        // In indented syntax, allow newlines inside media query parens
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
 
         if matches!(self.toks().peek(), Some(Token { kind: '(', .. })) {
@@ -3183,6 +3186,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }
         }
 
+        self.set_consume_newlines(was_consuming_newlines);
         self.expect_char(')')?;
         self.whitespace()?;
         buf.add_char(')');
