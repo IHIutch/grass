@@ -602,6 +602,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
         self.whitespace()?;
+
+        // CSS custom functions (@function --name()) should be passed through as-is
+        let before_name = self.toks().cursor();
         let name_start = self.toks().cursor();
         // Parse without normalization first to get the raw name for validation
         let raw_name = self.parse_identifier(false, false)?;
@@ -610,6 +613,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let name = raw_name.replace('_', "-");
         self.whitespace()?;
         self.set_consume_newlines(was_consuming_newlines);
+
+        if name.starts_with("--") {
+            // CSS custom function: rewind to before the name and parse as unknown at-rule
+            self.toks_mut().set_cursor(before_name);
+            let at_rule_name = Interpolation::new_plain("function".to_string());
+            return self.unknown_at_rule(at_rule_name, start);
+        }
+
         let arguments = self.parse_argument_declaration()?;
 
         if self.flags().in_mixin() || self.flags().in_content_block() {
