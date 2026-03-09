@@ -48,9 +48,7 @@ impl<'a> BaseParser for SassParser<'a> {
         loop {
             let mut next = self.toks.next();
             match next {
-                Some(Token { kind: '\n', .. }) => {
-                    return Err(("expected */.", self.toks.prev_span()).into())
-                }
+                Some(Token { kind: '\n', .. }) => continue,
                 Some(Token { kind: '*', .. }) => {}
                 _ => continue,
             }
