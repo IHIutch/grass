@@ -614,7 +614,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
         self.set_consume_newlines(was_consuming_newlines);
 
-        if name.starts_with("--") {
+        if raw_name.starts_with("--") {
             // CSS custom function: rewind to before the name and parse as unknown at-rule
             self.toks_mut().set_cursor(before_name);
             let at_rule_name = Interpolation::new_plain("function".to_string());
@@ -1187,14 +1187,16 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.set_consume_newlines(true);
         self.whitespace()?;
         self.set_consume_newlines(was_consuming_newlines);
-        let name_str = self.parse_identifier(true, false)?;
-        if name_str.starts_with("--") {
+        // Parse raw name first to check for CSS custom mixin prefix
+        let raw_name_start = self.toks().cursor();
+        let raw_name = self.parse_identifier(false, false)?;
+        if raw_name.starts_with("--") {
             return Err((
                 "Sass @mixin names beginning with -- are forbidden for forward-compatibility with plain CSS mixins.",
                 self.toks_mut().span_from(start),
             ).into());
         }
-        let name = Identifier::from(name_str);
+        let name = Identifier::from(raw_name.replace('_', "-"));
         self.whitespace()?;
         let args = if self.toks_mut().next_char_is('(') {
             self.parse_argument_declaration()?
