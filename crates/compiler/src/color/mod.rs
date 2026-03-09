@@ -620,7 +620,7 @@ impl Color {
         } else {
             // Convert to HSL, desaturate, convert back to original space
             let hsl = self.to_space(ColorSpace::Hsl);
-            let mut gray_hsl = Color {
+            let gray_hsl = Color {
                 space: ColorSpace::Hsl,
                 channels: [hsl.channels[0], Some(0.0), hsl.channels[2]],
                 alpha: hsl.alpha,
@@ -718,15 +718,27 @@ impl Color {
     }
 
     pub fn complement(&self) -> Self {
-        let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue + Number(180.0), saturation, luminance, alpha);
-        c.format = self.hsl_format_if_preserved();
-        c
+        // Work in HSL space, preserving missing channels
+        let in_hsl = self.to_space(ColorSpace::Hsl);
+        let mut channels = in_hsl.channels;
+        channels[0] = channels[0].map(|h| (h + 180.0).rem_euclid(360.0));
+        let result = Color {
+            space: ColorSpace::Hsl,
+            channels,
+            alpha: in_hsl.alpha,
+            format: self.hsl_format_if_preserved(),
+        };
+        if self.color_space() != ColorSpace::Hsl {
+            result.to_space(self.color_space())
+        } else {
+            result
+        }
     }
 
     /// Complement a color in a given color space (rotate hue by 180 degrees).
     pub fn complement_in_space(&self, space: ColorSpace) -> Self {
-        let in_space = self.to_space(space);
+        // Use powerless_missing to propagate None from analogous channels
+        let in_space = self.to_space_powerless_missing(space);
         let hue_idx = space.hue_channel_index();
 
         if let Some(idx) = hue_idx {
@@ -738,6 +750,7 @@ impl Color {
                 alpha: in_space.alpha,
                 format: ColorFormat::Infer,
             };
+            // Convert back, preserving missing channels
             if space != self.color_space() {
                 result.to_space(self.color_space())
             } else {
@@ -933,17 +946,62 @@ impl Color {
     /// Used by invert() and complement() with $space to detect powerless
     /// channels that become meaningless after conversion.
     pub fn to_space_powerless_missing(&self, target: ColorSpace) -> Self {
-        let mut result = self.to_space(target);
-        // For legacy targets, to_space() doesn't set powerless→None.
-        // Do it here when the color was actually converted (not identity).
-        if target.is_legacy() && self.space != target {
+        if self.space == target {
+            return self.clone();
+        }
+
+        // For legacy targets, we need custom conversion that preserves None
+        // for analogous channels AND sets powerless channels to None.
+        // The normal to_space() replaces analogous None with 0 for legacy.
+        if target.is_legacy() {
+            let c0 = self.channels[0].unwrap_or(0.0);
+            let c1 = self.channels[1].unwrap_or(0.0);
+            let c2 = self.channels[2].unwrap_or(0.0);
+
+            let converted = conversion::convert([c0, c1, c2], self.space, target);
+
+            // Propagate None from analogous source channels (like non-legacy does)
+            let new_channels = [
+                if should_propagate_none_for_legacy(self.space, &self.channels, target, 0) {
+                    None
+                } else {
+                    Some(converted[0])
+                },
+                if should_propagate_none_for_legacy(self.space, &self.channels, target, 1) {
+                    None
+                } else {
+                    Some(converted[1])
+                },
+                if should_propagate_none_for_legacy(self.space, &self.channels, target, 2) {
+                    None
+                } else {
+                    Some(converted[2])
+                },
+            ];
+
+            let mut result = Color {
+                space: target,
+                channels: new_channels,
+                alpha: self.alpha,
+                format: ColorFormat::Infer,
+            };
+
+            // Also set powerless channels to None
             for i in 0..3 {
                 if result.is_channel_powerless(i) && result.channels[i].is_some() {
                     result.channels[i] = None;
                 }
             }
+
+            if target == ColorSpace::Hsl || target == ColorSpace::Hwb {
+                result.format = ColorFormat::Hsl;
+            }
+
+            result
+        } else {
+            // Non-legacy: to_space() already handles None propagation and powerless→None
+            self.to_space(target)
         }
-        result
     }
 
     /// Whether a channel is missing (None/`none`).
@@ -1242,6 +1300,17 @@ fn should_propagate_none(
         return false;
     }
 
+    should_propagate_none_for_legacy(from, from_channels, to, to_idx)
+}
+
+/// Like should_propagate_none but also works for legacy targets.
+/// Used by to_space_powerless_missing() which needs legacyMissing: true behavior.
+fn should_propagate_none_for_legacy(
+    from: ColorSpace,
+    from_channels: &[Option<f64>; 3],
+    to: ColorSpace,
+    to_idx: usize,
+) -> bool {
     let target_type = match channel_analogy(to, to_idx) {
         Some(t) => t,
         None => return false,
