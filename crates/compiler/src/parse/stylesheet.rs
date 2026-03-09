@@ -49,6 +49,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     /// whitespace. No-op for SCSS and CSS parsers.
     fn set_consume_newlines(&mut self, _consume: bool) {}
 
+    /// Returns whether the indented-syntax parser is currently consuming
+    /// newlines. Always false for SCSS and CSS parsers.
+    fn is_consuming_newlines(&self) -> bool {
+        false
+    }
+
     fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation> {
         self.almost_any_value(false)
     }
@@ -2300,6 +2306,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let start = self.toks().cursor();
 
         self.expect_char('(')?;
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
 
         let mut positional = Vec::new();
@@ -2336,6 +2344,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 } else {
                     keyword_rest = Some(expression.node);
                     self.whitespace()?;
+                    self.scan_char(',');
+                    self.whitespace()?;
                     break;
                 }
             } else if !named.is_empty() {
@@ -2369,6 +2379,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         self.expect_char(')')?;
+        self.set_consume_newlines(was_consuming_newlines);
 
         Ok(ArgumentInvocation {
             positional,

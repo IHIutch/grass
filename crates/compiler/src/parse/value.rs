@@ -40,6 +40,7 @@ pub(crate) struct ValueParser<'a, 'c, P: StylesheetParser<'a>> {
     inside_bracketed_list: bool,
     single_equals: bool,
     parse_until: Option<Predicate<'c, P>>,
+    was_consuming_newlines: bool,
     _a: PhantomData<&'a ()>,
 }
 
@@ -59,13 +60,16 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
         }
 
+        value_parser.was_consuming_newlines = parser.is_consuming_newlines();
         if value_parser.inside_bracketed_list {
             let bracket_start = parser.toks().cursor();
 
             parser.expect_char('[')?;
+            parser.set_consume_newlines(true);
             parser.whitespace()?;
 
             if parser.scan_char(']') {
+                parser.set_consume_newlines(value_parser.was_consuming_newlines);
                 return Ok(AstExpr::List(ListExpr {
                     elems: Vec::new(),
                     separator: ListSeparator::Undecided,
@@ -102,6 +106,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             parse_until,
             inside_bracketed_list,
             single_equals,
+            was_consuming_newlines: false,
             _a: PhantomData,
         }
     }
@@ -413,6 +418,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         if self.inside_bracketed_list {
             parser.expect_char(']')?;
+            parser.set_consume_newlines(self.was_consuming_newlines);
         }
 
         if self.comma_expressions.is_some() {
@@ -679,6 +685,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         parser: &mut P,
         first: Spanned<AstExpr>,
         start: usize,
+        restore_consume_newlines: bool,
     ) -> SassResult<Spanned<AstExpr>> {
         let mut pairs = vec![(first, parser.parse_expression_until_comma(false)?.node)];
 
@@ -696,6 +703,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         }
 
         parser.expect_char(')')?;
+        parser.set_consume_newlines(restore_consume_newlines);
 
         Ok(AstExpr::Map(AstSassMap(pairs)).span(parser.toks_mut().span_from(start)))
     }
@@ -712,11 +720,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         let was_in_parentheses = parser.flags().in_parens();
         parser.flags_mut().set(ContextFlags::IN_PARENS, true);
+        let was_consuming_newlines = parser.is_consuming_newlines();
 
         parser.expect_char('(')?;
+        parser.set_consume_newlines(true);
         parser.whitespace()?;
         if !parser.looking_at_expression() {
             parser.expect_char(')')?;
+            parser.set_consume_newlines(was_consuming_newlines);
             parser
                 .flags_mut()
                 .set(ContextFlags::IN_PARENS, was_in_parentheses);
@@ -734,11 +745,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             parser
                 .flags_mut()
                 .set(ContextFlags::IN_PARENS, was_in_parentheses);
-            return Self::parse_map(parser, first, start);
+            return Self::parse_map(parser, first, start, was_consuming_newlines);
         }
 
         if !parser.scan_char(',') {
             parser.expect_char(')')?;
+            parser.set_consume_newlines(was_consuming_newlines);
             parser
                 .flags_mut()
                 .set(ContextFlags::IN_PARENS, was_in_parentheses);
@@ -761,6 +773,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         }
 
         parser.expect_char(')')?;
+        parser.set_consume_newlines(was_consuming_newlines);
 
         parser
             .flags_mut()
@@ -1758,10 +1771,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         start: usize,
     ) -> SassResult<Vec<AstExpr>> {
         parser.expect_char('(')?;
+        let was_consuming_newlines = parser.is_consuming_newlines();
+        parser.set_consume_newlines(true);
         if let Some(interpolation) =
             ValueParser::try_parse_calculation_interpolation(parser, start)?
         {
             parser.expect_char(')')?;
+            parser.set_consume_newlines(was_consuming_newlines);
             return Ok(vec![interpolation]);
         }
 
@@ -1781,6 +1797,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 r#""+", "-", "*", "/", ",", or ")""#
             },
         )?;
+        parser.set_consume_newlines(was_consuming_newlines);
 
         Ok(arguments)
     }

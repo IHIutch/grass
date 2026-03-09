@@ -20,18 +20,23 @@ pub(crate) fn try_parse_css_if<'a>(
         return Ok(None);
     }
 
+    let outer_consuming_newlines = parser.is_consuming_newlines();
     parser.scan_char('(');
+    parser.set_consume_newlines(true);
     parser.whitespace()?;
 
     let is_new_syntax = detect_css_if_syntax(parser)?;
 
     parser.toks_mut().set_cursor(before_paren);
+    parser.set_consume_newlines(outer_consuming_newlines);
 
     if !is_new_syntax {
         return Ok(None);
     }
 
     parser.expect_char('(')?;
+    let was_consuming_newlines = parser.is_consuming_newlines();
+    parser.set_consume_newlines(true);
     parser.whitespace()?;
 
     let mut clauses = Vec::new();
@@ -66,6 +71,7 @@ pub(crate) fn try_parse_css_if<'a>(
     }
 
     parser.expect_char(')')?;
+    parser.set_consume_newlines(was_consuming_newlines);
     let span = parser.toks_mut().span_from(start);
 
     Ok(Some(
@@ -623,6 +629,8 @@ fn parse_condition_primary<'a>(
     // `(` → grouping
     if parser.toks().next_char_is('(') {
         parser.toks_mut().next();
+        let was_consuming = parser.is_consuming_newlines();
+        parser.set_consume_newlines(true);
         parser.whitespace()?;
 
         // `(else)` is not allowed
@@ -639,6 +647,7 @@ fn parse_condition_primary<'a>(
 
         parser.whitespace()?;
         parser.expect_char(')')?;
+        parser.set_consume_newlines(was_consuming);
         return Ok(IfCondition::Paren(Box::new(inner)));
     }
 
@@ -715,6 +724,8 @@ fn parse_condition_primary<'a>(
     }
 
     parser.expect_char('(')?;
+    let was_consuming = parser.is_consuming_newlines();
+    parser.set_consume_newlines(true);
 
     match lower.as_str() {
         "sass" => {
@@ -722,12 +733,14 @@ fn parse_condition_primary<'a>(
             let expr = parser.parse_expression(None, None, None)?;
             parser.whitespace()?;
             parser.expect_char(')')?;
+            parser.set_consume_newlines(was_consuming);
             let span = parser.toks_mut().span_from(ident_start);
             Ok(IfCondition::Atom(IfConditionAtom::Sass(expr.node, span)))
         }
         _ => {
             let content = parse_css_function_args(parser)?;
             parser.expect_char(')')?;
+            parser.set_consume_newlines(was_consuming);
 
             let mut interp = Interpolation::new_plain(format!("{}(", name));
             interp.add_interpolation(content);
@@ -794,6 +807,19 @@ fn parse_css_function_args<'a>(
                         }
                         None => break,
                     }
+                }
+            }
+            ' ' | '\t' | '\n' | '\r' if parser.is_consuming_newlines() => {
+                // In indented syntax with consume_newlines, collapse whitespace
+                parser.toks_mut().next();
+                while matches!(parser.toks().peek(), Some(Token { kind: ' ' | '\t' | '\n' | '\r', .. })) {
+                    parser.toks_mut().next();
+                }
+                // Only add space if not at start or end of args
+                if !buffer.trailing_string().is_empty()
+                    && !matches!(parser.toks().peek(), Some(Token { kind: ')', .. }) | None)
+                {
+                    buffer.add_char(' ');
                 }
             }
             _ => {

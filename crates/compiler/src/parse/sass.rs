@@ -85,6 +85,10 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         self.consume_newlines = consume;
     }
 
+    fn is_consuming_newlines(&self) -> bool {
+        self.consume_newlines
+    }
+
     fn path(&self) -> &'a Path {
         self.path
     }
