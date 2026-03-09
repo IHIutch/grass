@@ -3,6 +3,27 @@ use crate::color::space::ColorSpace;
 
 use super::ParsedChannels;
 
+/// Try to parse a string part from a "channel/alpha" split as a value.
+/// Handles "none", plain numbers (0.4), and percentages (40%).
+fn parse_slash_part(s: &str) -> Option<Value> {
+    if s == "none" {
+        Some(Value::String("none".to_owned(), QuoteKind::None))
+    } else if let Some(num_str) = s.strip_suffix('%') {
+        num_str
+            .parse::<f64>()
+            .ok()
+            .map(|n| Value::Dimension(SassNumber {
+                num: Number(n),
+                unit: Unit::Percent,
+                as_slash: None,
+            }))
+    } else {
+        s.parse::<f64>()
+            .ok()
+            .map(|n| Value::Dimension(SassNumber::new_unitless(n)))
+    }
+}
+
 pub(crate) fn function_string(
     name: &'static str,
     args: &[Value],
@@ -300,28 +321,11 @@ pub(crate) fn parse_channels(
             None => Ok(ParsedChannels::List(list)),
         },
         Value::String(text, QuoteKind::None) if text.contains('/') => {
-            // Try to split "channel/alpha" strings like "none/0.4" into parts.
+            // Try to split "channel/alpha" strings like "none/0.4" or "40%/none"
             let parts: Vec<&str> = text.splitn(2, '/').collect();
             if parts.len() == 2 {
-                let channel_str = parts[0].trim();
-                let alpha_str = parts[1].trim();
-
-                // Check if this is a parseable channel/alpha pair
-                let channel_val = if channel_str == "none" {
-                    Some(Value::String("none".to_owned(), QuoteKind::None))
-                } else if let Ok(num) = channel_str.parse::<f64>() {
-                    Some(Value::Dimension(SassNumber::new_unitless(num)))
-                } else {
-                    None
-                };
-
-                let alpha_val = if alpha_str == "none" {
-                    Some(Value::String("none".to_owned(), QuoteKind::None))
-                } else if let Ok(num) = alpha_str.parse::<f64>() {
-                    Some(Value::Dimension(SassNumber::new_unitless(num)))
-                } else {
-                    None
-                };
+                let channel_val = parse_slash_part(parts[0].trim());
+                let alpha_val = parse_slash_part(parts[1].trim());
 
                 if let (Some(ch), Some(al)) = (channel_val, alpha_val) {
                     return Ok(ParsedChannels::List(vec![
