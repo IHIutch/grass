@@ -140,9 +140,23 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     let limit = args.default_arg(2, "limit", Value::Null);
 
     let vec: Vec<Value> = if matches!(limit, Value::Null) {
-        s1.split(&separator)
-            .map(|s| Value::String(s.to_string(), quote))
-            .collect()
+        if separator.is_empty() {
+            // Empty separator: split into characters (matching dart-sass)
+            if s1.is_empty() {
+                Vec::new()
+            } else {
+                s1.chars()
+                    .map(|c| Value::String(c.to_string(), quote))
+                    .collect()
+            }
+        } else if s1.is_empty() {
+            // Empty string with non-empty separator returns empty list
+            Vec::new()
+        } else {
+            s1.split(&separator)
+                .map(|s| Value::String(s.to_string(), quote))
+                .collect()
+        }
     } else {
         let limit = limit.assert_number_with_name("limit", args.span())?;
         let limit_int = limit.assert_int_with_name("limit", args.span())?;

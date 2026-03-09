@@ -62,6 +62,14 @@ impl PartialEq for Color {
         let other_legacy = other.space.is_legacy();
 
         if self_legacy && other_legacy {
+            // Check none vs non-none channels first (none != 0)
+            for i in 0..3 {
+                match (self.channels[i], other.channels[i]) {
+                    (None, Some(_)) | (Some(_), None) => return false,
+                    _ => {}
+                }
+            }
+
             // Legacy colors compare via exact RGB values (no rounding)
             let s = self.to_rgb_channels_raw();
             let o = other.to_rgb_channels_raw();
