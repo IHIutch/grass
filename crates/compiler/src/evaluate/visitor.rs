@@ -2804,15 +2804,6 @@ impl<'a> Visitor<'a> {
     fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {
         let name = func_call.name;
 
-        // CSS custom function names (--*) are always plain CSS, never Sass functions
-        if name.as_str().starts_with("--") {
-            return self.run_function_callable(
-                SassFunction::Plain { name },
-                (*func_call.arguments).clone(),
-                func_call.span,
-            );
-        }
-
         let func = match self.env.get_fn(name, func_call.namespace, func_call.span)? {
             Some(func) => func,
             None => {
