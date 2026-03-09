@@ -148,7 +148,10 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
     }
 
     fn at_end_of_statement(&self) -> bool {
-        matches!(self.toks.peek(), Some(Token { kind: '\n', .. }) | None)
+        matches!(
+            self.toks.peek(),
+            Some(Token { kind: '\n', .. }) | Some(Token { kind: ';', .. }) | None
+        )
     }
 
     fn looking_at_children(&mut self) -> SassResult<bool> {
@@ -396,6 +399,15 @@ impl<'a> SassParser<'a> {
 
         let start = self.toks.cursor();
 
+        // Accept semicolons before newlines (dart-sass allows them in indented syntax)
+        self.scan_char(';');
+
+        if self.toks.peek().is_none() {
+            self.next_indentation = Some(0);
+            self.next_indentation_end = Some(self.toks.cursor());
+            return Ok(0);
+        }
+
         if !self.scan_char('\n') {
             return Err(("Expected newline.", self.toks.current_span()).into());
         }
@@ -472,11 +484,11 @@ impl<'a> SassParser<'a> {
 
     fn expect_newline(&mut self) -> SassResult<()> {
         match self.toks.peek() {
-            Some(Token { kind: ';', .. }) => Err((
-                "semicolons aren't allowed in the indented syntax.",
-                self.toks.current_span(),
-            )
-                .into()),
+            Some(Token { kind: ';', .. }) => {
+                // dart-sass accepts semicolons in indented syntax
+                self.toks.next();
+                Ok(())
+            }
             Some(Token { kind: '\r', .. }) => {
                 self.toks.next();
                 self.scan_char('\n');

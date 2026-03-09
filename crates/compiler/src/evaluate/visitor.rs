@@ -1816,6 +1816,8 @@ impl<'a> Visitor<'a> {
         let was_in_keyframes = self.flags.in_keyframes();
         let was_in_unknown_at_rule = self.flags.in_unknown_at_rule();
 
+        let is_font_face = unvendor(&name) == "font-face";
+
         if unvendor(&name) == "keyframes" {
             self.flags.set(ContextFlags::IN_KEYFRAMES, true);
         } else {
@@ -1844,6 +1846,7 @@ impl<'a> Visitor<'a> {
                     || !visitor.style_rule_exists()
                     || visitor.flags.in_keyframes()
                     || nest_at_rule
+                    || is_font_face
                 {
                     for stmt in children {
                         let result = visitor.visit_stmt(stmt)?;

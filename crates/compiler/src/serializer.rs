@@ -1247,6 +1247,17 @@ impl<'a> Serializer<'a> {
                     _ => *sep2 != ListSeparator::Undecided,
                 }
             }
+            // ArgLists are always comma-separated, so they need parens in the
+            // same contexts as comma-separated lists
+            Value::ArgList(arglist) => {
+                if arglist.elems.len() < 2 {
+                    return false;
+                }
+                matches!(
+                    sep,
+                    ListSeparator::Comma | ListSeparator::Slash | ListSeparator::Space
+                )
+            }
             _ => false,
         }
     }
@@ -1329,7 +1340,8 @@ impl<'a> Serializer<'a> {
     }
 
     fn write_map_element(&mut self, value: &Value, span: Span) -> SassResult<()> {
-        let needs_parens = matches!(value, Value::List(_, ListSeparator::Comma, Brackets::None));
+        let needs_parens = matches!(value, Value::List(_, ListSeparator::Comma, Brackets::None))
+            || matches!(value, Value::ArgList(..));
 
         if needs_parens {
             self.buffer.push(b'(');

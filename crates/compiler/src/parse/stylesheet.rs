@@ -261,6 +261,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_argument_declaration(&mut self) -> SassResult<ArgumentDeclaration> {
         self.expect_char('(')?;
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
 
         let mut arguments = Vec::new();
@@ -295,6 +297,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             });
 
             if !named.insert(name) {
+                self.set_consume_newlines(was_consuming_newlines);
                 return Err(("Duplicate argument.", name_span).into());
             }
 
@@ -304,6 +307,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             self.whitespace()?;
         }
         self.expect_char(')')?;
+        self.set_consume_newlines(was_consuming_newlines);
 
         Ok(ArgumentDeclaration {
             args: arguments,
@@ -337,6 +341,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.expect_char('(')?;
         buffer.add_char('(');
 
+        // In indented syntax, allow newlines inside @at-root query parens
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
 
         buffer.add_expr(self.parse_expression(None, None, None)?);
@@ -348,6 +355,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             buffer.add_expr(self.parse_expression(None, None, None)?);
         }
 
+        self.set_consume_newlines(was_consuming_newlines);
         self.expect_char(')')?;
         self.whitespace()?;
         buffer.add_char(')');
@@ -413,6 +421,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_debug_rule(&mut self) -> SassResult<AstStmt> {
+        // In indented syntax, allow newline between @debug and its expression
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let value = self.parse_expression(None, None, None)?;
         self.expect_statement_separator(Some("@debug rule"))?;
 
@@ -429,6 +442,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
 
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+
         let mut variables = vec![Identifier::from(self.parse_variable_name()?)];
         self.whitespace()?;
         while self.scan_char(',') {
@@ -440,6 +457,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.expect_identifier("in", false)?;
         self.whitespace()?;
 
+        self.set_consume_newlines(was_consuming_newlines);
         let list = self.parse_expression(None, None, None)?.node;
 
         let body = self.with_children(child)?.node;
@@ -484,6 +502,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 .into());
         }
 
+        // In indented syntax, allow newline before selector
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
+
         let value = self.almost_any_value(false)?;
 
         let is_optional = self.scan_char('!');
@@ -507,6 +531,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     ) -> SassResult<AstStmt> {
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
+
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
 
         let var_start = self.toks().cursor();
         let variable = Spanned {
@@ -551,6 +579,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         };
 
         self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
 
         let to = self.parse_expression(None, None, None)?;
 
@@ -569,6 +598,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_function_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+        // In indented syntax, allow newlines around function name
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
         let name_start = self.toks().cursor();
         // Parse without normalization first to get the raw name for validation
         let raw_name = self.parse_identifier(false, false)?;
@@ -576,6 +609,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         // Normalize underscores to hyphens for actual use
         let name = raw_name.replace('_', "-");
         self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let arguments = self.parse_argument_declaration()?;
 
         if self.flags().in_mixin() || self.flags().in_content_block() {
@@ -691,6 +725,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
+        // In indented syntax, allow newline before condition
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let condition = self.parse_expression(None, None, None)?.node;
         let body = self.parse_children(child)?;
         self.whitespace_without_comments();
@@ -702,7 +741,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         while self.scan_else(if_indentation)? {
             self.whitespace()?;
             if self.scan_identifier("if", false)? {
+                // In indented syntax, allow newline before else-if condition
+                self.set_consume_newlines(true);
                 self.whitespace()?;
+                self.set_consume_newlines(was_consuming_newlines);
                 let condition = self.parse_expression(None, None, None)?.node;
                 let body = self.parse_children(child)?;
                 clauses.push(AstIfClause { condition, body });
@@ -960,6 +1002,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_include_rule(&mut self) -> SassResult<AstStmt> {
+        // In indented syntax, allow newline before mixin name
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
+
         let mut namespace: Option<Spanned<Identifier>> = None;
 
         let name_start = self.toks().cursor();
@@ -990,7 +1038,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
 
         let content_args = if self.scan_identifier("using", false)? {
+            // In indented syntax, allow newline between "using" and arg declaration
+            let was_cn = self.is_consuming_newlines();
+            self.set_consume_newlines(true);
             self.whitespace()?;
+            self.set_consume_newlines(was_cn);
             let args = self.parse_argument_declaration()?;
             self.whitespace()?;
             Some(args)
@@ -1105,6 +1157,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_return_rule(&mut self) -> SassResult<AstStmt> {
+        // In indented syntax, allow newline before value
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let value = self.parse_expression(None, None, None)?;
         self.expect_statement_separator(None)?;
         Ok(AstStmt::Return(AstReturn {
@@ -1114,6 +1171,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_mixin_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+        // In indented syntax, allow newline before mixin name
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let name_str = self.parse_identifier(true, false)?;
         if name_str.starts_with("--") {
             return Err((
@@ -1443,6 +1505,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_warn_rule(&mut self) -> SassResult<AstStmt> {
+        // In indented syntax, allow newline before value
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let value = self.parse_expression(None, None, None)?;
         self.expect_statement_separator(Some("@warn rule"))?;
         Ok(AstStmt::Warn(AstWarn {
@@ -1458,6 +1525,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
 
+        // In indented syntax, allow newline before condition
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
+        self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
         let condition = self.parse_expression(None, None, None)?.node;
 
         let body = self.with_children(child)?.node;
