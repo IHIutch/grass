@@ -85,15 +85,8 @@ pub(crate) fn unitless(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 }
 
 pub(crate) fn inspect(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
-    let value = if args.len() > 1 {
-        Value::List(
-            args.positional.drain(..).collect(),
-            ListSeparator::Comma,
-            Brackets::None,
-        )
-    } else {
-        args.get_err(0, "value")?
-    };
+    args.max_args(1)?;
+    let value = args.get_err(0, "value")?;
     Ok(Value::String(
         value.inspect(args.span())?,
         QuoteKind::None,
@@ -146,7 +139,7 @@ pub(crate) fn global_variable_exists(
         .borrow()
         .var_exists(name)
     } else {
-        (*visitor.env.global_vars()).borrow().contains_key(&name)
+        visitor.env.global_var_exists(name, args.span())?
     }))
 }
 

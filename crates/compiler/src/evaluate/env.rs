@@ -363,6 +363,15 @@ impl Environment {
             .is_some())
     }
 
+    pub fn global_var_exists(&self, name: Identifier, span: Span) -> SassResult<bool> {
+        if (*self.global_vars()).borrow().contains_key(&name) {
+            return Ok(true);
+        }
+        Ok(self
+            .get_variable_from_global_modules(name, span)?
+            .is_some())
+    }
+
     pub fn get_var(
         &mut self,
         name: Spanned<Identifier>,
