@@ -57,9 +57,10 @@ test!(
     "a {\n    --without-semicolon: {\n        a: b\n    }\n}\n",
     "a {\n  --without-semicolon: {\n      a: b\n  } ;\n}\n"
 );
-error!(
+test!(
     nothing_after_colon,
-    "a {\n  --btn-font-family:;\n}\n", "Error: Expected token."
+    "a {\n  --btn-font-family:;\n}\n",
+    "a {\n  --btn-font-family:;\n}\n"
 );
 error!(
     #[ignore = "dart-sass crashes on this input https://github.com/sass/dart-sass/issues/1857"]
@@ -95,10 +96,10 @@ error!(
     }",
     r#"Error: Declarations whose names begin with "--" may not be nested"#
 );
-error!(
+test!(
     empty_value,
     "a {
         --color:#{null};
     }",
-    "Error: Custom property values may not be empty."
+    "a {\n  --color:;\n}\n"
 );

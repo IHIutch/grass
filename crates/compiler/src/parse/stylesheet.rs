@@ -278,6 +278,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 self.expect_char('.')?;
                 self.whitespace()?;
                 rest_argument = Some(name);
+                self.scan_char(',');
+                self.whitespace()?;
                 break;
             }
 
@@ -1884,7 +1886,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.expect_char(':')?;
 
         if parse_custom_properties && name.initial_plain().starts_with("--") {
-            let interpolation = self.parse_interpolated_declaration_value(false, false, true)?;
+            let interpolation = self.parse_interpolated_declaration_value(false, true, true)?;
             let value_span = self.toks_mut().span_from(start);
             let value = AstExpr::String(StringExpr(interpolation, QuoteKind::None), value_span)
                 .span(value_span);
@@ -2451,7 +2453,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         // Parse custom properties as declarations no matter what.
         if name_buffer.initial_plain().starts_with("--") {
             let value_start = self.toks().cursor();
-            let value = self.parse_interpolated_declaration_value(false, false, true)?;
+            let value = self.parse_interpolated_declaration_value(false, true, true)?;
             let value_span = self.toks_mut().span_from(value_start);
             self.expect_statement_separator(Some("custom property"))?;
             return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(AstStyle {

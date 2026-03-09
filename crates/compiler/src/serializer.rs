@@ -329,6 +329,7 @@ impl<'a> Serializer<'a> {
                 self.buffer.push(b',');
                 if complex.line_break {
                     self.write_newline();
+                    self.write_indentation();
                 } else {
                     self.write_optional_space();
                 }

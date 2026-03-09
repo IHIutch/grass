@@ -57,7 +57,9 @@ impl CssStmt {
                 selector.is_invisible_or_bogus() || body.iter().all(CssStmt::is_invisible)
             }
             CssStmt::Style(style) => {
-                style.value.node.is_blank() && !style.value.node.is_empty_list()
+                style.value.node.is_blank()
+                    && !style.value.node.is_empty_list()
+                    && !style.declared_as_custom_property
             }
             CssStmt::Media(media_rule, ..) => media_rule.body.iter().all(CssStmt::is_invisible),
             CssStmt::UnknownAtRule(rule, ..) => {

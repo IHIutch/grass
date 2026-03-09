@@ -3865,7 +3865,7 @@ impl<'a> Visitor<'a> {
         {
             // If the value is an empty list, preserve it, because converting it to CSS
             // will throw an error that we want the user to see.
-            if !value.is_blank() || value.is_empty_list() {
+            if !value.is_blank() || value.is_empty_list() || is_custom_property {
                 // todo: superfluous clones?
                 self.css_tree.add_stmt(
                     CssStmt::Style(Style {
@@ -3875,8 +3875,6 @@ impl<'a> Visitor<'a> {
                     }),
                     self.parent,
                 );
-            } else if name.starts_with("--") {
-                return Err(("Custom property values may not be empty.", style.span).into());
             }
         }
 
