@@ -366,12 +366,6 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             ))
         }
         v => {
-            if v.is_special_function() {
-                return Ok(Value::String(
-                    format!("grayscale({})", v.to_css_string(args.span(), false)?),
-                    QuoteKind::None,
-                ));
-            }
             return Err((
                 format!("$color: {} is not a color.", v.inspect(args.span())?),
                 args.span(),
@@ -380,6 +374,29 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         }
     };
     Ok(Value::Color(Arc::new(color.grayscale())))
+}
+
+/// Global CSS filter overload: passes through var()/calc() as plain CSS.
+fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let span = args.span();
+    let val = args.get_err(0, "color")?;
+    // Pass through special functions like var() and calc()
+    if val.is_special_function() {
+        return Ok(Value::String(
+            format!("grayscale({})", val.to_css_string(span, false)?),
+            QuoteKind::None,
+        ));
+    }
+    // Re-wrap and delegate to the main implementation
+    let new_args = ArgumentResult {
+        positional: vec![val],
+        named: args.named,
+        separator: args.separator,
+        span,
+        touched: args.touched,
+    };
+    grayscale(new_args, visitor)
 }
 
 pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -573,7 +590,7 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     f.insert("darken", Builtin::new(darken));
     f.insert("saturate", Builtin::new(saturate));
     f.insert("desaturate", Builtin::new(desaturate));
-    f.insert("grayscale", Builtin::new(grayscale));
+    f.insert("grayscale", Builtin::new(global_grayscale));
     f.insert("complement", Builtin::new(complement));
     f.insert("invert", Builtin::new(invert));
 }

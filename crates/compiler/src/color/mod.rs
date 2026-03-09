@@ -611,22 +611,44 @@ impl Color {
     }
 
     /// Remove all color, producing a grayscale equivalent.
-    /// Always operates through HSL desaturation, then converts back to original space.
+    /// Legacy colors: desaturate in HSL.
+    /// Modern colors: zero chroma in OKLch, preserving missing channels.
     pub fn grayscale(&self) -> Self {
         use crate::color::space::ColorSpace;
 
         if self.space.is_legacy() {
-            self.desaturate(Number::one())
-        } else {
-            // Convert to HSL, desaturate, convert back to original space
-            let hsl = self.to_space(ColorSpace::Hsl);
+            // Legacy path: work in HSL, preserve missing channels
+            let in_hsl = self.to_space(ColorSpace::Hsl);
             let gray_hsl = Color {
                 space: ColorSpace::Hsl,
-                channels: [hsl.channels[0], Some(0.0), hsl.channels[2]],
-                alpha: hsl.alpha,
+                channels: [in_hsl.channels[0], Some(0.0), in_hsl.channels[2]],
+                alpha: in_hsl.alpha,
+                format: self.hsl_format_if_preserved(),
+            };
+            if self.color_space() != ColorSpace::Hsl {
+                gray_hsl.to_space(self.color_space())
+            } else {
+                gray_hsl
+            }
+        } else {
+            // Modern path: zero chroma in OKLch, then convert back.
+            // Preserve original hue value if already in OKLch; otherwise let
+            // to_space handle powerless hue (sets to None).
+            let in_oklch = self.to_space(ColorSpace::Oklch);
+            let mut channels = in_oklch.channels;
+            channels[1] = Some(0.0); // zero chroma
+            let gray = Color {
+                space: ColorSpace::Oklch,
+                channels,
+                alpha: in_oklch.alpha,
                 format: ColorFormat::Infer,
             };
-            gray_hsl.to_space(self.space)
+            if self.space == ColorSpace::Oklch {
+                // Already in OKLch: preserve hue value as-is (powerless but explicit)
+                gray
+            } else {
+                gray.to_space(self.space)
+            }
         }
     }
 
