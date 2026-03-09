@@ -33,7 +33,7 @@ test!(
         @keyframes {}
         color: green;
     }",
-    "a {\n  color: red;\n  color: green;\n}\n@keyframes {}\n"
+    "a {\n  color: red;\n}\n@keyframes {}\na {\n  color: green;\n}\n"
 );
 test!(
     keyframes_lowercase_to,

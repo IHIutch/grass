@@ -1808,7 +1808,7 @@ impl<'a> Visitor<'a> {
                 false,
             );
 
-            self.css_tree.add_stmt(stmt, self.parent);
+            self.add_child_to_current_parent(stmt);
 
             return Ok(None);
         }
@@ -1979,6 +1979,31 @@ impl<'a> Visitor<'a> {
         }
 
         self.css_tree.add_child(node, parent)
+    }
+
+    /// Add a leaf node (Style, Comment, bodyless at-rule) to the current parent,
+    /// creating a copy of the parent if a following sibling exists (interleaved
+    /// declarations).
+    fn add_child_to_current_parent(&mut self, node: CssStmt) -> CssTreeIdx {
+        let parent = self.parent.unwrap_or(CssTree::ROOT);
+
+        // Only check interleaving inside style rules
+        if self.style_rule_exists() && parent != CssTree::ROOT {
+            if self.css_tree.has_following_sibling(parent) {
+                let grandparent = self.css_tree.child_to_parent.get(&parent).copied().unwrap();
+                let parent_copy = self
+                    .css_tree
+                    .get(parent)
+                    .as_ref()
+                    .map(CssStmt::copy_without_children)
+                    .unwrap();
+                let new_parent = self.css_tree.add_child(parent_copy, grandparent);
+                self.parent = Some(new_parent);
+                return self.css_tree.add_child(node, new_parent);
+            }
+        }
+
+        self.css_tree.add_stmt(node, self.parent)
     }
 
     fn with_parent<F: FnOnce(&mut Self) -> SassResult<()>, FT: Fn(&CssStmt) -> bool>(
@@ -2302,7 +2327,7 @@ impl<'a> Visitor<'a> {
             self.perform_interpolation(comment.text, false)?,
             comment.span,
         );
-        self.css_tree.add_stmt(comment, self.parent);
+        self.add_child_to_current_parent(comment);
 
         Ok(None)
     }
@@ -3908,13 +3933,12 @@ impl<'a> Visitor<'a> {
             // will throw an error that we want the user to see.
             if !value.is_blank() || value.is_empty_list() || is_custom_property {
                 // todo: superfluous clones?
-                self.css_tree.add_stmt(
+                self.add_child_to_current_parent(
                     CssStmt::Style(Style {
                         property: InternedString::get_or_intern(&name),
                         value: Box::new(value),
                         declared_as_custom_property: is_custom_property,
                     }),
-                    self.parent,
                 );
             }
         }

@@ -29,7 +29,7 @@ test!(
 test!(
     deeply_nested_with_rulesets_and_styles,
     ".foo {\n  @at-root .bar {\n    a: b;\n    c {\n      d: e;\n      foo {\n        bar: baz;\n      }\n      h: j;\n    }\n    f: g;\n  }\n}\n",
-    ".bar {\n  a: b;\n  f: g;\n}\n.bar c {\n  d: e;\n  h: j;\n}\n.bar c foo {\n  bar: baz;\n}\n"
+    ".bar {\n  a: b;\n}\n.bar c {\n  d: e;\n}\n.bar c foo {\n  bar: baz;\n}\n.bar c {\n  h: j;\n}\n.bar {\n  f: g;\n}\n"
 );
 test!(
     super_selector_inside_with_nothing,

@@ -426,7 +426,7 @@ test!(
             color: foo;
         }
     }",
-    "a {\n  color: foo;\n}\n@media foo {\n  a b {\n    color: 1;\n  }\n}\n\na {\n  color: foo;\n}\n@media foo {\n  a b {\n    color: 2;\n  }\n}\n\na {\n  color: foo;\n}\n@media foo {\n  a b {\n    color: 3;\n  }\n}\n"
+    "@media foo {\n  a b {\n    color: 1;\n  }\n}\na {\n  color: foo;\n}\n\n@media foo {\n  a b {\n    color: 2;\n  }\n}\na {\n  color: foo;\n}\n\n@media foo {\n  a b {\n    color: 3;\n  }\n}\na {\n  color: foo;\n}\n"
 );
 test!(
     newline_between_media_rules_declared_at_root_inside_each_with_preceding_style_rule,
