@@ -69,6 +69,9 @@ pub struct FunctionCallExpr {
     pub name: Identifier,
     pub arguments: Arc<ArgumentInvocation>,
     pub span: Span,
+    /// True if the function name was written with literal `--` prefix (CSS custom function).
+    /// False if it was written with `__` (Sass function that normalizes to `--`).
+    pub is_css_custom_function: bool,
 }
 
 #[derive(Debug, Clone)]

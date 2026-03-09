@@ -2804,6 +2804,16 @@ impl<'a> Visitor<'a> {
     fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {
         let name = func_call.name;
 
+        // If the function name starts with -- AND was written with hyphens in source
+        // (not underscores normalized to hyphens), treat as CSS custom function
+        if name.as_str().starts_with("--") && func_call.is_css_custom_function {
+            return self.run_function_callable(
+                SassFunction::Plain { name },
+                (*func_call.arguments).clone(),
+                func_call.span,
+            );
+        }
+
         let func = match self.env.get_fn(name, func_call.namespace, func_call.span)? {
             Some(func) => func,
             None => {

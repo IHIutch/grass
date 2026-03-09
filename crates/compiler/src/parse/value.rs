@@ -1251,11 +1251,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     let arguments =
                         parser.parse_argument_invocation(false, lower.as_deref() == Some("var"))?;
 
+                    let is_css_custom = plain.starts_with("--");
                     Ok(AstExpr::FunctionCall(FunctionCallExpr {
                         namespace: None,
                         name: Identifier::from(plain),
                         arguments: Arc::new(arguments),
                         span: parser.toks_mut().span_from(start),
+                        is_css_custom_function: is_css_custom,
                     })
                     .span(parser.toks_mut().span_from(start)))
                 } else {
@@ -1316,6 +1318,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             name: Identifier::from(name),
             arguments: Arc::new(args),
             span,
+            is_css_custom_function: false,
         })
         .span(span))
     }
@@ -1665,11 +1668,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     )))
                     .span(parser.toks_mut().span_from(start)))
                 } else {
+                    let is_css_custom = ident.starts_with("--");
                     Ok(AstExpr::FunctionCall(FunctionCallExpr {
                         namespace: None,
                         name: Identifier::from(ident),
                         arguments: Arc::new(parser.parse_argument_invocation(false, false)?),
                         span: parser.toks_mut().span_from(start),
+                        is_css_custom_function: is_css_custom,
                     })
                     .span(parser.toks_mut().span_from(start)))
                 }
