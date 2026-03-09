@@ -145,6 +145,7 @@ pub(crate) struct Serializer<'a> {
     map: &'a CodeMap,
     _span: Span,
     in_calculation: bool,
+    in_custom_property: bool,
 }
 
 impl<'a> Serializer<'a> {
@@ -159,6 +160,7 @@ impl<'a> Serializer<'a> {
             map,
             _span: span,
             in_calculation: false,
+            in_custom_property: false,
         }
     }
 
@@ -1393,11 +1395,15 @@ impl<'a> Serializer<'a> {
         for c in string.bytes() {
             match c {
                 b'\n' => {
-                    self.buffer.push(b' ');
+                    if self.in_custom_property {
+                        self.buffer.push(b'\n');
+                    } else {
+                        self.buffer.push(b' ');
+                    }
                     after_newline = true;
                 }
                 b' ' => {
-                    if !after_newline {
+                    if !after_newline || self.in_custom_property {
                         self.buffer.push(b' ');
                     }
                 }
@@ -1554,14 +1560,125 @@ impl<'a> Serializer<'a> {
             .extend_from_slice(style.property.resolve_ref().as_bytes());
         self.buffer.push(b':');
 
-        // todo: _writeFoldedValue and _writeReindentedValue
         if !style.declared_as_custom_property && !self.options.is_compressed() {
             self.buffer.push(b' ');
         }
 
-        self.visit_value(&style.value.node, style.value.span)?;
+        if style.declared_as_custom_property {
+            let start = self.buffer.len();
+            self.in_custom_property = true;
+            self.visit_value(&style.value.node, style.value.span)?;
+            self.in_custom_property = false;
+            let name_col = self
+                .map
+                .look_up_pos(style.property_span.low())
+                .position
+                .column;
+            self.reindent_buffer_from(start, name_col);
+        } else {
+            self.visit_value(&style.value.node, style.value.span)?;
+        }
 
         Ok(())
+    }
+
+    /// Re-indent continuation lines in the buffer starting from `start` position.
+    /// Matches dart-sass `_writeReindentedValue` / `_writeWithIndent` algorithm.
+    fn reindent_buffer_from(&mut self, start: usize, name_col: usize) {
+        let value_bytes = self.buffer[start..].to_vec();
+        let value_str = String::from_utf8_lossy(&value_bytes);
+
+        // Use _minimumIndentation logic: scan past first \n, find min indent of rest
+        let first_newline = match value_str.find('\n') {
+            Some(pos) => pos,
+            None => return, // No newlines, nothing to reindent
+        };
+
+        // Check if everything after the first newline is just whitespace
+        let after_first = &value_str[first_newline + 1..];
+        let has_non_whitespace_continuation = after_first
+            .lines()
+            .any(|line| !line.trim().is_empty());
+
+        if !has_non_whitespace_continuation {
+            // dart-sass: -1 case — trimAsciiRight + space
+            let trimmed = value_str.trim_end();
+            self.buffer.truncate(start);
+            self.buffer.extend_from_slice(trimmed.as_bytes());
+            self.buffer.push(b' ');
+            return;
+        }
+
+        // Find minimum indentation of non-empty continuation lines
+        let min_indent = after_first
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.len() - line.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        // dart-sass: min(minimumIndentation, node.name.span.start.column)
+        let strip_amount = std::cmp::min(min_indent, name_col);
+
+        // Now rewrite: first line as-is, then process continuation lines
+        self.buffer.truncate(start);
+        self.buffer
+            .extend_from_slice(value_str[..first_newline].as_bytes());
+
+        // Process the rest using a scanner-like approach matching dart-sass _writeWithIndent
+        let rest = &value_str[first_newline + 1..];
+        let mut pos = 0;
+        let rest_bytes = rest.as_bytes();
+
+        while pos < rest_bytes.len() {
+            // Scan forward past whitespace/newlines to find the next non-empty line start
+            let scan_start = pos;
+            let mut newlines = 1; // We already consumed one \n
+            let mut line_start = pos;
+
+            loop {
+                if pos >= rest_bytes.len() {
+                    // End of text while in whitespace — write trailing space
+                    self.buffer.push(b' ');
+                    return;
+                }
+                match rest_bytes[pos] {
+                    b' ' | b'\t' => {
+                        pos += 1;
+                    }
+                    b'\n' => {
+                        pos += 1;
+                        line_start = pos;
+                        newlines += 1;
+                    }
+                    _ => break,
+                }
+            }
+
+            // Write newlines
+            for _ in 0..newlines {
+                self.buffer.push(b'\n');
+            }
+
+            // Write indentation + content after stripping
+            let line_indent = pos - line_start;
+            let actual_strip = std::cmp::min(strip_amount, line_indent);
+            self.write_indentation();
+            // Write from line_start + actual_strip to end of line
+            let content_start = line_start + actual_strip;
+            while pos < rest_bytes.len() && rest_bytes[pos] != b'\n' {
+                pos += 1;
+            }
+            self.buffer
+                .extend_from_slice(&rest_bytes[content_start..pos]);
+
+            // Skip the newline
+            if pos < rest_bytes.len() {
+                pos += 1;
+            } else {
+                return;
+            }
+        }
     }
 
     fn write_import(&mut self, import: &str, modifiers: Option<String>) -> SassResult<()> {

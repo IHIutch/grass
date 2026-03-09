@@ -3938,6 +3938,7 @@ impl<'a> Visitor<'a> {
                         property: InternedString::get_or_intern(&name),
                         value: Box::new(value),
                         declared_as_custom_property: is_custom_property,
+                        property_span: style.span,
                     }),
                 );
             }
