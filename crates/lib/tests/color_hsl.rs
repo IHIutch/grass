@@ -173,7 +173,7 @@ error!(
     "a {
         color: lighten(crimson, (0/0));
     }",
-    "Error: $amount: Expected NaN to be within 0 and 100."
+    "Error: $amount: Expected calc(NaN) to be within 0 and 100."
 );
 test!(
     darken_named_args,

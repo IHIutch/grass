@@ -657,7 +657,7 @@ error!(
 error!(
     opacify_amount_nan,
     "a {\n  color: opacify(#fff, (0/0));\n}\n",
-    "Error: $amount: Expected NaN to be within 0 and 1."
+    "Error: $amount: Expected calc(NaN) to be within 0 and 1."
 );
 error!(
     interpolated_string_is_not_color,
@@ -774,12 +774,12 @@ error!(
 error!(
     mix_weight_nan,
     "a {\n  color: mix(red, blue, (0/0));\n}\n",
-    "Error: $weight: Expected NaN to be within 0 and 100."
+    "Error: $weight: Expected calc(NaN) to be within 0 and 100."
 );
 error!(
     mix_weight_infinity,
     "a {\n  color: mix(red, blue, (1/0));\n}\n",
-    "Error: $weight: Expected Infinity to be within 0 and 100."
+    "Error: $weight: Expected calc(infinity) to be within 0 and 100."
 );
 
 // color.mix() with $method parameter

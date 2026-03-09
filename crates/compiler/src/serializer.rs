@@ -143,7 +143,7 @@ pub(crate) struct Serializer<'a> {
     _quote: bool,
     buffer: Vec<u8>,
     map: &'a CodeMap,
-    span: Span,
+    _span: Span,
     in_calculation: bool,
 }
 
@@ -157,7 +157,7 @@ impl<'a> Serializer<'a> {
             options,
             buffer: Vec::new(),
             map,
-            span,
+            _span: span,
             in_calculation: false,
         }
     }
@@ -975,6 +975,18 @@ impl<'a> Serializer<'a> {
         }
     }
 
+    /// Write the unit suffix for complex units in calc() expressions.
+    /// For numerators [a, b] and denominators [c, d], writes:
+    ///   ` * 1a * 1b / 1c / 1d`
+    fn write_complex_unit_suffix(&mut self, numer: &[Unit], denom: &[Unit]) {
+        for unit in numer {
+            let _ = write!(&mut self.buffer, " * 1{}", unit);
+        }
+        for unit in denom {
+            let _ = write!(&mut self.buffer, " / 1{}", unit);
+        }
+    }
+
     pub fn visit_number(&mut self, number: &SassNumber) -> SassResult<()> {
         if let Some(as_slash) = &number.as_slash {
             self.visit_number(&as_slash.0)?;
@@ -983,48 +995,66 @@ impl<'a> Serializer<'a> {
             return Ok(());
         }
 
-        if !self.inspect && number.unit.is_complex() {
-            return Err((
-                format!(
-                    "{} isn't a valid CSS value.",
-                    inspect_number(number, self.options, self.span)?
-                ),
-                self.span,
-            )
-                .into());
-        }
+        let is_complex = number.unit.is_complex();
 
-        if !self.inspect {
+        {
             let f = number.num.0;
             if f.is_nan() {
+                let (numer, denom) = number.unit.clone().numer_and_denom();
                 if self.in_calculation {
-                    if number.unit == Unit::None {
-                        self.buffer.extend_from_slice(b"NaN");
-                    } else {
-                        write!(&mut self.buffer, "NaN * 1{}", number.unit)?;
-                    }
-                } else if number.unit == Unit::None {
-                    self.buffer.extend_from_slice(b"calc(NaN)");
+                    self.buffer.extend_from_slice(b"NaN");
+                    self.write_complex_unit_suffix(&numer, &denom);
                 } else {
-                    write!(&mut self.buffer, "calc(NaN * 1{})", number.unit)?;
+                    self.buffer.extend_from_slice(b"calc(NaN");
+                    self.write_complex_unit_suffix(&numer, &denom);
+                    self.buffer.push(b')');
                 }
                 return Ok(());
             }
             if f.is_infinite() {
                 let sign = if f.is_sign_negative() { "-" } else { "" };
+                let (numer, denom) = number.unit.clone().numer_and_denom();
                 if self.in_calculation {
-                    if number.unit == Unit::None {
-                        write!(&mut self.buffer, "{}infinity", sign)?;
-                    } else {
-                        write!(&mut self.buffer, "{}infinity * 1{}", sign, number.unit)?;
-                    }
-                } else if number.unit == Unit::None {
-                    write!(&mut self.buffer, "calc({}infinity)", sign)?;
+                    write!(&mut self.buffer, "{}infinity", sign)?;
+                    self.write_complex_unit_suffix(&numer, &denom);
                 } else {
-                    write!(&mut self.buffer, "calc({}infinity * 1{})", sign, number.unit)?;
+                    write!(&mut self.buffer, "calc({}infinity", sign)?;
+                    self.write_complex_unit_suffix(&numer, &denom);
+                    self.buffer.push(b')');
                 }
                 return Ok(());
             }
+        }
+
+        if !self.inspect && is_complex {
+            // Wrap finite complex-unit numbers in calc()
+            let (numer, denom) = number.unit.clone().numer_and_denom();
+            if self.in_calculation {
+                self.write_float(number.num.0);
+                if let Some(first) = numer.first() {
+                    write!(&mut self.buffer, "{}", first)?;
+                }
+                for unit in numer.iter().skip(1) {
+                    write!(&mut self.buffer, " * 1{}", unit)?;
+                }
+                for unit in &denom {
+                    write!(&mut self.buffer, " / 1{}", unit)?;
+                }
+            } else {
+                self.buffer.extend_from_slice(b"calc(");
+                self.write_float(number.num.0);
+                if let Some(first) = numer.first() {
+                    write!(&mut self.buffer, "{}", first)?;
+                }
+                for unit in numer.iter().skip(1) {
+                    write!(&mut self.buffer, " * 1{}", unit)?;
+                }
+                for unit in &denom {
+                    write!(&mut self.buffer, " / 1{}", unit)?;
+                }
+                self.buffer.push(b')');
+            }
+            return Ok(());
         }
 
         self.write_float(number.num.0);
@@ -1081,18 +1111,41 @@ impl<'a> Serializer<'a> {
                     .trim_end_matches('.');
                 self.buffer.extend_from_slice(trimmed.as_bytes());
             }
-        } else if self.options.is_compressed() && num < 1.0 {
-            let formatted = format!("{:.10}", num);
-            let trimmed = formatted[1..]
-                .trim_end_matches('0')
-                .trim_end_matches('.');
-            self.buffer.extend_from_slice(trimmed.as_bytes());
         } else {
-            let formatted = format!("{:.10}", num);
-            let trimmed = formatted
-                .trim_end_matches('0')
-                .trim_end_matches('.');
-            self.buffer.extend_from_slice(trimmed.as_bytes());
+            // Use {:.10} for 10 decimal places, but fall back to shortest
+            // round-trip representation when {:.10} shows f64 artifacts
+            // (more significant digits than the value actually has).
+            let fixed = format!("{:.10}", num);
+            let short = format!("{}", num);
+
+            // Use the shorter representation if it has <= 10 decimal places
+            // and gives fewer total significant chars (avoids f64 artifacts)
+            let formatted = if let Some(dot_pos) = short.find('.') {
+                let short_decimals = short.len() - dot_pos - 1;
+                if short_decimals <= 10 && short.len() < fixed.len() {
+                    short
+                } else {
+                    fixed
+                }
+            } else {
+                // No decimal point in short form — integer
+                short
+            };
+
+            // Only trim trailing zeros after a decimal point
+            let trimmed = if formatted.contains('.') {
+                formatted
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+            } else {
+                &formatted
+            };
+
+            if self.options.is_compressed() && num < 1.0 && trimmed.starts_with('0') {
+                self.buffer.extend_from_slice(&trimmed.as_bytes()[1..]);
+            } else {
+                self.buffer.extend_from_slice(trimmed.as_bytes());
+            }
         }
 
         // Check if we only wrote a sign or "-0"
