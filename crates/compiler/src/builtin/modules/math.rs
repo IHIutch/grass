@@ -102,6 +102,31 @@ fn clamp(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
                 "$min has unit {} but $max is unitless. Arguments must all have units or all be unitless.",
                 min_unit
             ), span).into());
+    } else if min_unit == &Unit::None && max_unit != &Unit::None {
+        return Err((
+            format!(
+                "$min is unitless but $max has unit {}. Arguments must all have units or all be unitless.",
+                max_unit
+            ), span).into());
+    } else if number_unit == &Unit::None && max_unit != &Unit::None {
+        return Err((
+            format!(
+                "$number is unitless but $max has unit {}. Arguments must all have units or all be unitless.",
+                max_unit
+            ), span).into());
+    } else if number_unit != &Unit::None && max_unit == &Unit::None {
+        return Err((
+            format!(
+                "$number has unit {} but $max is unitless. Arguments must all have units or all be unitless.",
+                number_unit
+            ), span).into());
+    }
+
+    // CSS spec: clamp(min, val, max) = max(min, min(val, max))
+    // When min > max, the result is always min.
+    match min.cmp(&max, span, BinaryOp::LessThan)? {
+        Some(Ordering::Greater) => return Ok(min),
+        _ => {}
     }
 
     match min.cmp(&number, span, BinaryOp::LessThan)? {
@@ -208,15 +233,14 @@ fn log(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
 
     Ok(Value::Dimension(SassNumber::new_unitless(
         if let Some(base) = base {
-            if base.is_zero() {
+            if base.0 == 0.0 {
                 Number::zero()
             } else {
                 number.log(base)
             }
-        // todo: test with negative 0
-        } else if number.is_negative() && !number.is_zero() {
+        } else if number.0 < 0.0 && !number.0.is_nan() {
             Number(f64::NAN)
-        } else if number.is_zero() {
+        } else if number.0 == 0.0 {
             Number(f64::NEG_INFINITY)
         } else {
             number.ln()
@@ -483,6 +507,6 @@ pub(crate) fn declare(f: &mut Module) {
     );
     f.insert_builtin_var(
         "min-number",
-        Value::Dimension(SassNumber::new_unitless(f64::MIN_POSITIVE)),
+        Value::Dimension(SassNumber::new_unitless(5e-324)),
     );
 }
