@@ -2837,12 +2837,20 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
                 '/' => {
                     let comment_start = self.toks().cursor();
-                    if self.scan_comment()? {
-                        if !omit_comments {
-                            buffer.add_string(self.toks().raw_text(comment_start));
+                    match self.toks().peek_n(1) {
+                        Some(Token { kind: '/', .. }) => {
+                            // Silent comments are always stripped
+                            self.skip_silent_comment()?;
                         }
-                    } else {
-                        buffer.add_char(self.toks_mut().next().unwrap().kind);
+                        Some(Token { kind: '*', .. }) => {
+                            self.skip_loud_comment()?;
+                            if !omit_comments {
+                                buffer.add_string(self.toks().raw_text(comment_start));
+                            }
+                        }
+                        _ => {
+                            buffer.add_char(self.toks_mut().next().unwrap().kind);
+                        }
                     }
                 }
                 '#' => {
