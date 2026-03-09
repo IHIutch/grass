@@ -135,7 +135,7 @@ pub(crate) fn global_variable_exists(
     Ok(Value::bool(if let Some(module_name) = module {
         (*(*visitor.env.modules)
             .borrow()
-            .get(module_name.into(), args.span())?)
+            .get(Identifier::verbatim(&module_name), args.span())?)
         .borrow()
         .var_exists(name)
     } else {
@@ -166,7 +166,7 @@ pub(crate) fn mixin_exists(mut args: ArgumentResult, visitor: &mut Visitor) -> S
     Ok(Value::bool(if let Some(module_name) = module {
         (*(*visitor.env.modules)
             .borrow()
-            .get(module_name.into(), args.span())?)
+            .get(Identifier::verbatim(&module_name), args.span())?)
         .borrow()
         .mixin_exists(name)
     } else {
@@ -201,7 +201,7 @@ pub(crate) fn function_exists(
     Ok(Value::bool(if let Some(module_name) = module {
         (*(*visitor.env.modules)
             .borrow()
-            .get(module_name.into(), args.span())?)
+            .get(Identifier::verbatim(&module_name), args.span())?)
         .borrow()
         .fn_exists(name)
     } else {
@@ -248,7 +248,7 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         visitor.env.get_fn(
             name,
             Some(Spanned {
-                node: module_name.into(),
+                node: Identifier::verbatim(&module_name),
                 span: args.span(),
             }),
             args.span(),
@@ -294,7 +294,7 @@ pub(crate) fn get_mixin(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
     let mixin = if let Some(module_name) = module {
         let spanned = Spanned {
-            node: module_name.into(),
+            node: Identifier::verbatim(&module_name),
             span: args.span(),
         };
         Some(visitor.env.get_mixin(

@@ -2538,7 +2538,7 @@ impl<'a> Visitor<'a> {
             return Ok(ArgumentResult {
                 positional,
                 named,
-                separator: ListSeparator::Undecided,
+                separator,
                 span: arguments.span,
                 touched: BTreeSet::new(),
             });
@@ -2672,7 +2672,7 @@ impl<'a> Visitor<'a> {
                         if evaluated.separator == ListSeparator::Undecided {
                             ListSeparator::Comma
                         } else {
-                            ListSeparator::Space
+                            evaluated.separator
                         },
                     ));
 

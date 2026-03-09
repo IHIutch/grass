@@ -88,8 +88,8 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
 fn module_functions(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
 
-    let module = Identifier::from(
-        args.get_err(0, "module")?
+    let module = Identifier::verbatim(
+        &args.get_err(0, "module")?
             .assert_string_with_name("module", args.span())?
             .0,
     );
@@ -104,8 +104,8 @@ fn module_functions(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
 fn module_variables(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
 
-    let module = Identifier::from(
-        args.get_err(0, "module")?
+    let module = Identifier::verbatim(
+        &args.get_err(0, "module")?
             .assert_string_with_name("module", args.span())?
             .0,
     );
@@ -172,8 +172,8 @@ fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Val
 fn module_mixins(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
 
-    let module = Identifier::from(
-        args.get_err(0, "module")?
+    let module = Identifier::verbatim(
+        &args.get_err(0, "module")?
             .assert_string_with_name("module", args.span())?
             .0,
     );

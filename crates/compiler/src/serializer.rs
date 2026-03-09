@@ -1518,7 +1518,7 @@ impl<'a> Serializer<'a> {
     }
 
     fn visit_arglist(&mut self, arglist: &ArgList, span: Span) -> SassResult<()> {
-        self.visit_list(&arglist.elems, ListSeparator::Comma, Brackets::None, span)
+        self.visit_list(&arglist.elems, arglist.separator, Brackets::None, span)
     }
 
     fn visit_value(&mut self, value: &Value, span: Span) -> SassResult<()> {

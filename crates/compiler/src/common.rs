@@ -136,6 +136,12 @@ impl Identifier {
         }
     }
 
+    /// Create an identifier without normalizing underscores to dashes.
+    /// Used for module namespace lookups, which are dash-sensitive.
+    pub fn verbatim(s: &str) -> Self {
+        Identifier(InternedString::get_or_intern(s))
+    }
+
     pub fn is_public(&self) -> bool {
         !self.as_str().starts_with('-')
     }
