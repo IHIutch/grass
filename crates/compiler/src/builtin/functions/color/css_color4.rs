@@ -273,6 +273,29 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         return Ok(Value::String(fn_string, QuoteKind::None));
     }
 
+    // Validate list format
+    if matches!(description, Value::List(_, _, Brackets::Bracketed)) {
+        return Err((
+            format!(
+                "$description: Expected an unbracketed list, was {}",
+                description.inspect(span)?
+            ),
+            span,
+        )
+            .into());
+    }
+
+    if description.separator() == ListSeparator::Comma {
+        return Err((
+            format!(
+                "$description: Expected a space- or slash-separated list, was {}",
+                description.inspect(span)?
+            ),
+            span,
+        )
+            .into());
+    }
+
     // The description is a space-separated list potentially with slash for alpha
     let mut items = description.clone().as_list();
 
