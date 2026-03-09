@@ -1278,8 +1278,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }
 
             if self.scan_char('(') {
+                let was_cn = self.is_consuming_newlines();
+                self.set_consume_newlines(true);
                 let arguments = self.parse_interpolated_declaration_value(true, true, true)?;
                 self.expect_char(')')?;
+                self.set_consume_newlines(was_cn);
                 return Ok(AstSupportsCondition::Function {
                     name: identifier,
                     args: arguments,
@@ -1302,16 +1305,20 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         self.expect_char('(')?;
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
 
         if self.scan_identifier("not", false)? {
             self.whitespace()?;
             let condition = self.supports_condition_in_parens()?;
             self.expect_char(')')?;
+            self.set_consume_newlines(was_consuming_newlines);
             return Ok(AstSupportsCondition::Negation(Box::new(condition)));
         } else if self.toks_mut().next_char_is('(') {
             let condition = self.parse_supports_condition()?;
             self.expect_char(')')?;
+            self.set_consume_newlines(was_consuming_newlines);
             return Ok(condition);
         }
 
@@ -1348,6 +1355,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 // todo: superfluous clone?
                 if let Some(operation) = self.try_supports_operation(&identifier, name_start)? {
                     self.expect_char(')')?;
+                    self.set_consume_newlines(was_consuming_newlines);
                     return Ok(operation);
                 }
 
@@ -1366,6 +1374,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
 
                 self.expect_char(')')?;
+                self.set_consume_newlines(was_consuming_newlines);
 
                 return Ok(AstSupportsCondition::Anything { contents });
             }
@@ -1373,6 +1382,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let declaration = self.supports_declaration_value(name, start)?;
         self.expect_char(')')?;
+        self.set_consume_newlines(was_consuming_newlines);
 
         Ok(declaration)
     }
