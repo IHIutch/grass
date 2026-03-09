@@ -958,6 +958,42 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }));
         }
 
+        // In indented syntax, try parsing an unquoted URL if the next char
+        // is not a quote character or `u`/`U` (already handled above).
+        if self.is_indented()
+            && !self.toks_mut().next_char_is('"')
+            && !self.toks_mut().next_char_is('\'')
+        {
+            let start = self.toks().cursor();
+            let mut url = String::new();
+            while let Some(tok) = self.toks().peek() {
+                if matches!(
+                    tok.kind,
+                    ' ' | '\t' | '\n' | '\r' | ',' | ';'
+                ) || tok.kind == ')' {
+                    break;
+                }
+                url.push(tok.kind);
+                self.toks_mut().next();
+            }
+            self.whitespace()?;
+            let modifiers = self.try_import_modifiers()?;
+            let span = self.toks_mut().span_from(start);
+
+            // Wrap the unquoted URL in double quotes, matching dart-sass behavior
+            let quoted_url = format!("\"{}\"", url);
+
+            if is_plain_css_import(&url) || modifiers.is_some() {
+                return Ok(AstImport::Plain(AstPlainCssImport {
+                    url: Interpolation::new_plain(quoted_url),
+                    modifiers,
+                    span,
+                }));
+            } else {
+                return Ok(AstImport::Sass(AstSassImport { url, span }));
+            }
+        }
+
         let start = self.toks().cursor();
         let url = self.parse_string()?;
         let raw_url = self.toks().raw_text(start);
@@ -973,7 +1009,6 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 span,
             }))
         } else {
-            // todo: try parseImportUrl
             Ok(AstImport::Sass(AstSassImport { url, span }))
         }
     }
@@ -2321,7 +2356,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '\n' | '\r' => {
-                    if self.is_indented() {
+                    if self.is_indented() && brackets.is_empty() {
                         break;
                     }
                     if !matches!(
@@ -2950,6 +2985,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         omit_comments: bool,
     ) -> SassResult<Interpolation> {
         let mut buffer = Interpolation::new();
+        let mut bracket_depth: usize = 0;
 
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
@@ -3000,9 +3036,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '\r' | '\n' => {
-                    if self.is_indented() {
+                    if self.is_indented() && bracket_depth == 0 {
                         break;
                     }
+                    buffer.add_char(self.toks_mut().next().unwrap().kind);
+                }
+                '(' | '[' => {
+                    bracket_depth += 1;
+                    buffer.add_char(self.toks_mut().next().unwrap().kind);
+                }
+                ')' | ']' => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
                     buffer.add_char(self.toks_mut().next().unwrap().kind);
                 }
                 '!' | ';' | '{' | '}' => break,
