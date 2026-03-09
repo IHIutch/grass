@@ -677,6 +677,10 @@ impl Color {
             format: format.clone(),
         };
 
+        if weight == Number::one() {
+            return inverse;
+        }
+
         let mut result = inverse.mix(self, weight);
         result.format = format;
         result
