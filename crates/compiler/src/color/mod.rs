@@ -366,13 +366,22 @@ impl Color {
         // Step 1: Resolve missing channels.
         // If one color has `none` for a channel, use the other color's value.
         // If both are `none`, result is `none`.
+        // Powerless channels are also treated as missing per CSS Color 4.
         let mut v1 = [0.0_f64; 3];
         let mut v2 = [0.0_f64; 3];
         let mut both_none = [false; 3];
 
         for i in 0..3 {
-            let ch1 = c1.channels[i];
-            let ch2 = c2.channels[i];
+            let ch1 = if c1.channels[i].is_none() || c1.is_channel_powerless(i) {
+                None
+            } else {
+                c1.channels[i]
+            };
+            let ch2 = if c2.channels[i].is_none() || c2.is_channel_powerless(i) {
+                None
+            } else {
+                c2.channels[i]
+            };
 
             match (ch1, ch2) {
                 (None, None) => {
@@ -928,9 +937,12 @@ impl Color {
 
         // In modern (non-legacy) spaces, set powerless channels to none.
         // E.g. hue is powerless when chroma/saturation is 0.
+        // Also set hue to none when chroma was propagated as None from analogous source.
         if !target.is_legacy() {
             for i in 0..3 {
-                if result.is_channel_powerless(i) && result.channels[i].is_some() {
+                if result.channels[i].is_some()
+                    && (result.is_channel_powerless(i) || result.is_hue_with_missing_chroma(i))
+                {
                     result.channels[i] = None;
                 }
             }
@@ -1018,10 +1030,17 @@ impl Color {
                 format: ColorFormat::Infer,
             };
 
-            // Also set powerless channels to None
+            // Also set powerless channels to None.
+            // A hue channel is powerless when chroma/saturation is 0, but also
+            // when chroma/saturation was set to None by analogous propagation
+            // (e.g., hsl(30deg none 40%) → lch: chroma=none makes hue powerless).
             for i in 0..3 {
-                if result.is_channel_powerless(i) && result.channels[i].is_some() {
-                    result.channels[i] = None;
+                if result.channels[i].is_some() {
+                    if result.is_channel_powerless(i) {
+                        result.channels[i] = None;
+                    } else if result.is_hue_with_missing_chroma(i) {
+                        result.channels[i] = None;
+                    }
                 }
             }
 
@@ -1078,31 +1097,48 @@ impl Color {
             return false;
         }
 
-        // Hue is powerless when the associated chroma/saturation is 0
+        // Hue is powerless when the associated chroma/saturation is 0.
+        // A channel is NOT powerless if the determining channel is explicitly
+        // missing (None) — missing and powerless are distinct concepts.
         match self.space {
             ColorSpace::Hsl => {
                 // hue is channel 0, powerless when saturation (channel 1) is 0
-                index == 0 && fuzzy_is_zero(self.channels[1].unwrap_or(0.0))
+                index == 0 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
             ColorSpace::Hwb => {
                 // hue is channel 0, powerless when whiteness + blackness >= 1
-                index == 0 && {
-                    let w = self.channels[1].unwrap_or(0.0);
-                    let b = self.channels[2].unwrap_or(0.0);
-                    w + b >= 1.0
+                index == 0 && match (self.channels[1], self.channels[2]) {
+                    (Some(w), Some(b)) => w + b >= 1.0,
+                    _ => false,
                 }
             }
             ColorSpace::Lch => {
                 // hue is channel 2, powerless when chroma (channel 1) is 0
-                index == 2 && fuzzy_is_zero(self.channels[1].unwrap_or(0.0))
+                index == 2 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
             ColorSpace::Oklch => {
                 // hue is channel 2, powerless when chroma (channel 1) is 0
-                index == 2 && fuzzy_is_zero(self.channels[1].unwrap_or(0.0))
+                index == 2 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
             _ => false,
         }
     }
+
+    /// Check if a channel is a hue whose determining chroma/saturation is missing (None).
+    /// This is distinct from powerless: powerless means chroma=0, this means chroma=None.
+    fn is_hue_with_missing_chroma(&self, index: usize) -> bool {
+        let channel_defs = self.space.channels();
+        if !channel_defs[index].is_polar {
+            return false;
+        }
+        match self.space {
+            ColorSpace::Hsl => index == 0 && self.channels[1].is_none(),
+            ColorSpace::Hwb => index == 0 && (self.channels[1].is_none() || self.channels[2].is_none()),
+            ColorSpace::Lch | ColorSpace::Oklch => index == 2 && self.channels[1].is_none(),
+            _ => false,
+        }
+    }
+
     /// Return a copy with powerless channels set to none (missing).
     /// Used for error message display.
     pub fn with_powerless_as_missing(&self) -> Self {
@@ -1407,9 +1443,9 @@ fn adjust_hue(h1: f64, h2: f64, method: HueInterpolationMethod) -> (f64, f64) {
         }
         HueInterpolationMethod::Longer => {
             if diff > 0.0 && diff < 180.0 {
-                (h1 + 360.0, h2)
-            } else if diff > -180.0 && diff < 0.0 {
                 (h1, h2 + 360.0)
+            } else if diff > -180.0 && diff <= 0.0 {
+                (h1 + 360.0, h2)
             } else {
                 (h1, h2)
             }
