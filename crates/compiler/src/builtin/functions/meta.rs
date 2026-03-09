@@ -243,7 +243,10 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
     }
 
     let func = if css {
-        Some(SassFunction::Plain { name })
+        Some(SassFunction::Plain {
+            original_name: name.as_str().to_owned(),
+            name,
+        })
     } else if let Some(module_name) = module {
         visitor.env.get_fn(
             name,
@@ -362,7 +365,10 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
                 Some(f) => f,
                 None => match GLOBAL_FUNCTIONS.get(name.as_str()) {
                     Some(f) => SassFunction::Builtin(f.clone(), name),
-                    None => SassFunction::Plain { name },
+                    None => SassFunction::Plain {
+                        original_name: name.as_str().to_owned(),
+                        name,
+                    },
                 },
             }
         }

@@ -2758,7 +2758,10 @@ impl<'a> Visitor<'a> {
 
                     Err(("Function finished without @return.", span).into())
                 }),
-            SassFunction::Plain { name } => {
+            SassFunction::Plain {
+                name,
+                original_name,
+            } => {
                 let has_named;
                 let mut rest = None;
 
@@ -2789,7 +2792,7 @@ impl<'a> Visitor<'a> {
                     );
                 }
 
-                let mut buffer = format!("{}(", name.as_str());
+                let mut buffer = format!("{}(", original_name);
                 let mut first = true;
 
                 for argument in arguments {
@@ -2831,12 +2834,16 @@ impl<'a> Visitor<'a> {
 
     fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {
         let name = func_call.name;
+        let original_name = func_call.original_name;
 
         // If the function name starts with -- AND was written with hyphens in source
         // (not underscores normalized to hyphens), treat as CSS custom function
         if name.as_str().starts_with("--") && func_call.is_css_custom_function {
             return self.run_function_callable(
-                SassFunction::Plain { name },
+                SassFunction::Plain {
+                    name,
+                    original_name,
+                },
                 (*func_call.arguments).clone(),
                 func_call.span,
             );
@@ -2856,7 +2863,10 @@ impl<'a> Visitor<'a> {
                 } else if let Some(f) = GLOBAL_FUNCTIONS.get(name.as_str()) {
                     SassFunction::Builtin(f.clone(), name)
                 } else {
-                    SassFunction::Plain { name }
+                    SassFunction::Plain {
+                        name,
+                        original_name,
+                    }
                 }
             }
         };

@@ -20,6 +20,8 @@ pub enum SassFunction {
     UserDefined(UserDefinedFunction),
     Plain {
         name: Identifier,
+        /// Original function name before normalization, for CSS output
+        original_name: String,
     },
 }
 
@@ -46,7 +48,7 @@ impl SassFunction {
         match self {
             Self::Builtin(_, name)
             | Self::UserDefined(UserDefinedFunction { name, .. })
-            | Self::Plain { name } => *name,
+            | Self::Plain { name, .. } => *name,
         }
     }
 

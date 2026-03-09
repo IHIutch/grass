@@ -67,6 +67,9 @@ pub struct ListExpr {
 pub struct FunctionCallExpr {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
+    /// Original function name before underscore→dash normalization.
+    /// Used for plain CSS function output to preserve the original casing/underscores.
+    pub original_name: String,
     pub arguments: Arc<ArgumentInvocation>,
     pub span: Span,
     /// True if the function name was written with literal `--` prefix (CSS custom function).
