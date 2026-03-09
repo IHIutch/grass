@@ -648,9 +648,29 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             None => return Err(("Expected expression.", op.span).into()),
         }
 
+        // In indented syntax, allow newlines after binary operators so
+        // expressions can span multiple lines (e.g., `$a: b +\nc`).
+        let temporarily_consume_newlines = parser.is_indented()
+            && !parser.is_consuming_newlines()
+            && matches!(
+                parser.toks().peek(),
+                Some(Token {
+                    kind: '\n' | '\r',
+                    ..
+                })
+            );
+
+        if temporarily_consume_newlines {
+            parser.set_consume_newlines(true);
+        }
+
         parser.whitespace()?;
 
         self.single_expression = Some(self.parse_single_expression(parser)?);
+
+        if temporarily_consume_newlines {
+            parser.set_consume_newlines(false);
+        }
 
         Ok(())
     }
@@ -1187,9 +1207,29 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 let span = call_args.span;
                 return Ok(AstExpr::If(Arc::new(Ternary(call_args))).span(span));
             } else if plain == "not" {
+                // In indented syntax, allow newlines after `not` so expressions
+                // can span multiple lines (e.g., `$a: not\nb`).
+                let temporarily_consume_newlines = parser.is_indented()
+                    && !parser.is_consuming_newlines()
+                    && matches!(
+                        parser.toks().peek(),
+                        Some(Token {
+                            kind: '\n' | '\r',
+                            ..
+                        })
+                    );
+
+                if temporarily_consume_newlines {
+                    parser.set_consume_newlines(true);
+                }
+
                 parser.whitespace()?;
 
                 let value = self.parse_single_expression(parser)?;
+
+                if temporarily_consume_newlines {
+                    parser.set_consume_newlines(false);
+                }
 
                 let span = parser.toks_mut().span_from(start);
 
