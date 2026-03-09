@@ -1073,6 +1073,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let name = Identifier::from(name);
         let name_span = self.toks_mut().span_from(name_start);
 
+        if name.as_str().starts_with("--") {
+            return Err((
+                "Sass @mixin names beginning with -- are forbidden for forward-compatibility with plain CSS mixins.",
+                name_span,
+            )
+                .into());
+        }
+
         self.whitespace()?;
 
         let args = if self.toks_mut().next_char_is('(') {

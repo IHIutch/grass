@@ -91,6 +91,12 @@ impl ColorSpace {
         matches!(self, Self::XyzD50 | Self::XyzD65)
     }
 
+    /// Whether this color space is unbounded (all values are in gamut).
+    /// Perceptual and XYZ spaces have no gamut limits.
+    pub fn is_unbounded(self) -> bool {
+        self.is_perceptual() || self.is_xyz()
+    }
+
     /// Get channel definitions for this color space.
     pub fn channels(self) -> [ChannelDef; 3] {
         match self {

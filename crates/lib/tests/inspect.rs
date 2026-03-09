@@ -111,10 +111,10 @@ test!(
     "a {\n  color: inspect(1 2 3)\n}\n",
     "a {\n  color: 1 2 3;\n}\n"
 );
-test!(
+error!(
     inspect_comma_list,
     "a {\n  color: inspect(1, 2, 3)\n}\n",
-    "a {\n  color: 1, 2, 3;\n}\n"
+    "Error: Only 1 argument allowed, but 3 were passed."
 );
 test!(
     inspect_parens,

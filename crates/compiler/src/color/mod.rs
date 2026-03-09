@@ -1115,7 +1115,7 @@ impl Color {
     /// Perceptual spaces (lab, lch, oklab, oklch) are always considered in-gamut
     /// per the CSS Color 4 spec — they can represent colors beyond the visible gamut.
     pub fn is_in_gamut(&self) -> bool {
-        if self.space.is_perceptual() {
+        if self.space.is_unbounded() {
             return true;
         }
         let channel_defs = self.space.channels();
@@ -1197,6 +1197,10 @@ impl Color {
 impl Color {
     /// Clamp all channels to the gamut bounds of this color's space.
     pub fn to_gamut_clip(&self) -> Self {
+        // Unbounded spaces (perceptual, XYZ) have no gamut limits
+        if self.space.is_unbounded() {
+            return self.clone();
+        }
         let channel_defs = self.space.channels();
         let mut channels = self.channels;
         for i in 0..3 {
@@ -1210,7 +1214,7 @@ impl Color {
             space: self.space,
             channels,
             alpha: self.alpha,
-            format: ColorFormat::Infer,
+            format: self.format.clone(),
         }
     }
 
