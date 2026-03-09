@@ -196,11 +196,11 @@ error!(
 );
 error!(
     from_nan,
-    "@for $i from (0/0) through 0 {}", "Error: NaN is not an int."
+    "@for $i from (0/0) through 0 {}", "Error: calc(NaN) is not an int."
 );
 error!(
     to_nan,
-    "@for $i from 0 through (0/0) {}", "Error: NaN is not an int."
+    "@for $i from 0 through (0/0) {}", "Error: calc(NaN) is not an int."
 );
 test!(
     to_and_from_i32_min,

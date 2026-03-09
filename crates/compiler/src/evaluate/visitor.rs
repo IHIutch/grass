@@ -3181,6 +3181,20 @@ impl<'a> Visitor<'a> {
     }
 
     fn visit_ternary(&mut self, if_expr: Ternary) -> SassResult<Value> {
+        // When rest args are present, evaluate all args eagerly (can't do lazy
+        // evaluation since rest values are already evaluated)
+        if if_expr.0.rest.is_some() {
+            let span = if_expr.0.span;
+            let mut args = self.eval_args(if_expr.0, span)?;
+            args.max_args(3)?;
+            let value = if args.get_err(0, "condition")?.is_truthy() {
+                args.get_err(1, "if-true")?
+            } else {
+                args.get_err(2, "if-false")?
+            };
+            return Ok(self.without_slash(value));
+        }
+
         if_arguments().verify(if_expr.0.positional.len(), &if_expr.0.named, if_expr.0.span)?;
 
         let mut positional = if_expr.0.positional;

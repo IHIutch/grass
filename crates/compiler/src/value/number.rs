@@ -114,7 +114,20 @@ impl Number {
     pub fn assert_int(self, span: Span) -> SassResult<i64> {
         match fuzzy_as_int(self.0) {
             Some(i) => Ok(i),
-            None => Err((format!("{} is not an int.", self.0), span).into()),
+            None => {
+                let display = if self.0.is_nan() {
+                    "calc(NaN)".to_string()
+                } else if self.0.is_infinite() {
+                    if self.0.is_sign_negative() {
+                        "calc(-infinity)".to_string()
+                    } else {
+                        "calc(infinity)".to_string()
+                    }
+                } else {
+                    format!("{}", self.0)
+                };
+                Err((format!("{} is not an int.", display), span).into())
+            }
         }
     }
 
@@ -161,6 +174,25 @@ impl Number {
         }
 
         debug_assert!(from.comparable(to), "from: {:?}, to: {:?}", from, to);
+
+        // For complex units, multiply conversion factors for each pair
+        if let (Unit::Complex(_), Unit::Complex(_)) = (from, to) {
+            let (from_numer, from_denom) = from.clone().numer_and_denom();
+            let (to_numer, to_denom) = to.clone().numer_and_denom();
+            let mut factor = 1.0_f64;
+            for (f, t) in from_numer.iter().zip(&to_numer) {
+                if f != t {
+                    factor *= UNIT_CONVERSION_TABLE[t][f];
+                }
+            }
+            // Denominator conversion is inverted
+            for (f, t) in from_denom.iter().zip(&to_denom) {
+                if f != t {
+                    factor /= UNIT_CONVERSION_TABLE[t][f];
+                }
+            }
+            return Number(self.0 * factor);
+        }
 
         Number(self.0 * UNIT_CONVERSION_TABLE[to][from])
     }

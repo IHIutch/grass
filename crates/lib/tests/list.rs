@@ -584,11 +584,11 @@ test!(
 );
 error!(
     set_nth_index_infinity,
-    "a {\n  color: set-nth(a b, 1/0, d);\n}\n", "Error: $n: Infinity is not an int."
+    "a {\n  color: set-nth(a b, 1/0, d);\n}\n", "Error: $n: calc(infinity) is not an int."
 );
 error!(
     set_nth_index_negative_infinity,
-    "a {\n  color: set-nth(a b, -1/0, d);\n}\n", "Error: $n: -Infinity is not an int."
+    "a {\n  color: set-nth(a b, -1/0, d);\n}\n", "Error: $n: calc(-infinity) is not an int."
 );
 error!(
     set_nth_decimal_outside_range,

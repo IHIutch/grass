@@ -76,7 +76,8 @@ test!(
     "a {\n  color: uni#{t}less(1px);\n}\n",
     "a {\n  color: unitless(1px);\n}\n"
 );
-error!(
-    error_message_when_at_start_of_value,
-    "a {\n  color: #{2px*5px};\n}\n", "Error: 10px*px isn't a valid CSS value."
+test!(
+    complex_unit_in_interpolation,
+    "a {\n  color: #{2px*5px};\n}\n",
+    "a {\n  color: calc(10px * 1px);\n}\n"
 );

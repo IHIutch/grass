@@ -221,9 +221,10 @@ test!(
     "a {\n  color: unit(1 / (1px*1rem));\n}\n",
     "a {\n  color: \"(px*rem)^-1\";\n}\n"
 );
-error!(
+test!(
     display_single_div_with_none_numerator,
-    "a {\n  color: (1 / 1em);\n}\n", "Error: 1em^-1 isn't a valid CSS value."
+    "a {\n  color: (1 / 1em);\n}\n",
+    "a {\n  color: calc(1 / 1em);\n}\n"
 );
 error!(
     // note: dart-sass has error "Error: 1X and 1dppx have incompatible units."
@@ -235,22 +236,25 @@ error!(
     lowercase_x_is_not_alias_for_dppx,
     "a {\n  color: 1x + 1dppx;\n}\n", "Error: Incompatible units dppx and x."
 );
-error!(
+test!(
     display_single_div_with_non_comparable_numerator,
-    "a {\n  color: (1px / 1em);\n}\n", "Error: 1px/em isn't a valid CSS value."
+    "a {\n  color: (1px / 1em);\n}\n",
+    "a {\n  color: calc(1px / 1em);\n}\n"
 );
-error!(
+test!(
     display_single_mul,
-    "a {\n  color: 1rem * 1px;\n}\n", "Error: 1rem*px isn't a valid CSS value."
+    "a {\n  color: 1rem * 1px;\n}\n",
+    "a {\n  color: calc(1rem * 1px);\n}\n"
 );
-error!(
+test!(
     display_arbitrary_mul,
     "a {\n  color: 1rem * 1px * 1rad * 1foo;\n}\n",
-    "Error: 1rem*px*rad*foo isn't a valid CSS value."
+    "a {\n  color: calc(1rem * 1px * 1rad * 1foo);\n}\n"
 );
-error!(
+test!(
     display_single_div_with_none_numerator_percent,
-    "a {\n  color: (35 / 7%);\n}\n", "Error: 5%^-1 isn't a valid CSS value."
+    "a {\n  color: (35 / 7%);\n}\n",
+    "a {\n  color: calc(5 / 1%);\n}\n"
 );
 test!(
     /// Verify the display implementation of all special-cased units
