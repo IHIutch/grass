@@ -102,7 +102,14 @@ pub(crate) fn append(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     args.max_args(3)?;
     let (mut list, sep, brackets) = match args.get_err(0, "list")? {
         Value::List(v, sep, b) => (v, sep, b),
-        Value::Map(m) => (m.as_list(), ListSeparator::Comma, Brackets::None),
+        Value::Map(m) => {
+            let sep = if m.is_empty() {
+                ListSeparator::Undecided
+            } else {
+                ListSeparator::Comma
+            };
+            (m.as_list(), sep, Brackets::None)
+        }
         v => (vec![v], ListSeparator::Undecided, Brackets::None),
     };
     let val = args.get_err(1, "val")?;
@@ -148,12 +155,26 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     args.max_args(4)?;
     let (mut list1, sep1, brackets) = match args.get_err(0, "list1")? {
         Value::List(v, sep, brackets) => (v, sep, brackets),
-        Value::Map(m) => (m.as_list(), ListSeparator::Comma, Brackets::None),
+        Value::Map(m) => {
+            let sep = if m.is_empty() {
+                ListSeparator::Undecided
+            } else {
+                ListSeparator::Comma
+            };
+            (m.as_list(), sep, Brackets::None)
+        }
         v => (vec![v], ListSeparator::Undecided, Brackets::None),
     };
     let (list2, sep2) = match args.get_err(1, "list2")? {
         Value::List(v, sep, ..) => (v, sep),
-        Value::Map(m) => (m.as_list(), ListSeparator::Comma),
+        Value::Map(m) => {
+            let sep = if m.is_empty() {
+                ListSeparator::Undecided
+            } else {
+                ListSeparator::Comma
+            };
+            (m.as_list(), sep)
+        }
         v => (vec![v], ListSeparator::Undecided),
     };
     let sep = match args.default_arg(
