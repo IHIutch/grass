@@ -2871,9 +2871,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 .into());
         }
 
+        // In indented syntax, allow newlines around ':'
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
         self.expect_char(':')?;
         self.whitespace()?;
+        self.set_consume_newlines(was_consuming_newlines);
 
         let value = self.parse_expression(None, None, None)?.node;
 
