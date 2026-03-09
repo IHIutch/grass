@@ -1,6 +1,8 @@
 #[macro_use]
 mod macros;
 
+use macros::TestFs;
+
 test!(
     none_div_none,
     "a {\n  color: (35 / 7);\n}\n",
@@ -287,3 +289,31 @@ error!(
     color_div_number,
     "a {\n  color: red / 1;\n}\n", r#"Error: Undefined operation "red / 1"."#
 );
+
+// Slash-free division in @use with and @forward with
+#[test]
+fn slash_free_use_with() {
+    let mut fs = TestFs::new();
+    fs.add_file("_other.scss", "$a: null !default;\nb {c: $a}");
+
+    let input = r#"@use "other" with ($a: 1/2);"#;
+
+    assert_eq!(
+        "b {\n  c: 0.5;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
+
+#[test]
+fn slash_free_forward_with() {
+    let mut fs = TestFs::new();
+    fs.add_file("_midstream.scss", r#"@forward "upstream" with ($a: 1/2);"#);
+    fs.add_file("_upstream.scss", "$a: null !default;\nb {c: $a}");
+
+    let input = r#"@use "midstream";"#;
+
+    assert_eq!(
+        "b {\n  c: 0.5;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
