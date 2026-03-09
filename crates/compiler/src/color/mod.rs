@@ -43,25 +43,54 @@ pub(crate) enum ColorFormat {
 
 impl PartialEq for Color {
     fn eq(&self, other: &Self) -> bool {
-        let self_alpha = self.alpha();
-        let other_alpha = other.alpha();
-        if self_alpha != other_alpha
-            && !(self_alpha >= Number::one() && other_alpha >= Number::one())
-        {
-            return false;
+        // Check alpha equality: none != explicit value
+        match (self.alpha, other.alpha) {
+            (None, Some(_)) | (Some(_), None) => return false,
+            (Some(a), Some(b)) => {
+                let a_clamped = a.max(0.0).min(1.0);
+                let b_clamped = b.max(0.0).min(1.0);
+                if Number(a_clamped) != Number(b_clamped)
+                    && !(a_clamped >= 1.0 && b_clamped >= 1.0)
+                {
+                    return false;
+                }
+            }
+            (None, None) => {}
         }
 
-        // Compare in RGB space for legacy colors
-        let self_rgb = self.to_rgb_channels();
-        let other_rgb = other.to_rgb_channels();
+        let self_legacy = self.space.is_legacy();
+        let other_legacy = other.space.is_legacy();
 
-        let cmp = |a: Number, b: Number| -> bool {
-            a == b || (a >= Number(255.0) && b >= Number(255.0))
-        };
+        if self_legacy && other_legacy {
+            // Legacy colors compare via exact RGB values (no rounding)
+            let s = self.to_rgb_channels_raw();
+            let o = other.to_rgb_channels_raw();
 
-        cmp(Number(self_rgb[0]).round(), Number(other_rgb[0]).round())
-            && cmp(Number(self_rgb[1]).round(), Number(other_rgb[1]).round())
-            && cmp(Number(self_rgb[2]).round(), Number(other_rgb[2]).round())
+            Number(s[0]) == Number(o[0])
+                && Number(s[1]) == Number(o[1])
+                && Number(s[2]) == Number(o[2])
+        } else if !self_legacy && !other_legacy {
+            // Modern colors: must be same space, and none != 0
+            if self.space != other.space {
+                return false;
+            }
+
+            for i in 0..3 {
+                match (self.channels[i], other.channels[i]) {
+                    (None, None) => continue,
+                    (None, Some(_)) | (Some(_), None) => return false,
+                    (Some(a), Some(b)) => {
+                        if Number(a) != Number(b) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        } else {
+            // Legacy vs modern: never equal
+            false
+        }
     }
 }
 

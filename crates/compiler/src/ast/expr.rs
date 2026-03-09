@@ -211,7 +211,7 @@ impl AstExpr {
 
     pub fn is_slash_operand(&self) -> bool {
         match self {
-            Self::Number { .. } => true,
+            Self::Number { .. } | Self::Calculation { .. } => true,
             Self::BinaryOp(binop) => binop.allows_slash,
             _ => false,
         }
