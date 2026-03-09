@@ -15,11 +15,11 @@ fn parse_space_arg(args: &mut ArgumentResult, pos: usize, span: Span) -> SassRes
     match args.get(pos, "space") {
         Some(space_val) => match &space_val.node {
             Value::String(s, QuoteKind::Quoted) => {
-                return Err((
+                Err((
                     format!("$space: Expected {} to be an unquoted string.", s),
                     span,
                 )
-                    .into());
+                    .into())
             }
             Value::String(s, QuoteKind::None) => {
                 let space = ColorSpace::from_name(s).ok_or_else(|| {
@@ -487,18 +487,18 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                 // HWB: only hue (channels 1&2 are swapped, preserving missing).
                 // HSL/LCH/OKLch: hue + lightness (saturation/chroma preserved).
                 // Others: all channels.
-                for i in 0..3 {
+                for (i, ch_def) in channel_defs.iter().enumerate() {
                     let skip = if space == ColorSpace::Hwb {
                         i != 0 // only check hue for HWB
                     } else {
-                        channel_defs[i].name == "chroma" || channel_defs[i].name == "saturation"
+                        ch_def.name == "chroma" || ch_def.name == "saturation"
                     };
                     if !skip && in_space.has_missing_channel(i) {
                         let display_color = in_space.with_powerless_as_missing();
                         return Err((
                             format!(
                                 "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                                channel_defs[i].name,
+                                ch_def.name,
                                 Value::Color(Arc::new(display_color)).inspect(span)?
                             ),
                             span,
@@ -520,12 +520,12 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                 // Legacy invert works in RGB space — check for missing channels
                 let in_rgb = c.to_space(ColorSpace::Rgb);
                 let rgb_defs = ColorSpace::Rgb.channels();
-                for i in 0..3 {
+                for (i, rgb_def) in rgb_defs.iter().enumerate() {
                     if in_rgb.has_missing_channel(i) {
                         return Err((
                             format!(
                                 "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                                rgb_defs[i].name,
+                                rgb_def.name,
                                 Value::Color(Arc::new(in_rgb)).inspect(span)?
                             ),
                             span,

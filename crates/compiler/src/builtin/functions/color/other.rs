@@ -618,7 +618,7 @@ fn update_components(
             if blue.is_some() && !matches!(blue, Some(None)) {
                 check_missing_channel(&in_rgb, 2, "blue", span)?;
             }
-        } else if has_wb || (hue.is_some() && has_wb) {
+        } else if has_wb {
             let in_hwb = color.to_space(ColorSpace::Hwb);
             if hue.is_some() && !matches!(hue, Some(None)) {
                 check_missing_channel(&in_hwb, 0, "hue", span)?;

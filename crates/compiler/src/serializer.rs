@@ -670,7 +670,7 @@ impl<'a> Serializer<'a> {
         if matches!(color.color_space(), ColorSpace::Hsl | ColorSpace::Hwb) {
             let raw = color.raw_channels();
             let has_degenerate = raw.iter().any(|ch| {
-                ch.map_or(false, |v| !v.is_finite())
+                ch.is_some_and(|v| !v.is_finite())
             });
             if has_degenerate {
                 self.write_hsl(color);

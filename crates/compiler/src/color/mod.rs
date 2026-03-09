@@ -499,7 +499,7 @@ impl Color {
                 sum
             };
 
-        s * Number(100.0)
+        s.abs() * Number(100.0)
     }
 
     /// Calculate lightness (0-100%)
@@ -514,7 +514,7 @@ impl Color {
         let blue = Number(rgb[2]) / Number(255.0);
         let min = red.min(green.min(blue));
         let max = red.max(green.max(blue));
-        (((min + max) / Number(2.0)) * Number(100.0)).round()
+        ((min + max) / Number(2.0)) * Number(100.0)
     }
 
     pub fn as_hsla(&self) -> (Number, Number, Number, Number) {
@@ -657,7 +657,13 @@ impl Color {
             return self.clone();
         }
 
-        let rgb = self.to_rgb_channels();
+        // For HSL colors, invert in HSL space to avoid
+        // precision loss from HSL→RGB→invert→RGB→HSL round trips
+        if self.space == ColorSpace::Hsl {
+            return self.invert_in_space(self.space, weight);
+        }
+
+        let rgb = self.to_rgb_channels_raw();
         let red = 255.0 - rgb[0];
         let green = 255.0 - rgb[1];
         let blue = 255.0 - rgb[2];
@@ -864,7 +870,7 @@ impl Color {
         if self.space == target {
             let mut result = self.clone();
             // Ensure correct serialization format for to-space() results
-            if target == ColorSpace::Hsl || target == ColorSpace::Hwb {
+            if target == ColorSpace::Hsl {
                 result.format = ColorFormat::Hsl;
             }
             return result;
