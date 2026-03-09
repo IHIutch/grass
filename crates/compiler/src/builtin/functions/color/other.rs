@@ -214,6 +214,18 @@ fn update_modern(
         }
     }
 
+    // Check for missing alpha being modified
+    if alpha_adjustment.is_some() && color_in_space.has_missing_alpha() {
+        return Err((
+            format!(
+                "$alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                Value::Color(Arc::new(display_color)).inspect(span)?
+            ),
+            span,
+        )
+            .into());
+    }
+
     // Apply modifications to channels
     let mut new_channels = color_in_space.raw_channels();
 
@@ -640,6 +652,18 @@ fn update_components(
             if lightness.is_some() && !matches!(lightness, Some(None)) {
                 check_missing_channel(&in_hsl, 2, "lightness", span)?;
             }
+        }
+
+        // Check for missing alpha being modified
+        if alpha.is_some() && !matches!(alpha, Some(None)) && color.has_missing_alpha() {
+            return Err((
+                format!(
+                    "$alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                    Value::Color(color.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into());
         }
     }
 

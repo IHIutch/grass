@@ -161,7 +161,14 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     let target_space = match args.get(2, "space") {
         Some(space_val) => {
             let space_str = match &space_val.node {
-                Value::String(s, _) => s.clone(),
+                Value::String(s, QuoteKind::Quoted) => {
+                    return Err((
+                        format!("$space: Expected {} to be an unquoted string.", s),
+                        span,
+                    )
+                        .into())
+                }
+                Value::String(s, QuoteKind::None) => s.clone(),
                 Value::Null => {
                     // null means use the color's own space
                     color.color_space().name().to_owned()

@@ -341,7 +341,7 @@ impl SassCalculation {
     pub fn sign(arg: CalculationArg, options: &Options, span: Span) -> SassResult<Value> {
         let arg = Self::simplify(arg);
         match arg {
-            CalculationArg::Number(ref n) if !n.unit.is_complex() => {
+            CalculationArg::Number(ref n) => {
                 let val = if n.num.0.is_nan() {
                     f64::NAN
                 } else if n.num.0 == 0.0 {
@@ -352,7 +352,11 @@ impl SassCalculation {
                 } else {
                     -1.0
                 };
-                Ok(Value::Dimension(SassNumber::new_unitless(Number(val))))
+                Ok(Value::Dimension(SassNumber {
+                    num: Number(val),
+                    unit: n.unit.clone(),
+                    as_slash: None,
+                }))
             }
             _ => {
                 Self::verify_compatible_numbers(std::slice::from_ref(&arg), options, span)?;

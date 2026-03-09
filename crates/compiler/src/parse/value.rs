@@ -1904,15 +1904,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 }
                 .span(parser.toks_mut().span_from(start))
             }
-            "abs" | "sign" => {
+            "abs" => {
                 let before_args = parser.toks().cursor();
                 match ValueParser::parse_calculation_arguments(parser, Some(1), start) {
                     Ok(args) => AstExpr::Calculation {
-                        name: if name == "abs" {
-                            CalculationName::Abs
-                        } else {
-                            CalculationName::Sign
-                        },
+                        name: CalculationName::Abs,
                         args,
                     }
                     .span(parser.toks_mut().span_from(start)),
@@ -1922,13 +1918,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     }
                 }
             }
-            "acos" | "asin" | "atan" | "cos" | "exp" | "sin" | "sqrt" | "tan" => {
+            "acos" | "asin" | "atan" | "cos" | "exp" | "sign" | "sin" | "sqrt" | "tan" => {
                 let calc_name = match name {
                     "acos" => CalculationName::Acos,
                     "asin" => CalculationName::Asin,
                     "atan" => CalculationName::Atan,
                     "cos" => CalculationName::Cos,
                     "exp" => CalculationName::Exp,
+                    "sign" => CalculationName::Sign,
                     "sin" => CalculationName::Sin,
                     "sqrt" => CalculationName::Sqrt,
                     "tan" => CalculationName::Tan,
