@@ -574,11 +574,16 @@ fn first_if_root(queue: &mut VecDeque<ComplexSelectorComponent>) -> Option<Compo
     }
 }
 
-/// Returns whether or not `compound` contains a `::root` selector.
+/// Returns whether or not `compound` contains a "rootish" selector.
+/// dart-sass treats :root, :host, :host-context, and :scope as rootish.
 fn has_root(compound: &CompoundSelector) -> bool {
     compound.components.iter().any(|simple| {
         if let SimpleSelector::Pseudo(pseudo) = simple {
-            pseudo.is_class && pseudo.normalized_name() == "root"
+            pseudo.is_class
+                && matches!(
+                    pseudo.normalized_name(),
+                    "root" | "host" | "host-context" | "scope"
+                )
         } else {
             false
         }
