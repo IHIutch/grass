@@ -132,7 +132,19 @@ impl SimpleSelector {
             | Self::Class(..)
             | Self::Attribute(..) => false,
             Self::Pseudo(Pseudo { name, selector, .. }) => {
-                name != "not" && selector.as_ref().is_some_and(|sel| sel.is_invisible())
+                if name == "not" {
+                    return false;
+                }
+                if let Some(sel) = selector {
+                    // Inside :has(), leading combinators are valid;
+                    // inside :is()/:where()/:matches(), they're bogus
+                    let in_pseudo = name != "has";
+                    sel.components.iter().all(|c| {
+                        c.is_invisible() || c.is_bogus(in_pseudo)
+                    })
+                } else {
+                    false
+                }
             }
             Self::Placeholder(..) => true,
             Self::Parent(..) => false,

@@ -70,6 +70,13 @@ impl SelectorList {
         self.components.iter().all(ComplexSelector::is_invisible)
     }
 
+    /// Whether all selectors are either invisible or bogus (should suppress output)
+    pub fn is_invisible_or_bogus(&self) -> bool {
+        self.components
+            .iter()
+            .all(|c| c.is_invisible() || c.is_bogus(false))
+    }
+
     pub fn contains_parent_selector(&self) -> bool {
         self.components
             .iter()

@@ -54,7 +54,7 @@ impl CssStmt {
     pub fn is_invisible(&self) -> bool {
         match self {
             CssStmt::RuleSet { selector, body, .. } => {
-                selector.is_invisible() || body.iter().all(CssStmt::is_invisible)
+                selector.is_invisible_or_bogus() || body.iter().all(CssStmt::is_invisible)
             }
             CssStmt::Style(style) => {
                 style.value.node.is_blank() && !style.value.node.is_empty_list()

@@ -303,7 +303,22 @@ impl<'a> Serializer<'a> {
     }
 
     fn write_selector_list(&mut self, list: &SelectorList) {
-        let complexes = list.components.iter().filter(|c| !c.is_invisible());
+        self.write_selector_list_filtered(list, false);
+    }
+
+    /// Write a top-level selector list, filtering out bogus selectors
+    fn write_top_level_selector_list(&mut self, list: &SelectorList) {
+        self.write_selector_list_filtered(list, true);
+    }
+
+    fn write_selector_list_filtered(&mut self, list: &SelectorList, filter_bogus: bool) {
+        let complexes: Vec<_> = list
+            .components
+            .iter()
+            .filter(|c| {
+                !c.is_invisible() && (!filter_bogus || !c.is_bogus(false))
+            })
+            .collect();
 
         let mut first = true;
 
@@ -1628,7 +1643,7 @@ impl<'a> Serializer<'a> {
         match stmt {
             CssStmt::RuleSet { selector, body, .. } => {
                 self.write_indentation();
-                self.write_selector_list(&selector.as_selector_list());
+                self.write_top_level_selector_list(&selector.as_selector_list());
 
                 self.write_children(body)?;
             }

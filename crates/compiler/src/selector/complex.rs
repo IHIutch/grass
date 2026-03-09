@@ -134,6 +134,44 @@ impl ComplexSelector {
             .any(ComplexSelectorComponent::is_invisible)
     }
 
+    /// Whether this selector is "bogus" — contains invalid combinator patterns
+    /// that should be omitted from CSS output.
+    ///
+    /// A selector is bogus if it has:
+    /// - Trailing combinators (e.g., `a >`)
+    /// - Multiple adjacent combinators (e.g., `a > + b`)
+    /// - Leading combinators ONLY inside pseudo selectors like :is()/:where()
+    ///   (not at the top level, where they're a CSS hack)
+    pub fn is_bogus(&self, in_pseudo: bool) -> bool {
+        // Trailing combinators
+        if let Some(last) = self.components.last() {
+            if last.is_combinator() {
+                return true;
+            }
+        }
+
+        // Leading combinators are bogus inside pseudo selectors (except :has())
+        if in_pseudo {
+            if let Some(first) = self.components.first() {
+                if first.is_combinator() {
+                    return true;
+                }
+            }
+        }
+
+        // Multiple adjacent combinators
+        let mut prev_was_combinator = false;
+        for component in &self.components {
+            let is_combinator = component.is_combinator();
+            if is_combinator && prev_was_combinator {
+                return true;
+            }
+            prev_was_combinator = is_combinator;
+        }
+
+        false
+    }
+
     /// Returns whether `self` is a superselector of `other`.
     ///
     /// That is, whether `self` matches every element that `other` matches, as well
