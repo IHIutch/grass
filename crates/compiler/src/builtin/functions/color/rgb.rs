@@ -5,7 +5,7 @@ use super::ParsedChannels;
 
 /// Try to parse a string part from a "channel/alpha" split as a value.
 /// Handles "none", plain numbers (0.4), and percentages (40%).
-fn parse_slash_part(s: &str) -> Option<Value> {
+pub(crate) fn parse_slash_part(s: &str) -> Option<Value> {
     if s == "none" {
         Some(Value::String("none".to_owned(), QuoteKind::None))
     } else if let Some(num_str) = s.strip_suffix('%') {

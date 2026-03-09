@@ -341,6 +341,20 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             let last_idx = channel_items.len() - 1;
             channel_items[last_idx] = chan;
             alpha_val = Some(alpha);
+        } else if let Some(Value::String(text, QuoteKind::None)) = channel_items.last() {
+            // Handle strings like "none/0.4" or "0.3/none" from unresolved slash expressions
+            if let Some(slash_pos) = text.find('/') {
+                let ch_str = text[..slash_pos].trim();
+                let al_str = text[slash_pos + 1..].trim();
+                if let (Some(ch), Some(al)) = (
+                    super::rgb::parse_slash_part(ch_str),
+                    super::rgb::parse_slash_part(al_str),
+                ) {
+                    let last_idx = channel_items.len() - 1;
+                    channel_items[last_idx] = ch;
+                    alpha_val = Some(al);
+                }
+            }
         }
     }
 
