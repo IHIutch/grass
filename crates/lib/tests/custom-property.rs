@@ -63,14 +63,13 @@ test!(
     "a {\n  --btn-font-family:;\n}\n"
 );
 error!(
-    #[ignore = "dart-sass crashes on this input https://github.com/sass/dart-sass/issues/1857"]
     child_in_declaration_block_is_custom_property,
     "a {
         color: {
             --foo: bar;
         }
     }",
-    ""
+    r#"Error: Declarations whose names begin with "--" may not be nested."#
 );
 error!(
     // NOTE: https://github.com/sass/dart-sass/issues/1857

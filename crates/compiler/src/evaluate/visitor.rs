@@ -3697,6 +3697,14 @@ impl<'a> Visitor<'a> {
         let selector_text = self.interpolation_to_value(ruleset_selector, true, true)?;
 
         if self.flags.in_keyframes() {
+            if self.flags.in_keyframes_rule() {
+                return Err((
+                    "Style rules may not be used within keyframe blocks.",
+                    ruleset.selector_span,
+                )
+                    .into());
+            }
+
             let span = ruleset.selector_span;
             let sel_toks = Lexer::new_from_string(&selector_text, span);
             let parsed_selector =
@@ -3706,6 +3714,10 @@ impl<'a> Visitor<'a> {
                 selector: parsed_selector,
                 body: Vec::new(),
             });
+
+            let was_in_keyframes_rule = self.flags.in_keyframes_rule();
+            self.flags
+                .set(ContextFlags::IN_KEYFRAMES_RULE, true);
 
             self.with_parent(
                 keyframes_ruleset,
@@ -3720,6 +3732,9 @@ impl<'a> Visitor<'a> {
                 },
                 CssStmt::is_style_rule,
             )?;
+
+            self.flags
+                .set(ContextFlags::IN_KEYFRAMES_RULE, was_in_keyframes_rule);
 
             return Ok(None);
         }
@@ -3860,6 +3875,14 @@ impl<'a> Visitor<'a> {
         }
 
         let is_custom_property = style.is_custom_property();
+
+        if is_custom_property && self.declaration_name.is_some() {
+            return Err((
+                "Declarations whose names begin with \"--\" may not be nested.",
+                style.span,
+            )
+                .into());
+        }
 
         let mut name = self.interpolation_to_value(style.name, false, true)?;
 

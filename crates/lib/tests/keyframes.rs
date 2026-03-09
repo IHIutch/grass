@@ -335,6 +335,12 @@ error!(
     r#"Error: Expected number."#
 );
 
+error!(
+    style_rule_in_keyframe_block,
+    "@keyframes a { to {to {c: d}} }",
+    "Error: Style rules may not be used within keyframe blocks."
+);
+
 // todo: span for this
 // @keyframes foo {
 //   1\1100000000000000 3% {
