@@ -1570,6 +1570,12 @@ impl<'a> Serializer<'a> {
             return Ok(());
         }
 
+        // Strip source map comments per CSS spec
+        let trimmed = comment.trim_start_matches("/*").trim_start();
+        if trimmed.starts_with("# sourceMappingURL=") || trimmed.starts_with("# sourceURL=") {
+            return Ok(());
+        }
+
         self.write_indentation();
         let col = self.map.look_up_pos(span.low()).position.column;
         let mut lines = comment.lines();
