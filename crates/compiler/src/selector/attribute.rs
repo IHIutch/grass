@@ -57,6 +57,15 @@ fn attribute_name(parser: &mut SelectorParser) -> SassResult<QualifiedName> {
         });
     }
 
+    if next.kind == '|' {
+        parser.toks.next();
+        let ident = parser.parse_identifier(false, false)?;
+        return Ok(QualifiedName {
+            ident,
+            namespace: Namespace::Empty,
+        });
+    }
+
     let name_or_namespace = parser.parse_identifier(false, false)?;
     match parser.toks.peek() {
         Some(v) if v.kind != '|' => {
