@@ -60,7 +60,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn expect_statement_separator(&mut self, _name: Option<&str>) -> SassResult<()> {
-        self.whitespace_without_comments();
+        self.whitespace()?;
         match self.toks().peek() {
             Some(Token {
                 kind: ';' | '}', ..
@@ -2077,8 +2077,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn parse_single_interpolation(&mut self) -> SassResult<Interpolation> {
         self.expect_char('#')?;
         self.expect_char('{')?;
+        let was_consuming_newlines = self.is_consuming_newlines();
+        self.set_consume_newlines(true);
         self.whitespace()?;
         let contents = self.parse_expression(None, None, None)?;
+        self.set_consume_newlines(was_consuming_newlines);
         self.expect_char('}')?;
 
         if self.is_plain_css() {
