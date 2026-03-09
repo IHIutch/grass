@@ -562,8 +562,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_function_rule(&mut self, start: usize) -> SassResult<AstStmt> {
         let name_start = self.toks().cursor();
-        let name = self.parse_identifier(true, false)?;
+        // Parse without normalization first to get the raw name for validation
+        let raw_name = self.parse_identifier(false, false)?;
         let name_span = self.toks_mut().span_from(name_start);
+        // Normalize underscores to hyphens for actual use
+        let name = raw_name.replace('_', "-");
         self.whitespace()?;
         let arguments = self.parse_argument_declaration()?;
 
@@ -581,7 +584,18 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 .into());
         }
 
-        if RESERVED_IDENTIFIERS.contains(&unvendor(&name)) {
+        let lower_name = name.to_ascii_lowercase();
+        if lower_name == "type" {
+            return Err((
+                "This name is reserved for the plain-CSS function.",
+                name_span,
+            )
+                .into());
+        }
+
+        // Use the raw (un-normalized) name for the reserved check so that
+        // names like `-moz_calc` and `_moz-calc` are not incorrectly rejected.
+        if RESERVED_IDENTIFIERS.contains(&unvendor(&raw_name)) {
             return Err(("Invalid function name.", self.toks_mut().span_from(start)).into());
         }
 
