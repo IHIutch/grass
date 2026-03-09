@@ -280,8 +280,13 @@ impl Environment {
         self.scopes.insert_mixin(name, mixin);
     }
 
-    pub fn mixin_exists(&self, name: Identifier) -> bool {
-        self.scopes.mixin_exists(name)
+    pub fn mixin_exists(&self, name: Identifier, span: Span) -> SassResult<bool> {
+        if self.scopes.mixin_exists(name) {
+            return Ok(true);
+        }
+        Ok(self
+            .get_mixin_from_global_modules(name, span)?
+            .is_some())
     }
 
     pub fn get_mixin(
@@ -311,8 +316,13 @@ impl Environment {
         self.scopes.insert_fn(func);
     }
 
-    pub fn fn_exists(&self, name: Identifier) -> bool {
-        self.scopes.fn_exists(name)
+    pub fn fn_exists(&self, name: Identifier, span: Span) -> SassResult<bool> {
+        if self.scopes.fn_exists(name) {
+            return Ok(true);
+        }
+        Ok(self
+            .get_function_from_global_modules(name, span)?
+            .is_some())
     }
 
     pub fn get_fn(
@@ -337,6 +347,7 @@ impl Environment {
         &self,
         name: Identifier,
         namespace: Option<Spanned<Identifier>>,
+        span: Span,
     ) -> SassResult<bool> {
         if let Some(namespace) = namespace {
             let modules = (*self.modules).borrow();
@@ -344,7 +355,12 @@ impl Environment {
             return Ok((*module).borrow().var_exists(name));
         }
 
-        Ok(self.scopes.var_exists(name))
+        if self.scopes.var_exists(name) {
+            return Ok(true);
+        }
+        Ok(self
+            .get_variable_from_global_modules(name, span)?
+            .is_some())
     }
 
     pub fn get_var(

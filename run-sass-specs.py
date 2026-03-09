@@ -70,7 +70,7 @@ def extract_tests(files):
 
     # Identify companions: .scss/.sass files that aren't test inputs/outputs
     for fname, content in files.items():
-        if not (fname.endswith('.scss') or fname.endswith('.sass')):
+        if not (fname.endswith('.scss') or fname.endswith('.sass') or fname.endswith('.css')):
             continue
         if fname.endswith('/input.scss') or fname == 'input.scss':
             continue
@@ -143,6 +143,17 @@ def process_hrx(hrx_path, spec_dir, grass_binary):
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content)
 
+        # Copy on-disk sibling .scss/.sass/.css files into tmpdir
+        # so relative @use/@import (e.g., '../test-hue') can find them.
+        hrx_parent_rel = str(hrx_rel.parent)  # e.g., "core_functions/color/hwb/three_args/w3c"
+        dest_parent = Path(tmpdir) / hrx_parent_rel
+        dest_parent.mkdir(parents=True, exist_ok=True)
+        for sibling in hrx_path.parent.iterdir():
+            if sibling.suffix in ('.scss', '.sass', '.css') and sibling.is_file():
+                dest = dest_parent / sibling.name
+                if not dest.exists():
+                    shutil.copy2(str(sibling), str(dest))
+
         for test in tests:
             test_name = f"{hrx_rel}::{test['name']}"
             input_rel = Path(hrx_base) / test['input_path']
@@ -155,6 +166,7 @@ def process_hrx(hrx_path, spec_dir, grass_binary):
                     [grass_binary, str(input_full),
                      '--load-path', tmpdir,
                      '--load-path', str(spec_dir),
+                     '--load-path', str(hrx_path.parent),
                      '--style=expanded'],
                     capture_output=True, text=True, timeout=5,
                 )

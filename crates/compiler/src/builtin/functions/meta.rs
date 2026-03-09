@@ -112,7 +112,7 @@ pub(crate) fn variable_exists(
             .0,
     );
 
-    Ok(Value::bool(visitor.env.var_exists(name, None)?))
+    Ok(Value::bool(visitor.env.var_exists(name, None, args.span())?))
 }
 
 pub(crate) fn global_variable_exists(
@@ -177,7 +177,7 @@ pub(crate) fn mixin_exists(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         .borrow()
         .mixin_exists(name)
     } else {
-        visitor.env.mixin_exists(name)
+        visitor.env.mixin_exists(name, args.span())?
     }))
 }
 
@@ -212,7 +212,7 @@ pub(crate) fn function_exists(
         .borrow()
         .fn_exists(name)
     } else {
-        visitor.env.fn_exists(name)
+        visitor.env.fn_exists(name, args.span())?
     }))
 }
 
