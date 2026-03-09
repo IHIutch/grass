@@ -102,7 +102,7 @@ test!(
     "a {
       @box-shadow: $btn-focus-box-shadow, // $btn-active-box-shadow;
     }",
-    "a {\n  @box-shadow : $btn-focus-box-shadow, // $btn-active-box-shadow;;\n}\n"
+    "a {\n  @box-shadow : $btn-focus-box-shadow,;\n}\n"
 );
 test!(contains_multiline_comment, "@foo /**/;\n", "@foo;\n");
 error!(

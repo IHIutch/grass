@@ -1162,7 +1162,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let value: Option<Interpolation> =
             if !self.toks_mut().next_char_is('!') && !self.at_end_of_statement() {
-                Some(self.almost_any_value(false)?)
+                Some(self.almost_any_value(true)?)
             } else {
                 None
             };
