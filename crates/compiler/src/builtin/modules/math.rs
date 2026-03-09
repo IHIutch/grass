@@ -106,13 +106,13 @@ fn clamp(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
 
     match min.cmp(&number, span, BinaryOp::LessThan)? {
         Some(Ordering::Greater) => return Ok(min),
-        Some(Ordering::Equal) => return Ok(number),
+        Some(Ordering::Equal) => return Ok(min),
         Some(Ordering::Less) | None => {}
     }
 
     match max.cmp(&number, span, BinaryOp::GreaterThan)? {
         Some(Ordering::Less) => return Ok(max),
-        Some(Ordering::Equal) => return Ok(number),
+        Some(Ordering::Equal) => return Ok(max),
         Some(Ordering::Greater) | None => {}
     }
 
@@ -337,12 +337,6 @@ fn asin(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
             unit: Unit::Deg,
             as_slash: None,
         }));
-    } else if number.is_zero() {
-        return Ok(Value::Dimension(SassNumber {
-            num: Number::zero(),
-            unit: Unit::Deg,
-            as_slash: None,
-        }));
     }
 
     Ok(Value::Dimension(SassNumber {
@@ -361,14 +355,6 @@ fn atan(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
         .get_err(0, "number")?
         .assert_number_with_name("number", span)?;
     number.assert_no_units("number", span)?;
-
-    if number.num.is_zero() {
-        return Ok(Value::Dimension(SassNumber {
-            num: (Number::zero()),
-            unit: Unit::Deg,
-            as_slash: None,
-        }));
-    }
 
     Ok(Value::Dimension(SassNumber {
         num: number.num.atan(),

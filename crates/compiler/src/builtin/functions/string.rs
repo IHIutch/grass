@@ -128,10 +128,9 @@ pub(crate) fn str_slice(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(3)?;
 
-    let s1 = args
+    let (s1, quote) = args
         .get_err(0, "string")?
-        .assert_string_with_name("string", args.span())?
-        .0;
+        .assert_string_with_name("string", args.span())?;
 
     let separator = args
         .get_err(1, "separator")?
@@ -140,9 +139,9 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
     let limit = args.default_arg(2, "limit", Value::Null);
 
-    let vec = if matches!(limit, Value::Null) {
+    let vec: Vec<Value> = if matches!(limit, Value::Null) {
         s1.split(&separator)
-            .map(|s| Value::String(s.to_string(), QuoteKind::Quoted))
+            .map(|s| Value::String(s.to_string(), quote))
             .collect()
     } else {
         let limit = limit.assert_number_with_name("limit", args.span())?;
@@ -156,7 +155,7 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         }
         // note: `1 + limit_int` is required to match dart-sass
         s1.splitn(limit_int.saturating_add(1) as usize, &separator)
-            .map(|s| Value::String(s.to_string(), QuoteKind::Quoted))
+            .map(|s| Value::String(s.to_string(), quote))
             .collect()
     };
     Ok(Value::List(vec, ListSeparator::Comma, Brackets::Bracketed))

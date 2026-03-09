@@ -455,7 +455,14 @@ impl Value {
     pub fn separator(&self) -> ListSeparator {
         match self {
             Value::List(_, list_separator, _) => *list_separator,
-            Value::Map(..) | Value::ArgList(..) => ListSeparator::Comma,
+            Value::Map(ref m) => {
+                if m.is_empty() {
+                    ListSeparator::Undecided
+                } else {
+                    ListSeparator::Comma
+                }
+            }
+            Value::ArgList(..) => ListSeparator::Comma,
             _ => ListSeparator::Space,
         }
     }

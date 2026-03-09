@@ -379,6 +379,14 @@ fn real_mod(n1: f64, n2: f64) -> f64 {
 }
 
 fn modulo(n1: f64, n2: f64) -> f64 {
+    if n2.is_infinite() {
+        return if n1.is_sign_positive() == n2.is_sign_positive() {
+            n1
+        } else {
+            f64::NAN
+        };
+    }
+
     if n2 > 0.0 {
         return real_mod(n1, n2);
     }
