@@ -300,6 +300,39 @@ pub(crate) fn parse_channels(
             None => Ok(ParsedChannels::List(list)),
         },
         Value::String(text, QuoteKind::None) if text.contains('/') => {
+            // Try to split "channel/alpha" strings like "none/0.4" into parts.
+            let parts: Vec<&str> = text.splitn(2, '/').collect();
+            if parts.len() == 2 {
+                let channel_str = parts[0].trim();
+                let alpha_str = parts[1].trim();
+
+                // Check if this is a parseable channel/alpha pair
+                let channel_val = if channel_str == "none" {
+                    Some(Value::String("none".to_owned(), QuoteKind::None))
+                } else if let Ok(num) = channel_str.parse::<f64>() {
+                    Some(Value::Dimension(SassNumber::new_unitless(num)))
+                } else {
+                    None
+                };
+
+                let alpha_val = if alpha_str == "none" {
+                    Some(Value::String("none".to_owned(), QuoteKind::None))
+                } else if let Ok(num) = alpha_str.parse::<f64>() {
+                    Some(Value::Dimension(SassNumber::new_unitless(num)))
+                } else {
+                    None
+                };
+
+                if let (Some(ch), Some(al)) = (channel_val, alpha_val) {
+                    return Ok(ParsedChannels::List(vec![
+                        list[0].clone(),
+                        list[1].clone(),
+                        ch,
+                        al,
+                    ]));
+                }
+            }
+
             let fn_string = function_string(name, &[channels], visitor, span)?;
             Ok(ParsedChannels::String(fn_string))
         }
