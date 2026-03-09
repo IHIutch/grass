@@ -17,11 +17,35 @@ pub(crate) fn parse_slash_part(s: &str) -> Option<Value> {
                 unit: Unit::Percent,
                 as_slash: None,
             }))
+    } else if let Some((num_str, unit)) = parse_number_with_unit(s) {
+        num_str.parse::<f64>().ok().map(|n| Value::Dimension(SassNumber {
+            num: Number(n),
+            unit,
+            as_slash: None,
+        }))
     } else {
         s.parse::<f64>()
             .ok()
             .map(|n| Value::Dimension(SassNumber::new_unitless(n)))
     }
+}
+
+/// Try to parse a string as a number with a known CSS unit suffix (e.g., "3deg", "0.5turn").
+fn parse_number_with_unit(s: &str) -> Option<(&str, Unit)> {
+    let units = [
+        ("deg", Unit::Deg),
+        ("grad", Unit::Grad),
+        ("rad", Unit::Rad),
+        ("turn", Unit::Turn),
+    ];
+    for (suffix, unit) in &units {
+        if let Some(num_str) = s.strip_suffix(suffix) {
+            if !num_str.is_empty() && num_str.bytes().last().map_or(false, |b| b.is_ascii_digit() || b == b'.') {
+                return Some((num_str, unit.clone()));
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn function_string(

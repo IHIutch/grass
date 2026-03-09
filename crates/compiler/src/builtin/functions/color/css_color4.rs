@@ -146,9 +146,9 @@ pub(crate) fn construct_color(
                 if !val.is_nan() {
                     *val = val.rem_euclid(360.0);
                 }
-            } else if channel_defs[i].name == "chroma" && !val.is_nan() {
-                // Chroma: clamp negative to 0 (including -infinity)
-                if *val < 0.0 {
+            } else if channel_defs[i].name == "chroma" {
+                // Chroma: clamp negative to 0 (including -infinity), NaN → 0
+                if val.is_nan() || *val < 0.0 {
                     *val = 0.0;
                 }
             }

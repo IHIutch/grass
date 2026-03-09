@@ -1114,7 +1114,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_mixin_rule(&mut self, start: usize) -> SassResult<AstStmt> {
-        let name = Identifier::from(self.parse_identifier(true, false)?);
+        let name_str = self.parse_identifier(true, false)?;
+        if name_str.starts_with("--") {
+            return Err((
+                "Sass @mixin names beginning with -- are forbidden for forward-compatibility with plain CSS mixins.",
+                self.toks_mut().span_from(start),
+            ).into());
+        }
+        let name = Identifier::from(name_str);
         self.whitespace()?;
         let args = if self.toks_mut().next_char_is('(') {
             self.parse_argument_declaration()?
