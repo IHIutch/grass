@@ -1596,16 +1596,31 @@ impl<'a> Serializer<'a> {
             self.buffer.extend_from_slice(line.trim_start().as_bytes());
         }
 
-        let lines = lines
-            .map(|line| {
-                let diff = (line.len() - line.trim_start().len()).saturating_sub(col);
-                format!("{}{}", " ".repeat(diff), line.trim_start())
-            })
-            .collect::<Vec<String>>()
-            .join("\n");
+        let continuation: Vec<&str> = lines.collect();
 
-        if !lines.is_empty() {
-            write!(&mut self.buffer, "\n{}", lines)?;
+        if !continuation.is_empty() {
+            // Find minimum indentation of continuation lines
+            let min_indent = continuation
+                .iter()
+                .filter(|line| !line.trim_start().is_empty())
+                .map(|line| line.len() - line.trim_start().len())
+                .min()
+                .unwrap_or(0);
+
+            // Use the smaller of source column and min indentation as the base
+            let base = std::cmp::min(col, min_indent);
+
+            for line in &continuation {
+                let leading = line.len() - line.trim_start().len();
+                let relative = leading.saturating_sub(base);
+                let output_indent = self.indentation + relative;
+                write!(
+                    &mut self.buffer,
+                    "\n{}{}",
+                    " ".repeat(output_indent),
+                    line.trim_start()
+                )?;
+            }
         }
 
         Ok(())

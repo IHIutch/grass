@@ -138,10 +138,8 @@ error!(
     tilde_in_value,
     "a {color: ~a;}", "Error: Expected expression."
 );
-error!(
-    subtract_rem,
-    "a {color: 5 - %;}", "Error: Expected expression."
-);
+// `5 - %` is valid CSS; dart-sass outputs `5-%`
+// (removed error test -- % is now a valid expression)
 error!(
     operator_eq,
     "a {color: 5 - ==;}", "Error: Expected expression."

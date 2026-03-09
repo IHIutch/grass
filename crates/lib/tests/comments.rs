@@ -58,12 +58,12 @@ test!(
 test!(
     converts_form_feed_in_comment,
     "a {\n  /*  \x0C*/ color: red;\n}\n",
-    "a {\n  /*  \n*/\n  color: red;\n}\n"
+    "a {\n  /*  \n  */\n  color: red;\n}\n"
 );
 test!(
     converts_crlf_in_comment,
     "a {\n  /*  \r\n*/ color: red;\n}\n",
-    "a {\n  /*  \n*/\n  color: red;\n}\n"
+    "a {\n  /*  \n  */\n  color: red;\n}\n"
 );
 test!(
     closing_curly_brace_in_comment,
@@ -73,7 +73,7 @@ test!(
 test!(
     converts_cr_in_comment,
     "a {\n  /*  \r*/ color: red;\n}\n",
-    "a {\n  /*  \n*/\n  color: red;\n}\n"
+    "a {\n  /*  \n  */\n  color: red;\n}\n"
 );
 test!(
     interpolation_in_multiline_comment,

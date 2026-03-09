@@ -310,14 +310,40 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     }
                 }
                 Some(Token { kind: '%', .. }) => {
-                    parser.toks_mut().next();
-                    self.add_operator(
-                        Spanned {
-                            node: BinaryOp::Rem,
-                            span: parser.toks().current_span(),
-                        },
-                        parser,
-                    )?;
+                    // Check if % is followed (past whitespace) by a valid
+                    // expression start, indicating it's a binary mod operator.
+                    // If not, treat it as a standalone CSS value.
+                    let mut n = 1;
+                    while matches!(parser.toks().peek_n(n), Some(Token { kind: ' ' | '\t' | '\n' | '\r', .. })) {
+                        n += 1;
+                    }
+                    let is_binary_op = match parser.toks().peek_n(n) {
+                        Some(Token { kind: '0'..='9' | '.' | '(' | '$' | '#' | '"' | '\'' | '-' | '+', .. }) => true,
+                        Some(Token { kind: 'a'..='z' | 'A'..='Z' | '_' | '\\', .. }) => true,
+                        Some(Token { kind: c, .. }) if c > '\u{7f}' => true,
+                        _ => false,
+                    };
+
+                    if is_binary_op {
+                        parser.toks_mut().next();
+                        self.add_operator(
+                            Spanned {
+                                node: BinaryOp::Rem,
+                                span: parser.toks().current_span(),
+                            },
+                            parser,
+                        )?;
+                    } else {
+                        let expr_start = parser.toks().cursor();
+                        parser.toks_mut().next();
+                        let span = parser.toks_mut().span_from(expr_start);
+                        let expr = AstExpr::String(
+                            StringExpr(Interpolation::new_plain("%".to_owned()), QuoteKind::None),
+                            span,
+                        )
+                        .span(span);
+                        self.add_single_expression(expr, parser)?;
+                    }
                 }
                 Some(Token {
                     kind: '0'..='9', ..
@@ -515,6 +541,15 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 kind: '\u{80}'..=std::char::MAX,
                 ..
             }) => self.parse_identifier_like(parser),
+            Some(Token { kind: '%', .. }) => {
+                parser.toks_mut().next();
+                let span = parser.toks_mut().span_from(start);
+                Ok(AstExpr::String(
+                    StringExpr(Interpolation::new_plain("%".to_owned()), QuoteKind::None),
+                    span,
+                )
+                .span(span))
+            }
             Some(..) | None => Err((
                 "Expected expression.",
                 parser.toks_mut().span_from(self.start),

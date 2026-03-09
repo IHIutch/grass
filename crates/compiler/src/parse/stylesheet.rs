@@ -254,7 +254,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 | None => true,
                 Some(Token { kind, .. }) => kind.is_ascii_whitespace(),
             },
-            '(' | '/' | '[' | '\'' | '"' | '#' | '+' | '-' | '\\' | '$' | '&' => true,
+            '(' | '/' | '[' | '\'' | '"' | '#' | '+' | '-' | '\\' | '$' | '&' | '%' => true,
             c => is_name_start(c) || c.is_ascii_digit(),
         }
     }
