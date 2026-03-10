@@ -1200,7 +1200,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     fn parse_important_expr(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
         let start = parser.toks().cursor();
         parser.expect_char('!')?;
+        let was_cn = parser.is_consuming_newlines();
+        parser.set_consume_newlines(true);
         parser.whitespace()?;
+        parser.set_consume_newlines(was_cn);
         parser.expect_identifier("important", false)?;
 
         let span = parser.toks_mut().span_from(start);
