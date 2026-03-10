@@ -2381,15 +2381,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     {
                         break;
                     }
-                    if !matches!(
-                        self.toks().peek_n_backwards(1),
-                        Some(Token {
-                            kind: '\r' | '\n',
-                            ..
-                        })
-                    ) {
-                        buffer.add_char('\n');
-                    }
+                    buffer.add_char('\n');
                     self.toks_mut().next();
                     wrote_newline = true;
                 }

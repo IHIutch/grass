@@ -1762,6 +1762,7 @@ impl<'a> Serializer<'a> {
         }
     }
 
+
     fn write_children(&mut self, mut children: Vec<CssStmt>) -> SassResult<()> {
         if self.options.is_compressed() {
             self.buffer.push(b'{');

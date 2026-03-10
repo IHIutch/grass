@@ -4,7 +4,7 @@ use codemap::{Span, Spanned};
 
 use crate::{
     ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind, error::SassResult,
-    lexer::Lexer, ContextFlags, Options,
+    lexer::Lexer, ContextFlags, Options, Token,
 };
 
 use super::{value::ValueParser, BaseParser, StylesheetParser};
@@ -32,6 +32,21 @@ impl<'a> BaseParser for CssParser<'a> {
             self.toks.current_span(),
         )
             .into())
+    }
+
+    fn scan_comment(&mut self) -> SassResult<bool> {
+        if !matches!(self.toks().peek(), Some(Token { kind: '/', .. })) {
+            return Ok(false);
+        }
+
+        // In plain CSS, `//` is NOT a comment — only `/* */` is
+        Ok(match self.toks().peek_n(1) {
+            Some(Token { kind: '*', .. }) => {
+                self.skip_loud_comment()?;
+                true
+            }
+            _ => false,
+        })
     }
 }
 

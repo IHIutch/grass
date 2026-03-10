@@ -1092,13 +1092,16 @@ impl<'a> Visitor<'a> {
                 return Ok(Some(found));
             }
 
-            // Fall back to CSS candidates (no conflict check needed for CSS)
+            // Fall back to CSS candidates
             let mut css_candidates = Vec::new();
             if for_import {
                 css_candidates.extend(path_candidates(base_path.with_extension("import.css")));
             }
             css_candidates.extend(path_candidates(base_path.with_extension("css")));
-            Ok(self.options.fs.resolve_first_existing(&css_candidates))
+            if let Some(found) = check_conflicts(&css_candidates, context_dir, span)? {
+                return Ok(Some(found));
+            }
+            Ok(None)
         };
 
         if path_buf.extension() == Some(OsStr::new("scss"))

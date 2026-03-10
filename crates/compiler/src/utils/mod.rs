@@ -41,6 +41,7 @@ pub(crate) fn is_special_function(s: &str) -> bool {
         || s.starts_with("max(")
         || s.starts_with("clamp(")
         || s.starts_with("attr(")
+        || s.starts_with("if(")
 }
 
 /// Trim ASCII whitespace from both sides of string.

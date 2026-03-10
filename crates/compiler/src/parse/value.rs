@@ -1497,6 +1497,27 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         let mut buffer;
 
+        // `type()` is a special function only when unprefixed
+        if name == "type" {
+            if !parser.scan_char('(') {
+                return Ok(None);
+            }
+            buffer = Interpolation::new_plain(name.to_owned());
+            buffer.add_char('(');
+
+            buffer.add_interpolation(parser.parse_interpolated_declaration_value(false, true, true)?);
+            parser.expect_char(')')?;
+            buffer.add_char(')');
+
+            return Ok(Some(
+                AstExpr::String(
+                    StringExpr(buffer, QuoteKind::None),
+                    parser.toks_mut().span_from(start),
+                )
+                .span(parser.toks_mut().span_from(start)),
+            ));
+        }
+
         match normalized {
             "calc" | "element" | "expression" => {
                 if !parser.scan_char('(') {
