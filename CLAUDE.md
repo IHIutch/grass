@@ -263,6 +263,16 @@ When modifying test expectations:
 2. Use that exact output as the expected value
 3. Note in the commit message that expectations were verified against dart-sass
 
+### Outdated sass-spec Tests
+
+When you discover a sass-spec test whose expected output doesn't match dart-sass 1.97.3, file it as a beads issue under the **grass-cll** epic:
+
+```bash
+bd create --title="Outdated: <test-path> — <brief description>" --type=task --priority=4 --parent=grass-cll
+```
+
+Do NOT spend time trying to match outdated expectations. Verify against dart-sass, file under grass-cll, and move on.
+
 ## Project Structure
 - `crates/compiler/` - core compiler (grass_compiler crate)
 - `crates/lib/` - public library + CLI binary (grass crate)
