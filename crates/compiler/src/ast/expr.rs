@@ -163,7 +163,10 @@ impl StringExpr {
         }
     }
 
-    fn best_quote<'a>(strings: impl Iterator<Item = &'a str>) -> char {
+    fn best_quote<'a>(
+        strings: impl Iterator<Item = &'a str>,
+        preferred: Option<char>,
+    ) -> char {
         let mut contains_double_quote = false;
         for s in strings {
             for c in s.chars() {
@@ -178,19 +181,22 @@ impl StringExpr {
         if contains_double_quote {
             '\''
         } else {
-            '"'
+            preferred.unwrap_or('"')
         }
     }
 
-    pub fn as_interpolation(self, is_static: bool) -> Interpolation {
+    pub fn as_interpolation(self, is_static: bool, preferred_quote: Option<char>) -> Interpolation {
         if self.1 == QuoteKind::None {
             return self.0;
         }
 
-        let quote = Self::best_quote(self.0.contents.iter().filter_map(|c| match c {
-            InterpolationPart::Expr(..) => None,
-            InterpolationPart::String(text) => Some(text.as_str()),
-        }));
+        let quote = Self::best_quote(
+            self.0.contents.iter().filter_map(|c| match c {
+                InterpolationPart::Expr(..) => None,
+                InterpolationPart::String(text) => Some(text.as_str()),
+            }),
+            preferred_quote,
+        );
 
         let mut buffer = Interpolation::new();
         buffer.add_char(quote);

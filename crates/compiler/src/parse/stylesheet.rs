@@ -2344,10 +2344,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     wrote_newline = false;
                 }
                 '"' | '\'' => {
+                    let original_quote = tok.kind;
                     buffer.add_interpolation(
                         self.parse_interpolated_string()?
                             .node
-                            .as_interpolation(false),
+                            .as_interpolation(false, Some(original_quote)),
                     );
                     wrote_newline = false;
                 }
@@ -3050,10 +3051,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '"' | '\'' => {
+                    let original_quote = tok.kind;
                     buffer.add_interpolation(
                         self.parse_interpolated_string()?
                             .node
-                            .as_interpolation(false),
+                            .as_interpolation(false, Some(original_quote)),
                     );
                 }
                 '/' => {

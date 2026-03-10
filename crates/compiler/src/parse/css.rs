@@ -154,7 +154,7 @@ impl<'a> CssParser<'a> {
         } else {
             let string = self.parse_interpolated_string()?;
             AstExpr::String(
-                StringExpr(string.node.as_interpolation(true), QuoteKind::None),
+                StringExpr(string.node.as_interpolation(true, None), QuoteKind::None),
                 string.span,
             )
             .span(string.span)
