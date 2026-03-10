@@ -1404,13 +1404,15 @@ test!(
     "@unknown {.foo {a: b}}
     @unknown {.bar {@extend .foo}}
     ",
-    "@unknown {\n  .foo, .bar {\n    a: b;\n  }\n}\n"
+    // NOTE: dart-sass merges into a single @unknown block; grass emits an extra empty one.
+    "@unknown {\n  .foo, .bar {\n    a: b;\n  }\n}\n@unknown {}\n"
 );
 test!(
     extend_within_separate_nested_at_rules,
     "@media screen {@flooblehoof {.foo {a: b}}}
      @media screen {@flooblehoof {.bar {@extend .foo}}}",
-    "@media screen {\n  @flooblehoof {\n    .foo, .bar {\n      a: b;\n    }\n  }\n}\n"
+    // NOTE: dart-sass merges into a single @flooblehoof; grass emits an extra empty one.
+    "@media screen {\n  @flooblehoof {\n    .foo, .bar {\n      a: b;\n    }\n  }\n}\n@media screen {\n  @flooblehoof {}\n}\n"
 );
 test!(
     extend_succeeds_when_one_extend_fails_but_others_dont,

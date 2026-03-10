@@ -62,11 +62,10 @@ impl CssStmt {
                     && !style.declared_as_custom_property
             }
             CssStmt::Media(media_rule, ..) => media_rule.body.iter().all(CssStmt::is_invisible),
-            CssStmt::UnknownAtRule(rule, ..) => {
-                rule.has_body
-                    && !rule.body.is_empty()
-                    && rule.body.iter().all(CssStmt::is_invisible)
-            }
+            // An unknown at-rule is never invisible. Because we don't know the
+            // semantics of unknown rules, we can't guarantee that (for example)
+            // `@foo {}` isn't meaningful. (Matches dart-sass behavior.)
+            CssStmt::UnknownAtRule(..) => false,
             CssStmt::Import(..) | CssStmt::Comment(..) => false,
             CssStmt::Supports(supports_rule, ..) => {
                 supports_rule.body.iter().all(CssStmt::is_invisible)
