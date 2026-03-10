@@ -92,6 +92,50 @@ impl fmt::Display for ComplexSelector {
     }
 }
 
+/// Checks whether `intermediates` (the components of complex2 between
+/// two matched compounds) are compatible with the `previous` combinator.
+///
+/// - Descendant (None): any intermediates are OK
+/// - FollowingSibling (~): intermediates must all use ~ or +
+/// - Child (>) or NextSibling (+): no intermediates allowed
+fn compatible_with_previous_combinator(
+    previous: Option<Combinator>,
+    intermediates: &[ComplexSelectorComponent],
+) -> bool {
+    if intermediates.is_empty() {
+        return true;
+    }
+    match previous {
+        None => true,
+        Some(Combinator::FollowingSibling) => {
+            // Every compound must be followed by ~ or +. Adjacent compounds
+            // (implicit descendant) are not OK. Ending with a compound (descendant
+            // to the matched element) is also not OK.
+            let mut prev_was_compound = false;
+            for component in intermediates {
+                match component {
+                    ComplexSelectorComponent::Compound(_) => {
+                        if prev_was_compound {
+                            return false;
+                        }
+                        prev_was_compound = true;
+                    }
+                    ComplexSelectorComponent::Combinator(c) => {
+                        if *c != Combinator::FollowingSibling && *c != Combinator::NextSibling {
+                            return false;
+                        }
+                        prev_was_compound = false;
+                    }
+                }
+            }
+            // If intermediates end with a compound, that means descendant
+            // between the last intermediate and the matched element — not OK for ~
+            !prev_was_compound
+        }
+        Some(Combinator::Child) | Some(Combinator::NextSibling) => false,
+    }
+}
+
 /// When `style` is `OutputStyle::compressed`, omit spaces around combinators.
 fn omit_spaces_around(component: &ComplexSelectorComponent) -> bool {
     // todo: compressed
@@ -184,8 +228,21 @@ impl ComplexSelector {
             return false;
         }
 
+        // Bogus sub-selector check: if other has adjacent combinators, return false
+        {
+            let mut prev_was_combinator = false;
+            for component in &other.components {
+                let is_comb = component.is_combinator();
+                if is_comb && prev_was_combinator {
+                    return false;
+                }
+                prev_was_combinator = is_comb;
+            }
+        }
+
         let mut i1 = 0;
         let mut i2 = 0;
+        let mut previous_combinator: Option<Combinator> = None;
 
         loop {
             let remaining1 = self.components.len() - i1;
@@ -206,6 +263,12 @@ impl ComplexSelector {
             }
 
             if remaining1 == 1 {
+                // Check intermediates compatibility with previous combinator
+                let intermediates = &other.components[i2..other.components.len() - 1];
+                if !compatible_with_previous_combinator(previous_combinator, intermediates) {
+                    return false;
+                }
+
                 let parents = other
                     .components
                     .iter()
@@ -247,6 +310,12 @@ impl ComplexSelector {
                 return false;
             }
 
+            // Check intermediates compatibility with previous combinator
+            let intermediates = &other.components[i2..after_super_selector - 1];
+            if !compatible_with_previous_combinator(previous_combinator, intermediates) {
+                return false;
+            }
+
             if let Some(ComplexSelectorComponent::Combinator(combinator1)) =
                 self.components.get(i1 + 1)
             {
@@ -264,10 +333,7 @@ impl ComplexSelector {
                     return false;
                 }
 
-                if remaining1 == 3 && remaining2 > 3 {
-                    return false;
-                }
-
+                previous_combinator = Some(*combinator1);
                 i1 += 2;
                 i2 = after_super_selector + 1;
             } else if let Some(ComplexSelectorComponent::Combinator(combinator2)) =
@@ -276,9 +342,11 @@ impl ComplexSelector {
                 if combinator2 != &Combinator::Child {
                     return false;
                 }
+                previous_combinator = None;
                 i1 += 1;
                 i2 = after_super_selector + 1;
             } else {
+                previous_combinator = None;
                 i1 += 1;
                 i2 = after_super_selector;
             }

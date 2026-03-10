@@ -223,24 +223,26 @@ impl ExtensionStore {
             })
             .collect::<SassResult<Vec<CompoundSelector>>>()?;
 
-        let extensions: HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>> =
-            compound_targets
-                .into_iter()
-                .flat_map(|compound| {
-                    compound
-                        .components
-                        .into_iter()
-                        .map(|simple| (simple, extenders.clone()))
-                })
-                .collect();
-
-        let mut extender = ExtensionStore::with_mode(mode, span);
+        // Create one store and set originals once, then iterate targets
+        // one at a time, threading the selector through each extension.
+        let mut store = ExtensionStore::with_mode(mode, span);
 
         if !selector.is_invisible() {
-            extender.originals.extend(selector.components.iter());
+            store.originals.extend(selector.components.iter());
         }
 
-        extender.extend_list(selector, Some(&extensions), &None)
+        let mut current = selector;
+        for compound in compound_targets {
+            let extensions: HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>> =
+                compound
+                    .components
+                    .into_iter()
+                    .map(|simple| (simple, extenders.clone()))
+                    .collect();
+
+            current = store.extend_list(current, Some(&extensions), &None)?;
+        }
+        Ok(current)
     }
 
     fn with_mode(mode: ExtendMode, span: Span) -> Self {
@@ -379,12 +381,14 @@ impl ExtensionStore {
                             .collect(),
                     )
                     .into_iter()
-                    .map(|components| {
+                    .filter_map(|components| {
                         let output_complex = ComplexSelector::new(
                             components,
                             complex_has_line_break
                                 || path.iter().any(|input_complex| input_complex.line_break),
                         );
+
+                        let is_first = first;
 
                         // Make sure that copies of `complex` retain their status as "original"
                         // selectors. This includes selectors that are modified because a :not()
@@ -394,7 +398,15 @@ impl ExtensionStore {
                         }
                         first = false;
 
-                        output_complex
+                        // Filter out selectors with adjacent combinators produced by
+                        // weaving. These are invalid CSS that shouldn't appear in output.
+                        // Don't filter the first (original) selector — it may legitimately
+                        // have adjacent combinators as a CSS hack.
+                        if !is_first && has_adjacent_combinators(&output_complex.components) {
+                            return None;
+                        }
+
+                        Some(output_complex)
                     })
                     .collect::<Vec<ComplexSelector>>()
                 })
@@ -1213,6 +1225,20 @@ impl ExtensionStore {
         }
         Ok(())
     }
+}
+
+/// Returns whether a component list has adjacent combinators (two combinators
+/// in a row with no compound selector between them).
+fn has_adjacent_combinators(components: &[ComplexSelectorComponent]) -> bool {
+    let mut prev_was_combinator = false;
+    for component in components {
+        let is_comb = component.is_combinator();
+        if is_comb && prev_was_combinator {
+            return true;
+        }
+        prev_was_combinator = is_comb;
+    }
+    false
 }
 
 /// Rotates the element in list from `start` (inclusive) to `end` (exclusive)

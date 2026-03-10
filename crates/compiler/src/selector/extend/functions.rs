@@ -20,35 +20,82 @@ pub(crate) fn unify_complex(
     }
 
     let mut unified_base: Option<CompoundSelector> = None;
+    let mut trailing_combinator: Option<Combinator> = None;
 
     for complex in &complexes {
         let base = complex.last()?;
 
-        if let ComplexSelectorComponent::Compound(base) = base {
-            if let Some(existing) = unified_base {
-                unified_base = Some(existing.unify(base.clone())?);
-            } else {
-                unified_base = Some(base.clone());
+        // Handle trailing combinators: strip them and track separately.
+        // In dart-sass, each component carries its own combinators, but in grass
+        // they're separate list elements. So [Compound(.e), Combinator(>)] has
+        // the combinator as the last element.
+        let base_compound = match base {
+            ComplexSelectorComponent::Compound(c) => c,
+            ComplexSelectorComponent::Combinator(c) => {
+                // Last element is a combinator — look for the compound before it
+                if let Some(new_trailing) = Some(*c) {
+                    if let Some(existing) = trailing_combinator {
+                        if existing != new_trailing {
+                            return None;
+                        }
+                    } else {
+                        trailing_combinator = Some(new_trailing);
+                    }
+                }
+                // The compound is the second-to-last element
+                match complex.get(complex.len().wrapping_sub(2)) {
+                    Some(ComplexSelectorComponent::Compound(c)) => c,
+                    _ => return None,
+                }
             }
+        };
+
+        if let Some(existing) = unified_base {
+            unified_base = Some(existing.unify(base_compound.clone())?);
         } else {
-            return None;
+            unified_base = Some(base_compound.clone());
         }
     }
 
     let mut complexes_without_bases: Vec<Vec<ComplexSelectorComponent>> = complexes
         .into_iter()
         .map(|mut complex| {
+            // Pop trailing combinator if present
+            if let Some(ComplexSelectorComponent::Combinator(_)) = complex.last() {
+                complex.pop();
+            }
+            // Pop the base compound
             complex.pop();
             complex
         })
         .collect();
 
+    let mut base_components = vec![ComplexSelectorComponent::Compound(unified_base?)];
+    if let Some(combinator) = trailing_combinator {
+        base_components.push(ComplexSelectorComponent::Combinator(combinator));
+    }
+
     complexes_without_bases
         .last_mut()
         .unwrap()
-        .push(ComplexSelectorComponent::Compound(unified_base?));
+        .extend(base_components);
 
-    Some(weave(complexes_without_bases))
+    let mut result = weave(complexes_without_bases);
+
+    // Filter out selectors with adjacent combinators
+    result.retain(|r| {
+        let mut prev_was_combinator = false;
+        for component in r {
+            let is_comb = component.is_combinator();
+            if is_comb && prev_was_combinator {
+                return false;
+            }
+            prev_was_combinator = is_comb;
+        }
+        true
+    });
+
+    Some(result)
 }
 
 /// Expands "parenthesized selectors" in `complexes`.
@@ -466,13 +513,15 @@ fn merge_final_combinators(
                         ]]);
                     } else {
                         let mut v = vec![vec![
-                            ComplexSelectorComponent::Compound(following_sibling_selector),
+                            ComplexSelectorComponent::Compound(following_sibling_selector.clone()),
                             ComplexSelectorComponent::Combinator(Combinator::FollowingSibling),
-                            ComplexSelectorComponent::Compound(next_sibling_selector),
+                            ComplexSelectorComponent::Compound(next_sibling_selector.clone()),
                             ComplexSelectorComponent::Combinator(Combinator::NextSibling),
                         ]];
 
-                        if let Some(unified) = compound_one.unify(compound_two) {
+                        if let Some(unified) =
+                            following_sibling_selector.unify(next_sibling_selector)
+                        {
                             v.push(vec![
                                 ComplexSelectorComponent::Compound(unified),
                                 ComplexSelectorComponent::Combinator(Combinator::NextSibling),

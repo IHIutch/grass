@@ -1014,7 +1014,7 @@ test!(
     ".a + x {a: b}
     .b ~ y {@extend x}
     ",
-    ".a + x, .b ~ .a + y, .a.b + y {\n  a: b;\n}\n"
+    ".a + x, .b ~ .a + y, .b.a + y {\n  a: b;\n}\n"
 );
 test!(
     combinator_unification_tilde_plus_4,
