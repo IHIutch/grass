@@ -374,6 +374,7 @@ impl<'a> Serializer<'a> {
             CalculationName::Sin => b"sin",
             CalculationName::Sqrt => b"sqrt",
             CalculationName::Tan => b"tan",
+            CalculationName::CalcSize => b"calc-size",
         };
         self.buffer.extend_from_slice(s);
     }

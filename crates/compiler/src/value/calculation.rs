@@ -60,6 +60,7 @@ pub enum CalculationName {
     Sin,
     Sqrt,
     Tan,
+    CalcSize,
 }
 
 impl fmt::Display for CalculationName {
@@ -86,6 +87,7 @@ impl fmt::Display for CalculationName {
             CalculationName::Sin => f.write_str("sin"),
             CalculationName::Sqrt => f.write_str("sqrt"),
             CalculationName::Tan => f.write_str("tan"),
+            CalculationName::CalcSize => f.write_str("calc-size"),
         }
     }
 }
@@ -122,6 +124,14 @@ impl SassCalculation {
                 args: vec![arg],
             }),
         }
+    }
+
+    pub fn calc_size(args: Vec<CalculationArg>) -> Value {
+        let args = Self::simplify_arguments(args);
+        Value::Calculation(SassCalculation {
+            name: CalculationName::CalcSize,
+            args,
+        })
     }
 
     pub fn min(args: Vec<CalculationArg>, options: &Options, span: Span) -> SassResult<Value> {

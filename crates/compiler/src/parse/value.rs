@@ -2014,6 +2014,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 }
                 .span(parser.toks_mut().span_from(start))
             }
+            "calc-size" => {
+                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
+                AstExpr::Calculation {
+                    name: CalculationName::CalcSize,
+                    args,
+                }
+                .span(parser.toks_mut().span_from(start))
+            }
             "round" => {
                 let before_args = parser.toks().cursor();
                 match ValueParser::parse_calculation_arguments(parser, Some(3), start) {
