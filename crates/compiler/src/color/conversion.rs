@@ -498,24 +498,26 @@ fn hue_to_channel(m1: f64, m2: f64, mut hue: f64) -> f64 {
 /// Convert sRGB to HSL.
 /// Returns (hue, saturation, lightness). Handles out-of-gamut inputs
 /// where values may be outside [0,1].
+///
+/// Matches dart-sass's algorithm: saturation = (max - lightness) / min(lightness, 1 - lightness).
+/// Hue is set to 0 when saturation is fuzzy-zero (< 1e-11).
 pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     let min = r.min(g.min(b));
     let max = r.max(g.max(b));
     let lightness = (min + max) / 2.0;
 
-    if (max - min).abs() < 1e-10 {
+    if max == min {
         return [0.0, 0.0, lightness];
     }
 
     let delta = max - min;
-    let sum = max + min;
 
-    let denominator = if sum > 1.0 { 2.0 - sum } else { sum };
-    // When lightness is 0 or 1 (denominator ≈ 0), saturation is 0
-    let mut saturation = if denominator.abs() < f64::EPSILON {
+    // dart-sass formula: saturation = (max - lightness) / min(lightness, 1 - lightness)
+    // Guard against division by zero when lightness is exactly 0 or 1.
+    let mut saturation = if lightness == 0.0 || lightness == 1.0 {
         0.0
     } else {
-        delta / denominator
+        (max - lightness) / lightness.min(1.0 - lightness)
     };
 
     let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
@@ -533,6 +535,12 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     if saturation < 0.0 {
         saturation = -saturation;
         hue += 180.0;
+    }
+
+    // When saturation is effectively zero (fuzzy), set hue to 0.
+    // This catches near-achromatic colors from conversion roundtrips.
+    if saturation.abs() < 1e-11 {
+        return [0.0, 0.0, lightness];
     }
 
     if hue < 0.0 {
