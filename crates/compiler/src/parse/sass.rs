@@ -50,6 +50,9 @@ impl<'a> BaseParser for SassParser<'a> {
             match next {
                 Some(Token { kind: '\n', .. }) => continue,
                 Some(Token { kind: '*', .. }) => {}
+                None => {
+                    return Err(("expected more input.", self.toks.current_span()).into());
+                }
                 _ => continue,
             }
 
@@ -61,8 +64,12 @@ impl<'a> BaseParser for SassParser<'a> {
                 }
             }
 
-            if matches!(next, Some(Token { kind: '/', .. })) {
-                break;
+            match next {
+                Some(Token { kind: '/', .. }) => break,
+                None => {
+                    return Err(("expected more input.", self.toks.current_span()).into());
+                }
+                _ => {}
             }
         }
 
@@ -312,11 +319,23 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
                 buffer.add_char(' ');
             }
 
+            let mut found_close = false;
             while self.toks.peek().is_some() {
                 match self.toks.peek() {
                     Some(Token {
                         kind: '\n' | '\r', ..
                     }) => break,
+                    Some(Token { kind: '*', .. })
+                        if matches!(self.toks.peek_n(1), Some(Token { kind: '/', .. })) =>
+                    {
+                        // Found `*/` — consume it and stop
+                        buffer.add_char('*');
+                        self.toks.next();
+                        buffer.add_char('/');
+                        self.toks.next();
+                        found_close = true;
+                        break;
+                    }
                     Some(Token { kind: '#', .. }) => {
                         if matches!(self.toks.peek_n(1), Some(Token { kind: '{', .. })) {
                             buffer.add_interpolation(self.parse_single_interpolation()?);
@@ -329,8 +348,41 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
                         buffer.add_char(kind);
                         self.toks.next();
                     }
-                    None => todo!(),
+                    None => {
+                        return Err(("expected more input.", self.toks.current_span()).into());
+                    }
                 }
+            }
+
+            if found_close {
+                // Check for content after `*/` on the same line
+                self.spaces();
+                if let Some(tok) = self.toks.peek() {
+                    match tok.kind {
+                        '\n' | '\r' => {}
+                        '/' if matches!(self.toks.peek_n(1), Some(Token { kind: '/', .. })) => {
+                            // Silent comment after close — skip rest of line
+                            self.skip_silent_comment()?;
+                        }
+                        '/' if matches!(self.toks.peek_n(1), Some(Token { kind: '*', .. })) => {
+                            // Another loud comment after close — skip rest of line
+                            while let Some(tok) = self.toks.peek() {
+                                if tok.kind == '\n' || tok.kind == '\r' {
+                                    break;
+                                }
+                                self.toks.next();
+                            }
+                        }
+                        _ => {
+                            return Err((
+                                "Unexpected text after end of comment",
+                                self.toks.current_span(),
+                            )
+                                .into());
+                        }
+                    }
+                }
+                break;
             }
 
             if self.peek_indentation()? <= parent_indentation {

@@ -1896,6 +1896,18 @@ impl<'a> Serializer<'a> {
                 } else if unknown_at_rule.body.iter().all(CssStmt::is_invisible) {
                     self.buffer.extend_from_slice(b" {}");
                     return Ok(true);
+                } else if unknown_at_rule
+                    .body
+                    .iter()
+                    .all(|s| matches!(s, CssStmt::Comment(..)))
+                {
+                    // Comment-only body renders on a single line
+                    self.buffer.extend_from_slice(b" { ");
+                    for stmt in unknown_at_rule.body {
+                        self.visit_stmt(stmt)?;
+                    }
+                    self.buffer.extend_from_slice(b" }");
+                    return Ok(true);
                 }
 
                 self.write_children(unknown_at_rule.body)?;

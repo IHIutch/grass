@@ -3811,6 +3811,30 @@ impl<'a> Visitor<'a> {
                         }
                     }
                 }
+
+                // Reject leading combinators at the top level in plain CSS
+                if self.plain_css_style_rule_depth == 0 {
+                    if let Some(ComplexSelectorComponent::Combinator(..)) =
+                        complex.components.first()
+                    {
+                        return Err((
+                            "Top-level leading combinators aren't allowed in plain CSS.",
+                            ruleset.selector_span,
+                        )
+                            .into());
+                    }
+                }
+
+                // Reject trailing combinators in plain CSS
+                if let Some(ComplexSelectorComponent::Combinator(..)) =
+                    complex.components.last()
+                {
+                    return Err((
+                        "expected selector.",
+                        ruleset.selector_span,
+                    )
+                        .into());
+                }
             }
         }
 

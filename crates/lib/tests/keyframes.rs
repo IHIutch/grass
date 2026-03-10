@@ -104,7 +104,7 @@ test!(
 test!(
     keyframes_contains_multiline_comment,
     "@keyframes foo {/**/}",
-    "@keyframes foo {\n  /**/\n}\n"
+    "@keyframes foo { /**/ }\n"
 );
 test!(
     keyframes_multiple_rulesets,

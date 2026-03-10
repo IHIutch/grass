@@ -3032,8 +3032,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 '/' => {
                     let comment_start = self.toks().cursor();
                     match self.toks().peek_n(1) {
-                        Some(Token { kind: '/', .. }) => {
-                            // Silent comments are always stripped
+                        Some(Token { kind: '/', .. }) if bracket_depth == 0 => {
+                            // Silent comments are always stripped, but only at the
+                            // top level — inside parens (e.g. url-prefix(http://...))
+                            // `//` is literal text, not a comment.
                             self.skip_silent_comment()?;
                         }
                         Some(Token { kind: '*', .. }) => {
