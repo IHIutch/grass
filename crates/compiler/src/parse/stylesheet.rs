@@ -796,6 +796,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     fn parse_import_supports_query(&mut self) -> SassResult<AstSupportsCondition> {
+        self.whitespace()?;
         Ok(if self.scan_identifier("not", false)? {
             self.whitespace()?;
             AstSupportsCondition::Negation(Box::new(self.supports_condition_in_parens()?))
@@ -834,6 +835,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 buffer.add_interpolation(identifier);
 
                 if name.as_deref() != Some("and") && self.scan_char('(') {
+                    let was_cn = self.is_consuming_newlines();
+                    self.set_consume_newlines(true);
+
                     if name.as_deref() == Some("supports") {
                         let query = self.parse_import_supports_query()?;
                         let is_declaration =
@@ -857,6 +861,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
 
                     self.expect_char(')')?;
+                    self.set_consume_newlines(was_cn);
                     self.whitespace()?;
                 } else {
                     self.whitespace()?;
@@ -2363,7 +2368,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '\n' | '\r' => {
-                    if self.is_indented() && brackets.is_empty() {
+                    if self.is_indented()
+                        && brackets.is_empty()
+                        && !self.is_consuming_newlines()
+                    {
                         break;
                     }
                     if !matches!(
@@ -3043,7 +3051,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '\r' | '\n' => {
-                    if self.is_indented() && bracket_depth == 0 {
+                    if self.is_indented()
+                        && bracket_depth == 0
+                        && !self.is_consuming_newlines()
+                    {
                         break;
                     }
                     buffer.add_char(self.toks_mut().next().unwrap().kind);

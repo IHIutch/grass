@@ -398,7 +398,48 @@ impl<'a> SassParser<'a> {
         let start = self.toks.cursor();
 
         // Accept semicolons before newlines (dart-sass allows them in indented syntax)
-        self.scan_char(';');
+        if self.scan_char(';') {
+            // Skip trailing whitespace and comments after semicolons
+            loop {
+                match self.toks.peek() {
+                    Some(Token { kind: ' ' | '\t', .. }) => {
+                        self.toks.next();
+                    }
+                    Some(Token { kind: '/', .. })
+                        if matches!(self.toks.peek_n(1), Some(Token { kind: '/', .. })) =>
+                    {
+                        // Skip silent comment to end of line
+                        while matches!(self.toks.peek(), Some(tok) if tok.kind != '\n' && tok.kind != '\r')
+                        {
+                            self.toks.next();
+                        }
+                    }
+                    Some(Token { kind: '/', .. })
+                        if matches!(self.toks.peek_n(1), Some(Token { kind: '*', .. })) =>
+                    {
+                        // Skip loud comment
+                        self.toks.next(); // /
+                        self.toks.next(); // *
+                        loop {
+                            match self.toks.next() {
+                                Some(Token { kind: '*', .. })
+                                    if matches!(
+                                        self.toks.peek(),
+                                        Some(Token { kind: '/', .. })
+                                    ) =>
+                                {
+                                    self.toks.next();
+                                    break;
+                                }
+                                None => break,
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
 
         if self.toks.peek().is_none() {
             self.next_indentation = Some(0);
