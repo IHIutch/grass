@@ -77,6 +77,7 @@ impl PartialEq for Value {
                         true
                     }
                 }
+                Value::Map(map2) => list1.is_empty() && map2.is_empty(),
                 _ => false,
             },
             Value::Null => matches!(other, Value::Null),
@@ -96,13 +97,11 @@ impl PartialEq for Value {
                     false
                 }
             }
-            Value::Map(map1) => {
-                if let Value::Map(map2) = other {
-                    map1 == map2
-                } else {
-                    false
-                }
-            }
+            Value::Map(map1) => match other {
+                Value::Map(map2) => map1 == map2,
+                Value::List(list2, _, _) => map1.is_empty() && list2.is_empty(),
+                _ => false,
+            },
             Value::Color(color1) => {
                 if let Value::Color(color2) = other {
                     color1 == color2
