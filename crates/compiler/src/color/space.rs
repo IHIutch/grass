@@ -200,8 +200,8 @@ impl ColorSpace {
     pub fn white_channels(self) -> [Option<f64>; 3] {
         match self {
             Self::Rgb => [Some(255.0), Some(255.0), Some(255.0)],
-            Self::Hsl => [Some(0.0), Some(0.0), Some(1.0)], // hue=0, sat=0, lightness=1.0 (100%)
-            Self::Hwb => [Some(0.0), Some(1.0), Some(0.0)], // hue=0, whiteness=1.0, blackness=0
+            Self::Hsl => [None, Some(0.0), Some(1.0)], // hue=none (powerless), sat=0, lightness=1.0 (100%)
+            Self::Hwb => [None, Some(1.0), Some(0.0)], // hue=none (powerless), whiteness=1.0, blackness=0
             Self::SRgb | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => {
                 [Some(1.0), Some(1.0), Some(1.0)]
             }
@@ -219,8 +219,8 @@ impl ColorSpace {
     pub fn black_channels(self) -> [Option<f64>; 3] {
         match self {
             Self::Rgb => [Some(0.0), Some(0.0), Some(0.0)],
-            Self::Hsl => [Some(0.0), Some(0.0), Some(0.0)],
-            Self::Hwb => [Some(0.0), Some(0.0), Some(1.0)],
+            Self::Hsl => [None, Some(0.0), Some(0.0)], // hue=none (powerless)
+            Self::Hwb => [None, Some(0.0), Some(1.0)], // hue=none (powerless)
             Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb
             | Self::ProphotoRgb | Self::Rec2020 => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Lab => [Some(0.0), Some(0.0), Some(0.0)],
