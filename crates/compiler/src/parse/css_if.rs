@@ -519,6 +519,9 @@ fn try_extend_with_raw<'a>(
             parser.toks_mut().next(); // {
             let expr = parser.parse_expression(None, None, None)?;
             parser.expect_char('}')?;
+            if parser.is_plain_css() {
+                return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
+            }
             let span = parser.toks_mut().span_from(pos);
             if had_whitespace {
                 buffer.add_char(' ');
@@ -661,6 +664,10 @@ fn parse_condition_primary<'a>(
         let expr = parser.parse_expression(None, None, None)?;
         parser.expect_char('}')?;
 
+        if parser.is_plain_css() {
+            return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
+        }
+
         // Check if followed by `(` — forms an interpolated function name
         if parser.toks().next_char_is('(') {
             parser.expect_char('(')?;
@@ -729,6 +736,10 @@ fn parse_condition_primary<'a>(
 
     match lower.as_str() {
         "sass" => {
+            if parser.is_plain_css() {
+                let span = parser.toks_mut().span_from(ident_start);
+                return Err(("sass() conditions aren't allowed in plain CSS", span).into());
+            }
             parser.whitespace()?;
             let expr = parser.parse_expression(None, None, None)?;
             parser.whitespace()?;
@@ -778,6 +789,9 @@ fn parse_css_function_args<'a>(
                 parser.toks_mut().next(); // {
                 let expr = parser.parse_expression(None, None, None)?;
                 parser.expect_char('}')?;
+                if parser.is_plain_css() {
+                    return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
+                }
                 buffer.add_expr(expr);
             }
             '\'' | '"' => {

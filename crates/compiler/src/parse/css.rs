@@ -167,6 +167,13 @@ impl<'a> CssParser<'a> {
 
         let lower = plain.to_ascii_lowercase();
 
+        // Try CSS if() syntax first (before special function check)
+        if lower == "if" && self.toks().next_char_is('(') {
+            if let Some(css_if) = super::css_if::try_parse_css_if(self, start)? {
+                return Ok(css_if);
+            }
+        }
+
         if let Some(special_fn) = ValueParser::try_parse_special_function(self, &lower, start)? {
             return Ok(special_fn);
         }
