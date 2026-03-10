@@ -364,8 +364,14 @@ pub(crate) fn parse_channels(
                 }
             }
 
-            let fn_string = function_string(name, &[channels], visitor, span)?;
-            Ok(ParsedChannels::String(fn_string))
+            // Only pass through as CSS string if it contains a special function
+            if crate::utils::is_special_function(text) || list.iter().any(|v| v.is_special_function()) {
+                let fn_string = function_string(name, &[channels], visitor, span)?;
+                Ok(ParsedChannels::String(fn_string))
+            } else {
+                // Return the list as-is so the caller can produce the proper error
+                Ok(ParsedChannels::List(list))
+            }
         }
         _ => Ok(ParsedChannels::List(list)),
     }
