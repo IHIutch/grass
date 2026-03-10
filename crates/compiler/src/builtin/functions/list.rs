@@ -155,6 +155,7 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     args.max_args(4)?;
     let (mut list1, sep1, brackets) = match args.get_err(0, "list1")? {
         Value::List(v, sep, brackets) => (v, sep, brackets),
+        Value::ArgList(v) => (v.elems, v.separator, Brackets::None),
         Value::Map(m) => {
             let sep = if m.is_empty() {
                 ListSeparator::Undecided
@@ -167,6 +168,7 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     };
     let (list2, sep2) = match args.get_err(1, "list2")? {
         Value::List(v, sep, ..) => (v, sep),
+        Value::ArgList(v) => (v.elems, v.separator),
         Value::Map(m) => {
             let sep = if m.is_empty() {
                 ListSeparator::Undecided
