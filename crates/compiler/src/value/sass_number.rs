@@ -228,6 +228,11 @@ impl SassNumber {
             return false;
         }
 
+        // Unitless is only compatible with unitless
+        if self.unit == Unit::None || other.unit == Unit::None {
+            return self.unit == Unit::None && other.unit == Unit::None;
+        }
+
         let known_compatibilities = match known_compatibilities_by_unit(&self.unit) {
             Some(known_compatibilities) => known_compatibilities,
             None => return true,

@@ -550,9 +550,11 @@ impl SassCalculation {
 
     // --- Multi-arg functions ---
 
-    pub fn atan2(args: Vec<CalculationArg>, _options: &Options, _span: Span) -> SassResult<Value> {
+    pub fn atan2(args: Vec<CalculationArg>, options: &Options, span: Span) -> SassResult<Value> {
         let args = Self::simplify_arguments(args);
         debug_assert!(args.len() == 2);
+
+        Self::verify_compatible_numbers(&args, options, span)?;
 
         match (&args[0], &args[1]) {
             (CalculationArg::Number(y), CalculationArg::Number(x)) => {
@@ -677,10 +679,11 @@ impl SassCalculation {
     pub fn hypot(args: Vec<CalculationArg>, options: &Options, span: Span) -> SassResult<Value> {
         let args = Self::simplify_arguments(args);
 
+        Self::verify_compatible_numbers(&args, options, span)?;
+
         let first = match &args[0] {
             CalculationArg::Number(n) => n,
             _ => {
-                Self::verify_compatible_numbers(&args, options, span)?;
                 return Ok(Self::unsimplified_calc(CalculationName::Hypot, args));
             }
         };
@@ -711,7 +714,6 @@ impl SassCalculation {
                 as_slash: None,
             }))
         } else {
-            Self::verify_compatible_numbers(&args, options, span)?;
             Ok(Self::unsimplified_calc(CalculationName::Hypot, args))
         }
     }
@@ -726,7 +728,7 @@ impl SassCalculation {
 
         match (&args[0], &args[1]) {
             (CalculationArg::Number(a), CalculationArg::Number(b))
-                if a.unit.comparable(&b.unit) =>
+                if a.has_possibly_compatible_units(b) && a.unit.comparable(&b.unit) =>
             {
                 let b_converted = b.num.convert(&b.unit, &a.unit).0;
                 // CSS mod: result sign matches divisor
@@ -759,7 +761,7 @@ impl SassCalculation {
 
         match (&args[0], &args[1]) {
             (CalculationArg::Number(a), CalculationArg::Number(b))
-                if a.unit.comparable(&b.unit) =>
+                if a.has_possibly_compatible_units(b) && a.unit.comparable(&b.unit) =>
             {
                 let b_converted = b.num.convert(&b.unit, &a.unit).0;
                 // CSS rem: result sign matches dividend (IEEE remainder)
@@ -835,7 +837,7 @@ impl SassCalculation {
         if args.len() == 2 {
             match (&args[0], &args[1]) {
                 (CalculationArg::Number(number), CalculationArg::Number(step))
-                    if number.unit.comparable(&step.unit) =>
+                    if number.has_possibly_compatible_units(step) && number.unit.comparable(&step.unit) =>
                 {
                     let step_converted = step.num.convert(&step.unit, &number.unit).0;
                     let result =
