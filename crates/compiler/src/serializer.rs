@@ -1686,6 +1686,12 @@ impl<'a> Serializer<'a> {
             // Skip the newline
             if pos < rest_bytes.len() {
                 pos += 1;
+                // If the value ended with a newline (no more content),
+                // add trailing space so serialized `;` becomes `} ;`
+                if pos >= rest_bytes.len() {
+                    self.buffer.push(b' ');
+                    return;
+                }
             } else {
                 return;
             }
@@ -1761,7 +1767,6 @@ impl<'a> Serializer<'a> {
             _ => false,
         }
     }
-
 
     fn write_children(&mut self, mut children: Vec<CssStmt>) -> SassResult<()> {
         if self.options.is_compressed() {
