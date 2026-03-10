@@ -52,23 +52,43 @@ pub(crate) fn whiteness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 fn hwb_inner(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     let span = args.span();
 
-    let hue = angle_value(args.get_err(0, "hue")?, "hue", args.span())?;
+    let hue_val = args.get_err(0, "hue")?;
+    let whiteness_val = args.get_err(1, "whiteness")?;
+    let blackness_val = args.get_err(2, "blackness")?;
+    let alpha_val = args.default_arg(3, "alpha", Value::Dimension(SassNumber::new_unitless(1.0)));
 
-    let whiteness = args
-        .get_err(1, "whiteness")?
-        .assert_number_with_name("whiteness", span)?;
+    // If any argument is a special function, pass through as CSS string.
+    // dart-sass outputs HWB in modern space-separated syntax for passthrough.
+    if [&hue_val, &whiteness_val, &blackness_val, &alpha_val]
+        .iter()
+        .copied()
+        .any(Value::is_special_function)
+    {
+        let is_compressed = visitor.options.is_compressed();
+        let mut result = String::from("hwb(");
+        result.push_str(&hue_val.to_css_string(span, is_compressed)?);
+        result.push(' ');
+        result.push_str(&whiteness_val.to_css_string(span, is_compressed)?);
+        result.push(' ');
+        result.push_str(&blackness_val.to_css_string(span, is_compressed)?);
+        if args.len() == 4 {
+            result.push_str(" / ");
+            result.push_str(&alpha_val.to_css_string(span, is_compressed)?);
+        }
+        result.push(')');
+        return Ok(Value::String(result, QuoteKind::None));
+    }
+
+    let hue = angle_value(hue_val, "hue", span)?;
+
+    let whiteness = whiteness_val.assert_number_with_name("whiteness", span)?;
     whiteness.assert_unit(&Unit::Percent, "whiteness", span)?;
 
-    let blackness = args
-        .get_err(2, "blackness")?
-        .assert_number_with_name("blackness", span)?;
+    let blackness = blackness_val.assert_number_with_name("blackness", span)?;
     blackness.assert_unit(&Unit::Percent, "blackness", span)?;
 
-    let alpha = args
-        .default_arg(3, "alpha", Value::Dimension(SassNumber::new_unitless(1.0)))
-        .assert_number_with_name("alpha", args.span())?;
-
-    let alpha = percentage_or_unitless(&alpha, 1.0, "alpha", args.span(), visitor)?;
+    let alpha = alpha_val.assert_number_with_name("alpha", span)?;
+    let alpha = percentage_or_unitless(&alpha, 1.0, "alpha", span, visitor)?;
 
     Ok(Value::Color(Arc::new(Color::from_hwb(
         hue,
@@ -92,9 +112,10 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         )? {
             ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
             ParsedChannels::List(list) => {
-                // Check if any channel is `none` — if so, use modern Color 4 path
+                // Check if any channel is `none` or a special function — if so, use modern Color 4 path
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
-                if has_none {
+                let has_special = list.iter().any(|v| v.is_special_function());
+                if has_none || has_special {
                     let has_alpha = list.len() > 3;
                     return super::css_color4::construct_color("hwb", ColorSpace::Hwb, &list, has_alpha, span, visitor);
                 }

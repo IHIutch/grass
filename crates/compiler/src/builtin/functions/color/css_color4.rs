@@ -100,14 +100,15 @@ pub(crate) fn construct_color(
     let any_special = channels.iter().any(|v| v.is_special_function());
     if any_special {
         let is_compressed = visitor.options.is_compressed();
-        let legacy = space.is_legacy();
-        let sep = if legacy { ", " } else { " " };
+        // RGB and HSL use comma-separated syntax; HWB and all modern spaces use space-separated
+        let comma_sep = matches!(space, ColorSpace::Rgb | ColorSpace::Hsl);
+        let sep = if comma_sep { ", " } else { " " };
         let mut result = String::new();
         result.push_str(name);
         result.push('(');
         for (i, ch) in channels.iter().enumerate() {
             if has_alpha && i == 3 {
-                if legacy {
+                if comma_sep {
                     result.push_str(sep);
                 } else {
                     // Modern color functions: dart-sass uses no spaces around /
@@ -457,11 +458,8 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             result.push_str(&ch.to_css_string(span, is_compressed)?);
         }
         if let Some(alpha) = &alpha_val {
-            if is_compressed {
-                result.push('/');
-            } else {
-                result.push_str(" / ");
-            }
+            // dart-sass uses no spaces around / for color() passthrough
+            result.push('/');
             result.push_str(&alpha.to_css_string(span, is_compressed)?);
         }
         result.push(')');

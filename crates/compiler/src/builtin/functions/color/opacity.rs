@@ -73,6 +73,7 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
 
 pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
+    let span = args.span();
     match args.get_err(0, "color")? {
         Value::Color(c) => Ok(Value::Dimension(SassNumber::new_unitless(c.alpha()))),
         Value::Dimension(SassNumber {
@@ -83,9 +84,13 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
             format!("opacity({}{})", num.inspect(), unit),
             QuoteKind::None,
         )),
+        v if v.is_special_function() => Ok(Value::String(
+            format!("opacity({})", v.to_css_string(span, visitor.options.is_compressed())?),
+            QuoteKind::None,
+        )),
         v => Err((
-            format!("$color: {} is not a color.", v.inspect(args.span())?),
-            args.span(),
+            format!("$color: {} is not a color.", v.inspect(span)?),
+            span,
         )
             .into()),
     }
