@@ -987,6 +987,28 @@ impl Color {
                     result.channels[i] = None;
                 }
             }
+
+            // Lab: a and b are powerless when lightness is 0 or missing,
+            // but only when converting from LCH or Lab itself.
+            // This matches dart-sass, where Lab.convert() applies powerlessAB
+            // only when called from LCH.convert() (polar→rectangular delegation).
+            // Note: OKLab does NOT have this rule — dart-sass's OKLab converter
+            // does not force a,b to None when lightness is 0.
+            let apply_lab_powerless = matches!(
+                (self.space, target),
+                (ColorSpace::Lch, ColorSpace::Lab)
+                | (ColorSpace::Lab, ColorSpace::Lab)
+            );
+            if apply_lab_powerless {
+                let lightness_zero_or_missing = match result.channels[0] {
+                    None => true,
+                    Some(v) => fuzzy_is_zero(v),
+                };
+                if lightness_zero_or_missing {
+                    result.channels[1] = None;
+                    result.channels[2] = None;
+                }
+            }
         }
 
         // For legacy target spaces, always use HSL format for HSL/HWB targets.

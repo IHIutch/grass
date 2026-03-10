@@ -771,16 +771,17 @@ impl<'a> Serializer<'a> {
             match &color.format {
                 ColorFormat::Rgb => self.write_rgb(color),
                 ColorFormat::Hsl => {
-                    // For HWB-stored colors from to-space(), check named colors first.
+                    // For HWB-stored colors from to-space(), serialize as hex
+                    // (like any other legacy color) rather than hsl().
                     // HSL-stored colors always use hsl() format (matching dart-sass).
                     if color.color_space() == ColorSpace::Hwb && fuzzy_equals(color.alpha().0, 1.0) {
-                        let red = color.red().0.round() as u8;
-                        let green = color.green().0.round() as u8;
-                        let blue = color.blue().0.round() as u8;
-                        if let Some(name) = NAMED_COLORS.get_by_rgba([red, green, blue]) {
+                        if let Some(name) = name {
                             self.buffer.extend_from_slice(name.as_bytes());
                         } else {
-                            self.write_hsl(color);
+                            self.buffer.push(b'#');
+                            self.write_hex_component(red as u32);
+                            self.write_hex_component(green as u32);
+                            self.write_hex_component(blue as u32);
                         }
                     } else {
                         self.write_hsl(color);

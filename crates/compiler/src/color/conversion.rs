@@ -565,11 +565,39 @@ pub fn hwb_to_srgb(h: f64, w: f64, b: f64) -> [f64; 3] {
 
 /// Convert sRGB [0,1] to HWB.
 /// Returns (hue [0,360], whiteness [0,1], blackness [0,1]).
+///
+/// Unlike HSL, HWB uses the raw hue without saturation-based correction.
+/// When saturation is negative (out-of-gamut), HSL rotates hue by 180° and
+/// negates saturation, but HWB keeps the raw hue value.
 pub fn srgb_to_hwb(r: f64, g: f64, b: f64) -> [f64; 3] {
-    let hsl = srgb_to_hsl(r, g, b);
-    let white = r.min(g.min(b));
-    let black = 1.0 - r.max(g.max(b));
-    [hsl[0], white, black]
+    let min = r.min(g.min(b));
+    let max = r.max(g.max(b));
+
+    let hue = if (max - min).abs() < 1e-10 {
+        0.0
+    } else {
+        raw_hue(r, g, b, max, max - min)
+    };
+
+    [hue, min, 1.0 - max]
+}
+
+/// Compute the raw hue from sRGB values, without saturation-based correction.
+/// Result is in [0, 360).
+fn raw_hue(r: f64, g: f64, b: f64, max: f64, delta: f64) -> f64 {
+    let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
+        60.0 * (r - g) / delta + 240.0
+    } else if (max - g).abs() < f64::EPSILON {
+        60.0 * (b - r) / delta + 120.0
+    } else {
+        60.0 * (g - b) / delta + 360.0
+    };
+
+    hue %= 360.0;
+    if hue < 0.0 {
+        hue += 360.0;
+    }
+    hue
 }
 
 /// Convert Lab to XYZ-D50.
