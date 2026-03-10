@@ -386,6 +386,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 body: children,
                 span: self.toks_mut().span_from(start),
             }
+        } else if self.is_indented() && self.at_end_of_statement() {
+            // Empty @at-root with no children in indented syntax
+            AstAtRootRule {
+                query: None,
+                body: Vec::new(),
+                span: self.toks_mut().span_from(start),
+            }
         } else {
             let child = self.parse_style_rule(None, None)?;
             AstAtRootRule {
