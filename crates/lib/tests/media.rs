@@ -499,7 +499,7 @@ test!(
             color: red;
         }
     }",
-    "@media (foo) and (prefers-reduced-motion: reduce) {\n  a {\n    transition: none;\n  }\n}\n@media (foo) {\n  a {\n    color: red;\n  }\n}\n@media (foo) {\n  a {\n    color: red;\n  }\n}\n"
+    "@media (foo) and (prefers-reduced-motion: reduce) {\n  a {\n    transition: none;\n  }\n}\n@media (foo) {\n  a {\n    color: red;\n  }\n  a {\n    color: red;\n  }\n}\n"
 );
 test!(
     doesnt_split_child_nodes_when_trailing_media,

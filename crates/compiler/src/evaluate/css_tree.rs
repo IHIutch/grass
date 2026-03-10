@@ -194,6 +194,36 @@ impl CssTree {
         })
     }
 
+    /// Check if the last child of `grandparent_idx` is a media rule with the
+    /// same query as the media rule at `parent_idx`. Used for merging consecutive
+    /// siblings with matching media queries after bubbling.
+    pub fn last_matching_media_sibling(
+        &self,
+        parent_idx: CssTreeIdx,
+        grandparent_idx: CssTreeIdx,
+    ) -> Option<CssTreeIdx> {
+        let children = self.parent_to_child.get(&grandparent_idx)?;
+        let &last = children.last()?;
+
+        if last == parent_idx {
+            return None;
+        }
+
+        let parent_stmt = self.stmts[parent_idx.0].borrow();
+        let last_stmt = self.stmts[last.0].borrow();
+
+        match (&*parent_stmt, &*last_stmt) {
+            (Some(CssStmt::Media(parent_media, _)), Some(CssStmt::Media(last_media, _))) => {
+                if parent_media.query == last_media.query {
+                    Some(last)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn add_stmt(&mut self, child: CssStmt, parent: Option<CssTreeIdx>) -> CssTreeIdx {
         match parent {
             Some(parent) => self.add_child(child, parent),

@@ -1974,13 +1974,24 @@ impl<'a> Visitor<'a> {
             // interstitial sibling.
             if self.css_tree.has_following_sibling(parent) {
                 let grandparent = self.css_tree.child_to_parent.get(&parent).copied().unwrap();
-                let parent_node = self
-                    .css_tree
-                    .get(parent)
-                    .as_ref()
-                    .map(CssStmt::copy_without_children)
-                    .unwrap();
-                parent = self.css_tree.add_child(parent_node, grandparent);
+
+                // Check if the last child of the grandparent already has matching
+                // media queries — if so, reuse it instead of creating a new copy.
+                // This merges siblings like `h` and `k` into the same `@media`
+                // block after bubbling (dart-sass#777).
+                if let Some(existing) =
+                    self.css_tree.last_matching_media_sibling(parent, grandparent)
+                {
+                    parent = existing;
+                } else {
+                    let parent_node = self
+                        .css_tree
+                        .get(parent)
+                        .as_ref()
+                        .map(CssStmt::copy_without_children)
+                        .unwrap();
+                    parent = self.css_tree.add_child(parent_node, grandparent);
+                }
             }
         }
 
