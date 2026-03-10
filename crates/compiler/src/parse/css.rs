@@ -98,7 +98,7 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
 
         match name.as_plain() {
             Some("at-root") | Some("content") | Some("debug") | Some("each") | Some("error")
-            | Some("extend") | Some("for") | Some("function") | Some("if") | Some("include")
+            | Some("extend") | Some("for") | Some("if") | Some("include")
             | Some("mixin") | Some("return") | Some("warn") | Some("while") => {
                 self.almost_any_value(false)?;
                 Err((
@@ -106,6 +106,19 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
                     self.toks.span_from(start),
                 )
                     .into())
+            }
+            Some("function") => {
+                // CSS @function --name() is allowed in plain CSS
+                if self.toks.next_char_is('-') {
+                    self.unknown_at_rule(name, start)
+                } else {
+                    self.almost_any_value(false)?;
+                    Err((
+                        "This at-rule isn't allowed in plain CSS.",
+                        self.toks.span_from(start),
+                    )
+                        .into())
+                }
             }
             Some("import") => self.parse_css_import_rule(start),
             Some("media") => self.parse_media_rule(start),

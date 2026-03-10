@@ -1315,6 +1315,15 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 None
             };
 
+        // CSS custom function: @function --name() or @FUNCTION --name()
+        let is_css_function = name.as_plain()
+            .map_or(false, |n| n.eq_ignore_ascii_case("function"))
+            && value.as_ref().map_or(false, |v| v.initial_plain().starts_with("--"));
+        let was_in_css_function = self.flags().in_css_function_body();
+        if is_css_function {
+            self.flags_mut().set(ContextFlags::IN_CSS_FUNCTION_BODY, true);
+        }
+
         let children = if self.looking_at_children()? {
             Some(self.with_children(Self::parse_statement)?.node)
         } else {
@@ -1324,6 +1333,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.flags_mut()
             .set(ContextFlags::IN_UNKNOWN_AT_RULE, was_in_unknown_at_rule);
+        if is_css_function {
+            self.flags_mut()
+                .set(ContextFlags::IN_CSS_FUNCTION_BODY, was_in_css_function);
+        }
 
         Ok(AstStmt::UnknownAtRule(AstUnknownAtRule {
             name,
@@ -2649,12 +2662,24 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
         mid_buffer.push(':');
 
-        // Parse custom properties as declarations no matter what.
-        if name_buffer.initial_plain().starts_with("--") {
+        // Parse custom properties and CSS function body declarations as raw CSS.
+        let is_custom_property = name_buffer.initial_plain().starts_with("--");
+        let is_css_fn_decl = self.flags().in_css_function_body() && name_buffer.as_plain().is_some();
+        if is_custom_property || is_css_fn_decl {
+            // For CSS function body declarations, consume whitespace so the
+            // serializer's ": " doesn't create a double space.
+            if is_css_fn_decl && !is_custom_property {
+                self.whitespace()?;
+            }
             let value_start = self.toks().cursor();
             let value = self.parse_interpolated_declaration_value_no_strip_comments(false, true, true)?;
             let value_span = self.toks_mut().span_from(value_start);
-            self.expect_statement_separator(Some("custom property"))?;
+            let separator_name = if is_css_fn_decl && !is_custom_property {
+                Some("@function result")
+            } else {
+                Some("custom property")
+            };
+            self.expect_statement_separator(separator_name)?;
             return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(AstStyle {
                 name: name_buffer,
                 value: Some(

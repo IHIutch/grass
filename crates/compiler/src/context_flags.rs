@@ -21,6 +21,7 @@ impl ContextFlags {
     pub const IN_SUPPORTS_DECLARATION: ContextFlag = ContextFlag(1 << 11);
     pub const IN_SEMI_GLOBAL_SCOPE: ContextFlag = ContextFlag(1 << 12);
     pub const IN_KEYFRAMES_RULE: ContextFlag = ContextFlag(1 << 13);
+    pub const IN_CSS_FUNCTION_BODY: ContextFlag = ContextFlag(1 << 14);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -84,6 +85,10 @@ impl ContextFlags {
 
     pub fn in_keyframes_rule(self) -> bool {
         (self.0 & Self::IN_KEYFRAMES_RULE) != 0
+    }
+
+    pub fn in_css_function_body(self) -> bool {
+        (self.0 & Self::IN_CSS_FUNCTION_BODY) != 0
     }
 
     pub fn found_content_rule(self) -> bool {
