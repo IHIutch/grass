@@ -100,22 +100,21 @@ pub(crate) fn construct_color(
     let any_special = channels.iter().any(|v| v.is_special_function());
     if any_special {
         let is_compressed = visitor.options.is_compressed();
+        let legacy = space.is_legacy();
+        let sep = if legacy { ", " } else { " " };
         let mut result = String::new();
         result.push_str(name);
         result.push('(');
         for (i, ch) in channels.iter().enumerate() {
             if has_alpha && i == 3 {
-                if is_compressed {
-                    result.push_str("/");
+                if legacy {
+                    result.push_str(sep);
                 } else {
-                    result.push_str(" / ");
+                    // Modern color functions: dart-sass uses no spaces around /
+                    result.push('/');
                 }
             } else if i > 0 {
-                if !is_compressed {
-                    result.push(' ');
-                } else {
-                    result.push(' ');
-                }
+                result.push_str(sep);
             }
             result.push_str(&ch.to_css_string(span, is_compressed)?);
         }
@@ -412,7 +411,23 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         }
     }
 
+    // If there are fewer than 3 channels but any is a special function (var(), calc(), etc.),
+    // the var() could expand to multiple values at runtime — pass through as CSS string.
     if channel_items.len() < 3 {
+        if channel_items.iter().any(|v| v.is_special_function() || v.is_var()) {
+            let is_compressed = visitor.options.is_compressed();
+            let mut result = format!("color({}", space_name);
+            for ch in &channel_items {
+                result.push(' ');
+                result.push_str(&ch.to_css_string(span, is_compressed)?);
+            }
+            if let Some(alpha) = &alpha_val {
+                result.push('/');
+                result.push_str(&alpha.to_css_string(span, is_compressed)?);
+            }
+            result.push(')');
+            return Ok(Value::String(result, QuoteKind::None));
+        }
         let channel_defs = space.channels();
         let missing = channel_defs.get(channel_items.len()).map_or("channel", |c| c.name);
         return Err((

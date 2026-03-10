@@ -4,10 +4,13 @@ use crate::color::space::ColorSpace;
 use super::ParsedChannels;
 
 /// Try to parse a string part from a "channel/alpha" split as a value.
-/// Handles "none", plain numbers (0.4), and percentages (40%).
+/// Handles "none", plain numbers (0.4), percentages (40%), and special
+/// CSS functions (var(), calc(), env(), attr(), min(), max(), clamp()).
 pub(crate) fn parse_slash_part(s: &str) -> Option<Value> {
     if s == "none" {
         Some(Value::String("none".to_owned(), QuoteKind::None))
+    } else if crate::utils::is_special_function(s) {
+        Some(Value::String(s.to_owned(), QuoteKind::None))
     } else if let Some(num_str) = s.strip_suffix('%') {
         num_str
             .parse::<f64>()
@@ -312,7 +315,7 @@ pub(crate) fn parse_channels(
         )
             .into());
     } else if list.len() < 3 {
-        if list.iter().any(Value::is_var)
+        if list.iter().any(|v| v.is_var() || v.is_special_function())
             || (!list.is_empty() && is_var_slash(list.last().unwrap()))
         {
             let fn_string = function_string(name, &[original_channels], visitor, span)?;
