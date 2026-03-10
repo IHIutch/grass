@@ -1304,9 +1304,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let was_in_unknown_at_rule = self.flags().in_unknown_at_rule();
         self.flags_mut().set(ContextFlags::IN_UNKNOWN_AT_RULE, true);
 
+        // Strip comments from @-moz-document values (dart-sass compatibility)
+        let omit_comments = name.as_plain()
+            .map_or(false, |n| n.eq_ignore_ascii_case("-moz-document"));
+
         let value: Option<Interpolation> =
             if !self.toks_mut().next_char_is('!') && !self.at_end_of_statement() {
-                Some(self.almost_any_value(false)?)
+                Some(self.almost_any_value(omit_comments)?)
             } else {
                 None
             };
@@ -2087,6 +2091,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: None,
                 body: children,
                 span: self.toks_mut().span_from(start),
+
             }));
         }
 
@@ -2116,6 +2121,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: Some(value),
                 body: children,
                 span: self.toks_mut().span_from(start),
+
             }))
         } else {
             self.expect_statement_separator(None)?;
@@ -2124,6 +2130,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: Some(value),
                 body: Vec::new(),
                 span: self.toks_mut().span_from(start),
+
             }))
         }
     }
@@ -2685,6 +2692,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: None,
                 span: self.toks_mut().span_from(start),
                 body,
+
             })));
         }
 
@@ -2741,6 +2749,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: Some(value),
                 span: self.toks_mut().span_from(start),
                 body,
+
             })))
         } else {
             self.expect_statement_separator(None)?;
@@ -2749,6 +2758,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: Some(value),
                 span: self.toks_mut().span_from(start),
                 body: Vec::new(),
+
             })))
         }
     }
