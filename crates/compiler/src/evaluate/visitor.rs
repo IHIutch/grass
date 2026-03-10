@@ -1349,10 +1349,13 @@ impl<'a> Visitor<'a> {
                 &content.env.clone(),
                 span,
                 |content, visitor| {
+                    let old_in_mixin = visitor.flags.in_mixin();
+                    visitor.flags.set(ContextFlags::IN_MIXIN, false);
                     for stmt in content.content.body.iter().cloned() {
                         let result = visitor.visit_stmt(stmt)?;
                         debug_assert!(result.is_none());
                     }
+                    visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
 
                     Ok(())
                 },
@@ -2748,13 +2751,17 @@ impl<'a> Visitor<'a> {
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
                 .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
+                    let old_in_mixin = visitor.flags.in_mixin();
+                    visitor.flags.set(ContextFlags::IN_MIXIN, false);
                     for stmt in function.body.iter().cloned() {
                         let result = visitor.visit_stmt(stmt)?;
 
                         if let Some(val) = result {
+                            visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
                             return Ok(val);
                         }
                     }
+                    visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
 
                     Err(("Function finished without @return.", span).into())
                 }),
@@ -3180,6 +3187,9 @@ impl<'a> Visitor<'a> {
             CalculationName::Rem => {
                 debug_assert_eq!(args.len(), 2);
                 SassCalculation::calc_rem(args, self.options, span)
+            }
+            CalculationName::CalcSize => {
+                Ok(SassCalculation::calc_size(args))
             }
             CalculationName::Round => {
                 // round() can have 1-3 args. With 2-3 args, first might be a strategy keyword.
