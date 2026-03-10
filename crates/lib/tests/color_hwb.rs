@@ -132,8 +132,8 @@ error!(
     "@use \"sass:color\";\na {\n  color: color.whiteness();\n}\n",
     "Error: Missing argument $color."
 );
-error!(
+test!(
     hwb_var_channels,
     "@use \"sass:color\";\na {\n  color: color.hwb(var(--foo));\n}\n",
-    "Error: Expected numeric channels, got \"hwb(var(--foo))\"."
+    "a {\n  color: hwb(var(--foo));\n}\n"
 );

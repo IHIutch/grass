@@ -85,13 +85,44 @@ fn parse_alpha_value(
 }
 
 /// Construct a Color from parsed channels for a known color space.
+/// `name` is the CSS function name (e.g. "lab", "oklch") used for passthrough
+/// when channels contain special functions like var(), calc(), env(), attr().
 pub(crate) fn construct_color(
+    name: &'static str,
     space: ColorSpace,
     channels: &[Value],
     has_alpha: bool,
     span: Span,
     visitor: &mut Visitor,
 ) -> SassResult<Value> {
+    // If any channel is a special function (var(), calc(), env(), attr(), etc.),
+    // pass through as a plain CSS string instead of trying to evaluate.
+    let any_special = channels.iter().any(|v| v.is_special_function());
+    if any_special {
+        let is_compressed = visitor.options.is_compressed();
+        let mut result = String::new();
+        result.push_str(name);
+        result.push('(');
+        for (i, ch) in channels.iter().enumerate() {
+            if has_alpha && i == 3 {
+                if is_compressed {
+                    result.push_str("/");
+                } else {
+                    result.push_str(" / ");
+                }
+            } else if i > 0 {
+                if !is_compressed {
+                    result.push(' ');
+                } else {
+                    result.push(' ');
+                }
+            }
+            result.push_str(&ch.to_css_string(span, is_compressed)?);
+        }
+        result.push(')');
+        return Ok(Value::String(result, QuoteKind::None));
+    }
+
     let channel_defs = space.channels();
 
     let c0 = parse_channel_value(
@@ -186,7 +217,7 @@ pub(crate) fn lab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             if list.len() < 3 {
                 return Err(("Missing element $a.", span).into());
             }
-            construct_color(ColorSpace::Lab, &list, has_alpha, span, visitor)
+            construct_color("lab", ColorSpace::Lab, &list, has_alpha, span, visitor)
         }
     }
 }
@@ -209,7 +240,7 @@ pub(crate) fn lch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             if list.len() < 3 {
                 return Err(("Missing element $chroma.", span).into());
             }
-            construct_color(ColorSpace::Lch, &list, has_alpha, span, visitor)
+            construct_color("lch", ColorSpace::Lch, &list, has_alpha, span, visitor)
         }
     }
 }
@@ -232,7 +263,7 @@ pub(crate) fn oklab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             if list.len() < 3 {
                 return Err(("Missing element $a.", span).into());
             }
-            construct_color(ColorSpace::Oklab, &list, has_alpha, span, visitor)
+            construct_color("oklab", ColorSpace::Oklab, &list, has_alpha, span, visitor)
         }
     }
 }
@@ -255,7 +286,7 @@ pub(crate) fn oklch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             if list.len() < 3 {
                 return Err(("Missing element $chroma.", span).into());
             }
-            construct_color(ColorSpace::Oklch, &list, has_alpha, span, visitor)
+            construct_color("oklch", ColorSpace::Oklch, &list, has_alpha, span, visitor)
         }
     }
 }
@@ -401,11 +432,32 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             .into());
     }
 
+    // Check if any channel or alpha is a special function — pass through as CSS string
+    let alpha_is_special = alpha_val.as_ref().map_or(false, |a| a.is_special_function());
+    if channel_items.iter().any(|v| v.is_special_function()) || alpha_is_special {
+        let is_compressed = visitor.options.is_compressed();
+        let mut result = format!("color({}", space_name);
+        for ch in &channel_items {
+            result.push(' ');
+            result.push_str(&ch.to_css_string(span, is_compressed)?);
+        }
+        if let Some(alpha) = &alpha_val {
+            if is_compressed {
+                result.push('/');
+            } else {
+                result.push_str(" / ");
+            }
+            result.push_str(&alpha.to_css_string(span, is_compressed)?);
+        }
+        result.push(')');
+        return Ok(Value::String(result, QuoteKind::None));
+    }
+
     // Build channels list with optional alpha
     let mut channels_with_alpha = channel_items;
     if let Some(alpha) = alpha_val {
         channels_with_alpha.push(alpha);
     }
 
-    construct_color(space, &channels_with_alpha, channels_with_alpha.len() > 3, span, visitor)
+    construct_color("color", space, &channels_with_alpha, channels_with_alpha.len() > 3, span, visitor)
 }

@@ -90,17 +90,13 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             visitor,
             span,
         )? {
-            ParsedChannels::String(s) => Err((
-                format!("Expected numeric channels, got \"{}\".", s),
-                span,
-            )
-                .into()),
+            ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
             ParsedChannels::List(list) => {
                 // Check if any channel is `none` — if so, use modern Color 4 path
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 if has_none {
                     let has_alpha = list.len() > 3;
-                    return super::css_color4::construct_color(ColorSpace::Hwb, &list, has_alpha, span, visitor);
+                    return super::css_color4::construct_color("hwb", ColorSpace::Hwb, &list, has_alpha, span, visitor);
                 }
                 let args = ArgumentResult {
                     positional: list,

@@ -391,7 +391,7 @@ fn inner_rgb(
                     let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                     if has_none {
                         let has_alpha = list.len() > 3;
-                        return super::css_color4::construct_color(ColorSpace::Rgb, &list, has_alpha, span, visitor);
+                        return super::css_color4::construct_color(name, ColorSpace::Rgb, &list, has_alpha, span, visitor);
                     }
                     let args = ArgumentResult {
                         positional: list,

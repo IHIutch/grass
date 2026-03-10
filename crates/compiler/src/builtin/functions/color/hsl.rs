@@ -117,7 +117,7 @@ fn inner_hsl(
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 if has_none {
                     let has_alpha = list.len() > 3;
-                    return construct_color(ColorSpace::Hsl, &list, has_alpha, span, visitor);
+                    return construct_color(name, ColorSpace::Hsl, &list, has_alpha, span, visitor);
                 }
                 let args = ArgumentResult {
                     positional: list,
