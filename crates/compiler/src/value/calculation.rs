@@ -819,18 +819,29 @@ impl SassCalculation {
 
         let args = Self::simplify_arguments(args);
 
-        if args.len() == 1 {
-            // round(strategy, number) — single number with strategy
-            match &args[0] {
-                CalculationArg::Number(n) => {
-                    let result = Self::round_with_step(n.num.0, 1.0, strategy_str);
-                    return Ok(Value::Dimension(SassNumber {
-                        num: Number(result),
-                        unit: n.unit.clone(),
-                        as_slash: None,
-                    }));
-                }
-                _ => {}
+        if args.len() == 1 && strategy.is_some() {
+            // round(strategy, number) with no step — error when arg is a Number
+            if matches!(&args[0], CalculationArg::Number(..)) {
+                return Err((
+                    "If strategy is not null, step is required.",
+                    span,
+                )
+                    .into());
+            }
+        }
+
+        // 3 args without a detected strategy means the first arg isn't a valid strategy
+        // Only error when the first arg is a Number (runtime values like var() pass through)
+        if args.len() == 3 && strategy.is_none() {
+            if let CalculationArg::Number(n) = &args[0] {
+                return Err((
+                    format!(
+                        "{} must be either nearest, up, down or to-zero.",
+                        Value::Dimension(n.clone()).inspect(span)?
+                    ),
+                    span,
+                )
+                    .into());
             }
         }
 
