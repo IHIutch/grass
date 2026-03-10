@@ -1133,32 +1133,24 @@ impl Color {
     /// A channel is powerless when its value has no effect on the color's appearance.
     /// Examples: hue when saturation=0 in HSL, hue when chroma=0 in LCH/OKLch.
     pub fn is_channel_powerless(&self, index: usize) -> bool {
-        let channel_defs = self.space.channels();
-        if !channel_defs[index].is_polar {
-            return false;
-        }
-
-        // Hue is powerless when the associated chroma/saturation is 0.
-        // A channel is NOT powerless if the determining channel is explicitly
-        // missing (None) — missing and powerless are distinct concepts.
         match self.space {
+            // HSL: hue (index 0) is powerless when saturation (index 1) is 0
             ColorSpace::Hsl => {
-                // hue is channel 0, powerless when saturation (channel 1) is 0
                 index == 0 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
+            // HWB: hue (index 0) is powerless when whiteness + blackness >= 1
             ColorSpace::Hwb => {
-                // hue is channel 0, powerless when whiteness + blackness >= 1
                 index == 0 && match (self.channels[1], self.channels[2]) {
                     (Some(w), Some(b)) => w + b >= 1.0,
                     _ => false,
                 }
             }
+            // LCH: hue (index 2) powerless when chroma (index 1) is 0
             ColorSpace::Lch => {
-                // hue is channel 2, powerless when chroma (channel 1) is 0
                 index == 2 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
+            // OKLch: hue (index 2) powerless when chroma (index 1) is 0
             ColorSpace::Oklch => {
-                // hue is channel 2, powerless when chroma (channel 1) is 0
                 index == 2 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
             _ => false,

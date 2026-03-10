@@ -503,8 +503,6 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     let max = r.max(g.max(b));
     let lightness = (min + max) / 2.0;
 
-    // Use a tolerance larger than f64::EPSILON to handle floating-point noise
-    // from color space conversion roundtrips (e.g., lab → xyz → srgb → hsl).
     if (max - min).abs() < 1e-10 {
         return [0.0, 0.0, lightness];
     }

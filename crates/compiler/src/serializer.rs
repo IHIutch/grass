@@ -822,8 +822,11 @@ impl<'a> Serializer<'a> {
             if !has_any_missing {
                 let channel_defs = space.channels();
                 let lightness = color.channel_value(0).0;
-                let lightness_oor =
-                    lightness < channel_defs[0].min || lightness > channel_defs[0].max;
+                // Use fuzzy comparison: lightness < min or lightness > max
+                // but not when it's within epsilon of the boundary.
+                let epsilon = 1e-11;
+                let lightness_oor = lightness < channel_defs[0].min - epsilon
+                    || lightness > channel_defs[0].max + epsilon;
                 if lightness_oor {
                     self.write_color_mix_fallback(color);
                     return;
