@@ -1029,8 +1029,8 @@ impl SassCalculation {
             });
         }
 
-        let left = Self::simplify(left);
-        let mut right = Self::simplify(right);
+        let left = Self::simplify_operand(left);
+        let mut right = Self::simplify_operand(right);
 
         if op == BinaryOp::Plus || op == BinaryOp::Minus {
             match (&left, &right) {
@@ -1105,11 +1105,47 @@ impl SassCalculation {
             | CalculationArg::String(..) => arg,
             CalculationArg::Calculation(mut calc) => {
                 if calc.name == CalculationName::Calc {
-                    calc.args.remove(0)
+                    let inner = calc.args.remove(0);
+                    // When unwrapping calc(), String/Interpolation args that contain
+                    // operator characters need parens to preserve grouping
+                    match inner {
+                        CalculationArg::String(ref s) | CalculationArg::Interpolation(ref s)
+                            if Self::needs_calc_parens(s) =>
+                        {
+                            CalculationArg::String(format!("({})", s))
+                        }
+                        other => other,
+                    }
                 } else {
                     CalculationArg::Calculation(calc)
                 }
             }
+        }
+    }
+
+    /// Returns true if the given string needs parens when unwrapped from calc().
+    /// Strings containing spaces or operator characters need parens.
+    fn needs_calc_parens(s: &str) -> bool {
+        s.contains(' ') || s.contains('*') || s.contains('/')
+            || s.contains('+') || s.contains('-')
+    }
+
+    /// Like `simplify`, but wraps String/Interpolation results in parens when
+    /// they came from unwrapping calc(). This preserves the grouping that calc()
+    /// provided when the result is used as an operand in an Operation.
+    fn simplify_operand(arg: CalculationArg) -> CalculationArg {
+        match arg {
+            CalculationArg::Calculation(mut calc) if calc.name == CalculationName::Calc => {
+                let inner = calc.args.remove(0);
+                match inner {
+                    CalculationArg::String(s) => CalculationArg::String(format!("({})", s)),
+                    CalculationArg::Interpolation(s) => {
+                        CalculationArg::String(format!("({})", s))
+                    }
+                    other => other,
+                }
+            }
+            other => Self::simplify(other),
         }
     }
 

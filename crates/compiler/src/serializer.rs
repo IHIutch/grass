@@ -446,6 +446,16 @@ impl<'a> Serializer<'a> {
                     CalculationArg::Operation { op: op2, .. } => {
                         CalculationArg::parenthesize_calculation_rhs(*op, *op2)
                     }
+                    // Degenerate numbers (NaN/infinity) with units serialize as
+                    // multi-token expressions (e.g. "infinity * 1px"), which need
+                    // parens to preserve precedence in division context
+                    CalculationArg::Number(n)
+                        if *op == BinaryOp::Div
+                            && (n.num.0.is_infinite() || n.num.0.is_nan())
+                            && n.unit != Unit::None =>
+                    {
+                        true
+                    }
                     _ => false,
                 };
 
