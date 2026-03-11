@@ -575,25 +575,26 @@ fn update_components(
 
     // Apply an update operation to a channel value.
     // ChannelArg: None=not provided, Some(None)=set to missing, Some(Some(val))=numeric
+    // current: Option<f64> — None means the channel is missing (none)
     fn apply_update(
-        current: f64,
+        current: Option<f64>,
         param: &ChannelArg,
         max: f64,
         update: UpdateComponents,
     ) -> Option<f64> {
         match param {
-            None => Some(current),          // Not provided, keep current
+            None => current,                // Not provided, preserve current (including None/missing)
             Some(None) => None,             // `none` keyword, set to missing
             Some(Some(p)) => {
+                let cur = current.unwrap_or(0.0);
                 let val = match update {
                     UpdateComponents::Change => p.0,
-                    UpdateComponents::Adjust => p.0 + current,
+                    UpdateComponents::Adjust => p.0 + cur,
                     UpdateComponents::Scale => {
-                        current
-                            + if p.0 > 0.0 {
-                                (max - current) * p.0
+                        cur + if p.0 > 0.0 {
+                                (max - cur) * p.0
                             } else {
-                                current * p.0
+                                cur * p.0
                             }
                     }
                 };
@@ -671,13 +672,15 @@ fn update_components(
     let original_format = color.format.clone();
     let color = if has_rgb {
         let clamp_rgb = update == UpdateComponents::Adjust;
-        let new_r = apply_update(color.red().0, &red, 255.0, update)
+        let in_rgb = color.to_space(ColorSpace::Rgb);
+        let rgb_ch = in_rgb.raw_channels();
+        let new_r = apply_update(rgb_ch[0], &red, 255.0, update)
             .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_g = apply_update(color.green().0, &green, 255.0, update)
+        let new_g = apply_update(rgb_ch[1], &green, 255.0, update)
             .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_b = apply_update(color.blue().0, &blue, 255.0, update)
+        let new_b = apply_update(rgb_ch[2], &blue, 255.0, update)
             .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_a = apply_update(color.alpha().0, &alpha, 1.0, update)
+        let new_a = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         Arc::new(Color::for_space(
             ColorSpace::Rgb,
@@ -688,30 +691,26 @@ fn update_components(
     } else if has_wb {
         // When the color is already in HWB space, use raw channel values to avoid
         // precision loss from HWB→RGB→whiteness/blackness roundtrip conversion.
-        let (current_hue, current_w, current_b) = if color.color_space() == ColorSpace::Hwb {
+        let (raw_hue, raw_w, raw_b) = if color.color_space() == ColorSpace::Hwb {
             let ch = color.raw_channels();
-            (
-                Number(ch[0].unwrap_or(0.0)),
-                Number(ch[1].unwrap_or(0.0)),
-                Number(ch[2].unwrap_or(0.0)),
-            )
+            (ch[0], ch[1], ch[2])
         } else {
-            (color.hue(), color.whiteness(), color.blackness())
+            (Some(color.hue().0), Some(color.whiteness().0), Some(color.blackness().0))
         };
         let new_hue = match &hue {
-            None => Some(current_hue.0),
+            None => raw_hue,
             Some(None) => None, // none keyword
             Some(Some(h)) => {
                 if update == UpdateComponents::Change {
                     Some(h.0)
                 } else {
-                    Some(current_hue.0 + h.0)
+                    Some(raw_hue.unwrap_or(0.0) + h.0)
                 }
             }
         };
-        let new_w = apply_update(current_w.0, &whiteness, 1.0, update);
-        let new_b = apply_update(current_b.0, &blackness, 1.0, update);
-        let new_alpha = apply_update(color.alpha().0, &alpha, 1.0, update)
+        let new_w = apply_update(raw_w, &whiteness, 1.0, update);
+        let new_b = apply_update(raw_b, &blackness, 1.0, update);
+        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
         let mut result = Color::for_space(
@@ -726,19 +725,20 @@ fn update_components(
         }
         Arc::new(result)
     } else if hue.is_some() || has_sl {
-        let (this_hue, this_saturation, this_lightness, this_alpha) = color.as_hsla();
+        let in_hsl = color.to_space(ColorSpace::Hsl);
+        let hsl_ch = in_hsl.raw_channels();
         let new_hue = match &hue {
-            None => Some(this_hue.0),
+            None => hsl_ch[0],
             Some(None) => None,
             Some(Some(h)) => {
                 if update == UpdateComponents::Change {
                     Some(h.0)
                 } else {
-                    Some(this_hue.0 + h.0)
+                    Some(hsl_ch[0].unwrap_or(0.0) + h.0)
                 }
             }
         };
-        let mut new_sat = apply_update(this_saturation.0, &saturation, 1.0, update);
+        let mut new_sat = apply_update(hsl_ch[1], &saturation, 1.0, update);
         let mut new_hue = new_hue;
         // For Adjust, clamp saturation to ≥0. For Change, reflect (negate + rotate hue 180°).
         if let Some(s) = new_sat {
@@ -753,8 +753,8 @@ fn update_components(
                 }
             }
         }
-        let new_light = apply_update(this_lightness.0, &lightness, 1.0, update);
-        let new_alpha = apply_update(this_alpha.0, &alpha, 1.0, update)
+        let new_light = apply_update(hsl_ch[2], &lightness, 1.0, update);
+        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hsla's clamping of out-of-range values
         let mut result = Color::for_space(
@@ -770,7 +770,7 @@ fn update_components(
         }
         Arc::new(result)
     } else if alpha.is_some() {
-        let new_alpha = apply_update(color.alpha().0, &alpha, 1.0, update)
+        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         match new_alpha {
             Some(a) => Arc::new(color.with_alpha(Number(a))),
