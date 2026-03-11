@@ -245,9 +245,20 @@ impl Environment {
     pub fn to_implicit_configuration(&self) -> Configuration {
         let mut configuration = HashMap::new();
 
-        // Include variables from imported modules (forwarded via @import).
+        // Include variables from imported/forwarded modules (via @import).
         // These are accessible via get_var() → from_one_module() but not in
         // the scope variables, so we need to add them here for @forward chains.
+        if let Some(nested_forwarded_modules) = &self.nested_forwarded_modules {
+            for modules in nested_forwarded_modules.borrow().iter() {
+                for module in modules.borrow().iter() {
+                    let m = (*module).borrow();
+                    for (name, value) in m.scope().variables.iter() {
+                        configuration.insert(name, ConfiguredValue::implicit(value));
+                    }
+                }
+            }
+        }
+
         for module in self.imported_modules.borrow().iter() {
             let m = (*module).borrow();
             for (name, value) in m.scope().variables.iter() {
