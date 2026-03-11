@@ -140,6 +140,17 @@ fn transparentize(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
     Ok(Value::Color(Arc::new(color.fade_out(amount.num))))
 }
 
+/// Module-level `color.opacity()` — strict type checking, no special function passthrough.
+/// Unlike the global `opacity()`, this always requires a color argument.
+pub(crate) fn module_opacity(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let span = args.span();
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", span)?;
+    Ok(Value::Dimension(SassNumber::new_unitless(color.alpha())))
+}
+
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     f.insert("alpha", Builtin::new(alpha));
     f.insert("opacity", Builtin::new(opacity));

@@ -1048,6 +1048,57 @@ impl Color {
         result
     }
 
+    /// Convert this color to a different color space for programmatic channel
+    /// access. Unlike `to_space()`, this never switches the internal
+    /// representation to HSL for out-of-gamut RGB — it always stores channels
+    /// in the requested target space. Used by `channel()`, `same()`, etc.
+    pub fn to_space_for_channel_access(&self, target: ColorSpace) -> Self {
+        if self.space == target {
+            return self.clone();
+        }
+
+        let c0 = self.channels[0].unwrap_or(0.0);
+        let c1 = self.channels[1].unwrap_or(0.0);
+        let c2 = self.channels[2].unwrap_or(0.0);
+
+        let converted = conversion::convert([c0, c1, c2], self.space, target);
+
+        let new_channels = [
+            if should_propagate_none(self.space, &self.channels, target, 0) {
+                None
+            } else {
+                Some(converted[0])
+            },
+            if should_propagate_none(self.space, &self.channels, target, 1) {
+                None
+            } else {
+                Some(converted[1])
+            },
+            if should_propagate_none(self.space, &self.channels, target, 2) {
+                None
+            } else {
+                Some(converted[2])
+            },
+        ];
+
+        let mut new_channels = new_channels;
+
+        if target.is_legacy() {
+            for (i, ch) in new_channels.iter_mut().enumerate() {
+                if should_replace_with_zero(self.space, &self.channels, target, i) {
+                    *ch = Some(0.0);
+                }
+            }
+        }
+
+        Color {
+            space: target,
+            channels: new_channels,
+            alpha: self.alpha,
+            format: ColorFormat::Infer,
+        }
+    }
+
     /// Convert to target space, setting powerless channels to None even in
     /// legacy spaces. Matches dart-sass's `toSpace(space, legacyMissing: true)`.
     /// Used by invert() and complement() with $space to detect powerless
@@ -1126,6 +1177,20 @@ impl Color {
     /// Whether alpha is missing.
     pub fn has_missing_alpha(&self) -> bool {
         self.alpha.is_none()
+    }
+
+    /// Return a copy with all missing channels replaced by 0.
+    pub fn with_none_as_zero(&self) -> Self {
+        Color {
+            space: self.space,
+            channels: [
+                Some(self.channels[0].unwrap_or(0.0)),
+                Some(self.channels[1].unwrap_or(0.0)),
+                Some(self.channels[2].unwrap_or(0.0)),
+            ],
+            alpha: Some(self.alpha.unwrap_or(0.0)),
+            format: self.format.clone(),
+        }
     }
 
     /// Get a channel value, treating None as 0.

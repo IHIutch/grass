@@ -95,6 +95,32 @@ pub(crate) fn construct_color(
     span: Span,
     visitor: &mut Visitor,
 ) -> SassResult<Value> {
+    construct_color_inner(name, space, channels, has_alpha, false, span, visitor)
+}
+
+/// Like `construct_color`, but `alpha_from_slash_list` indicates the alpha came
+/// from a Sass slash-list (e.g. `list.slash(channels, alpha)`), which requires
+/// spaces around the `/` in passthrough output for modern color functions.
+pub(crate) fn construct_color_slash_list(
+    name: &'static str,
+    space: ColorSpace,
+    channels: &[Value],
+    has_alpha: bool,
+    span: Span,
+    visitor: &mut Visitor,
+) -> SassResult<Value> {
+    construct_color_inner(name, space, channels, has_alpha, true, span, visitor)
+}
+
+fn construct_color_inner(
+    name: &'static str,
+    space: ColorSpace,
+    channels: &[Value],
+    has_alpha: bool,
+    alpha_from_slash_list: bool,
+    span: Span,
+    visitor: &mut Visitor,
+) -> SassResult<Value> {
     // If any channel is a special function (var(), calc(), env(), attr(), etc.),
     // pass through as a plain CSS string instead of trying to evaluate.
     let any_special = channels.iter().any(|v| v.is_special_function());
@@ -110,8 +136,11 @@ pub(crate) fn construct_color(
             if has_alpha && i == 3 {
                 if comma_sep {
                     result.push_str(sep);
+                } else if alpha_from_slash_list {
+                    // Slash-list input → spaces around slash: `lab(1% 2 3 / var(--c))`
+                    result.push_str(" / ");
                 } else {
-                    // Modern color functions: dart-sass uses no spaces around /
+                    // Parsed slash → no spaces: `lab(1% 2 3/0.4)`
                     result.push('/');
                 }
             } else if i > 0 {
@@ -204,20 +233,26 @@ pub(crate) fn lab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
     args.max_args(1)?;
     let span = args.span();
 
-    match parse_channels(
+    let parsed = parse_channels(
         "lab",
         &["lightness", "a", "b"],
         args.get_err(0, "channels")?,
         visitor,
         span,
-    )? {
-        ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-        ParsedChannels::List(list) => {
+    )?;
+    match &parsed {
+        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
+            let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
             if list.len() < 3 {
                 return Err(("Missing element $a.", span).into());
             }
-            construct_color("lab", ColorSpace::Lab, &list, has_alpha, span, visitor)
+            if is_slash_list {
+                construct_color_slash_list("lab", ColorSpace::Lab, &list, has_alpha, span, visitor)
+            } else {
+                construct_color("lab", ColorSpace::Lab, &list, has_alpha, span, visitor)
+            }
         }
     }
 }
@@ -227,20 +262,26 @@ pub(crate) fn lch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
     args.max_args(1)?;
     let span = args.span();
 
-    match parse_channels(
+    let parsed = parse_channels(
         "lch",
         &["lightness", "chroma", "hue"],
         args.get_err(0, "channels")?,
         visitor,
         span,
-    )? {
-        ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-        ParsedChannels::List(list) => {
+    )?;
+    match &parsed {
+        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
+            let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
             if list.len() < 3 {
                 return Err(("Missing element $chroma.", span).into());
             }
-            construct_color("lch", ColorSpace::Lch, &list, has_alpha, span, visitor)
+            if is_slash_list {
+                construct_color_slash_list("lch", ColorSpace::Lch, &list, has_alpha, span, visitor)
+            } else {
+                construct_color("lch", ColorSpace::Lch, &list, has_alpha, span, visitor)
+            }
         }
     }
 }
@@ -250,20 +291,26 @@ pub(crate) fn oklab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     args.max_args(1)?;
     let span = args.span();
 
-    match parse_channels(
+    let parsed = parse_channels(
         "oklab",
         &["lightness", "a", "b"],
         args.get_err(0, "channels")?,
         visitor,
         span,
-    )? {
-        ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-        ParsedChannels::List(list) => {
+    )?;
+    match &parsed {
+        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
+            let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
             if list.len() < 3 {
                 return Err(("Missing element $a.", span).into());
             }
-            construct_color("oklab", ColorSpace::Oklab, &list, has_alpha, span, visitor)
+            if is_slash_list {
+                construct_color_slash_list("oklab", ColorSpace::Oklab, &list, has_alpha, span, visitor)
+            } else {
+                construct_color("oklab", ColorSpace::Oklab, &list, has_alpha, span, visitor)
+            }
         }
     }
 }
@@ -273,20 +320,26 @@ pub(crate) fn oklch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     args.max_args(1)?;
     let span = args.span();
 
-    match parse_channels(
+    let parsed = parse_channels(
         "oklch",
         &["lightness", "chroma", "hue"],
         args.get_err(0, "channels")?,
         visitor,
         span,
-    )? {
-        ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-        ParsedChannels::List(list) => {
+    )?;
+    match &parsed {
+        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
+            let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
             if list.len() < 3 {
                 return Err(("Missing element $chroma.", span).into());
             }
-            construct_color("oklch", ColorSpace::Oklch, &list, has_alpha, span, visitor)
+            if is_slash_list {
+                construct_color_slash_list("oklch", ColorSpace::Oklch, &list, has_alpha, span, visitor)
+            } else {
+                construct_color("oklch", ColorSpace::Oklch, &list, has_alpha, span, visitor)
+            }
         }
     }
 }

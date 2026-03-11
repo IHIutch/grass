@@ -20,6 +20,8 @@ pub mod space_fns;
 pub(crate) enum ParsedChannels {
     String(String),
     List(Vec<Value>),
+    /// Like List, but alpha came from a slash-separated list input.
+    SlashList(Vec<Value>),
 }
 
 pub(crate) fn angle_value(num: Value, name: &str, span: Span) -> SassResult<Number> {

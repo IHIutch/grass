@@ -112,7 +112,7 @@ fn inner_hsl(
             args.span(),
         )? {
             ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-            ParsedChannels::List(list) => {
+            ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel or alpha is `none` — if so, use modern Color 4 path
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 if has_none {

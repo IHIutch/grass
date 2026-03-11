@@ -111,7 +111,7 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             span,
         )? {
             ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-            ParsedChannels::List(list) => {
+            ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel is `none` or a special function — if so, use modern Color 4 path
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 let has_special = list.iter().any(|v| v.is_special_function());

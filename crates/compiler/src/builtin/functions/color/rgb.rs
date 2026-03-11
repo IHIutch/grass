@@ -332,7 +332,7 @@ pub(crate) fn parse_channels(
 
     if let Some(alpha_from_slash_list) = alpha_from_slash_list {
         list.push(alpha_from_slash_list);
-        return Ok(ParsedChannels::List(list));
+        return Ok(ParsedChannels::SlashList(list));
     }
 
     #[allow(clippy::collapsible_match)]
@@ -395,7 +395,7 @@ fn inner_rgb(
                 span,
             )? {
                 ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
-                ParsedChannels::List(list) => {
+                ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                     // Check if any channel is `none` — if so, use modern Color 4 path
                     let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                     if has_none {

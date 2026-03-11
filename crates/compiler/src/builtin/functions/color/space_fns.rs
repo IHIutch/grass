@@ -194,10 +194,12 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         None => color.color_space(),
     };
 
+    // Use to_space_for_channel_access to avoid the HSL fallback for
+    // out-of-gamut RGB — we need actual RGB channel values, not HSL.
     let color_in_space = if target_space == color.color_space() {
         color.as_ref().clone()
     } else {
-        color.to_space(target_space)
+        color.to_space_for_channel_access(target_space)
     };
 
     if channel_str == "alpha" {
@@ -486,8 +488,9 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
 }
 
 /// `color.same($color1, $color2)` - check if two colors represent the same color
-/// Missing channels (none) are treated as 0. Colors in different spaces are
-/// compared by converting to the same space.
+/// Missing channels (none) are treated as 0.
+/// Matches dart-sass: same space → fuzzyEquals directly,
+/// different spaces → convert both to XYZ-D65 then compare.
 pub(crate) fn same(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
     let span = args.span();
@@ -498,31 +501,41 @@ pub(crate) fn same(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         .get_err(1, "color2")?
         .assert_color_with_name("color2", span)?;
 
-    // Convert both colors to the same space for comparison.
-    // Use color1's space; if they differ, convert color2 to color1's space.
-    let space = color1.color_space();
-    let c1 = color1.as_ref().clone();
-    let c2 = if color2.color_space() != space {
-        color2.to_space(space)
-    } else {
-        color2.as_ref().clone()
-    };
-
-    // Compare channels: none is treated as 0
-    for i in 0..3 {
-        let v1 = c1.raw_channels()[i].unwrap_or(0.0);
-        let v2 = c2.raw_channels()[i].unwrap_or(0.0);
-        if !fuzzy_equals(v1, v2) {
+    if color1.color_space() == color2.color_space() {
+        // Same space: compare channels directly, treating none as 0
+        for i in 0..3 {
+            let v1 = color1.raw_channels()[i].unwrap_or(0.0);
+            let v2 = color2.raw_channels()[i].unwrap_or(0.0);
+            if !fuzzy_equals(v1, v2) {
+                return Ok(Value::False);
+            }
+        }
+        let a1 = color1.raw_alpha().unwrap_or(0.0);
+        let a2 = color2.raw_alpha().unwrap_or(0.0);
+        if !fuzzy_equals(a1, a2) {
             return Ok(Value::False);
         }
+        Ok(Value::True)
+    } else {
+        // Different spaces: convert both to XYZ-D65 for comparison.
+        // Per dart-sass: replace missing channels with 0 *before* conversion,
+        // then compare the XYZ-D65 values.
+        let c1_no_none = color1.with_none_as_zero();
+        let c2_no_none = color2.with_none_as_zero();
+        let xyz1 = c1_no_none.to_space_for_channel_access(ColorSpace::XyzD65);
+        let xyz2 = c2_no_none.to_space_for_channel_access(ColorSpace::XyzD65);
+        for i in 0..3 {
+            let v1 = xyz1.raw_channels()[i].unwrap_or(0.0);
+            let v2 = xyz2.raw_channels()[i].unwrap_or(0.0);
+            if !fuzzy_equals(v1, v2) {
+                return Ok(Value::False);
+            }
+        }
+        let a1 = xyz1.raw_alpha().unwrap_or(0.0);
+        let a2 = xyz2.raw_alpha().unwrap_or(0.0);
+        if !fuzzy_equals(a1, a2) {
+            return Ok(Value::False);
+        }
+        Ok(Value::True)
     }
-
-    // Compare alpha: none is treated as 0
-    let a1 = c1.raw_alpha().unwrap_or(0.0);
-    let a2 = c2.raw_alpha().unwrap_or(0.0);
-    if !fuzzy_equals(a1, a2) {
-        return Ok(Value::False);
-    }
-
-    Ok(Value::True)
 }

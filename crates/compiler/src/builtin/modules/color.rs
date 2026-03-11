@@ -3,7 +3,7 @@ use crate::builtin::{
         css_color4::{color_fn, lab, lch, oklab, oklch},
         hsl::{complement, grayscale, hue, invert, lightness, saturation},
         hwb::{blackness, hwb, whiteness},
-        opacity::{alpha, opacity},
+        opacity::{alpha, module_opacity},
         other::{adjust_color, change_color, ie_hex_str, scale_color},
         rgb::{blue, green, mix, red},
         space_fns::{channel, is_in_gamut, is_legacy, is_missing, is_powerless, same, space, to_gamut, to_space},
@@ -29,7 +29,7 @@ pub(crate) fn declare(f: &mut Module) {
     f.insert_builtin("is-powerless", is_powerless);
     f.insert_builtin("lightness", lightness);
     f.insert_builtin("mix", mix);
-    f.insert_builtin("opacity", opacity);
+    f.insert_builtin("opacity", module_opacity);
     f.insert_builtin("red", red);
     f.insert_builtin("saturation", saturation);
     f.insert_builtin("same", same);
