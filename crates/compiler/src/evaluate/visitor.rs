@@ -186,7 +186,9 @@ pub struct Visitor<'a> {
     css_tree: CssTree,
     parent: Option<CssTreeIdx>,
     pub(crate) configuration: Rc<RefCell<Configuration>>,
-    import_nodes: Vec<CssStmt>,
+    combined_import_section: Vec<CssStmt>,
+    pending_import_items: Vec<CssStmt>,
+    in_module_import_section: bool,
     pub options: &'a Options<'a>,
     pub(crate) map: &'a mut CodeMap,
     // todo: remove
@@ -239,7 +241,9 @@ impl<'a> Visitor<'a> {
             configuration: Rc::new(RefCell::new(Configuration::empty())),
             is_plain_css: false,
             plain_css_style_rule_depth: 0,
-            import_nodes: Vec::new(),
+            combined_import_section: Vec::new(),
+            pending_import_items: Vec::new(),
+            in_module_import_section: true,
             modules: HashMap::new(),
             active_modules: HashSet::new(),
             options,
@@ -292,13 +296,55 @@ impl<'a> Visitor<'a> {
     }
 
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
+        self.flush_pending_imports(true);
         self.extend_modules()?;
         let mut finished_tree = self.css_tree.finish();
-        if self.import_nodes.is_empty() {
+        if self.combined_import_section.is_empty() {
             Ok(finished_tree)
         } else {
-            self.import_nodes.append(&mut finished_tree);
-            Ok(self.import_nodes)
+            self.combined_import_section.append(&mut finished_tree);
+            Ok(self.combined_import_section)
+        }
+    }
+
+    /// Returns the index after the last @import in a sequence of imports and
+    /// comments. Items before this index belong in the import section; items
+    /// at or after belong in the CSS section.
+    fn index_after_imports(items: &[CssStmt]) -> usize {
+        let mut last_import: i64 = -1;
+        for (i, item) in items.iter().enumerate() {
+            match item {
+                CssStmt::Import(..) => last_import = i as i64,
+                CssStmt::Comment(..) => continue,
+                _ => break,
+            }
+        }
+        (last_import + 1) as usize
+    }
+
+    /// Flush pending import-section items: imports and their interleaved
+    /// comments go to `combined_import_section`, while trailing comments
+    /// (after the last import) go to the CSS tree.
+    ///
+    /// When `end_of_module` is true and the pending items contain no imports
+    /// (only comments), all items go to `combined_import_section` to maintain
+    /// correct topological ordering for comment-only modules.
+    fn flush_pending_imports(&mut self, end_of_module: bool) {
+        if self.pending_import_items.is_empty() {
+            return;
+        }
+        let pending = mem::take(&mut self.pending_import_items);
+        let idx = Self::index_after_imports(&pending);
+        for (i, item) in pending.into_iter().enumerate() {
+            if i < idx {
+                self.combined_import_section.push(item);
+            } else if end_of_module && idx == 0 {
+                // Module had only comments, no imports — keep in combined
+                // so they appear in the correct topological position.
+                self.combined_import_section.push(item);
+            } else {
+                self.css_tree.add_stmt(item, None);
+            }
         }
     }
 
@@ -1013,6 +1059,11 @@ impl<'a> Visitor<'a> {
                 .set(ContextFlags::AT_ROOT_EXCLUDING_STYLE_RULE, false);
             visitor.flags.set(ContextFlags::IN_KEYFRAMES, false);
 
+            // Each module starts with a fresh import section.
+            let old_pending_imports = mem::take(&mut visitor.pending_import_items);
+            let old_in_module_import_section = visitor.in_module_import_section;
+            visitor.in_module_import_section = true;
+
             // Swap in this module's ExtensionStore so all @extend rules and
             // selector registrations go into the module's own store.
             mem::swap(&mut visitor.extender, &mut module_extension_store);
@@ -1022,6 +1073,9 @@ impl<'a> Visitor<'a> {
             let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
 
             visitor.visit_stylesheet(stylesheet)?;
+
+            // Flush any remaining pending imports from this module.
+            visitor.flush_pending_imports(true);
 
             // Record this module's root-level CSS indices for potential cloning.
             let new_css_indices = visitor.css_tree.root_children_from(root_children_before);
@@ -1069,6 +1123,10 @@ impl<'a> Visitor<'a> {
             // Swap back the parent's ExtensionStore and capture the module's.
             mem::swap(&mut visitor.extender, &mut module_extension_store);
             module_upstream = mem::replace(&mut visitor.upstream_modules, old_upstream);
+
+            // Restore import section state for the parent module.
+            visitor.pending_import_items = old_pending_imports;
+            visitor.in_module_import_section = old_in_module_import_section;
 
             visitor.parent = old_parent;
             visitor.style_rule_ignoring_at_root = old_style_rule;
@@ -1242,6 +1300,12 @@ impl<'a> Visitor<'a> {
         }
 
         self.active_modules.insert(canonical_url.clone());
+
+        // Flush pre-module comments into the combined import section before
+        // loading the module, so comments before @use/@forward appear before
+        // the module's own imports in the output.
+        self.combined_import_section
+            .append(&mut self.pending_import_items);
 
         let module = self.execute(stylesheet.clone(), configuration, names_in_errors)?;
 
@@ -1726,8 +1790,11 @@ impl<'a> Visitor<'a> {
 
         if self.parent.is_some() && self.parent != Some(CssTree::ROOT) {
             self.css_tree.add_stmt(node, self.parent);
+        } else if self.in_module_import_section {
+            self.pending_import_items.push(node);
         } else {
-            self.import_nodes.push(node);
+            // Out-of-order import after the import section ended
+            self.combined_import_section.push(node);
         }
 
         Ok(())
@@ -2359,6 +2426,13 @@ impl<'a> Visitor<'a> {
         through: Option<F>,
     ) -> CssTreeIdx {
         if self.parent.is_none() || self.parent == Some(CssTree::ROOT) {
+            // End the import section when a non-comment, non-import hits ROOT.
+            if self.in_module_import_section
+                && !matches!(node, CssStmt::Comment(..) | CssStmt::Import(..))
+            {
+                self.flush_pending_imports(false);
+                self.in_module_import_section = false;
+            }
             return self.css_tree.add_stmt(node, self.parent);
         }
 
@@ -2408,6 +2482,14 @@ impl<'a> Visitor<'a> {
     /// declarations).
     fn add_child_to_current_parent(&mut self, node: CssStmt) -> CssTreeIdx {
         let parent = self.parent.unwrap_or(CssTree::ROOT);
+
+        // A non-comment, non-import statement at ROOT ends the import section.
+        if parent == CssTree::ROOT && self.in_module_import_section {
+            if !matches!(node, CssStmt::Comment(..) | CssStmt::Import(..)) {
+                self.flush_pending_imports(false);
+                self.in_module_import_section = false;
+            }
+        }
 
         // Only check interleaving inside style rules
         if self.style_rule_exists() && parent != CssTree::ROOT {
@@ -2740,16 +2822,19 @@ impl<'a> Visitor<'a> {
             return Ok(None);
         }
 
-        // todo: Comments are allowed to appear between CSS imports
-        // if (_parent == _root && _endOfImports == _root.children.length) {
-        //   _endOfImports++;
-        // }
-
         let comment = CssStmt::Comment(
             self.perform_interpolation(comment.text, false)?,
             comment.span,
         );
-        self.add_child_to_current_parent(comment);
+
+        // At ROOT level during the import section, accumulate comments with
+        // pending imports so they can be interleaved correctly in the output.
+        let at_root = self.parent.is_none() || self.parent == Some(CssTree::ROOT);
+        if at_root && self.in_module_import_section {
+            self.pending_import_items.push(comment);
+        } else {
+            self.add_child_to_current_parent(comment);
+        }
 
         Ok(None)
     }
