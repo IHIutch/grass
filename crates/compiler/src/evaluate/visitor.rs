@@ -341,47 +341,8 @@ impl<'a> Visitor<'a> {
         (result, true)
     }
 
-    /// Recursively clone a module and all its upstream modules, remapping
-    /// ExtendedSelectors so extensions are isolated.
-    fn clone_module_recursive(
-        &self,
-        module: &Arc<RefCell<Module>>,
-        selector_map: &HashMap<usize, ExtendedSelector>,
-        cloned_modules: &mut HashMap<usize, Arc<RefCell<Module>>>,
-    ) -> Arc<RefCell<Module>> {
-        let ptr = Arc::as_ptr(module) as usize;
-
-        // Return cached clone if already cloned
-        if let Some(existing) = cloned_modules.get(&ptr) {
-            return Arc::clone(existing);
-        }
-
-        let m = module.borrow();
-        let cloned = match &*m {
-            Module::Environment { extension_store, upstream, .. } => {
-                // First, recursively clone all upstream modules
-                let cloned_upstream: Vec<Arc<RefCell<Module>>> = upstream
-                    .iter()
-                    .map(|up| self.clone_module_recursive(up, selector_map, cloned_modules))
-                    .collect();
-
-                let cloned_store = extension_store.clone_for_import(selector_map);
-
-                Arc::new(RefCell::new(Module::Environment {
-                    scope: m.scope().clone(),
-                    upstream: cloned_upstream,
-                    extension_store: cloned_store,
-                    env: Environment::new(),
-                }))
-            }
-            _ => Arc::clone(module),
-        };
-
-        cloned_modules.insert(ptr, Arc::clone(&cloned));
-        cloned
-    }
-
-    /// Like clone_module_recursive but uses the shared import_cloned_modules
+    /// Recursively clone a module and all its upstream modules, using the shared
+    /// import_cloned_modules and import_selector_map fields to deduplicate
     /// and import_selector_map fields to deduplicate across diamond dependencies.
     fn clone_module_recursive_shared(
         &mut self,
