@@ -1870,18 +1870,7 @@ impl<'a> Serializer<'a> {
                 self.write_indentation();
                 self.write_top_level_selector_list(&selector.as_selector_list());
 
-                if !self.options.is_compressed()
-                    && body.iter().all(|s| matches!(s, CssStmt::Comment(..)))
-                {
-                    // Comment-only body renders on a single line: `a { /**/ }`
-                    self.buffer.extend_from_slice(b" { ");
-                    for stmt in body {
-                        self.visit_stmt(stmt)?;
-                    }
-                    self.buffer.extend_from_slice(b" }");
-                } else {
-                    self.write_children(body)?;
-                }
+                self.write_children(body)?;
             }
             CssStmt::Media(media_rule, ..) => {
                 self.write_indentation();
@@ -1908,7 +1897,15 @@ impl<'a> Serializer<'a> {
                     .extend_from_slice(unknown_at_rule.name.as_bytes());
 
                 if !unknown_at_rule.params.is_empty() {
-                    write!(&mut self.buffer, " {}", unknown_at_rule.params)?;
+                    self.buffer.push(b' ');
+                    if unknown_at_rule.params.contains('\n') {
+                        // Multi-line params: preserve line structure
+                        self.buffer
+                            .extend_from_slice(unknown_at_rule.params.as_bytes());
+                    } else {
+                        self.buffer
+                            .extend_from_slice(normalize_whitespace(&unknown_at_rule.params).as_bytes());
+                    }
                 }
 
                 if !unknown_at_rule.has_body {
@@ -1955,4 +1952,43 @@ impl<'a> Serializer<'a> {
 
         Ok(true)
     }
+}
+
+/// Collapse runs of spaces/tabs to single spaces on each line,
+/// while preserving newlines and whitespace inside quoted strings.
+fn normalize_whitespace(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_quote: Option<char> = None;
+    let mut last_was_space = false;
+
+    for c in s.chars() {
+        match in_quote {
+            Some(q) => {
+                result.push(c);
+                if c == q {
+                    in_quote = None;
+                }
+            }
+            None => {
+                if c == '"' || c == '\'' {
+                    in_quote = Some(c);
+                    result.push(c);
+                    last_was_space = false;
+                } else if c == ' ' || c == '\t' {
+                    if !last_was_space {
+                        result.push(' ');
+                        last_was_space = true;
+                    }
+                } else {
+                    if c == '\n' {
+                        last_was_space = false;
+                    }
+                    result.push(c);
+                    last_was_space = false;
+                }
+            }
+        }
+    }
+
+    result
 }
