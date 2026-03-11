@@ -1435,21 +1435,10 @@ impl<'a> Visitor<'a> {
             return Ok(());
         }
 
-        // todo:
-        let loads_user_defined_modules = true;
-
-        // this todo should be unreachable, as we currently do not push
-        // to stylesheet.uses or stylesheet.forwards
-        // let mut children = Vec::new();
         let env = self.env.for_import();
 
         self.with_environment::<SassResult<()>, _>(env.clone(), |visitor| {
-            let old_parent = visitor.parent;
             let old_configuration = Rc::clone(&visitor.configuration);
-
-            if loads_user_defined_modules {
-                visitor.parent = Some(CssTree::ROOT);
-            }
 
             // This configuration is only used if it passes through a `@forward`
             // rule, so we avoid creating unnecessary ones for performance reasons.
@@ -1459,9 +1448,6 @@ impl<'a> Visitor<'a> {
 
             visitor.visit_stylesheet(stylesheet)?;
 
-            if loads_user_defined_modules {
-                visitor.parent = old_parent;
-            }
             visitor.configuration = old_configuration;
 
             Ok(())
@@ -1472,24 +1458,6 @@ impl<'a> Visitor<'a> {
         // CSS from modules used by [stylesheet].
         let module = env.to_dummy_module(self.empty_span);
         self.env.import_forwards(module);
-
-        if loads_user_defined_modules {
-            // todo:
-            //     if (module.transitivelyContainsCss) {
-            //       // If any transitively used module contains extensions, we need to
-            //       // clone all modules' CSS. Otherwise, it's possible that they'll be
-            //       // used or imported from another location that shouldn't have the same
-            //       // extensions applied.
-            //       await _combineCss(module,
-            //               clone: module.transitivelyContainsExtensions)
-            //           .accept(this);
-            //     }
-
-            //     var visitor = _ImportedCssVisitor(this);
-            //     for (var child in children) {
-            //       child.accept(visitor);
-            //     }
-        }
 
         self.active_modules.remove(&url);
 
