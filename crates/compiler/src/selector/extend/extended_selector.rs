@@ -62,6 +62,12 @@ impl ExtendedSelector {
     pub fn set_inner(&mut self, selector: SelectorList) {
         self.0.replace(selector);
     }
+
+    /// Returns a stable pointer identifier for this ExtendedSelector's Rc.
+    /// Used to build mappings between original and cloned selectors.
+    pub fn rc_ptr(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
 }
 
 /// There is the potential for danger here by modifying the hash

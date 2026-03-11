@@ -157,6 +157,14 @@ pub struct Visitor<'a> {
     /// Used to track upstream dependencies for per-module @extend scoping.
     pub(crate) upstream_modules: Vec<Arc<RefCell<Module>>>,
 
+    /// Maps module URLs to their root-level CSS tree indices.
+    /// Used to clone module CSS when the same module is loaded via @import.
+    module_css_indices: HashMap<PathBuf, Vec<CssTreeIdx>>,
+
+    /// When true, cached modules should have their CSS cloned (not shared)
+    /// so that @extend mutations are isolated per-import context.
+    in_import_context: bool,
+
     /// The complete file path of the current file being visited. Imports are
     /// resolved relative to this path
     pub current_import_path: PathBuf,
@@ -208,6 +216,8 @@ impl<'a> Visitor<'a> {
             env: Environment::new(),
             extender,
             upstream_modules: Vec::new(),
+            module_css_indices: HashMap::new(),
+            in_import_context: false,
             css_tree: CssTree::new(),
             parent: None,
             current_import_path,
@@ -274,6 +284,113 @@ impl<'a> Visitor<'a> {
         } else {
             self.import_nodes.append(&mut finished_tree);
             Ok(self.import_nodes)
+        }
+    }
+
+    /// Clone a cached module's CSS and ExtensionStore for @import isolation.
+    /// Recursively clones the entire upstream module graph so that extensions
+    /// flow through cloned copies independently from the originals.
+    fn clone_module_for_import(
+        &mut self,
+        url: &Path,
+        cached: &Arc<RefCell<Module>>,
+    ) -> (Arc<RefCell<Module>>, bool) {
+        // Collect ALL CSS indices transitively: this module + all upstream modules
+        let mut all_css_indices = Vec::new();
+        let mut visited_urls = HashSet::new();
+        self.collect_css_indices_transitive(url, &mut all_css_indices, &mut visited_urls);
+
+        if all_css_indices.is_empty() {
+            return (Arc::clone(cached), false);
+        }
+
+        let mut selector_map = HashMap::new();
+        for idx in &all_css_indices {
+            self.css_tree.clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
+        }
+
+        if selector_map.is_empty() {
+            return (Arc::clone(cached), false);
+        }
+
+        // Recursively clone the entire module graph with remapped selectors
+        let mut cloned_modules: HashMap<usize, Arc<RefCell<Module>>> = HashMap::new();
+        let result = self.clone_module_recursive(cached, &selector_map, &mut cloned_modules);
+
+        (result, true)
+    }
+
+    /// Recursively clone a module and all its upstream modules, remapping
+    /// ExtendedSelectors so extensions are isolated.
+    fn clone_module_recursive(
+        &self,
+        module: &Arc<RefCell<Module>>,
+        selector_map: &HashMap<usize, ExtendedSelector>,
+        cloned_modules: &mut HashMap<usize, Arc<RefCell<Module>>>,
+    ) -> Arc<RefCell<Module>> {
+        let ptr = Arc::as_ptr(module) as usize;
+
+        // Return cached clone if already cloned
+        if let Some(existing) = cloned_modules.get(&ptr) {
+            return Arc::clone(existing);
+        }
+
+        let m = module.borrow();
+        let cloned = match &*m {
+            Module::Environment { extension_store, upstream, .. } => {
+                // First, recursively clone all upstream modules
+                let cloned_upstream: Vec<Arc<RefCell<Module>>> = upstream
+                    .iter()
+                    .map(|up| self.clone_module_recursive(up, selector_map, cloned_modules))
+                    .collect();
+
+                let cloned_store = extension_store.clone_for_import(selector_map);
+
+                Arc::new(RefCell::new(Module::Environment {
+                    scope: m.scope().clone(),
+                    upstream: cloned_upstream,
+                    extension_store: cloned_store,
+                    env: Environment::new(),
+                }))
+            }
+            _ => Arc::clone(module),
+        };
+
+        cloned_modules.insert(ptr, Arc::clone(&cloned));
+        cloned
+    }
+
+    /// Recursively collect CSS tree indices for a module and all its upstream modules.
+    fn collect_css_indices_transitive(
+        &self,
+        url: &Path,
+        indices: &mut Vec<CssTreeIdx>,
+        visited: &mut HashSet<PathBuf>,
+    ) {
+        if !visited.insert(url.to_path_buf()) {
+            return;
+        }
+
+        // Add this module's CSS indices
+        if let Some(css_indices) = self.module_css_indices.get(url) {
+            indices.extend(css_indices);
+        }
+
+        // Recurse into upstream modules
+        if let Some(module) = self.modules.get(url) {
+            let m = module.borrow();
+            if let Module::Environment { upstream, .. } = &*m {
+                for up in upstream {
+                    // Find this upstream module's URL by pointer identity in modules map
+                    let up_ptr = Arc::as_ptr(up) as usize;
+                    for (mod_url, mod_ref) in &self.modules {
+                        if Arc::as_ptr(mod_ref) as usize == up_ptr {
+                            self.collect_css_indices_transitive(mod_url, indices, visited);
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -809,35 +926,24 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Arc<RefCell<Module>>> {
         let url = self.canonicalize(&stylesheet.url);
 
-        if let Some(already_loaded) = self.modules.get(&url) {
+        if let Some(already_loaded) = self.modules.get(&url).cloned() {
             let current_configuration =
                 configuration.unwrap_or_else(|| Rc::clone(&self.configuration));
 
             if !current_configuration.borrow().is_implicit() {
-                //   if (!_moduleConfigurations[url]!.sameOriginal(currentConfiguration) &&
-                //       currentConfiguration is ExplicitConfiguration) {
-                //     var message = namesInErrors
-                //         ? "${p.prettyUri(url)} was already loaded, so it can't be "
-                //             "configured using \"with\"."
-                //         : "This module was already loaded, so it can't be configured using "
-                //             "\"with\".";
-
-                //     var existingSpan = _moduleNodes[url]?.span;
-                //     var configurationSpan = configuration == null
-                //         ? currentConfiguration.nodeWithSpan.span
-                //         : null;
-                //     var secondarySpans = {
-                //       if (existingSpan != null) existingSpan: "original load",
-                //       if (configurationSpan != null) configurationSpan: "configuration"
-                //     };
-
-                //     throw secondarySpans.isEmpty
-                //         ? _exception(message)
-                //         : _multiSpanException(message, "new load", secondarySpans);
-                //   }
+                // TODO: configuration conflict error
             }
 
-            return Ok(Arc::clone(already_loaded));
+            // In @import context, clone the cached module's CSS so that
+            // @extend mutations are isolated per-import.
+            if self.in_import_context {
+                let (cloned_module, has_clones) = self.clone_module_for_import(&url, &already_loaded);
+                if has_clones {
+                    return Ok(cloned_module);
+                }
+            }
+
+            return Ok(already_loaded);
         }
 
         let mut env = Environment::new();
@@ -878,7 +984,14 @@ impl<'a> Visitor<'a> {
             mem::swap(&mut visitor.extender, &mut module_extension_store);
             let old_upstream = mem::take(&mut visitor.upstream_modules);
 
+            // Snapshot ROOT children count to track which CSS this module adds.
+            let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
+
             visitor.visit_stylesheet(stylesheet)?;
+
+            // Record this module's root-level CSS indices for potential cloning.
+            let new_css_indices = visitor.css_tree.root_children_from(root_children_before);
+            visitor.module_css_indices.insert(url.clone(), new_css_indices);
 
             // Swap back the parent's ExtensionStore and capture the module's.
             mem::swap(&mut visitor.extender, &mut module_extension_store);
@@ -1446,8 +1559,14 @@ impl<'a> Visitor<'a> {
                 visitor.configuration = Rc::new(RefCell::new(env.to_implicit_configuration()));
             }
 
+            // Mark import context so that cached modules clone their CSS
+            // instead of sharing it (needed for @extend isolation).
+            let old_in_import = visitor.in_import_context;
+            visitor.in_import_context = true;
+
             visitor.visit_stylesheet(stylesheet)?;
 
+            visitor.in_import_context = old_in_import;
             visitor.configuration = old_configuration;
 
             Ok(())

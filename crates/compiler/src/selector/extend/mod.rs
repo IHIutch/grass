@@ -137,6 +137,51 @@ impl ExtensionStore {
         self.extensions.is_empty()
     }
 
+    /// Create a clone of this ExtensionStore where ExtendedSelectors in the
+    /// `selectors` and `media_contexts` maps are replaced according to the
+    /// provided mapping (old Rc pointer → new ExtendedSelector).
+    /// Used when cloning module CSS for @import contexts so that @extend
+    /// mutations don't bleed between the original and the import's copy.
+    pub fn clone_for_import(
+        &self,
+        selector_map: &std::collections::HashMap<usize, ExtendedSelector>,
+    ) -> Self {
+        let mut new_selectors = HashMap::new();
+        for (simple, hash_set) in &self.selectors {
+            let mut new_set = SelectorHashSet::new();
+            for sel in hash_set.iter() {
+                let ptr = sel.rc_ptr();
+                if let Some(new_sel) = selector_map.get(&ptr) {
+                    new_set.insert(new_sel.clone());
+                } else {
+                    new_set.insert(sel.clone());
+                }
+            }
+            new_selectors.insert(simple.clone(), new_set);
+        }
+
+        let mut new_media_contexts = HashMap::new();
+        for (sel, queries) in &self.media_contexts {
+            let ptr = sel.rc_ptr();
+            if let Some(new_sel) = selector_map.get(&ptr) {
+                new_media_contexts.insert(new_sel.clone(), queries.clone());
+            } else {
+                new_media_contexts.insert(sel.clone(), queries.clone());
+            }
+        }
+
+        Self {
+            selectors: new_selectors,
+            extensions: self.extensions.clone(),
+            extensions_by_extender: self.extensions_by_extender.clone(),
+            media_contexts: new_media_contexts,
+            source_specificity: self.source_specificity.clone(),
+            originals: self.originals.clone(),
+            mode: self.mode,
+            span: self.span,
+        }
+    }
+
     /// Merge extensions from downstream stores into this store.
     /// Applies downstream extends to this store's existing selectors/extensions.
     /// Skips private placeholders — they can't be extended cross-module.

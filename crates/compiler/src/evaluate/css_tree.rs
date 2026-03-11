@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::ast::CssStmt;
+use crate::selector::ExtendedSelector;
 
 #[derive(Debug, Clone)]
 pub(super) struct CssTree {
@@ -229,6 +230,105 @@ impl CssTree {
             Some(parent) => self.add_child(child, parent),
             None => self.add_child(child, Self::ROOT),
         }
+    }
+
+    /// Returns the number of children currently under `parent`.
+    pub fn child_count(&self, parent: CssTreeIdx) -> usize {
+        self.parent_to_child
+            .get(&parent)
+            .map_or(0, |children| children.len())
+    }
+
+    /// Move children of `from_parent` (starting at index `start`) to `to_parent`.
+    /// Used to re-parent CSS nodes that were added to ROOT during module
+    /// evaluation but need to be nested under a different parent (e.g., for
+    /// nested @import).
+    pub fn reparent_children(
+        &mut self,
+        from_parent: CssTreeIdx,
+        to_parent: CssTreeIdx,
+        start: usize,
+    ) {
+        let children_to_move: Vec<CssTreeIdx> = self
+            .parent_to_child
+            .get(&from_parent)
+            .map_or_else(Vec::new, |children| children[start..].to_vec());
+
+        if children_to_move.is_empty() {
+            return;
+        }
+
+        // Remove from old parent
+        if let Some(children) = self.parent_to_child.get_mut(&from_parent) {
+            children.truncate(start);
+        }
+
+        // Add to new parent and update child_to_parent
+        for child_idx in children_to_move {
+            self.parent_to_child
+                .entry(to_parent)
+                .or_default()
+                .push(child_idx);
+            self.child_to_parent.insert(child_idx, to_parent);
+        }
+    }
+
+    /// Returns the CssTreeIdx values of children under `parent`, starting at
+    /// index `start`. Used to identify which ROOT children were added during
+    /// a module's execution.
+    pub fn root_children_from(&self, start: usize) -> Vec<CssTreeIdx> {
+        self.parent_to_child
+            .get(&Self::ROOT)
+            .map_or_else(Vec::new, |children| {
+                children[start..].to_vec()
+            })
+    }
+
+    /// Deep-clone a subtree rooted at `idx` into a new parent.
+    /// RuleSet selectors get new independent ExtendedSelectors so that
+    /// @extend mutations don't bleed between the original and clone.
+    /// Returns (new_root_idx, mapping from old ExtendedSelector Rc ptrs to new ones).
+    pub fn clone_subtree(
+        &mut self,
+        idx: CssTreeIdx,
+        new_parent: CssTreeIdx,
+        selector_map: &mut HashMap<usize, ExtendedSelector>,
+    ) -> CssTreeIdx {
+        let cloned_stmt = {
+            let stmt = self.stmts[idx.0].borrow();
+            match &*stmt {
+                None => {
+                    // Tombstone — skip it
+                    return idx;
+                }
+                Some(CssStmt::RuleSet { selector, is_group_end, .. }) => {
+                    let old_ptr = selector.rc_ptr();
+                    let new_selector = ExtendedSelector::new(selector.as_selector_list().clone());
+                    selector_map.insert(old_ptr, new_selector.clone());
+                    CssStmt::RuleSet {
+                        selector: new_selector,
+                        body: Vec::new(),
+                        is_group_end: *is_group_end,
+                    }
+                }
+                Some(other) => other.clone(),
+            }
+        };
+
+        let new_idx = self.add_child(cloned_stmt, new_parent);
+
+        // Recursively clone children
+        let children: Vec<CssTreeIdx> = self
+            .parent_to_child
+            .get(&idx)
+            .cloned()
+            .unwrap_or_default();
+
+        for child_idx in children {
+            self.clone_subtree(child_idx, new_idx, selector_map);
+        }
+
+        new_idx
     }
 
     fn add_stmt_inner(&mut self, stmt: CssStmt) -> CssTreeIdx {
