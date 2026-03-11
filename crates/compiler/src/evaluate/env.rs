@@ -212,37 +212,48 @@ impl Environment {
 
             // Remove existing member definitions that are now shadowed by the
             // forwarded modules.
-            for variable in forwarded_var_names {
+            for variable in &forwarded_var_names {
                 (*self.scopes.variables)
                     .borrow_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
-                    .remove(&variable);
+                    .remove(variable);
             }
             self.scopes.last_variable_index = None;
 
-            for func in forwarded_fn_names {
+            for func in &forwarded_fn_names {
                 (*self.scopes.functions)
                     .borrow_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
-                    .remove(&func);
+                    .remove(func);
             }
-            for mixin in forwarded_mixin_names {
+            for mixin in &forwarded_mixin_names {
                 (*self.scopes.mixins)
                     .borrow_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
-                    .remove(&mixin);
+                    .remove(mixin);
             }
+
         }
     }
 
     pub fn to_implicit_configuration(&self) -> Configuration {
         let mut configuration = HashMap::new();
+
+        // Include variables from imported modules (forwarded via @import).
+        // These are accessible via get_var() → from_one_module() but not in
+        // the scope variables, so we need to add them here for @forward chains.
+        for module in self.imported_modules.borrow().iter() {
+            let m = (*module).borrow();
+            for (name, value) in m.scope().variables.iter() {
+                configuration.insert(name, ConfiguredValue::implicit(value));
+            }
+        }
 
         let variables = (*self.scopes.variables).borrow();
 
