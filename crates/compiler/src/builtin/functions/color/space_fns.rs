@@ -371,7 +371,10 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     let color_in_space = if target_space == color.color_space() {
         color.as_ref().clone()
     } else {
-        color.to_space(target_space)
+        // Use to_space_for_channel_access to avoid HSL format fallback for
+        // out-of-gamut RGB. Gamut mapping algorithms need actual target-space
+        // channels, not HSL-converted values.
+        color.to_space_for_channel_access(target_space)
     };
 
     let gamut_mapped = match method_str.as_str() {
