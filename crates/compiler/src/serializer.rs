@@ -1870,7 +1870,18 @@ impl<'a> Serializer<'a> {
                 self.write_indentation();
                 self.write_top_level_selector_list(&selector.as_selector_list());
 
-                self.write_children(body)?;
+                if !self.options.is_compressed()
+                    && body.iter().all(|s| matches!(s, CssStmt::Comment(..)))
+                {
+                    // Comment-only body renders on a single line: `a { /**/ }`
+                    self.buffer.extend_from_slice(b" { ");
+                    for stmt in body {
+                        self.visit_stmt(stmt)?;
+                    }
+                    self.buffer.extend_from_slice(b" }");
+                } else {
+                    self.write_children(body)?;
+                }
             }
             CssStmt::Media(media_rule, ..) => {
                 self.write_indentation();
