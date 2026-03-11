@@ -170,6 +170,12 @@ pub struct Visitor<'a> {
     /// so that @extend mutations are isolated per-import context.
     in_import_context: bool,
 
+    /// Shared clone state across all module clones within the same @import.
+    /// Prevents double-cloning when diamond dependencies share upstream modules.
+    import_selector_map: HashMap<usize, ExtendedSelector>,
+    import_cloned_modules: HashMap<usize, Arc<RefCell<Module>>>,
+    import_cloned_css: HashSet<CssTreeIdx>,
+
     /// The complete file path of the current file being visited. Imports are
     /// resolved relative to this path
     pub current_import_path: PathBuf,
@@ -224,6 +230,9 @@ impl<'a> Visitor<'a> {
             module_css_indices: HashMap::new(),
             modules_loaded_in_import: HashSet::new(),
             in_import_context: false,
+            import_selector_map: HashMap::new(),
+            import_cloned_modules: HashMap::new(),
+            import_cloned_css: HashSet::new(),
             css_tree: CssTree::new(),
             parent: None,
             current_import_path,
@@ -296,6 +305,8 @@ impl<'a> Visitor<'a> {
     /// Clone a cached module's CSS and ExtensionStore for @import isolation.
     /// Recursively clones the entire upstream module graph so that extensions
     /// flow through cloned copies independently from the originals.
+    /// Uses shared clone state (import_selector_map, import_cloned_modules,
+    /// import_cloned_css) to avoid double-cloning diamond dependencies.
     fn clone_module_for_import(
         &mut self,
         url: &Path,
@@ -310,18 +321,22 @@ impl<'a> Visitor<'a> {
             return (Arc::clone(cached), false);
         }
 
-        let mut selector_map = HashMap::new();
+        // Only clone CSS indices that haven't been cloned yet in this @import context
         for idx in &all_css_indices {
-            self.css_tree.clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
+            if !self.import_cloned_css.contains(idx) {
+                self.css_tree
+                    .clone_subtree(*idx, CssTree::ROOT, &mut self.import_selector_map);
+                self.import_cloned_css.insert(*idx);
+            }
         }
 
-        if selector_map.is_empty() {
+        if self.import_selector_map.is_empty() {
             return (Arc::clone(cached), false);
         }
 
-        // Recursively clone the entire module graph with remapped selectors
-        let mut cloned_modules: HashMap<usize, Arc<RefCell<Module>>> = HashMap::new();
-        let result = self.clone_module_recursive(cached, &selector_map, &mut cloned_modules);
+        // Recursively clone the entire module graph with remapped selectors,
+        // reusing already-cloned modules from the shared state.
+        let result = self.clone_module_recursive_shared(cached);
 
         (result, true)
     }
@@ -363,6 +378,56 @@ impl<'a> Visitor<'a> {
         };
 
         cloned_modules.insert(ptr, Arc::clone(&cloned));
+        cloned
+    }
+
+    /// Like clone_module_recursive but uses the shared import_cloned_modules
+    /// and import_selector_map fields to deduplicate across diamond dependencies.
+    fn clone_module_recursive_shared(
+        &mut self,
+        module: &Arc<RefCell<Module>>,
+    ) -> Arc<RefCell<Module>> {
+        let ptr = Arc::as_ptr(module) as usize;
+
+        if let Some(existing) = self.import_cloned_modules.get(&ptr) {
+            return Arc::clone(existing);
+        }
+
+        // Extract upstream list and check if it's an Environment module
+        let (upstream, is_env) = {
+            let m = module.borrow();
+            match &*m {
+                Module::Environment { upstream, .. } => (upstream.clone(), true),
+                _ => (Vec::new(), false),
+            }
+        };
+
+        if !is_env {
+            return Arc::clone(module);
+        }
+
+        // Recursively clone upstream modules (borrow of module is dropped)
+        let cloned_upstream: Vec<Arc<RefCell<Module>>> = upstream
+            .iter()
+            .map(|up| self.clone_module_recursive_shared(up))
+            .collect();
+
+        // Re-borrow to clone extension store and scope
+        let m = module.borrow();
+        let cloned = if let Module::Environment { extension_store, .. } = &*m {
+            let cloned_store = extension_store.clone_for_import(&self.import_selector_map);
+            Arc::new(RefCell::new(Module::Environment {
+                scope: m.scope().clone(),
+                upstream: cloned_upstream,
+                extension_store: cloned_store,
+                env: Environment::new(),
+            }))
+        } else {
+            unreachable!()
+        };
+        drop(m);
+
+        self.import_cloned_modules.insert(ptr, Arc::clone(&cloned));
         cloned
     }
 
@@ -1659,8 +1724,18 @@ impl<'a> Visitor<'a> {
             let old_in_import = visitor.in_import_context;
             visitor.in_import_context = true;
 
+            // Clear shared clone state so all modules within this @import
+            // share the same selector_map and cloned_modules (deduplicating
+            // diamond dependencies).
+            let old_selector_map = mem::take(&mut visitor.import_selector_map);
+            let old_cloned_modules = mem::take(&mut visitor.import_cloned_modules);
+            let old_cloned_css = mem::take(&mut visitor.import_cloned_css);
+
             visitor.visit_stylesheet(stylesheet)?;
 
+            visitor.import_selector_map = old_selector_map;
+            visitor.import_cloned_modules = old_cloned_modules;
+            visitor.import_cloned_css = old_cloned_css;
             visitor.in_import_context = old_in_import;
             visitor.configuration = old_configuration;
 
