@@ -991,7 +991,35 @@ impl<'a> Visitor<'a> {
 
             // Record this module's root-level CSS indices for potential cloning.
             let new_css_indices = visitor.css_tree.root_children_from(root_children_before);
-            visitor.module_css_indices.insert(url.clone(), new_css_indices);
+            visitor.module_css_indices.insert(url.clone(), new_css_indices.clone());
+
+            // When this module is being evaluated inside a nested @import
+            // (i.e., `a { @import "file-that-uses-modules" }`), the module's
+            // CSS was emitted at ROOT with parent=None. We need to resolve
+            // module CSS selectors with the enclosing parent selector so that
+            // they appear nested under the parent in the output.
+            if visitor.in_import_context {
+                if let Some(ref parent_selector) = old_style_rule {
+                    let parent_list = parent_selector.as_selector_list().clone();
+                    for idx in &new_css_indices {
+                        let needs_resolution = {
+                            let stmt = visitor.css_tree.get(*idx);
+                            matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
+                        };
+                        if needs_resolution {
+                            let mut stmt = visitor.css_tree.get_mut(*idx);
+                            if let Some(CssStmt::RuleSet { ref mut selector, .. }) = &mut *stmt {
+                                let old_list = selector.as_selector_list().clone();
+                                let resolved = old_list.resolve_parent_selectors(
+                                    Some(parent_list.clone()),
+                                    true,
+                                )?;
+                                selector.set_inner(resolved);
+                            }
+                        }
+                    }
+                }
+            }
 
             // Swap back the parent's ExtensionStore and capture the module's.
             mem::swap(&mut visitor.extender, &mut module_extension_store);
@@ -1045,10 +1073,46 @@ impl<'a> Visitor<'a> {
             } else {
                 None
             };
-            // NOTE: unlike execute(), we preserve parent, style_rule_ignoring_at_root,
-            // media_queries, etc. so CSS is emitted nested under the caller's context.
+
+            // Like execute(), evaluate with clean parent context so that
+            // @at-root and & behave as if the loaded file is a standalone module.
+            // After evaluation, resolve CSS selectors with the caller's parent.
+            let old_parent = visitor.parent;
+            let old_style_rule = visitor.style_rule_ignoring_at_root.take();
+            let old_media_queries = visitor.media_queries.take();
+            visitor.parent = None;
+
+            let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
 
             visitor.visit_stylesheet(stylesheet)?;
+
+            // Resolve new ROOT children's selectors with the caller's parent,
+            // so that CSS from the loaded file is nested under the calling context.
+            if let Some(ref parent_selector) = old_style_rule {
+                let parent_list = parent_selector.as_selector_list().clone();
+                let new_children = visitor.css_tree.root_children_from(root_children_before);
+                for idx in &new_children {
+                    let needs_resolution = {
+                        let stmt = visitor.css_tree.get(*idx);
+                        matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
+                    };
+                    if needs_resolution {
+                        let mut stmt = visitor.css_tree.get_mut(*idx);
+                        if let Some(CssStmt::RuleSet { ref mut selector, .. }) = &mut *stmt {
+                            let old_list = selector.as_selector_list().clone();
+                            let resolved = old_list.resolve_parent_selectors(
+                                Some(parent_list.clone()),
+                                true,
+                            )?;
+                            selector.set_inner(resolved);
+                        }
+                    }
+                }
+            }
+
+            visitor.parent = old_parent;
+            visitor.style_rule_ignoring_at_root = old_style_rule;
+            visitor.media_queries = old_media_queries;
 
             if let Some(old_config) = old_configuration {
                 visitor.configuration = old_config;

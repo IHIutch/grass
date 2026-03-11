@@ -14,7 +14,7 @@ use super::{CompoundSelector, Pseudo, SelectorList, SimpleSelector, Specificity}
 pub(crate) static COMPLEX_SELECTOR_UNIQUE_ID: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Debug)]
-pub(crate) struct ComplexSelectorHashSet(HashSet<u32>);
+pub(crate) struct ComplexSelectorHashSet(HashSet<ComplexSelector>);
 
 impl ComplexSelectorHashSet {
     pub fn new() -> Self {
@@ -22,15 +22,15 @@ impl ComplexSelectorHashSet {
     }
 
     pub fn insert(&mut self, complex: &ComplexSelector) -> bool {
-        self.0.insert(complex.unique_id)
+        self.0.insert(complex.clone())
     }
 
     pub fn contains(&self, complex: &ComplexSelector) -> bool {
-        self.0.contains(&complex.unique_id)
+        self.0.contains(complex)
     }
 
     pub fn extend<'a>(&mut self, complexes: impl Iterator<Item = &'a ComplexSelector>) {
-        self.0.extend(complexes.map(|complex| complex.unique_id));
+        self.0.extend(complexes.cloned());
     }
 }
 
