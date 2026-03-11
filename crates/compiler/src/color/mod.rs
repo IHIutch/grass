@@ -1091,11 +1091,17 @@ impl Color {
             }
         }
 
+        let format = if target == ColorSpace::Hsl || target == ColorSpace::Hwb {
+            ColorFormat::Hsl
+        } else {
+            ColorFormat::Infer
+        };
+
         Color {
             space: target,
             channels: new_channels,
             alpha: self.alpha,
-            format: ColorFormat::Infer,
+            format,
         }
     }
 
@@ -1306,7 +1312,7 @@ impl Color {
             return self.clone();
         }
 
-        let origin = self.to_space(ColorSpace::Oklch);
+        let origin = self.to_space_for_channel_access(ColorSpace::Oklch);
         let l = origin.channels[0].unwrap_or(0.0);
         let h = origin.channels[2];
         let alpha = origin.alpha;
@@ -1351,7 +1357,7 @@ impl Color {
                 alpha,
                 ColorFormat::Infer,
             )
-            .to_space(self.space);
+            .to_space_for_channel_access(self.space);
 
             if min_in_gamut && current.is_in_gamut() {
                 min = chroma;
@@ -1377,8 +1383,8 @@ impl Color {
 
 /// Calculate deltaEOK (Euclidean distance in OKLab space).
 fn delta_e_ok(a: &Color, b: &Color) -> f64 {
-    let a_oklab = a.to_space(ColorSpace::Oklab);
-    let b_oklab = b.to_space(ColorSpace::Oklab);
+    let a_oklab = a.to_space_for_channel_access(ColorSpace::Oklab);
+    let b_oklab = b.to_space_for_channel_access(ColorSpace::Oklab);
 
     let dl = a_oklab.channels[0].unwrap_or(0.0) - b_oklab.channels[0].unwrap_or(0.0);
     let da = a_oklab.channels[1].unwrap_or(0.0) - b_oklab.channels[1].unwrap_or(0.0);
