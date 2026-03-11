@@ -161,6 +161,11 @@ pub struct Visitor<'a> {
     /// Used to clone module CSS when the same module is loaded via @import.
     module_css_indices: HashMap<PathBuf, Vec<CssTreeIdx>>,
 
+    /// Modules that were first loaded inside an @import context.
+    /// When these modules are later @use'd in a non-import context, their
+    /// CSS must be cloned so extends from the @import don't leak.
+    modules_loaded_in_import: HashSet<PathBuf>,
+
     /// When true, cached modules should have their CSS cloned (not shared)
     /// so that @extend mutations are isolated per-import context.
     in_import_context: bool,
@@ -217,6 +222,7 @@ impl<'a> Visitor<'a> {
             extender,
             upstream_modules: Vec::new(),
             module_css_indices: HashMap::new(),
+            modules_loaded_in_import: HashSet::new(),
             in_import_context: false,
             css_tree: CssTree::new(),
             parent: None,
@@ -934,9 +940,11 @@ impl<'a> Visitor<'a> {
                 // TODO: configuration conflict error
             }
 
-            // In @import context, clone the cached module's CSS so that
-            // @extend mutations are isolated per-import.
-            if self.in_import_context {
+            // Clone CSS for extend isolation in two cases:
+            // 1. We're in an @import context loading a cached module
+            // 2. We're in a @use context but the module was first loaded
+            //    inside an @import (so the original CSS belongs to the @import)
+            if self.in_import_context || self.modules_loaded_in_import.contains(&url) {
                 let (cloned_module, has_clones) = self.clone_module_for_import(&url, &already_loaded);
                 if has_clones {
                     return Ok(cloned_module);
@@ -1060,7 +1068,13 @@ impl<'a> Visitor<'a> {
         // Build module with its own extension store and upstream deps.
         let module = env.to_module_with_upstream(module_extension_store, module_upstream);
 
-        self.modules.insert(url, Arc::clone(&module));
+        self.modules.insert(url.clone(), Arc::clone(&module));
+
+        // Track modules loaded in @import context so that later @use
+        // references know to clone the CSS for extend isolation.
+        if self.in_import_context {
+            self.modules_loaded_in_import.insert(url);
+        }
 
         Ok(module)
     }
