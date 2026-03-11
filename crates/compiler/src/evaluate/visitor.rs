@@ -1008,13 +1008,24 @@ impl<'a> Visitor<'a> {
                         };
                         if needs_resolution {
                             let mut stmt = visitor.css_tree.get_mut(*idx);
-                            if let Some(CssStmt::RuleSet { ref mut selector, .. }) = &mut *stmt {
+                            if let Some(CssStmt::RuleSet {
+                                ref mut selector,
+                                ref mut is_group_end,
+                                ..
+                            }) = &mut *stmt
+                            {
                                 let old_list = selector.as_selector_list().clone();
                                 let resolved = old_list.resolve_parent_selectors(
                                     Some(parent_list.clone()),
                                     true,
                                 )?;
                                 selector.set_inner(resolved);
+                                // Clear group_end since these are conceptually
+                                // children of the enclosing style rule, flattened
+                                // to top level. Blank-line insertion should be
+                                // controlled by the enclosing context, not the
+                                // module's internal evaluation.
+                                *is_group_end = false;
                             }
                         }
                     }
@@ -1098,13 +1109,19 @@ impl<'a> Visitor<'a> {
                     };
                     if needs_resolution {
                         let mut stmt = visitor.css_tree.get_mut(*idx);
-                        if let Some(CssStmt::RuleSet { ref mut selector, .. }) = &mut *stmt {
+                        if let Some(CssStmt::RuleSet {
+                            ref mut selector,
+                            ref mut is_group_end,
+                            ..
+                        }) = &mut *stmt
+                        {
                             let old_list = selector.as_selector_list().clone();
                             let resolved = old_list.resolve_parent_selectors(
                                 Some(parent_list.clone()),
                                 true,
                             )?;
                             selector.set_inner(resolved);
+                            *is_group_end = false;
                         }
                     }
                 }

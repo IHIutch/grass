@@ -245,34 +245,40 @@ impl Environment {
     pub fn to_implicit_configuration(&self) -> Configuration {
         let mut configuration = HashMap::new();
 
-        // Include variables from imported/forwarded modules (via @import).
-        // These are accessible via get_var() → from_one_module() but not in
-        // the scope variables, so we need to add them here for @forward chains.
-        if let Some(nested_forwarded_modules) = &self.nested_forwarded_modules {
-            for modules in nested_forwarded_modules.borrow().iter() {
-                for module in modules.borrow().iter() {
+        // Match dart-sass: iterate scope levels from global (0) to innermost,
+        // interleaving module variables and scope-local variables per level.
+        // At each level, module variables are added first, then scope variables
+        // (which can overwrite them). Inner scopes overwrite outer scopes.
+        let variables = (*self.scopes.variables).borrow();
+        let nested_forwarded = self.nested_forwarded_modules.as_ref();
+
+        for (i, scope_vars) in variables.iter().enumerate() {
+            // Add module variables for this scope level.
+            if i == 0 {
+                // Global scope: use imported_modules
+                for module in self.imported_modules.borrow().iter() {
                     let m = (*module).borrow();
                     for (name, value) in m.scope().variables.iter() {
                         configuration.insert(name, ConfiguredValue::implicit(value));
                     }
                 }
+            } else if let Some(forwarded) = nested_forwarded {
+                // Non-global scope: use nested_forwarded_modules[i]
+                // (grass includes an entry for each scope level including global)
+                let forwarded_ref = forwarded.borrow();
+                if let Some(modules) = forwarded_ref.get(i) {
+                    for module in modules.borrow().iter() {
+                        let m = (*module).borrow();
+                        for (name, value) in m.scope().variables.iter() {
+                            configuration.insert(name, ConfiguredValue::implicit(value));
+                        }
+                    }
+                }
             }
-        }
 
-        for module in self.imported_modules.borrow().iter() {
-            let m = (*module).borrow();
-            for (name, value) in m.scope().variables.iter() {
-                configuration.insert(name, ConfiguredValue::implicit(value));
-            }
-        }
-
-        let variables = (*self.scopes.variables).borrow();
-
-        for variables in variables.iter() {
-            let entries = (**variables).borrow();
+            // Add scope-local variables (overwrite module vars at same level).
+            let entries = (**scope_vars).borrow();
             for (key, value) in entries.iter() {
-                // Implicit configurations are never invalid, making [configurationSpan]
-                // unnecessary, so we pass null here to avoid having to compute it.
                 configuration.insert(*key, ConfiguredValue::implicit(value.clone()));
             }
         }

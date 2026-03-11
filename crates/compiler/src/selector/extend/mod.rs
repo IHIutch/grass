@@ -251,17 +251,12 @@ impl ExtensionStore {
         }
 
         if !new_extensions.is_empty() {
+            // Extend existing extensions first (registers transitive extends),
+            // then extend selectors with new_extensions.
+            // We ignore the return value of extend_existing_extensions because
+            // extend loops can't exist across module boundaries (dart-sass).
             if !extensions_to_extend.is_empty() {
-                let additional = self
-                    .extend_existing_extensions(extensions_to_extend, &new_extensions)?;
-                if let Some(additional) = additional {
-                    for (target, sources) in additional {
-                        new_extensions
-                            .entry(target)
-                            .or_insert_with(IndexMap::new)
-                            .extend(sources);
-                    }
-                }
+                self.extend_existing_extensions(extensions_to_extend, &new_extensions)?;
             }
             if has_selectors_to_extend {
                 self.extend_existing_selectors(selectors_to_extend, &new_extensions)?;
