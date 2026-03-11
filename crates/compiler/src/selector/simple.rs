@@ -72,6 +72,16 @@ pub(crate) enum SimpleSelector {
     Attribute(Box<Attribute>),
 }
 
+impl SimpleSelector {
+    /// Returns true if this is a private placeholder (starts with - or _)
+    pub fn is_private_placeholder(&self) -> bool {
+        match self {
+            Self::Placeholder(name) => name.starts_with('-') || name.starts_with('_'),
+            _ => false,
+        }
+    }
+}
+
 impl fmt::Display for SimpleSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

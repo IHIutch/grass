@@ -223,9 +223,7 @@ impl ModuleScope {
 pub(crate) enum Module {
     Environment {
         scope: ModuleScope,
-        #[allow(dead_code)]
-        upstream: Vec<Module>,
-        #[allow(dead_code)]
+        upstream: Vec<Arc<RefCell<Module>>>,
         extension_store: ExtensionStore,
         #[allow(dead_code)]
         env: Environment,
@@ -317,7 +315,11 @@ fn member_map<V: fmt::Debug + Clone + 'static>(
 }
 
 impl Module {
-    pub fn new_env(env: Environment, extension_store: ExtensionStore) -> Self {
+    pub fn new_env_with_upstream(
+        env: Environment,
+        extension_store: ExtensionStore,
+        upstream: Vec<Arc<RefCell<Module>>>,
+    ) -> Self {
         let variables = {
             let variables = (*env.forwarded_modules).borrow();
             let variables = variables
@@ -353,7 +355,7 @@ impl Module {
 
         Module::Environment {
             scope,
-            upstream: Vec::new(),
+            upstream,
             extension_store,
             env,
         }

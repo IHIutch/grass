@@ -623,10 +623,18 @@ impl Environment {
         Ok(())
     }
 
-    pub fn to_module(self, extension_store: ExtensionStore) -> Arc<RefCell<Module>> {
+    pub fn to_module_with_upstream(
+        self,
+        extension_store: ExtensionStore,
+        upstream: Vec<Arc<RefCell<Module>>>,
+    ) -> Arc<RefCell<Module>> {
         debug_assert!(self.at_root());
 
-        Arc::new(RefCell::new(Module::new_env(self, extension_store)))
+        Arc::new(RefCell::new(Module::new_env_with_upstream(
+            self,
+            extension_store,
+            upstream,
+        )))
     }
 
     fn from_one_module<T>(

@@ -32,8 +32,8 @@ use crate::{
         StylesheetParser,
     },
     selector::{
-        ComplexSelectorComponent, ExtendRule, ExtendedSelector, ExtensionStore, SelectorList,
-        SelectorParser, SimpleSelector,
+        ComplexSelectorComponent, ExtendRule, ExtendedSelector, Extension, ExtensionStore,
+        SelectorList, SelectorParser, SimpleSelector,
     },
     utils::{to_sentence, trim_ascii},
     value::{
@@ -153,6 +153,10 @@ pub struct Visitor<'a> {
     pub(crate) media_query_sources: Option<IndexSet<MediaQuery>>,
     pub(crate) extender: ExtensionStore,
 
+    /// Modules loaded via @use during the current module's evaluation.
+    /// Used to track upstream dependencies for per-module @extend scoping.
+    pub(crate) upstream_modules: Vec<Arc<RefCell<Module>>>,
+
     /// The complete file path of the current file being visited. Imports are
     /// resolved relative to this path
     pub current_import_path: PathBuf,
@@ -203,6 +207,7 @@ impl<'a> Visitor<'a> {
             media_query_sources: None,
             env: Environment::new(),
             extender,
+            upstream_modules: Vec::new(),
             css_tree: CssTree::new(),
             parent: None,
             current_import_path,
@@ -262,7 +267,7 @@ impl<'a> Visitor<'a> {
     }
 
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
-        self.extender.check_unsatisfied_extends()?;
+        self.extend_modules()?;
         let mut finished_tree = self.css_tree.finish();
         if self.import_nodes.is_empty() {
             Ok(finished_tree)
@@ -270,6 +275,184 @@ impl<'a> Visitor<'a> {
             self.import_nodes.append(&mut finished_tree);
             Ok(self.import_nodes)
         }
+    }
+
+    /// Propagate @extend rules between modules according to the @use
+    /// dependency graph. Extensions flow from downstream modules (those that
+    /// @use others) to upstream modules (those being @use'd).
+    ///
+    /// Per-module unsatisfied extend checks happen in execute().
+    /// Root unsatisfied extends are checked here before propagation.
+    fn extend_modules(&mut self) -> SassResult<()> {
+        // If no modules were loaded, just check root's own extends.
+        if self.upstream_modules.is_empty() {
+            return self.extender.check_unsatisfied_extends();
+        }
+
+        // Build downstream-first topological order.
+        let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut seen: HashSet<*const RefCell<Module>> = HashSet::new();
+
+        fn visit_module(
+            module: &Arc<RefCell<Module>>,
+            sorted: &mut Vec<Arc<RefCell<Module>>>,
+            seen: &mut HashSet<*const RefCell<Module>>,
+        ) {
+            let ptr = Arc::as_ptr(module);
+            if !seen.insert(ptr) {
+                return;
+            }
+
+            let upstream_modules: Vec<Arc<RefCell<Module>>> = {
+                let m = module.borrow();
+                if let Module::Environment { upstream, .. } = &*m {
+                    upstream.clone()
+                } else {
+                    Vec::new()
+                }
+            };
+
+            for up in &upstream_modules {
+                visit_module(up, sorted, seen);
+            }
+            // Insert at front so downstream modules come first.
+            sorted.insert(0, Arc::clone(module));
+        }
+
+        for module in &self.upstream_modules {
+            visit_module(module, &mut sorted, &mut seen);
+        }
+
+        // Map from module pointer → list of cloned downstream ExtensionStores
+        // to apply to that module.
+        let mut downstream_stores: HashMap<*const RefCell<Module>, Vec<ExtensionStore>> =
+            HashMap::new();
+
+        // Collect unsatisfied extensions (dart-sass style).
+        let mut unsatisfied: Vec<Extension> = Vec::new();
+
+        // Root's unsatisfied extends: targets not in root's own selectors.
+        let root_selectors = self.extender.simple_selectors();
+        unsatisfied.extend(
+            self.extender
+                .extensions_where_target(|t| !root_selectors.contains(t)),
+        );
+
+        // Register root's extensions as downstream of root's upstream modules.
+        if !self.extender.is_empty() {
+            let root_store_clone = self.extender.clone();
+            for upstream in &self.upstream_modules {
+                let up_ptr = Arc::as_ptr(upstream);
+                downstream_stores
+                    .entry(up_ptr)
+                    .or_default()
+                    .push(root_store_clone.clone());
+            }
+        }
+
+        // Process modules in downstream-first order, propagating extensions.
+        for module_ref in &sorted {
+            let ptr = Arc::as_ptr(module_ref);
+
+            // Get upstream pointers before mutations.
+            let upstream_ptrs = {
+                let module = module_ref.borrow();
+                if let Module::Environment { upstream, .. } = &*module {
+                    upstream.iter().map(|u| Arc::as_ptr(u)).collect::<Vec<_>>()
+                } else {
+                    continue;
+                }
+            };
+
+            // Collect this module's original selectors before applying downstream.
+            let original_selectors = {
+                let module = module_ref.borrow();
+                if let Module::Environment {
+                    extension_store, ..
+                } = &*module
+                {
+                    extension_store.simple_selectors()
+                } else {
+                    continue;
+                }
+            };
+
+            // Collect this module's unsatisfied extends.
+            {
+                let module = module_ref.borrow();
+                if let Module::Environment {
+                    extension_store, ..
+                } = &*module
+                {
+                    unsatisfied.extend(
+                        extension_store
+                            .extensions_where_target(|t| !original_selectors.contains(t)),
+                    );
+                }
+            }
+
+            // Apply downstream extension stores to this module.
+            if let Some(stores) = downstream_stores.remove(&ptr) {
+                let store_refs: Vec<&ExtensionStore> = stores.iter().collect();
+                let mut module = module_ref.borrow_mut();
+                if let Module::Environment {
+                    extension_store, ..
+                } = &mut *module
+                {
+                    extension_store.add_extensions(&store_refs)?;
+                }
+            }
+
+            // Register this module's store as downstream of its upstreams.
+            {
+                let module = module_ref.borrow();
+                if let Module::Environment {
+                    extension_store, ..
+                } = &*module
+                {
+                    if !extension_store.is_empty() {
+                        let store_clone = extension_store.clone();
+                        drop(module);
+                        for up_ptr in &upstream_ptrs {
+                            downstream_stores
+                                .entry(*up_ptr)
+                                .or_default()
+                                .push(store_clone.clone());
+                        }
+                    }
+                }
+            }
+
+            // Remove now-satisfied extends: any whose target is in this
+            // module's selectors. Private placeholders can never be satisfied
+            // cross-module — they stay unsatisfied.
+            unsatisfied.retain(|ext| {
+                if let Some(ref target) = ext.target {
+                    target.is_private_placeholder() || !original_selectors.contains(target)
+                } else {
+                    false
+                }
+            });
+        }
+
+        // Report first unsatisfied extend as error.
+        if let Some(ext) = unsatisfied.first() {
+            let target_str = ext
+                .target
+                .as_ref()
+                .map(|t| t.to_string())
+                .unwrap_or_default();
+            return Err((
+                format!(
+                    "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
+                    target_str
+                ),
+                ext.span,
+            )
+                .into());
+        }
+
+        Ok(())
     }
 
     fn visit_return_rule(&mut self, ret: AstReturn) -> SassResult<Option<Value>> {
@@ -341,7 +524,8 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 |visitor, module, _| {
-                    visitor.env.forward_module(module, forward_rule.clone())?;
+                    visitor.env.forward_module(Arc::clone(&module), forward_rule.clone())?;
+                    visitor.upstream_modules.push(module);
 
                     Ok(())
                 },
@@ -390,7 +574,8 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 move |visitor, module, _| {
-                    visitor.env.forward_module(module, forward_rule.clone())?;
+                    visitor.env.forward_module(Arc::clone(&module), forward_rule.clone())?;
+                    visitor.upstream_modules.push(module);
 
                     Ok(())
                 },
@@ -664,6 +849,10 @@ impl<'a> Visitor<'a> {
             env.scopes.insert_var(0, *name, Value::Null);
         }
 
+        // Create a fresh ExtensionStore for this module (per-module scoping).
+        let mut module_extension_store = ExtensionStore::new(self.empty_span);
+        let mut module_upstream: Vec<Arc<RefCell<Module>>> = Vec::new();
+
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
             let old_style_rule = visitor.style_rule_ignoring_at_root.take();
@@ -684,17 +873,16 @@ impl<'a> Visitor<'a> {
                 .set(ContextFlags::AT_ROOT_EXCLUDING_STYLE_RULE, false);
             visitor.flags.set(ContextFlags::IN_KEYFRAMES, false);
 
-            // Snapshot extension targets before executing this module so we can
-            // check that any new @extend rules added by the module are satisfied
-            // within the module's own scope (dart-sass checks per-module).
-            let extensions_before = visitor.extender.snapshot_extension_targets();
+            // Swap in this module's ExtensionStore so all @extend rules and
+            // selector registrations go into the module's own store.
+            mem::swap(&mut visitor.extender, &mut module_extension_store);
+            let old_upstream = mem::take(&mut visitor.upstream_modules);
 
             visitor.visit_stylesheet(stylesheet)?;
 
-            // Check that extends added by this module are satisfied.
-            // This catches cross-module unsatisfied extends that would
-            // otherwise be silently ignored when checked globally in finish().
-            visitor.extender.check_unsatisfied_extends_since(&extensions_before)?;
+            // Swap back the parent's ExtensionStore and capture the module's.
+            mem::swap(&mut visitor.extender, &mut module_extension_store);
+            module_upstream = mem::replace(&mut visitor.upstream_modules, old_upstream);
 
             visitor.parent = old_parent;
             visitor.style_rule_ignoring_at_root = old_style_rule;
@@ -717,10 +905,8 @@ impl<'a> Visitor<'a> {
             Ok(())
         })?;
 
-        // Extension store is shared with the root — unsatisfied extends are
-        // checked globally in finish(), matching dart-sass's _combineCss flow.
-        let extension_store = ExtensionStore::new(self.empty_span);
-        let module = env.to_module(extension_store);
+        // Build module with its own extension store and upstream deps.
+        let module = env.to_module_with_upstream(module_extension_store, module_upstream);
 
         self.modules.insert(url, Arc::clone(&module));
 
@@ -863,7 +1049,8 @@ impl<'a> Visitor<'a> {
             false,
             span,
             |visitor, module, _| {
-                visitor.env.add_module(namespace, module, span)?;
+                visitor.env.add_module(namespace, Arc::clone(&module), span)?;
+                visitor.upstream_modules.push(module);
 
                 Ok(())
             },
