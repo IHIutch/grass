@@ -1407,9 +1407,9 @@ impl<'a> Serializer<'a> {
         let mut after_newline = false;
         self.buffer.reserve(string.len());
 
-        for c in string.bytes() {
+        for c in string.chars() {
             match c {
-                b'\n' => {
+                '\n' => {
                     if self.in_custom_property {
                         self.buffer.push(b'\n');
                     } else {
@@ -1417,13 +1417,21 @@ impl<'a> Serializer<'a> {
                     }
                     after_newline = true;
                 }
-                b' ' => {
+                ' ' => {
                     if !after_newline || self.in_custom_property {
                         self.buffer.push(b' ');
                     }
                 }
+                _ if is_private_use(c) => {
+                    self.buffer.push(b'\\');
+                    let hex = format!("{:x}", c as u32);
+                    self.buffer.extend_from_slice(hex.as_bytes());
+                    after_newline = false;
+                }
                 _ => {
-                    self.buffer.push(c);
+                    let mut buf = [0u8; 4];
+                    self.buffer
+                        .extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
                     after_newline = false;
                 }
             }
@@ -1439,10 +1447,10 @@ impl<'a> Serializer<'a> {
         if force_double_quote {
             buffer.push(b'"');
         }
-        let mut iter = string.as_bytes().iter().copied().peekable();
-        while let Some(c) = iter.next() {
+        let mut chars = string.chars().peekable();
+        while let Some(c) = chars.next() {
             match c {
-                b'\'' => {
+                '\'' => {
                     if force_double_quote {
                         buffer.push(b'\'');
                     } else if has_double_quote {
@@ -1453,7 +1461,7 @@ impl<'a> Serializer<'a> {
                         buffer.push(b'\'');
                     }
                 }
-                b'"' => {
+                '"' => {
                     if force_double_quote {
                         buffer.push(b'\\');
                         buffer.push(b'"');
@@ -1465,27 +1473,20 @@ impl<'a> Serializer<'a> {
                         buffer.push(b'"');
                     }
                 }
-                b'\x00'..=b'\x08' | b'\x0A'..=b'\x1F' => {
-                    buffer.push(b'\\');
-                    if c as u32 > 0xF {
-                        buffer.push(hex_char_for(c as u32 >> 4) as u8);
-                    }
-                    buffer.push(hex_char_for(c as u32 & 0xF) as u8);
-
-                    let next = match iter.peek() {
-                        Some(v) => *v,
-                        None => break,
-                    };
-
-                    if next.is_ascii_hexdigit() || next == b' ' || next == b'\t' {
-                        buffer.push(b' ');
-                    }
+                '\x00'..='\x08' | '\x0A'..='\x1F' | '\x7F' => {
+                    write_hex_escape(&mut buffer, c as u32, chars.peek().copied());
                 }
-                b'\\' => {
+                '\\' => {
                     buffer.push(b'\\');
                     buffer.push(b'\\');
                 }
-                _ => buffer.push(c),
+                _ if is_private_use(c) => {
+                    write_hex_escape(&mut buffer, c as u32, chars.peek().copied());
+                }
+                _ => {
+                    let mut buf = [0u8; 4];
+                    buffer.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                }
             }
         }
 
@@ -1951,6 +1952,31 @@ impl<'a> Serializer<'a> {
         }
 
         Ok(true)
+    }
+}
+
+/// Returns true for Unicode Private Use Area characters, which should be
+/// hex-escaped in CSS strings to avoid invisible/empty rendering.
+fn is_private_use(c: char) -> bool {
+    let cp = c as u32;
+    // BMP Private Use Area
+    (0xE000..=0xF8FF).contains(&cp)
+    // Supplementary Private Use Areas
+    || (0xF0000..=0xFFFFD).contains(&cp)
+    || (0x100000..=0x10FFFD).contains(&cp)
+}
+
+/// Write a CSS hex escape like `\e600` with a trailing space if the next
+/// character is a hex digit, space, or tab.
+fn write_hex_escape(buffer: &mut Vec<u8>, code_point: u32, next: Option<char>) {
+    buffer.push(b'\\');
+    let hex = format!("{:x}", code_point);
+    buffer.extend_from_slice(hex.as_bytes());
+
+    if let Some(next_ch) = next {
+        if next_ch.is_ascii_hexdigit() || next_ch == ' ' || next_ch == '\t' {
+            buffer.push(b' ');
+        }
     }
 }
 
