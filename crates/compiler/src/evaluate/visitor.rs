@@ -3275,6 +3275,7 @@ impl<'a> Visitor<'a> {
             } => {
                 let has_named;
                 let mut rest = None;
+                let is_calc = name.as_str() == "calc";
 
                 // todo: somewhat hacky solution to support plain css fns passed
                 // as strings to `call(..)`
@@ -3282,10 +3283,23 @@ impl<'a> Visitor<'a> {
                     MaybeEvaledArguments::Invocation(args) => {
                         has_named = !args.named.is_empty() || args.keyword_rest.is_some();
                         rest = args.rest;
-                        args.positional
-                            .into_iter()
-                            .map(|arg| self.evaluate_to_css(arg, QuoteKind::Quoted, span))
-                            .collect::<SassResult<Vec<_>>>()?
+
+                        let mut result = Vec::new();
+                        for arg in args.positional {
+                            let value = self.visit_expr(arg)?;
+
+                            // When calc() falls back to Plain function (due to
+                            // $variables in space-separated content), validate
+                            // that the resolved values aren't adjacent numbers
+                            // without operators (e.g., calc($c $d) where both
+                            // are numbers should error).
+                            if is_calc {
+                                Self::validate_calc_value(&value, span)?;
+                            }
+
+                            result.push(self.serialize(value, QuoteKind::Quoted, span)?);
+                        }
+                        result
                     }
                     MaybeEvaledArguments::Evaled(args) => {
                         has_named = !args.named.is_empty();
@@ -3328,6 +3342,26 @@ impl<'a> Visitor<'a> {
                 Ok(Value::String(buffer, QuoteKind::None))
             }
         }
+    }
+
+    /// Validates that a calc() argument value doesn't contain adjacent
+    /// numeric values without operators (e.g., `calc($c $d)` where both
+    /// resolve to numbers should error with "Missing math operator").
+    fn validate_calc_value(value: &Value, span: Span) -> SassResult<()> {
+        if let Value::List(items, ListSeparator::Space, _) = value {
+            // Check for adjacent non-string values (numbers, dimensions)
+            // without operator strings between them. A valid calc with
+            // variables would have strings like "+ 2" between values.
+            let mut prev_was_numeric = false;
+            for item in items {
+                let is_numeric = matches!(item, Value::Dimension(..));
+                if is_numeric && prev_was_numeric {
+                    return Err(("Missing math operator.", span).into());
+                }
+                prev_was_numeric = is_numeric;
+            }
+        }
+        Ok(())
     }
 
     fn visit_list_expr(&mut self, list: ListExpr) -> SassResult<Value> {
@@ -3594,13 +3628,47 @@ impl<'a> Visitor<'a> {
     fn visit_calculation_expr(
         &mut self,
         name: CalculationName,
-        args: Vec<AstExpr>,
+        mut ast_args: Vec<AstExpr>,
         span: Span,
     ) -> SassResult<Value> {
-        let mut args = args
-            .into_iter()
-            .map(|arg| self.visit_calculation_value(arg, name.in_min_or_max(), span))
-            .collect::<SassResult<Vec<_>>>()?;
+        // For single-arg functions (abs, round), when calculation arg
+        // resolution fails due to incompatible units (e.g. abs(1 + 1px)),
+        // fall back to evaluating as the Sass math function where unitless
+        // values freely combine with units.
+        let single_arg_fallback = matches!(
+            name,
+            CalculationName::Abs | CalculationName::Round
+        ) && ast_args.len() == 1;
+
+        let resolved = ast_args
+            .iter()
+            .map(|arg| self.visit_calculation_value(arg.clone(), name.in_min_or_max(), span))
+            .collect::<SassResult<Vec<_>>>();
+
+        let mut args = match resolved {
+            Ok(args) => args,
+            Err(e) if single_arg_fallback => {
+                let val = self.visit_expr(ast_args.remove(0))?;
+                return match val {
+                    Value::Dimension(n) if name == CalculationName::Abs => {
+                        Ok(Value::Dimension(SassNumber {
+                            num: n.num.abs(),
+                            unit: n.unit,
+                            as_slash: None,
+                        }))
+                    }
+                    Value::Dimension(n) if name == CalculationName::Round => {
+                        Ok(Value::Dimension(SassNumber {
+                            num: (n.num.0.round()).into(),
+                            unit: n.unit,
+                            as_slash: None,
+                        }))
+                    }
+                    _ => Err(e),
+                };
+            }
+            Err(e) => return Err(e),
+        };
 
         if self.flags.in_supports_declaration() {
             return Ok(Value::Calculation(SassCalculation::unsimplified(

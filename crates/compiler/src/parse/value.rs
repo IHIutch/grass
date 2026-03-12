@@ -1596,7 +1596,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         break;
                     }
                 }
-                '$' => {
+                '$' if parser.toks().peek().is_some_and(|t| {
+                    t.kind.is_ascii_alphabetic() || t.kind == '_'
+                }) => {
                     parser.toks_mut().set_cursor(start);
                     return true;
                 }
@@ -1636,6 +1638,20 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         let mut has_top_level_comma = false;
 
         let start = parser.toks().cursor();
+
+        // If the first non-whitespace character can't start a calculation
+        // value, don't use the greedy interpolation path — let the normal
+        // parser run so it produces the proper error message.
+        if let Some(first) = parser.toks().peek() {
+            if !matches!(first.kind,
+                '+' | '-' | '.' | '0'..='9' | '$' | '(' | '#' | '\'' | '"'
+                | ' ' | '\t' | '\n' | '\r'
+            ) && !first.kind.is_ascii_alphabetic()
+                && first.kind != '_'
+            {
+                return Ok(false);
+            }
+        }
 
         while let Some(next) = parser.toks().peek() {
             match next.kind {
