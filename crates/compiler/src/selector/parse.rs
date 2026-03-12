@@ -47,6 +47,11 @@ pub(crate) struct SelectorParser {
     pub toks: Lexer,
 
     span: Span,
+
+    /// Whether the last `parse_complex_selector` call consumed trailing whitespace
+    /// that included a newline. Used by `parse_selector_list` to set `line_break`
+    /// on the next selector.
+    trailing_newline: bool,
 }
 
 impl BaseParser for SelectorParser {
@@ -67,6 +72,7 @@ impl SelectorParser {
             allows_placeholder,
             plain_css: false,
             span,
+            trailing_newline: false,
         }
     }
 
@@ -81,9 +87,11 @@ impl SelectorParser {
     fn parse_selector_list(&mut self) -> SassResult<SelectorList> {
         let mut components = vec![self.parse_complex_selector(false)?];
 
-        self.whitespace()?;
+        // Capture trailing newline from parse_complex_selector (it consumes
+        // whitespace before breaking when it encounters a comma)
+        let mut line_break = self.trailing_newline;
 
-        let mut line_break = false;
+        self.whitespace()?;
 
         while self.scan_char(',') {
             line_break = self.eat_whitespace() == DevouredWhitespace::Newline || line_break;
@@ -94,7 +102,7 @@ impl SelectorParser {
             }
             components.push(self.parse_complex_selector(line_break)?);
 
-            line_break = false;
+            line_break = self.trailing_newline;
         }
 
         Ok(SelectorList {
@@ -121,9 +129,12 @@ impl SelectorParser {
     /// before this selector.
     fn parse_complex_selector(&mut self, line_break: bool) -> SassResult<ComplexSelector> {
         let mut components = Vec::new();
+        self.trailing_newline = false;
 
         loop {
+            let start = self.toks().cursor();
             self.whitespace()?;
+            let ws_had_newline = self.toks().raw_text(start).contains('\n');
 
             // todo: can we do while let Some(..) = self.toks.peek() ?
             match self.toks.peek() {
@@ -163,6 +174,7 @@ impl SelectorParser {
                 }
                 Some(..) => {
                     if !self.looking_at_identifier() {
+                        self.trailing_newline = ws_had_newline;
                         break;
                     }
                     components.push(ComplexSelectorComponent::Compound(
@@ -174,7 +186,10 @@ impl SelectorParser {
                         }
                     }
                 }
-                None => break,
+                None => {
+                    self.trailing_newline = ws_had_newline;
+                    break;
+                }
             }
         }
 

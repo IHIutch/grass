@@ -1915,7 +1915,7 @@ test!(
     %d {
       color: red;
     }",
-    "c b {\n  color: red;\n}\n"
+    "c b, c > b {\n  color: red;\n}\n"
 );
 test!(
     unification_subselector_of_target_where,

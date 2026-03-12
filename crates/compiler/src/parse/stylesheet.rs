@@ -960,18 +960,32 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_import_argument(&mut self, start: usize) -> SassResult<AstImport> {
         if self.toks_mut().next_char_is('u') || self.toks_mut().next_char_is('U') {
-            let url = self.parse_dynamic_url()?;
-            self.whitespace()?;
-            let modifiers = self.try_import_modifiers()?;
-            return Ok(AstImport::Plain(AstPlainCssImport {
-                url: Interpolation::new_with_expr(url.span(self.toks_mut().span_from(start))),
-                modifiers,
-                span: self.toks_mut().span_from(start),
-            }));
+            // In indented syntax, only try url() if the identifier is actually
+            // "url" (not another identifier starting with 'u' like "unquoted").
+            let try_url = if self.is_indented() {
+                let saved = self.toks().cursor();
+                let is_url = self.scan_identifier("url", false)?
+                    && self.toks().peek().map_or(false, |t| t.kind == '(');
+                self.toks_mut().set_cursor(saved);
+                is_url
+            } else {
+                true
+            };
+
+            if try_url {
+                let url = self.parse_dynamic_url()?;
+                self.whitespace()?;
+                let modifiers = self.try_import_modifiers()?;
+                return Ok(AstImport::Plain(AstPlainCssImport {
+                    url: Interpolation::new_with_expr(url.span(self.toks_mut().span_from(start))),
+                    modifiers,
+                    span: self.toks_mut().span_from(start),
+                }));
+            }
         }
 
         // In indented syntax, try parsing an unquoted URL if the next char
-        // is not a quote character or `u`/`U` (already handled above).
+        // is not a quote character.
         if self.is_indented()
             && !self.toks_mut().next_char_is('"')
             && !self.toks_mut().next_char_is('\'')

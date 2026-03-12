@@ -147,6 +147,9 @@ pub struct Visitor<'a> {
     pub(crate) flags: ContextFlags,
     pub(crate) env: Environment,
     pub(crate) style_rule_ignoring_at_root: Option<ExtendedSelector>,
+    /// The original (pre-extension) selector for the current style rule.
+    /// Used by `&` in value context, matching dart-sass's `originalSelector`.
+    pub(crate) original_selector: Option<SelectorList>,
     // avoid emitting duplicate warnings for the same span
     pub(crate) warnings_emitted: HashSet<Span>,
     pub(crate) media_queries: Option<Vec<MediaQuery>>,
@@ -222,6 +225,7 @@ impl<'a> Visitor<'a> {
         Self {
             declaration_name: None,
             style_rule_ignoring_at_root: None,
+            original_selector: None,
             flags,
             warnings_emitted: HashSet::new(),
             media_queries: None,
@@ -1042,6 +1046,7 @@ impl<'a> Visitor<'a> {
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
             let old_style_rule = visitor.style_rule_ignoring_at_root.take();
+            let old_original_selector = visitor.original_selector.take();
             let old_media_queries = visitor.media_queries.take();
             let old_declaration_name = visitor.declaration_name.take();
             let old_in_unknown_at_rule = visitor.flags.in_unknown_at_rule();
@@ -1130,6 +1135,7 @@ impl<'a> Visitor<'a> {
 
             visitor.parent = old_parent;
             visitor.style_rule_ignoring_at_root = old_style_rule;
+            visitor.original_selector = old_original_selector;
             visitor.media_queries = old_media_queries;
             visitor.declaration_name = old_declaration_name;
             visitor
@@ -1188,6 +1194,7 @@ impl<'a> Visitor<'a> {
             // After evaluation, resolve CSS selectors with the caller's parent.
             let old_parent = visitor.parent;
             let old_style_rule = visitor.style_rule_ignoring_at_root.take();
+            let old_original_selector = visitor.original_selector.take();
             let old_media_queries = visitor.media_queries.take();
             visitor.parent = None;
 
@@ -1227,6 +1234,7 @@ impl<'a> Visitor<'a> {
 
             visitor.parent = old_parent;
             visitor.style_rule_ignoring_at_root = old_style_rule;
+            visitor.original_selector = old_original_selector;
             visitor.media_queries = old_media_queries;
 
             if let Some(old_config) = old_configuration {
@@ -3464,8 +3472,11 @@ impl<'a> Visitor<'a> {
     }
 
     fn visit_parent_selector(&self) -> Value {
-        match &self.style_rule_ignoring_at_root {
-            Some(selector) => selector.as_selector_list().clone().to_sass_list(),
+        // Use the original (pre-extension) selector, matching dart-sass's
+        // `originalSelector` behavior. This ensures `&` in values reflects
+        // the selector as written, not after @extend modifications.
+        match &self.original_selector {
+            Some(selector) => selector.clone().to_sass_list(),
             None => Value::Null,
         }
     }
@@ -4427,6 +4438,10 @@ impl<'a> Visitor<'a> {
             )?;
         }
 
+        // Save the original (pre-extension) selector for `&` in value context.
+        // This matches dart-sass's `originalSelector` on style rules.
+        let original_selector = parsed_selector.clone();
+
         // todo: _mediaQueries
         let selector = self
             .extender
@@ -4444,7 +4459,9 @@ impl<'a> Visitor<'a> {
             .set(ContextFlags::AT_ROOT_EXCLUDING_STYLE_RULE, false);
 
         let old_style_rule_ignoring_at_root = self.style_rule_ignoring_at_root.take();
+        let old_original_selector = self.original_selector.take();
         self.style_rule_ignoring_at_root = Some(selector);
+        self.original_selector = Some(original_selector);
 
         if self.is_plain_css {
             self.plain_css_style_rule_depth += 1;
@@ -4477,6 +4494,7 @@ impl<'a> Visitor<'a> {
         }
 
         self.style_rule_ignoring_at_root = old_style_rule_ignoring_at_root;
+        self.original_selector = old_original_selector;
         self.flags.set(
             ContextFlags::AT_ROOT_EXCLUDING_STYLE_RULE,
             old_at_root_excluding_style_rule,
