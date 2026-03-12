@@ -3811,7 +3811,7 @@ impl<'a> Visitor<'a> {
                 SassCalculation::calc_rem(args, self.options, span)
             }
             CalculationName::CalcSize => {
-                Self::check_calc_args(&args, 2, "calc-size", span)?;
+                Self::check_calc_args(&args, 1, "calc-size", span)?;
                 Ok(SassCalculation::calc_size(args))
             }
             CalculationName::Round => {

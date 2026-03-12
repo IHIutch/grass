@@ -1602,6 +1602,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     parser.toks_mut().set_cursor(start);
                     return true;
                 }
+                '#' if parser.toks().peek().is_some_and(|t| t.kind == '{') => {
+                    parser.toks_mut().set_cursor(start);
+                    return true;
+                }
                 'v' | 'V' | 'e' | 'E' => {
                     // Check for var( or env(
                     let remaining_start = parser.toks().cursor();
@@ -1975,15 +1979,26 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         max_args: Option<usize>,
         start: usize,
     ) -> SassResult<Vec<AstExpr>> {
+        Self::parse_calculation_arguments_inner(parser, max_args, start, false)
+    }
+
+    fn parse_calculation_arguments_inner(
+        parser: &mut P,
+        max_args: Option<usize>,
+        start: usize,
+        skip_interpolation_check: bool,
+    ) -> SassResult<Vec<AstExpr>> {
         parser.expect_char('(')?;
         let was_consuming_newlines = parser.is_consuming_newlines();
         parser.set_consume_newlines(true);
-        if let Some(interpolation) =
-            ValueParser::try_parse_calculation_interpolation(parser, start)?
-        {
-            parser.expect_char(')')?;
-            parser.set_consume_newlines(was_consuming_newlines);
-            return Ok(vec![interpolation]);
+        if !skip_interpolation_check {
+            if let Some(interpolation) =
+                ValueParser::try_parse_calculation_interpolation(parser, start)?
+            {
+                parser.expect_char(')')?;
+                parser.set_consume_newlines(was_consuming_newlines);
+                return Ok(vec![interpolation]);
+            }
         }
 
         parser.whitespace()?;
@@ -2030,8 +2045,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 // $variables, or #{interpolation}), fall back to a normal
                 // function call so those elements get evaluated. For purely
                 // static content, propagate the calculation error.
+                //
+                // Skip the greedy interpolation check so expressions like
+                // `100%/2 - #{$x}` are parsed structurally (allowing `100%/2`
+                // to simplify to `50%`). The try/catch handles cases where
+                // interpolation makes structured parsing impossible.
                 let before_args = parser.toks().cursor();
-                match ValueParser::parse_calculation_arguments(parser, Some(1), start) {
+                match ValueParser::parse_calculation_arguments_inner(parser, Some(1), start, true) {
                     Ok(args) => AstExpr::Calculation {
                         name: CalculationName::Calc,
                         args,
@@ -2052,7 +2072,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 // are parsed as normal Sass functions.
                 let before_args = parser.toks().cursor();
 
-                let args = match ValueParser::parse_calculation_arguments(parser, None, start) {
+                let args = match ValueParser::parse_calculation_arguments_inner(parser, None, start, true) {
                     Ok(args) => args,
                     Err(..) => {
                         parser.toks_mut().set_cursor(before_args);
@@ -2080,7 +2100,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
             "abs" => {
                 let before_args = parser.toks().cursor();
-                match ValueParser::parse_calculation_arguments(parser, Some(1), start) {
+                match ValueParser::parse_calculation_arguments_inner(parser, Some(1), start, true) {
                     Ok(args) => AstExpr::Calculation {
                         name: CalculationName::Abs,
                         args,
@@ -2160,7 +2180,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
             "round" => {
                 let before_args = parser.toks().cursor();
-                match ValueParser::parse_calculation_arguments(parser, Some(3), start) {
+                match ValueParser::parse_calculation_arguments_inner(parser, Some(3), start, true) {
                     Ok(args) => AstExpr::Calculation {
                         name: CalculationName::Round,
                         args,

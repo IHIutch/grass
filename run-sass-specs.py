@@ -162,34 +162,47 @@ def process_hrx(hrx_path, spec_dir, grass_binary):
             input_full.write_text(test['input'])
 
             try:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     [grass_binary, str(input_full),
                      '--load-path', tmpdir,
                      '--load-path', str(spec_dir),
                      '--load-path', str(hrx_path.parent),
                      '--style=expanded'],
-                    capture_output=True, text=True, timeout=5,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    start_new_session=True,
                 )
+                try:
+                    stdout, stderr = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    import os, signal
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass  # Zombie process — can't reap, but don't block
+                    results.append((test_name, False, "TIMEOUT", "", test['type']))
+                    continue
 
                 if test['type'] == 'success':
-                    actual = result.stdout.rstrip('\n') + '\n' if result.stdout.strip() else ''
+                    actual = stdout.rstrip('\n') + '\n' if stdout.strip() else ''
                     expected = test['expected'].rstrip('\n') + '\n' if test['expected'].strip() else ''
-                    if result.returncode != 0:
+                    if proc.returncode != 0:
                         results.append((test_name, False,
-                                        f"ERROR: {result.stderr[:200]}",
+                                        f"ERROR: {stderr[:200]}",
                                         expected.rstrip(), 'success'))
                     else:
                         passed = actual == expected
                         results.append((test_name, passed,
                                         actual.rstrip(), expected.rstrip(), 'success'))
                 else:  # error test
-                    passed = result.returncode != 0
-                    actual = result.stderr.rstrip() if result.returncode != 0 else f"Expected error, got: {result.stdout[:100]}"
+                    passed = proc.returncode != 0
+                    actual = stderr.rstrip() if proc.returncode != 0 else f"Expected error, got: {stdout[:100]}"
                     results.append((test_name, passed,
                                     actual, test.get('expected_error', '').rstrip(), 'error'))
 
-            except subprocess.TimeoutExpired:
-                results.append((test_name, False, "TIMEOUT", "", test['type']))
             except Exception as e:
                 results.append((test_name, False, str(e), "", test['type']))
 
@@ -227,20 +240,35 @@ def process_disk_test(test_dir, spec_dir, grass_binary):
 
     results = []
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             [grass_binary, str(input_file),
              '--load-path', str(spec_dir),
              '--style=expanded'],
-            capture_output=True, text=True, timeout=5,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            import os, signal
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            results.append((test_name, False, "TIMEOUT", "", 'success'))
+            return results
 
         if output_file.exists():
             expected = output_file.read_text()
-            actual = result.stdout.rstrip('\n') + '\n' if result.stdout.strip() else ''
+            actual = stdout.rstrip('\n') + '\n' if stdout.strip() else ''
             expected_norm = expected.rstrip('\n') + '\n' if expected.strip() else ''
-            if result.returncode != 0:
+            if proc.returncode != 0:
                 results.append((test_name, False,
-                                f"ERROR: {result.stderr[:200]}",
+                                f"ERROR: {stderr[:200]}",
                                 expected_norm.rstrip(), 'success'))
             else:
                 passed = actual == expected_norm
@@ -248,12 +276,10 @@ def process_disk_test(test_dir, spec_dir, grass_binary):
                                 actual.rstrip(), expected_norm.rstrip(), 'success'))
         elif error_file.exists():
             expected_error = error_file.read_text()
-            passed = result.returncode != 0
-            actual = result.stderr.rstrip() if result.returncode != 0 else f"Expected error, got: {result.stdout[:100]}"
+            passed = proc.returncode != 0
+            actual = stderr.rstrip() if proc.returncode != 0 else f"Expected error, got: {stdout[:100]}"
             results.append((test_name, passed, actual, expected_error.rstrip(), 'error'))
 
-    except subprocess.TimeoutExpired:
-        results.append((test_name, False, "TIMEOUT", "", 'success'))
     except Exception as e:
         results.append((test_name, False, str(e), "", 'success'))
 

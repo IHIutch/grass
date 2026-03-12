@@ -412,7 +412,6 @@ impl<'a> Serializer<'a> {
             }
             CalculationArg::Operation { lhs, op, rhs } => {
                 let paren_left = match &**lhs {
-                    CalculationArg::Interpolation(..) => true,
                     CalculationArg::Operation { op: op2, .. } => op2.precedence() < op.precedence(),
                     _ => false,
                 };
@@ -442,7 +441,6 @@ impl<'a> Serializer<'a> {
                 }
 
                 let paren_right = match &**rhs {
-                    CalculationArg::Interpolation(..) => true,
                     CalculationArg::Operation { op: op2, .. } => {
                         CalculationArg::parenthesize_calculation_rhs(*op, *op2)
                     }
