@@ -744,7 +744,7 @@ impl Color {
     /// - HWB whiteness/blackness: swap with each other
     /// - All other channels: reflect around midpoint (max + min - value)
     pub fn invert_in_space(&self, space: ColorSpace, weight: Number) -> Self {
-        let in_space = self.to_space(space);
+        let in_space = self.to_space_for_channel_access(space);
 
         let channels_def = space.channels();
         let mut inverted_channels: [Option<f64>; 3] = [None; 3];
