@@ -309,6 +309,7 @@ impl CssTree {
                         selector: new_selector,
                         body: Vec::new(),
                         is_group_end: *is_group_end,
+                        source_span: None,
                     }
                 }
                 Some(other) => other.clone(),

@@ -970,6 +970,7 @@ impl<'a> Visitor<'a> {
                         selector,
                         body: Vec::new(),
                         is_group_end: false,
+                        source_span: None,
                     };
 
                     visitor.with_parent(
@@ -2195,6 +2196,7 @@ impl<'a> Visitor<'a> {
             MediaRule {
                 query,
                 body: Vec::new(),
+                query_span: Some(media_rule.query_span),
             },
             false,
         );
@@ -2223,6 +2225,7 @@ impl<'a> Visitor<'a> {
                                 selector,
                                 body: Vec::new(),
                                 is_group_end: false,
+                                source_span: None,
                             };
 
                             visitor.with_parent(
@@ -2349,6 +2352,7 @@ impl<'a> Visitor<'a> {
                         selector,
                         body: Vec::new(),
                         is_group_end: false,
+                        source_span: None,
                     };
 
                     visitor.with_parent(
@@ -4451,6 +4455,7 @@ impl<'a> Visitor<'a> {
             selector: selector.clone(),
             body: Vec::new(),
             is_group_end: false,
+            source_span: Some(ruleset.span),
         };
 
         let old_at_root_excluding_style_rule = self.flags.at_root_excluding_style_rule();

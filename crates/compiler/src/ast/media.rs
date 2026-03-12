@@ -8,6 +8,8 @@ use crate::{ast::CssStmt, error::SassResult, lexer::Lexer, parse::MediaQueryPars
 pub(crate) struct MediaRule {
     pub query: Vec<MediaQuery>,
     pub body: Vec<CssStmt>,
+    /// Span of the query portion, used to determine the source line of the opening `{`
+    pub query_span: Option<Span>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

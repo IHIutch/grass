@@ -77,7 +77,7 @@ pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
 pub use crate::{builtin::Builtin, evaluate::Visitor};
 pub(crate) use crate::{context_flags::ContextFlags, lexer::Token};
-use crate::{lexer::Lexer, parse::ScssParser};
+use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
 
 pub mod sass_value {
     pub use crate::{
@@ -204,17 +204,40 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
 
     let mut prev_was_group_end = false;
     let mut prev_requires_semicolon = false;
-    for stmt in stmts {
+    let mut stmts: std::collections::VecDeque<CssStmt> = stmts.into();
+
+    while let Some(stmt) = stmts.pop_front() {
         if stmt.is_invisible() {
             continue;
         }
 
         let is_group_end = stmt.is_group_end();
         let requires_semicolon = Serializer::requires_semicolon(&stmt);
+        let closing_brace_line = serializer.stmt_closing_brace_line(&stmt);
 
         serializer
             .visit_group(stmt, prev_was_group_end, prev_requires_semicolon)
             .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
+
+        // Sub-problem C at top level: comment after closing `}` on same source line
+        if let Some(brace_line) = closing_brace_line {
+            let next_visible = stmts.iter().position(|s| !s.is_invisible());
+            if let Some(idx) = next_visible {
+                if let Some(comment_line) = serializer.comment_start_line(&stmts[idx]) {
+                    if comment_line == brace_line {
+                        if let CssStmt::Comment(ref comment, span) = stmts[idx] {
+                            let comment = comment.clone();
+                            serializer
+                                .write_inline_comment(&comment, span)
+                                .map_err(|e| {
+                                    raw_to_parse_error(&map, *e, options.unicode_error_messages)
+                                })?;
+                            stmts.remove(idx);
+                        }
+                    }
+                }
+            }
+        }
 
         prev_was_group_end = is_group_end;
         prev_requires_semicolon = requires_semicolon;

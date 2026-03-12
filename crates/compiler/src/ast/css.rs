@@ -10,6 +10,8 @@ pub(crate) enum CssStmt {
         selector: ExtendedSelector,
         body: Vec<Self>,
         is_group_end: bool,
+        /// Span of the entire rule (including closing `}`), used for inline comment detection
+        source_span: Option<Span>,
     },
     Style(Style),
     Media(MediaRule, bool),
@@ -79,17 +81,20 @@ impl CssStmt {
             CssStmt::RuleSet {
                 selector,
                 is_group_end,
+                source_span,
                 ..
             } => CssStmt::RuleSet {
                 selector: selector.clone(),
                 body: Vec::new(),
                 is_group_end: *is_group_end,
+                source_span: *source_span,
             },
             CssStmt::Style(..) | CssStmt::Comment(..) | CssStmt::Import(..) => unreachable!(),
             CssStmt::Media(media, is_group_end) => CssStmt::Media(
                 MediaRule {
                     query: media.query.clone(),
                     body: Vec::new(),
+                    query_span: media.query_span,
                 },
                 *is_group_end,
             ),

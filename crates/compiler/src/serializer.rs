@@ -1773,19 +1773,133 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn write_children(&mut self, mut children: Vec<CssStmt>) -> SassResult<()> {
+    /// Get the source line number for a span position
+    fn source_line(&self, pos: codemap::Pos) -> usize {
+        self.map.look_up_pos(pos).position.line
+    }
+
+    /// Write a comment inline (after a semicolon or opening brace) without indentation
+    pub(crate) fn write_inline_comment(&mut self, comment: &str, span: Span) -> SassResult<()> {
+        if self.options.is_compressed() && !comment.starts_with("/*!") {
+            return Ok(());
+        }
+
+        // Strip source map comments per CSS spec
+        let trimmed = comment.trim_start_matches("/*").trim_start();
+        if trimmed.starts_with("# sourceMappingURL=") || trimmed.starts_with("# sourceURL=") {
+            return Ok(());
+        }
+
+        self.buffer.push(b' ');
+        // For inline comments, write on the same line without indentation
+        let col = self.map.look_up_pos(span.low()).position.column;
+        let mut lines = comment.lines();
+
+        if let Some(line) = lines.next() {
+            self.buffer.extend_from_slice(line.trim_start().as_bytes());
+        }
+
+        let continuation: Vec<&str> = lines.collect();
+
+        if !continuation.is_empty() {
+            let min_indent = continuation
+                .iter()
+                .filter(|line| !line.trim_start().is_empty())
+                .map(|line| line.len() - line.trim_start().len())
+                .min()
+                .unwrap_or(0);
+
+            let base = std::cmp::min(col, min_indent);
+
+            for line in &continuation {
+                let leading = line.len() - line.trim_start().len();
+                let relative = leading.saturating_sub(base);
+                let output_indent = self.indentation + relative;
+                write!(
+                    &mut self.buffer,
+                    "\n{}{}",
+                    " ".repeat(output_indent),
+                    line.trim_start()
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the end source line of a statement (for same-line comment detection)
+    fn stmt_end_line(&self, stmt: &CssStmt) -> Option<usize> {
+        match stmt {
+            CssStmt::Style(style) => Some(self.source_line(style.value.span.high())),
+            CssStmt::Comment(_, span) => Some(self.source_line(span.high())),
+            _ => None,
+        }
+    }
+
+    /// Get the source line of the closing `}` for block-level statements
+    pub(crate) fn stmt_closing_brace_line(&self, stmt: &CssStmt) -> Option<usize> {
+        match stmt {
+            CssStmt::RuleSet { source_span: Some(span), .. } => {
+                Some(self.source_line(span.high()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the start source line of a comment statement
+    pub(crate) fn comment_start_line(&self, stmt: &CssStmt) -> Option<usize> {
+        match stmt {
+            CssStmt::Comment(_, span) => Some(self.source_line(span.low())),
+            _ => None,
+        }
+    }
+
+    fn write_children(
+        &mut self,
+        children: Vec<CssStmt>,
+        opening_brace_line: Option<usize>,
+    ) -> SassResult<()> {
+        use std::collections::VecDeque;
+
         if self.options.is_compressed() {
             self.buffer.push(b'{');
         } else {
-            self.buffer.extend_from_slice(b" {\n");
+            self.buffer.extend_from_slice(b" {");
         }
 
         self.indentation += self.indent_width;
 
-        let last = children.pop();
+        let mut children: VecDeque<CssStmt> = children.into();
 
-        for child in children {
+        // Sub-problem B: Check if first visible child is an inline comment
+        // on the same source line as the opening `{`
+        if !self.options.is_compressed() {
+            if let Some(brace_line) = opening_brace_line {
+                // Find first visible child
+                let first_visible = children.iter().position(|c| !c.is_invisible());
+                if let Some(idx) = first_visible {
+                    if let Some(comment_line) = self.comment_start_line(&children[idx]) {
+                        if comment_line == brace_line {
+                            if let CssStmt::Comment(ref comment, span) = children[idx] {
+                                let comment = comment.clone();
+                                self.write_inline_comment(&comment, span)?;
+                                children.remove(idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !self.options.is_compressed() {
+            self.buffer.push(b'\n');
+        }
+
+        while let Some(child) = children.pop_front() {
             let needs_semicolon = Self::requires_semicolon(&child);
+            let end_line = self.stmt_end_line(&child);
+            let closing_brace_line = self.stmt_closing_brace_line(&child);
+            let is_last = children.is_empty();
             let did_write = self.visit_stmt(child)?;
 
             if !did_write {
@@ -1793,28 +1907,55 @@ impl<'a> Serializer<'a> {
             }
 
             if needs_semicolon {
-                self.buffer.push(b';');
+                if is_last && self.options.is_compressed() {
+                    // skip trailing semicolon in compressed mode
+                } else {
+                    self.buffer.push(b';');
+                }
+            }
+
+            if !self.options.is_compressed() {
+                // Sub-problem A: If we just wrote a Style and the next visible child
+                // is a Comment on the same source line, write it inline
+                if let Some(style_end_line) = end_line {
+                    if needs_semicolon {
+                        let next_visible = children.iter().position(|c| !c.is_invisible());
+                        if let Some(idx) = next_visible {
+                            if let Some(comment_line) = self.comment_start_line(&children[idx]) {
+                                if comment_line == style_end_line {
+                                    if let CssStmt::Comment(ref comment, span) = children[idx] {
+                                        let comment = comment.clone();
+                                        self.write_inline_comment(&comment, span)?;
+                                        children.remove(idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sub-problem C: If we just wrote a block with closing `}` and the next
+                // visible child is a Comment on the same source line, write it inline
+                if let Some(brace_line) = closing_brace_line {
+                    let next_visible = children.iter().position(|c| !c.is_invisible());
+                    if let Some(idx) = next_visible {
+                        if let Some(comment_line) = self.comment_start_line(&children[idx]) {
+                            if comment_line == brace_line {
+                                if let CssStmt::Comment(ref comment, span) = children[idx] {
+                                    let comment = comment.clone();
+                                    self.write_inline_comment(&comment, span)?;
+                                    children.remove(idx);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             self.write_optional_newline();
         }
 
-        if let Some(last) = last {
-            let needs_semicolon = Self::requires_semicolon(&last);
-            let did_write = self.visit_stmt(last)?;
-
-            if did_write {
-                if needs_semicolon && !self.options.is_compressed() {
-                    self.buffer.push(b';');
-                }
-
-                self.write_optional_newline();
-            }
-        }
-
         // In compressed mode, remove trailing semicolons before closing brace
-        // This handles cases where the last visible child was followed by
-        // invisible children (e.g., comments stripped in compressed mode)
         if self.options.is_compressed() {
             while self.buffer.last() == Some(&b';') {
                 self.buffer.pop();
@@ -1855,7 +1996,7 @@ impl<'a> Serializer<'a> {
                 .extend_from_slice(supports_rule.params.as_bytes());
         }
 
-        self.write_children(supports_rule.body)?;
+        self.write_children(supports_rule.body, None)?;
 
         Ok(())
     }
@@ -1869,9 +2010,31 @@ impl<'a> Serializer<'a> {
         match stmt {
             CssStmt::RuleSet { selector, body, .. } => {
                 self.write_indentation();
-                self.write_top_level_selector_list(&selector.as_selector_list());
+                let sel_list = selector.as_selector_list();
+                let brace_line = Some(self.source_line(sel_list.span.high()));
+                self.write_top_level_selector_list(&sel_list);
 
-                self.write_children(body)?;
+                // Comment-only body on same line as `{`: render single-line (issue_894)
+                if !self.options.is_compressed()
+                    && !body.is_empty()
+                    && body.iter().all(|s| matches!(s, CssStmt::Comment(..)))
+                {
+                    if let Some(bl) = brace_line {
+                        let all_on_brace_line = body.iter().all(|s| {
+                            self.comment_start_line(s) == Some(bl)
+                        });
+                        if all_on_brace_line {
+                            self.buffer.extend_from_slice(b" { ");
+                            for stmt in body {
+                                self.visit_stmt(stmt)?;
+                            }
+                            self.buffer.extend_from_slice(b" }");
+                            return Ok(true);
+                        }
+                    }
+                }
+
+                self.write_children(body, brace_line)?;
             }
             CssStmt::Media(media_rule, ..) => {
                 self.write_indentation();
@@ -1889,7 +2052,10 @@ impl<'a> Serializer<'a> {
                     self.write_media_query(last);
                 }
 
-                self.write_children(media_rule.body)?;
+                let brace_line = media_rule
+                    .query_span
+                    .map(|span| self.source_line(span.high()));
+                self.write_children(media_rule.body, brace_line)?;
             }
             CssStmt::UnknownAtRule(unknown_at_rule, ..) => {
                 self.write_indentation();
@@ -1929,7 +2095,7 @@ impl<'a> Serializer<'a> {
                     return Ok(true);
                 }
 
-                self.write_children(unknown_at_rule.body)?;
+                self.write_children(unknown_at_rule.body, None)?;
             }
             CssStmt::Style(style) => self.write_style(style)?,
             CssStmt::Comment(comment, span) => self.write_comment(&comment, span)?,
@@ -1945,7 +2111,7 @@ impl<'a> Serializer<'a> {
 
                 self.buffer.extend_from_slice(selector.as_bytes());
 
-                self.write_children(keyframes_rule_set.body)?;
+                self.write_children(keyframes_rule_set.body, None)?;
             }
             CssStmt::Import(import, modifier) => self.write_import(&import, modifier)?,
             CssStmt::Supports(supports_rule, _) => self.write_supports_rule(supports_rule)?,
