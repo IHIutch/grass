@@ -1487,13 +1487,22 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         name: &str,
         start: usize,
     ) -> SassResult<Option<Spanned<AstExpr>>> {
+        let normalized = unvendor(name);
+
         if matches!(parser.toks().peek(), Some(Token { kind: '(', .. })) {
             if let Some(calculation) = ValueParser::try_parse_calculation(parser, name, start)? {
                 return Ok(Some(calculation));
             }
-        }
 
-        let normalized = unvendor(name);
+            // When unprefixed calc() parsing fails and returns None (dynamic
+            // content detected), skip the CSS passthrough below and fall
+            // through to the regular function call path, which properly
+            // evaluates Sass variables and expressions. Prefixed calc
+            // (e.g. -a-calc) still uses CSS passthrough.
+            if name == "calc" {
+                return Ok(None);
+            }
+        }
 
         let mut buffer;
 
@@ -1567,6 +1576,57 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             )
             .span(parser.toks_mut().span_from(start)),
         ))
+    }
+
+    /// Quick scan of calc() content for dynamic elements ($variables,
+    /// var(), env()) that can't be fully validated at parse time. When
+    /// present, space-separated values should be allowed and the
+    /// calculation parser falls back to a regular function call.
+    /// Cursor must be at `(`. Resets cursor after scanning.
+    fn scan_for_dynamic_calc_content(parser: &mut P) -> bool {
+        let start = parser.toks().cursor();
+        let mut parens = 0i32;
+
+        while let Some(tok) = parser.toks_mut().next() {
+            match tok.kind {
+                '(' => parens += 1,
+                ')' => {
+                    parens -= 1;
+                    if parens < 0 {
+                        break;
+                    }
+                }
+                '$' => {
+                    parser.toks_mut().set_cursor(start);
+                    return true;
+                }
+                'v' | 'V' | 'e' | 'E' => {
+                    // Check for var( or env(
+                    let remaining_start = parser.toks().cursor();
+                    let mut name = String::from(tok.kind);
+                    while let Some(t) = parser.toks().peek() {
+                        if t.kind.is_ascii_alphanumeric() || t.kind == '-' || t.kind == '_' {
+                            name.push(t.kind);
+                            parser.toks_mut().next();
+                        } else {
+                            break;
+                        }
+                    }
+                    let lower = name.to_ascii_lowercase();
+                    if (lower == "var" || lower == "env")
+                        && matches!(parser.toks().peek(), Some(Token { kind: '(', .. }))
+                    {
+                        parser.toks_mut().set_cursor(start);
+                        return true;
+                    }
+                    parser.toks_mut().set_cursor(remaining_start);
+                }
+                _ => {}
+            }
+        }
+
+        parser.toks_mut().set_cursor(start);
+        false
     }
 
     fn contains_calculation_interpolation(parser: &mut P) -> SassResult<bool> {
@@ -1949,13 +2009,27 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         Ok(Some(match name {
             "calc" => {
-                let args = ValueParser::parse_calculation_arguments(parser, Some(1), start)?;
-
-                AstExpr::Calculation {
-                    name: CalculationName::Calc,
-                    args,
+                // calc() is parsed as a calculation if possible. When parsing
+                // fails and the content contains dynamic elements (var(), env(),
+                // $variables, or #{interpolation}), fall back to a normal
+                // function call so those elements get evaluated. For purely
+                // static content, propagate the calculation error.
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(1), start) {
+                    Ok(args) => AstExpr::Calculation {
+                        name: CalculationName::Calc,
+                        args,
+                    }
+                    .span(parser.toks_mut().span_from(start)),
+                    Err(e) => {
+                        parser.toks_mut().set_cursor(before_args);
+                        if Self::scan_for_dynamic_calc_content(parser) {
+                            parser.toks_mut().set_cursor(before_args);
+                            return Ok(None);
+                        }
+                        return Err(e);
+                    }
                 }
-                .span(parser.toks_mut().span_from(start))
             }
             "min" | "max" => {
                 // min() and max() are parsed as calculations if possible, and otherwise
