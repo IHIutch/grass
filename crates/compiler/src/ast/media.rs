@@ -86,7 +86,7 @@ impl MediaQuery {
         let conditions;
 
         if (this_modifier.as_deref() == Some("not")) != (other_modifier.as_deref() == Some("not")) {
-            if this_modifier == other_modifier {
+            if this_type == other_type {
                 let negative_conditions = if this_modifier.as_deref() == Some("not") {
                     &self.conditions
                 } else {
