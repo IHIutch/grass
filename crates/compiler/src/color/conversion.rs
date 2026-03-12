@@ -502,6 +502,13 @@ fn hue_to_channel(m1: f64, m2: f64, mut hue: f64) -> f64 {
 /// Matches dart-sass's algorithm: saturation = (max - lightness) / min(lightness, 1 - lightness).
 /// Hue is set to 0 when saturation is fuzzy-zero (< 1e-11).
 pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
+    // NaN propagation: if any channel is NaN, all HSL components depend on it
+    // so the result must be all-NaN. Rust's f64::min/max suppress NaN, which
+    // would otherwise produce incorrect results.
+    if r.is_nan() || g.is_nan() || b.is_nan() {
+        return [f64::NAN, f64::NAN, f64::NAN];
+    }
+
     let min = r.min(g.min(b));
     let max = r.max(g.max(b));
     let lightness = (min + max) / 2.0;
@@ -578,6 +585,10 @@ pub fn hwb_to_srgb(h: f64, w: f64, b: f64) -> [f64; 3] {
 /// When saturation is negative (out-of-gamut), HSL rotates hue by 180° and
 /// negates saturation, but HWB keeps the raw hue value.
 pub fn srgb_to_hwb(r: f64, g: f64, b: f64) -> [f64; 3] {
+    if r.is_nan() || g.is_nan() || b.is_nan() {
+        return [f64::NAN, f64::NAN, f64::NAN];
+    }
+
     let min = r.min(g.min(b));
     let max = r.max(g.max(b));
 
