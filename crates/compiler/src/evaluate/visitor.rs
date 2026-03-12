@@ -3560,6 +3560,28 @@ impl<'a> Visitor<'a> {
         })
     }
 
+    /// Check that a calculation function received the required number of arguments
+    fn check_calc_args(
+        args: &[CalculationArg],
+        required: usize,
+        name: &str,
+        span: Span,
+    ) -> SassResult<()> {
+        if args.len() < required {
+            let was_were = if args.len() == 1 { "was" } else { "were" };
+            return Err((
+                format!(
+                    "{required} argument{} required, but only {} {was_were} passed.",
+                    if required == 1 { "" } else { "s" },
+                    args.len(),
+                ),
+                span,
+            )
+                .into());
+        }
+        Ok(())
+    }
+
     fn visit_calculation_value(
         &mut self,
         expr: AstExpr,
@@ -3713,69 +3735,83 @@ impl<'a> Visitor<'a> {
                 SassCalculation::clamp(min, value, max, self.options, span)
             }
             CalculationName::Abs => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "abs", span)?;
                 SassCalculation::abs(args.remove(0), self.options, span)
             }
             CalculationName::Exp => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "exp", span)?;
                 SassCalculation::exp(args.remove(0), self.options, span)
             }
             CalculationName::Sign => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "sign", span)?;
                 SassCalculation::sign(args.remove(0), self.options, span)
             }
             CalculationName::Sin => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "sin", span)?;
                 SassCalculation::sin(args.remove(0), self.options, span)
             }
             CalculationName::Cos => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "cos", span)?;
                 SassCalculation::cos(args.remove(0), self.options, span)
             }
             CalculationName::Tan => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "tan", span)?;
                 SassCalculation::tan(args.remove(0), self.options, span)
             }
             CalculationName::Asin => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "asin", span)?;
                 SassCalculation::asin(args.remove(0), self.options, span)
             }
             CalculationName::Acos => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "acos", span)?;
                 SassCalculation::acos(args.remove(0), self.options, span)
             }
             CalculationName::Atan => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "atan", span)?;
                 SassCalculation::atan(args.remove(0), self.options, span)
             }
             CalculationName::Sqrt => {
-                debug_assert_eq!(args.len(), 1);
+                Self::check_calc_args(&args, 1, "sqrt", span)?;
                 SassCalculation::sqrt(args.remove(0), self.options, span)
             }
             CalculationName::Atan2 => {
-                debug_assert_eq!(args.len(), 2);
+                Self::check_calc_args(&args, 2, "atan2", span)?;
                 SassCalculation::atan2(args, self.options, span)
             }
             CalculationName::Pow => {
-                debug_assert_eq!(args.len(), 2);
+                Self::check_calc_args(&args, 2, "pow", span)?;
                 SassCalculation::pow(args, self.options, span)
             }
             CalculationName::Log => {
-                debug_assert!(args.len() == 1 || args.len() == 2);
+                if args.is_empty() {
+                    return Err((
+                        "1 argument required, but only 0 were passed.",
+                        span,
+                    )
+                        .into());
+                }
                 SassCalculation::log(args, self.options, span)
             }
             CalculationName::Hypot => {
+                if args.is_empty() {
+                    return Err((
+                        "hypot() must have at least one argument.",
+                        span,
+                    )
+                        .into());
+                }
                 SassCalculation::hypot(args, self.options, span)
             }
             CalculationName::Mod => {
-                debug_assert_eq!(args.len(), 2);
+                Self::check_calc_args(&args, 2, "mod", span)?;
                 SassCalculation::calc_mod(args, self.options, span)
             }
             CalculationName::Rem => {
-                debug_assert_eq!(args.len(), 2);
+                Self::check_calc_args(&args, 2, "rem", span)?;
                 SassCalculation::calc_rem(args, self.options, span)
             }
             CalculationName::CalcSize => {
+                Self::check_calc_args(&args, 2, "calc-size", span)?;
                 Ok(SassCalculation::calc_size(args))
             }
             CalculationName::Round => {
