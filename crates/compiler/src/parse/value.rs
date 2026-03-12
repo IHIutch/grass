@@ -1572,6 +1572,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     fn contains_calculation_interpolation(parser: &mut P) -> SassResult<bool> {
         let mut parens = 0;
         let mut brackets = Vec::new();
+        let mut has_interpolation = false;
+        let mut has_top_level_comma = false;
 
         let start = parser.toks().cursor();
 
@@ -1594,8 +1596,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     if parens == 0
                         && matches!(parser.toks().peek_n(1), Some(Token { kind: '{', .. }))
                     {
-                        parser.toks_mut().set_cursor(start);
-                        return Ok(true);
+                        has_interpolation = true;
+                    }
+                    parser.toks_mut().next();
+                }
+                ',' => {
+                    if parens == 0 && brackets.is_empty() {
+                        has_top_level_comma = true;
                     }
                     parser.toks_mut().next();
                 }
@@ -1612,7 +1619,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     }
                     if brackets.is_empty() || brackets.pop() != Some(next.kind) {
                         parser.toks_mut().set_cursor(start);
-                        return Ok(false);
+                        // When there are multiple comma-separated arguments,
+                        // don't use the greedy interpolation path — parse each
+                        // argument individually so they can be resolved separately
+                        return Ok(has_interpolation && !has_top_level_comma);
                     }
                     parser.toks_mut().next();
                 }
@@ -1691,6 +1701,18 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 parser.expect_char(')')?;
 
                 Ok(AstExpr::Paren(Arc::new(value)).span(parser.toks_mut().span_from(start)))
+            }
+            Some(Token { kind: '#', .. })
+                if matches!(parser.toks().peek_n(1), Some(Token { kind: '{', .. })) =>
+            {
+                let start = parser.toks().cursor();
+                let interpolation = parser.parse_single_interpolation()?;
+                let span = parser.toks_mut().span_from(start);
+                Ok(AstExpr::String(
+                    StringExpr(interpolation, QuoteKind::None),
+                    span,
+                )
+                .span(span))
             }
             _ if !parser.looking_at_identifier() => Err((
                 "Expected number, variable, function, or calculation.",
