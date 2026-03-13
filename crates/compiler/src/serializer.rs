@@ -1102,7 +1102,7 @@ impl<'a> Serializer<'a> {
         // This matches dart-sass behavior where 1e100 outputs as 1 followed
         // by 100 zeros.
         if num >= 1e15 && num.fract() == 0.0 {
-            let s = format!("{:.16e}", num);
+            let s = format!("{:e}", num);
             if let Some(e_pos) = s.find('e') {
                 let mantissa = &s[..e_pos];
                 let exp: usize = s[e_pos + 1..].parse().unwrap_or(0);
