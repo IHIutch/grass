@@ -1140,7 +1140,7 @@ impl ExtensionStore {
         span: Span,
     ) -> SassResult<()> {
         let selectors = self.selectors.get(target).cloned();
-        let existing_extensions = self.extensions_by_extender.get(target).cloned();
+        let had_existing_extensions = self.extensions_by_extender.contains_key(target);
 
         // Media context compatibility is checked during extension application
         // in assert_compatible_media_context(), not here. An @extend defined
@@ -1190,7 +1190,7 @@ impl ExtensionStore {
                     .or_insert_with(|| complex.max_specificity());
             }
 
-            if selectors.is_some() || existing_extensions.is_some() {
+            if selectors.is_some() || had_existing_extensions {
                 new_extensions
                     .get_or_insert_with(IndexMap::new)
                     .insert(complex.clone(), state);
@@ -1206,7 +1206,11 @@ impl ExtensionStore {
         let mut new_extensions_by_target = HashMap::new();
         new_extensions_by_target.insert(target.clone(), new_extensions);
 
-        if let Some(existing_extensions) = existing_extensions {
+        if let Some(existing_extensions) = if had_existing_extensions {
+            self.extensions_by_extender.get(target).cloned()
+        } else {
+            None
+        } {
             let additional_extensions =
                 self.extend_existing_extensions(existing_extensions, &new_extensions_by_target)?;
             if let Some(additional_extensions) = additional_extensions {
@@ -1291,14 +1295,18 @@ impl ExtensionStore {
                 } else {
                     sources.insert(complex.clone(), with_extender.clone());
 
-                    for simple in simple_selectors_in_complex(&complex) {
-                        self.extensions_by_extender
-                            .entry(simple.clone())
-                            .or_insert_with(Vec::new)
-                            .push(with_extender.clone());
+                    for component in &complex.components {
+                        if let ComplexSelectorComponent::Compound(compound) = component {
+                            for simple in &compound.components {
+                                self.extensions_by_extender
+                                    .entry(simple.clone())
+                                    .or_insert_with(Vec::new)
+                                    .push(with_extender.clone());
+                            }
+                        }
                     }
 
-                    if !new_extensions.contains_key(&extension.target.clone().unwrap()) {
+                    if new_extensions.contains_key(&extension.target.clone().unwrap()) {
                         additional_extensions
                             .get_or_insert_with(HashMap::new)
                             .entry(extension.target.clone().unwrap())

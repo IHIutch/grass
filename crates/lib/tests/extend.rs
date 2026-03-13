@@ -1976,6 +1976,42 @@ error!(
     "@extend a;", "Error: @extend may only be used within style rules."
 );
 
+// Extend loop propagation tests (sass-spec: extend-loop.hrx)
+// Verified against dart-sass 1.97.3
+test!(
+    extend_loop_order2,
+    "@media order2 {
+        .x2.y2.a2 {x: y; @extend .b2}
+        .c2 {x: y; @extend .a2}
+        .z2.b2 {x: y; @extend .c2}
+    }",
+    "@media order2 {\n  .x2.y2.a2, .x2.y2.c2, .x2.y2.z2.b2 {\n    x: y;\n  }\n  .c2, .z2.b2, .z2.x2.y2.a2, .z2.x2.y2.c2, .z2.x2.y2.b2 {\n    x: y;\n  }\n  .z2.b2, .z2.x2.y2.a2, .z2.x2.y2.c2, .z2.x2.y2.b2 {\n    x: y;\n  }\n}\n"
+);
+test!(
+    extend_loop_order6,
+    "@media order6 {
+        .c6 {x: y; @extend .a6}
+        .x6.y6.a6 {x: y; @extend .b6}
+        .z6.b6 {x: y; @extend .c6}
+    }",
+    "@media order6 {\n  .c6, .z6.b6, .z6.x6.y6.a6, .z6.x6.y6.c6, .z6.x6.y6.b6 {\n    x: y;\n  }\n  .x6.y6.a6, .x6.y6.c6, .x6.y6.z6.b6 {\n    x: y;\n  }\n  .z6.b6, .z6.x6.y6.a6, .z6.x6.y6.c6, .z6.x6.y6.b6 {\n    x: y;\n  }\n}\n"
+);
+// Regression guard: mutual extend shouldn't over-propagate
+// sass-spec: libsass-closed-issues/issue_2399.hrx
+test!(
+    issue_2399_no_regression,
+    ".a {
+        @extend .b;
+    }
+    .b {
+        @extend .a;
+    }
+    .a, .b {
+        x: y;
+    }",
+    ".a, .b {\n  x: y;\n}\n"
+);
+
 // todo: extend_loop (massive test)
 // todo: extend tests in folders
 // todo: copy all :where extend tests, https://github.com/sass/sass-spec/pull/1783/files
