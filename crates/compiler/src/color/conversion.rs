@@ -18,6 +18,13 @@ use std::f64::consts::PI;
 
 use super::space::ColorSpace;
 
+/// Cube root matching dart-sass's `math.pow(x.abs(), 1/3) * x.sign` behavior.
+/// Rust's f64::cbrt() uses a different algorithm that produces ~1e-11 different
+/// results, which compounds through matrix multiplications in color conversions.
+fn cbrt_like_dart(v: f64) -> f64 {
+    v.signum() * v.abs().powf(1.0 / 3.0)
+}
+
 // ---- 3x3 Matrix operations ----
 
 /// Row-major 3x3 matrix
@@ -665,7 +672,7 @@ pub fn xyz_d50_to_lab(x: f64, y: f64, z: f64) -> [f64; 3] {
 
     let f = |v: f64| -> f64 {
         if v > EPSILON {
-            v.cbrt()
+            cbrt_like_dart(v)
         } else {
             (KAPPA * v + 16.0) / 116.0
         }
@@ -713,7 +720,7 @@ pub fn xyz_d65_to_oklab(x: f64, y: f64, z: f64) -> [f64; 3] {
     // XYZ-D65 -> LMS
     let lms = mat3_mul(&OKLAB_XYZ_TO_LMS, [x, y, z]);
     // Cube root
-    let lms_g = [lms[0].cbrt(), lms[1].cbrt(), lms[2].cbrt()];
+    let lms_g = [cbrt_like_dart(lms[0]), cbrt_like_dart(lms[1]), cbrt_like_dart(lms[2])];
     // LMS -> OKLab
     mat3_mul(&OKLAB_LMS_TO_OKLAB, lms_g)
 }
@@ -1005,7 +1012,7 @@ pub fn convert(
         {
             let linear = to_linear_rgb(channels, from);
             let lms = linear_rgb_to_lms(linear, from_ls);
-            let lms_g = [lms[0].cbrt(), lms[1].cbrt(), lms[2].cbrt()];
+            let lms_g = [cbrt_like_dart(lms[0]), cbrt_like_dart(lms[1]), cbrt_like_dart(lms[2])];
             let oklab = mat3_mul(&OKLAB_LMS_TO_OKLAB, lms_g);
             if to == ColorSpace::Oklch {
                 oklab_to_oklch(oklab[0], oklab[1], oklab[2])
