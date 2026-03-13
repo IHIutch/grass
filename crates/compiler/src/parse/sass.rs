@@ -221,7 +221,13 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
             }
 
             let indentation = self.read_indentation()?;
-            assert_eq!(indentation, 0);
+            if indentation != 0 {
+                return Err((
+                    "Nothing may be indented here.",
+                    self.toks.current_span(),
+                )
+                    .into());
+            }
         }
 
         Ok(statements)
