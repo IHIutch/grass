@@ -1257,6 +1257,7 @@ impl<'a> Visitor<'a> {
         configuration: Option<Rc<RefCell<Configuration>>>,
     ) -> SassResult<()> {
         let canonical_url = self.canonicalize(&stylesheet.url);
+        let is_plain_css = stylesheet.is_plain_css;
 
         if self.active_modules.contains(&canonical_url) {
             return Err((
@@ -1297,10 +1298,39 @@ impl<'a> Visitor<'a> {
         let all_css_indices = self.collect_transitive_css_indices(&module);
 
         // Clone all transitive CSS into ROOT, creating new ExtendedSelectors.
+        // For plain CSS files, `&` is a CSS nesting selector that must be
+        // preserved literally (not resolved to the parent). We wrap such
+        // subtrees in a RuleSet with the parent selector instead.
         let mut selector_map = HashMap::new();
+        let mut wrapper_indices: HashSet<CssTreeIdx> = HashSet::new();
         for idx in &all_css_indices {
-            self.css_tree
-                .clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
+            let needs_wrapper = is_plain_css && old_style_rule.is_some() && {
+                let stmt = self.css_tree.get(*idx);
+                if let Some(CssStmt::RuleSet { ref selector, .. }) = &*stmt {
+                    selector.as_selector_list().contains_parent_selector()
+                } else {
+                    false
+                }
+            };
+
+            if needs_wrapper {
+                let parent_list =
+                    old_style_rule.as_ref().unwrap().as_selector_list().clone();
+                let wrapper_selector = ExtendedSelector::new(parent_list);
+                let wrapper = CssStmt::RuleSet {
+                    selector: wrapper_selector,
+                    body: Vec::new(),
+                    is_group_end: false,
+                    source_span: None,
+                };
+                let wrapper_idx = self.css_tree.add_child(wrapper, CssTree::ROOT);
+                wrapper_indices.insert(wrapper_idx);
+                self.css_tree
+                    .clone_subtree(*idx, wrapper_idx, &mut selector_map);
+            } else {
+                self.css_tree
+                    .clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
+            }
         }
 
         // Apply the loaded module's extensions to the CLONED selectors only.
@@ -1313,6 +1343,11 @@ impl<'a> Visitor<'a> {
             let parent_list = parent_selector.as_selector_list().clone();
             let cloned_children = self.css_tree.root_children_from(cloned_start);
             for idx in &cloned_children {
+                // Skip wrapper RuleSets created for plain CSS `&` nesting —
+                // their selector is already the parent.
+                if wrapper_indices.contains(idx) {
+                    continue;
+                }
                 let needs_resolution = {
                     let stmt = self.css_tree.get(*idx);
                     matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
