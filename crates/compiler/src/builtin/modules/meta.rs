@@ -57,18 +57,19 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
         None
     };
 
-    // Check if this is a builtin module — builtins can't be configured
+    let is_builtin = matches!(
+        url.as_str(),
+        "sass:color"
+            | "sass:list"
+            | "sass:map"
+            | "sass:math"
+            | "sass:meta"
+            | "sass:selector"
+            | "sass:string"
+    );
+
+    // Built-in modules can't be configured
     if let Some(ref configuration) = configuration {
-        let is_builtin = matches!(
-            url.as_str(),
-            "sass:color"
-                | "sass:list"
-                | "sass:map"
-                | "sass:math"
-                | "sass:meta"
-                | "sass:selector"
-                | "sass:string"
-        );
         if is_builtin && !configuration.borrow().is_implicit() {
             return Err((
                 format!("Built-in module {} can't be configured.", url),
@@ -76,6 +77,11 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
             )
                 .into());
         }
+    }
+
+    // Built-in modules produce no CSS output — nothing to load
+    if is_builtin {
+        return Ok(());
     }
 
     let style_sheet = visitor.load_style_sheet(url.as_ref(), false, args.span())?;
@@ -216,7 +222,7 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
             func(args, visitor)?;
             Ok(())
         }
-        Mixin::UserDefined(mixin_def, env) => {
+        Mixin::UserDefined(mixin_def, env, defining_path) => {
             if has_content && !mixin_def.has_content {
                 return Err(("Mixin doesn't accept a content block.", span).into());
             }
@@ -225,6 +231,9 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
             visitor.flags.set(ContextFlags::IN_MIXIN, true);
 
             let content = visitor.env.content.take();
+
+            let old_import_path =
+                std::mem::replace(&mut visitor.current_import_path, defining_path);
 
             visitor.run_user_defined_callable::<_, (), _>(
                 MaybeEvaledArguments::Evaled(args),
@@ -242,6 +251,7 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
                 },
             )?;
 
+            visitor.current_import_path = old_import_path;
             visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
             Ok(())
         }

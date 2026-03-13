@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::{
     ast::ArgumentResult,
@@ -14,7 +15,7 @@ pub(crate) use crate::ast::AstMixin as UserDefinedMixin;
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Mixin {
-    UserDefined(UserDefinedMixin, Environment),
+    UserDefined(UserDefinedMixin, Environment, PathBuf),
     Builtin(BuiltinMixin),
     /// A builtin mixin that accepts a `@content` block
     BuiltinWithContent(BuiltinMixin),
@@ -48,7 +49,7 @@ pub(crate) struct SassMixin {
 impl PartialEq for SassMixin {
     fn eq(&self, other: &Self) -> bool {
         match (&self.mixin, &other.mixin) {
-            (Mixin::UserDefined(a, _), Mixin::UserDefined(b, _)) => a.id == b.id,
+            (Mixin::UserDefined(a, _, _), Mixin::UserDefined(b, _, _)) => a.id == b.id,
             (
                 Mixin::Builtin(a) | Mixin::BuiltinWithContent(a),
                 Mixin::Builtin(b) | Mixin::BuiltinWithContent(b),

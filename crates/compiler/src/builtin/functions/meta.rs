@@ -348,7 +348,7 @@ pub(crate) fn accepts_content(
         }
     };
     match mixin.mixin {
-        Mixin::UserDefined(m, _) => Ok(Value::bool(m.has_content)),
+        Mixin::UserDefined(m, _, _) => Ok(Value::bool(m.has_content)),
         Mixin::Builtin(_) => Ok(Value::False),
         Mixin::BuiltinWithContent(_) => Ok(Value::True),
     }

@@ -2936,7 +2936,7 @@ impl<'a> Visitor<'a> {
 
                 Ok(None)
             }
-            Mixin::UserDefined(mixin, env) => {
+            Mixin::UserDefined(mixin, env, defining_path) => {
                 if include_stmt.content.is_some() && !mixin.has_content {
                     return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
@@ -2952,6 +2952,9 @@ impl<'a> Visitor<'a> {
                         env: self.env.new_closure(),
                     })
                 });
+
+                let old_import_path =
+                    std::mem::replace(&mut self.current_import_path, defining_path);
 
                 self.run_user_defined_callable::<_, (), _>(
                     MaybeEvaledArguments::Invocation(args),
@@ -2969,6 +2972,7 @@ impl<'a> Visitor<'a> {
                     },
                 )?;
 
+                self.current_import_path = old_import_path;
                 self.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
 
                 Ok(None)
@@ -2977,9 +2981,10 @@ impl<'a> Visitor<'a> {
     }
 
     fn visit_mixin_decl(&mut self, mixin: AstMixin) {
+        let defining_path = self.current_import_path.clone();
         self.env.insert_mixin(
             mixin.name,
-            Mixin::UserDefined(mixin, self.env.new_closure()),
+            Mixin::UserDefined(mixin, self.env.new_closure(), defining_path),
         );
     }
 
