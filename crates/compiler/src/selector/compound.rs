@@ -62,6 +62,13 @@ impl CompoundSelector {
         Specificity::new(min, max)
     }
 
+    /// Returns the index and reference of the first pseudo-element in this compound.
+    fn find_pseudo_element_indexed(&self) -> Option<(usize, &SimpleSelector)> {
+        self.components.iter().enumerate().find(|(_, s)| {
+            matches!(s, SimpleSelector::Pseudo(Pseudo { is_class: false, .. }))
+        })
+    }
+
     pub fn is_invisible(&self) -> bool {
         self.components.iter().any(SimpleSelector::is_invisible)
     }
@@ -71,6 +78,56 @@ impl CompoundSelector {
         other: &Self,
         parents: &Option<Vec<ComplexSelectorComponent>>,
     ) -> bool {
+        // Pseudo-elements effectively change the target of a compound selector.
+        // If either has a pseudo-element, they both must have the same one,
+        // and components before/after must be checked separately.
+        let pseudo1 = self.find_pseudo_element_indexed();
+        let pseudo2 = other.find_pseudo_element_indexed();
+        match (pseudo1, pseudo2) {
+            (Some((idx1, pe1)), Some((idx2, pe2))) => {
+                // The pseudo-elements themselves must match.
+                // For pseudo-elements with selector args (e.g. ::slotted),
+                // use proper superselector logic; otherwise use equality.
+                match (pe1, pe2) {
+                    (
+                        SimpleSelector::Pseudo(
+                            pseudo @ Pseudo {
+                                selector: Some(..), ..
+                            },
+                        ),
+                        _,
+                    ) => {
+                        // Build a 1-element compound from pe2 for the check
+                        let pe2_compound = CompoundSelector {
+                            components: vec![pe2.clone()],
+                        };
+                        if !pseudo.is_super_selector(&pe2_compound, parents.clone()) {
+                            return false;
+                        }
+                    }
+                    _ => {
+                        if pe1 != pe2 {
+                            return false;
+                        }
+                    }
+                }
+
+                // Check components before the pseudo-element
+                let before1 = &self.components[..idx1];
+                let before2 = &other.components[..idx2];
+                if !compound_components_is_superselector(before1, before2, parents) {
+                    return false;
+                }
+
+                // Check components after the pseudo-element
+                let after1 = &self.components[idx1 + 1..];
+                let after2 = &other.components[idx2 + 1..];
+                return compound_components_is_superselector(after1, after2, parents);
+            }
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+
         for simple1 in &self.components {
             if let SimpleSelector::Pseudo(
                 pseudo @ Pseudo {
@@ -263,4 +320,29 @@ impl CompoundSelector {
             }
         })
     }
+}
+
+/// Like `CompoundSelector::is_super_selector` but operates on slices of components.
+/// An empty `compound1` is treated as a universal selector (matches everything).
+fn compound_components_is_superselector(
+    compound1: &[SimpleSelector],
+    compound2: &[SimpleSelector],
+    parents: &Option<Vec<ComplexSelectorComponent>>,
+) -> bool {
+    if compound1.is_empty() {
+        return true;
+    }
+    let c1 = CompoundSelector {
+        components: compound1.to_vec(),
+    };
+    let c2 = if compound2.is_empty() {
+        CompoundSelector {
+            components: vec![SimpleSelector::Universal(Namespace::Asterisk)],
+        }
+    } else {
+        CompoundSelector {
+            components: compound2.to_vec(),
+        }
+    };
+    c1.is_super_selector(&c2, parents)
 }

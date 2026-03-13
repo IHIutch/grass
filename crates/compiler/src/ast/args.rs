@@ -285,6 +285,14 @@ impl ArgumentResult {
         }
     }
 
+    /// Error if any named arguments remain unconsumed.
+    pub(crate) fn no_remaining_named(&self) -> SassResult<()> {
+        if let Some((name, _)) = self.named.iter().next() {
+            return Err((format!("No argument named ${}.", name), self.span).into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn get_variadic(self) -> SassResult<Vec<Spanned<Value>>> {
         if let Some((name, _)) = self.named.iter().next() {
             return Err((format!("No argument named ${}.", name), self.span).into());

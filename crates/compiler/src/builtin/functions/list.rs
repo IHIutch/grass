@@ -232,6 +232,8 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         }
     };
 
+    args.no_remaining_named()?;
+
     list1.extend(list2);
 
     Ok(Value::List(list1, sep, brackets))
