@@ -88,7 +88,7 @@ error!(
     "{ {color: red;}", "Error: expected \"}\"."
 );
 error!(toplevel_open_paren, "(", "Error: expected \"{\".");
-error!(toplevel_close_paren, ")", "Error: expected \"{\".");
+error!(toplevel_close_paren, ")", "Error: expected \"}\".");
 error!(
     backtick_in_value,
     "a {color:`red;}", "Error: Expected expression."

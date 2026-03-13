@@ -3050,7 +3050,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         omit_comments: bool,
     ) -> SassResult<Interpolation> {
         let mut buffer = Interpolation::new();
-        let mut bracket_depth: usize = 0;
+        let mut brackets: Vec<char> = Vec::new();
 
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
@@ -3076,7 +3076,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 '/' => {
                     let comment_start = self.toks().cursor();
                     match self.toks().peek_n(1) {
-                        Some(Token { kind: '/', .. }) if bracket_depth == 0 => {
+                        Some(Token { kind: '/', .. }) if brackets.is_empty() => {
                             // Silent comments are always stripped, but only at the
                             // top level — inside parens (e.g. url-prefix(http://...))
                             // `//` is literal text, not a comment.
@@ -3105,7 +3105,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
                 '\r' | '\n' => {
                     if self.is_indented()
-                        && bracket_depth == 0
+                        && brackets.is_empty()
                         && !self.is_consuming_newlines()
                     {
                         break;
@@ -3113,12 +3113,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     buffer.add_char(self.toks_mut().next().unwrap().kind);
                 }
                 '(' | '[' => {
-                    bracket_depth += 1;
-                    buffer.add_char(self.toks_mut().next().unwrap().kind);
+                    let bracket = self.toks_mut().next().unwrap().kind;
+                    buffer.add_char(bracket);
+                    brackets.push(opposite_bracket(bracket));
                 }
                 ')' | ']' => {
-                    bracket_depth = bracket_depth.saturating_sub(1);
-                    buffer.add_char(self.toks_mut().next().unwrap().kind);
+                    if brackets.is_empty() {
+                        break;
+                    }
+                    let expected = brackets.pop().unwrap();
+                    self.expect_char(expected)?;
+                    buffer.add_char(expected);
                 }
                 '!' | ';' | '{' | '}' => break,
                 'u' | 'U' => {
