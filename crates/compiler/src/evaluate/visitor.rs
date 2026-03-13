@@ -673,6 +673,7 @@ impl<'a> Visitor<'a> {
                 .as_ref()
                 .map(|t| t.to_string())
                 .unwrap_or_default();
+
             return Err((
                 format!(
                     "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
@@ -1247,8 +1248,9 @@ impl<'a> Visitor<'a> {
     }
 
     /// Evaluate a stylesheet for `meta.load-css()`, routing through `execute()`
-    /// so modules are cached. On cache hit, clones CSS instead of re-evaluating.
-    /// On first load, also clones so the originals are preserved for future clones.
+    /// so modules are cached. Clones CSS from the loaded module's full transitive
+    /// dependency tree (like dart-sass's `_combineCss(clone: true)`), applies
+    /// extends to the cloned selectors, and emits the result.
     pub(crate) fn load_css_inner(
         &mut self,
         stylesheet: StyleSheet,
@@ -1276,58 +1278,41 @@ impl<'a> Visitor<'a> {
 
         self.active_modules.remove(&canonical_url);
 
-        // Check unsatisfied extends from the loaded module. With execute(),
-        // extends are in the module's own extension store. Without this check,
-        // @extend targeting non-existent selectors would silently pass.
-        {
-            let m = module.borrow();
-            if let Module::Environment {
-                ref extension_store,
-                ..
-            } = *m
-            {
-                extension_store.check_unsatisfied_extends()?;
-            }
+        // Ensure hidden templates exist for all modules in the transitive tree.
+        // On first load, module_css_indices point to visible nodes at ROOT;
+        // we create hidden copies so the originals are preserved for the root's
+        // own output, and clones come from pristine templates.
+        self.ensure_hidden_templates_for_module(&module);
+
+        // On first load, execute() emitted CSS directly at ROOT. Hide that
+        // output — we'll emit cloned CSS instead (so extends don't bleed back
+        // to the original selectors via Rc<RefCell> sharing).
+        let execute_children = self.css_tree.root_children_from(root_children_before);
+        for idx in &execute_children {
+            self.css_tree.hide(*idx);
         }
 
-        // Check if execute() actually emitted new CSS (first load) or returned
-        // cached (subsequent load).
-        let new_children = self.css_tree.root_children_from(root_children_before);
-        if new_children.is_empty() {
-            // Cache hit — clone CSS from stored templates into ROOT
-            if let Some(indices) = self.module_css_indices.get(&canonical_url).cloned() {
-                let mut selector_map = HashMap::new();
-                for idx in &indices {
-                    self.css_tree
-                        .clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
-                }
-            }
-        } else {
-            // First load — execute() emitted CSS at ROOT. Create hidden template
-            // copies BEFORE parent selector resolution so they stay pristine.
-            if let Some(indices) = self.module_css_indices.get(&canonical_url).cloned() {
-                if !indices.is_empty() {
-                    // Clone into hidden area as templates for future loads
-                    let mut template_indices = Vec::new();
-                    let mut selector_map = HashMap::new();
-                    for idx in &indices {
-                        let template_idx =
-                            self.css_tree.clone_subtree_hidden(*idx, &mut selector_map);
-                        template_indices.push(template_idx);
-                    }
-                    // Replace the stored indices with the hidden template copies
-                    self.module_css_indices
-                        .insert(canonical_url.clone(), template_indices);
-                }
-            }
+        // Collect CSS indices from the loaded module's FULL transitive dependency
+        // tree (templates point to hidden copies after ensure_hidden_templates).
+        let all_css_indices = self.collect_transitive_css_indices(&module);
+
+        // Clone all transitive CSS into ROOT, creating new ExtendedSelectors.
+        let mut selector_map = HashMap::new();
+        for idx in &all_css_indices {
+            self.css_tree
+                .clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
         }
 
-        // Resolve new ROOT children's selectors with the caller's parent,
-        // so that CSS from the loaded file is nested under the calling context.
+        // Apply the loaded module's extensions to the CLONED selectors only.
+        // This matches dart-sass's approach of cloning CSS before extending.
+        Self::extend_cloned_selectors(&module, &selector_map)?;
+
+        // Resolve cloned CSS selectors with the caller's parent selector.
+        let cloned_start = root_children_before + execute_children.len();
         if let Some(ref parent_selector) = old_style_rule {
             let parent_list = parent_selector.as_selector_list().clone();
-            let new_children = self.css_tree.root_children_from(root_children_before);
-            for idx in &new_children {
+            let cloned_children = self.css_tree.root_children_from(cloned_start);
+            for idx in &cloned_children {
                 let needs_resolution = {
                     let stmt = self.css_tree.get(*idx);
                     matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
@@ -1350,11 +1335,11 @@ impl<'a> Visitor<'a> {
             }
         }
 
-        // Register all CSS selectors from the loaded module in the caller's
-        // extension store, so that @extend rules in the caller can target them.
+        // Register cloned CSS selectors in the caller's extension store,
+        // so that @extend rules in the caller can target them.
         {
-            let all_new_children = self.css_tree.root_children_from(root_children_before);
-            for idx in &all_new_children {
+            let cloned_children = self.css_tree.root_children_from(cloned_start);
+            for idx in &cloned_children {
                 let stmt = self.css_tree.get(*idx);
                 if let Some(CssStmt::RuleSet { ref selector, .. }) = &*stmt {
                     self.extender.register_existing_selector(selector)?;
@@ -1365,6 +1350,184 @@ impl<'a> Visitor<'a> {
         if let Some(configuration) = configuration {
             Self::assert_configuration_is_empty(&configuration, true)?;
         }
+
+        Ok(())
+    }
+
+    /// Collect deduplicated CSS tree indices from the full transitive dependency
+    /// tree of a module, in upstream-first topological order.
+    fn collect_transitive_css_indices(
+        &self,
+        module: &Arc<RefCell<Module>>,
+    ) -> Vec<CssTreeIdx> {
+        // Build reverse mapping: module pointer → URL for looking up CSS indices.
+        let ptr_to_url: HashMap<*const RefCell<Module>, PathBuf> = self
+            .modules
+            .iter()
+            .map(|(url, m)| (Arc::as_ptr(m), url.clone()))
+            .collect();
+
+        let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut seen: HashSet<*const RefCell<Module>> = HashSet::new();
+
+        fn visit_module(
+            module: &Arc<RefCell<Module>>,
+            sorted: &mut Vec<Arc<RefCell<Module>>>,
+            seen: &mut HashSet<*const RefCell<Module>>,
+        ) {
+            let ptr = Arc::as_ptr(module);
+            if !seen.insert(ptr) {
+                return;
+            }
+            let upstream: Vec<Arc<RefCell<Module>>> = {
+                let m = module.borrow();
+                if let Module::Environment { upstream, .. } = &*m {
+                    upstream.clone()
+                } else {
+                    Vec::new()
+                }
+            };
+            for up in &upstream {
+                visit_module(up, sorted, seen);
+            }
+            sorted.push(Arc::clone(module));
+        }
+
+        visit_module(module, &mut sorted, &mut seen);
+
+        // Collect CSS indices from each module, deduplicating.
+        let mut all_indices = Vec::new();
+        let mut seen_indices: HashSet<CssTreeIdx> = HashSet::new();
+
+        for module_ref in &sorted {
+            let ptr = Arc::as_ptr(module_ref);
+            if let Some(url) = ptr_to_url.get(&ptr) {
+                if let Some(indices) = self.module_css_indices.get(url) {
+                    for idx in indices {
+                        if seen_indices.insert(*idx) {
+                            all_indices.push(*idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        all_indices
+    }
+
+    /// Ensure all modules in the transitive dependency tree have hidden template
+    /// copies of their CSS. On first load, module_css_indices points to the
+    /// original CSS at ROOT. We create hidden copies so the originals are
+    /// preserved for the root's output, and future clones come from templates.
+    fn ensure_hidden_templates_for_module(&mut self, module: &Arc<RefCell<Module>>) {
+        // Build reverse mapping: module pointer → URL
+        let ptr_to_url: HashMap<*const RefCell<Module>, PathBuf> = self
+            .modules
+            .iter()
+            .map(|(url, m)| (Arc::as_ptr(m), url.clone()))
+            .collect();
+
+        let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut seen: HashSet<*const RefCell<Module>> = HashSet::new();
+
+        fn visit_module(
+            module: &Arc<RefCell<Module>>,
+            sorted: &mut Vec<Arc<RefCell<Module>>>,
+            seen: &mut HashSet<*const RefCell<Module>>,
+        ) {
+            let ptr = Arc::as_ptr(module);
+            if !seen.insert(ptr) {
+                return;
+            }
+            let upstream: Vec<Arc<RefCell<Module>>> = {
+                let m = module.borrow();
+                if let Module::Environment { upstream, .. } = &*m {
+                    upstream.clone()
+                } else {
+                    Vec::new()
+                }
+            };
+            for up in &upstream {
+                visit_module(up, sorted, seen);
+            }
+            sorted.push(Arc::clone(module));
+        }
+
+        visit_module(module, &mut sorted, &mut seen);
+
+        // First pass: create ONE hidden copy per unique original index.
+        let mut original_to_hidden: HashMap<CssTreeIdx, CssTreeIdx> = HashMap::new();
+        let mut selector_map = HashMap::new();
+
+        for module_ref in &sorted {
+            let ptr = Arc::as_ptr(module_ref);
+            if let Some(url) = ptr_to_url.get(&ptr) {
+                if let Some(indices) = self.module_css_indices.get(url) {
+                    for &idx in indices {
+                        if !self.css_tree.is_hidden(idx)
+                            && !original_to_hidden.contains_key(&idx)
+                        {
+                            let hidden_idx =
+                                self.css_tree.clone_subtree_hidden(idx, &mut selector_map);
+                            original_to_hidden.insert(idx, hidden_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        if original_to_hidden.is_empty() {
+            return;
+        }
+
+        // Second pass: update module_css_indices to point to hidden copies.
+        for module_ref in &sorted {
+            let ptr = Arc::as_ptr(module_ref);
+            if let Some(url) = ptr_to_url.get(&ptr) {
+                if let Some(indices) = self.module_css_indices.get(url).cloned() {
+                    let new_indices: Vec<CssTreeIdx> = indices
+                        .iter()
+                        .map(|idx| original_to_hidden.get(idx).copied().unwrap_or(*idx))
+                        .collect();
+                    if new_indices != indices {
+                        self.module_css_indices.insert(url.clone(), new_indices);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply extensions from a loaded module's dependency tree to cloned selectors.
+    /// Operates only on the cloned ExtendedSelectors (via selector_map), leaving
+    /// original module selectors untouched.
+    fn extend_cloned_selectors(
+        module: &Arc<RefCell<Module>>,
+        selector_map: &HashMap<usize, ExtendedSelector>,
+    ) -> SassResult<()> {
+        // Get the loaded module's extensions.
+        let extensions = {
+            let m = module.borrow();
+            match &*m {
+                Module::Environment { extension_store, .. } => {
+                    if extension_store.is_empty() {
+                        return Ok(());
+                    }
+                    extension_store.clone()
+                }
+                _ => return Ok(()),
+            }
+        };
+
+        // Create a temporary extension store with the module's extensions
+        // and register cloned selectors in it. The registration process
+        // will apply matching extensions via set_inner on the clones.
+        let mut temp_store = extensions;
+        for (_old_ptr, new_selector) in selector_map {
+            temp_store.register_existing_selector(new_selector)?;
+        }
+
+        // Check for unsatisfied extends.
+        temp_store.check_unsatisfied_extends()?;
 
         Ok(())
     }

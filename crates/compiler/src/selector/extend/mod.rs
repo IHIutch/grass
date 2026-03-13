@@ -300,6 +300,7 @@ impl ExtensionStore {
             }
             for extension in sources.values() {
                 if !extension.is_optional && !extension.is_original {
+
                     return Err((
                         format!(
                             "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",

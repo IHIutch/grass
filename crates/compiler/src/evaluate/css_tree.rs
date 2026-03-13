@@ -355,6 +355,16 @@ impl CssTree {
         new_idx
     }
 
+    /// Check if a node is in the hidden set.
+    pub fn is_hidden(&self, idx: CssTreeIdx) -> bool {
+        self.hidden.contains(&idx)
+    }
+
+    /// Mark a node as hidden. It will be excluded from finish() output.
+    pub fn hide(&mut self, idx: CssTreeIdx) {
+        self.hidden.insert(idx);
+    }
+
     /// Clone a subtree into a hidden area (no parent in the visible tree).
     /// The cloned nodes are marked hidden and won't appear in finish() output,
     /// but remain available for future clone_subtree calls.
