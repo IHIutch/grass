@@ -1176,12 +1176,13 @@ impl<'a> Serializer<'a> {
         stmt: CssStmt,
         prev_was_group_end: bool,
         prev_requires_semicolon: bool,
+        had_previous_visible: bool,
     ) -> SassResult<()> {
         if prev_requires_semicolon {
             self.buffer.push(b';');
         }
 
-        if !self.buffer.is_empty() {
+        if !self.buffer.is_empty() || had_previous_visible {
             self.write_optional_newline();
         }
 
@@ -1192,6 +1193,10 @@ impl<'a> Serializer<'a> {
         self.visit_stmt(stmt)?;
 
         Ok(())
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
     }
 
     fn finish_for_expr(self) -> String {

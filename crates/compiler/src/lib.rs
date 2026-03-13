@@ -204,6 +204,7 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
 
     let mut prev_was_group_end = false;
     let mut prev_requires_semicolon = false;
+    let mut had_previous_visible = false;
     let mut stmts: std::collections::VecDeque<CssStmt> = stmts.into();
 
     while let Some(stmt) = stmts.pop_front() {
@@ -215,9 +216,22 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
         let requires_semicolon = Serializer::requires_semicolon(&stmt);
         let closing_brace_line = serializer.stmt_closing_brace_line(&stmt);
 
+        let buf_len_before = serializer.buffer_len();
+
         serializer
-            .visit_group(stmt, prev_was_group_end, prev_requires_semicolon)
+            .visit_group(stmt, prev_was_group_end, prev_requires_semicolon, had_previous_visible)
             .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
+
+        // Track whether any visible statement has been processed,
+        // even if it wrote nothing (e.g. stripped sourcemap comment)
+        had_previous_visible = true;
+
+        // If the statement wrote nothing (e.g. stripped sourcemap comment),
+        // don't update prev state — the next real statement should get
+        // a normal separator, not group_end or semicolon from the phantom.
+        if serializer.buffer_len() == buf_len_before {
+            continue;
+        }
 
         // Sub-problem C at top level: comment after closing `}` on same source line
         if let Some(brace_line) = closing_brace_line {
