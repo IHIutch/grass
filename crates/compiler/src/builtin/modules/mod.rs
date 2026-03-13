@@ -1,9 +1,11 @@
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt,
     sync::Arc,
 };
+
+use rustc_hash::FxHashMap;
 
 use codemap::{Span, Spanned};
 
@@ -211,9 +213,9 @@ pub(crate) struct ModuleScope {
 impl ModuleScope {
     pub fn new() -> Self {
         Self {
-            variables: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
-            mixins: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
-            functions: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
+            variables: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
+            mixins: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
+            functions: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
         }
     }
 }
@@ -236,11 +238,11 @@ pub(crate) enum Module {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Modules(pub HashMap<Identifier, Arc<RefCell<Module>>>);
+pub(crate) struct Modules(pub FxHashMap<Identifier, Arc<RefCell<Module>>>);
 
 impl Modules {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self(FxHashMap::default())
     }
 
     pub fn insert(

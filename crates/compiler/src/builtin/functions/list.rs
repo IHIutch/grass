@@ -53,7 +53,7 @@ pub(crate) fn list_separator(mut args: ArgumentResult, visitor: &mut Visitor) ->
 pub(crate) fn set_nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(3)?;
     let (mut list, sep, brackets) = match args.get_err(0, "list")? {
-        Value::List(v, sep, b) => (v, sep, b),
+        Value::List(v, sep, b) => (Arc::unwrap_or_clone(v), sep, b),
         Value::ArgList(v) => (
             v.elems.into_iter().collect(),
             ListSeparator::Comma,
@@ -95,13 +95,13 @@ pub(crate) fn set_nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         list[len - index_int.unsigned_abs() as usize] = val;
     }
 
-    Ok(Value::List(list, sep, brackets))
+    Ok(Value::List(Arc::new(list), sep, brackets))
 }
 
 pub(crate) fn append(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(3)?;
     let (mut list, sep, brackets) = match args.get_err(0, "list")? {
-        Value::List(v, sep, b) => (v, sep, b),
+        Value::List(v, sep, b) => (Arc::unwrap_or_clone(v), sep, b),
         Value::Map(m) => {
             let sep = if m.is_empty() {
                 ListSeparator::Undecided
@@ -148,13 +148,13 @@ pub(crate) fn append(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 
     list.push(val);
 
-    Ok(Value::List(list, sep, brackets))
+    Ok(Value::List(Arc::new(list), sep, brackets))
 }
 
 pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(4)?;
     let (mut list1, sep1, brackets) = match args.get_err(0, "list1")? {
-        Value::List(v, sep, brackets) => (v, sep, brackets),
+        Value::List(v, sep, brackets) => (Arc::unwrap_or_clone(v), sep, brackets),
         Value::ArgList(v) => (v.elems, v.separator, Brackets::None),
         Value::Map(m) => {
             let sep = if m.is_empty() {
@@ -167,7 +167,7 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         v => (vec![v], ListSeparator::Undecided, Brackets::None),
     };
     let (list2, sep2) = match args.get_err(1, "list2")? {
-        Value::List(v, sep, ..) => (v, sep),
+        Value::List(v, sep, ..) => (Arc::unwrap_or_clone(v), sep),
         Value::ArgList(v) => (v.elems, v.separator),
         Value::Map(m) => {
             let sep = if m.is_empty() {
@@ -236,7 +236,7 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
 
     list1.extend(list2);
 
-    Ok(Value::List(list1, sep, brackets))
+    Ok(Value::List(Arc::new(list1), sep, brackets))
 }
 
 pub(crate) fn is_bracketed(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -272,7 +272,7 @@ pub(crate) fn zip(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
 
     if len == 0 {
         return Ok(Value::List(
-            Vec::new(),
+            Arc::new(Vec::new()),
             ListSeparator::Comma,
             Brackets::None,
         ));
@@ -281,11 +281,11 @@ pub(crate) fn zip(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     let result = (0..len)
         .map(|i| {
             let items = lists.iter().map(|v| v[i].clone()).collect();
-            Value::List(items, ListSeparator::Space, Brackets::None)
+            Value::List(Arc::new(items), ListSeparator::Space, Brackets::None)
         })
         .collect();
 
-    Ok(Value::List(result, ListSeparator::Comma, Brackets::None))
+    Ok(Value::List(Arc::new(result), ListSeparator::Comma, Brackets::None))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

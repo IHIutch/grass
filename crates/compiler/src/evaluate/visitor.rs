@@ -12,6 +12,7 @@ use std::{
 
 use codemap::{CodeMap, Span, Spanned};
 use indexmap::IndexSet;
+use rustc_hash::FxHashMap;
 
 use crate::{
     ast::*,
@@ -824,7 +825,7 @@ impl<'a> Visitor<'a> {
         config: Rc<RefCell<Configuration>>,
         forward_rule: &AstForwardRule,
     ) -> SassResult<Rc<RefCell<Configuration>>> {
-        let mut new_values = HashMap::from_iter((*config).borrow().values.iter());
+        let mut new_values = FxHashMap::from_iter((*config).borrow().values.iter());
 
         for variable in &forward_rule.configuration {
             if variable.is_guarded {
@@ -1649,7 +1650,7 @@ impl<'a> Visitor<'a> {
         let configuration = if use_rule.configuration.is_empty() {
             Rc::new(RefCell::new(Configuration::empty()))
         } else {
-            let mut values = HashMap::new();
+            let mut values = FxHashMap::default();
 
             for var in use_rule.configuration {
                 let value = self.visit_expr(var.expr.node)?;
@@ -3391,7 +3392,7 @@ impl<'a> Visitor<'a> {
         match rest {
             Value::Map(rest) => self.add_rest_map(&mut named, rest)?,
             Value::List(elems, list_separator, _) => {
-                let mut list = elems
+                let mut list = Arc::unwrap_or_clone(elems)
                     .into_iter()
                     .map(|e| self.without_slash(e))
                     .collect::<Vec<_>>();
@@ -3729,7 +3730,7 @@ impl<'a> Visitor<'a> {
             // without operator strings between them. A valid calc with
             // variables would have strings like "+ 2" between values.
             let mut prev_was_numeric = false;
-            for item in items {
+            for item in items.iter() {
                 let is_numeric = matches!(item, Value::Dimension(..));
                 if is_numeric && prev_was_numeric {
                     return Err(("Missing math operator.", span).into());
@@ -3750,7 +3751,7 @@ impl<'a> Visitor<'a> {
             })
             .collect::<SassResult<Vec<_>>>()?;
 
-        Ok(Value::List(elems, list.separator, list.brackets))
+        Ok(Value::List(Arc::new(elems), list.separator, list.brackets))
     }
 
     fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {

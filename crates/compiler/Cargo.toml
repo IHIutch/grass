@@ -35,6 +35,7 @@ phf = { version = "0.11", features = ["macros"] }
 indexmap = "2"
 # todo: do we really need interning for things?
 lasso = "0.7"
+rustc-hash = "2"
 
 [features]
 default = ["random", "custom-builtin-fns"]

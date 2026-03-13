@@ -595,7 +595,7 @@ fn parse_interpolation_method(
         }
         Value::List(items, ListSeparator::Space, _) => {
             let mut parts = Vec::new();
-            for item in items {
+            for item in items.iter() {
                 match item {
                     Value::String(s, QuoteKind::None) => parts.push(s.clone()),
                     _ => {

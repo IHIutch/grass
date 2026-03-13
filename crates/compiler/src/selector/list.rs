@@ -3,6 +3,7 @@ use std::{
     fmt::{self, Write},
     hash::{Hash, Hasher},
     mem,
+    sync::Arc,
 };
 
 use codemap::Span;
@@ -99,22 +100,22 @@ impl SelectorList {
     /// This has the same format as a list returned by `selector-parse()`.
     pub fn to_sass_list(self) -> Value {
         Value::List(
-            self.components
+            Arc::new(self.components
                 .into_iter()
                 .map(|complex| {
                     Value::List(
-                        complex
+                        Arc::new(complex
                             .components
                             .into_iter()
                             .map(|complex_component| {
                                 Value::String(complex_component.to_string(), QuoteKind::None)
                             })
-                            .collect(),
+                            .collect()),
                         ListSeparator::Space,
                         Brackets::None,
                     )
                 })
-                .collect(),
+                .collect()),
             ListSeparator::Comma,
             Brackets::None,
         )

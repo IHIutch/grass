@@ -1,10 +1,12 @@
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::PathBuf,
     rc::Rc,
     sync::Arc,
 };
+
+use rustc_hash::FxHashMap;
 
 use codemap::{Span, Spanned};
 
@@ -367,7 +369,7 @@ impl Configuration {
         self.span.is_none()
     }
 
-    pub fn implicit(values: HashMap<Identifier, ConfiguredValue>) -> Self {
+    pub fn implicit(values: FxHashMap<Identifier, ConfiguredValue>) -> Self {
         Self {
             values: Arc::new(BaseMapView(Arc::new(RefCell::new(values)))),
             original_config: None,
@@ -375,7 +377,7 @@ impl Configuration {
         }
     }
 
-    pub fn explicit(values: HashMap<Identifier, ConfiguredValue>, span: Span) -> Self {
+    pub fn explicit(values: FxHashMap<Identifier, ConfiguredValue>, span: Span) -> Self {
         Self {
             values: Arc::new(BaseMapView(Arc::new(RefCell::new(values)))),
             original_config: None,
@@ -385,7 +387,7 @@ impl Configuration {
 
     pub fn empty() -> Self {
         Self {
-            values: Arc::new(BaseMapView(Arc::new(RefCell::new(HashMap::new())))),
+            values: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
             original_config: None,
             span: None,
         }

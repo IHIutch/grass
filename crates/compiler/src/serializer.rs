@@ -1551,7 +1551,7 @@ impl<'a> Serializer<'a> {
             Value::Dimension(num) => self.visit_number(num)?,
             Value::Color(color) => self.visit_color(color),
             Value::Calculation(calc) => self.visit_calculation(calc)?,
-            Value::List(elems, sep, brackets) => self.visit_list(elems, *sep, *brackets, span)?,
+            Value::List(elems, sep, brackets) => self.visit_list(elems.as_slice(), *sep, *brackets, span)?,
             Value::True => self.buffer.extend_from_slice(b"true"),
             Value::False => self.buffer.extend_from_slice(b"false"),
             Value::Null => {

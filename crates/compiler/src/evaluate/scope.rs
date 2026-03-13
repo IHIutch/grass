@@ -1,8 +1,13 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     sync::Arc,
 };
+
+use rustc_hash::FxHashMap;
+
+fn new_scope_map<K, V>() -> FxHashMap<K, V> {
+    FxHashMap::with_capacity_and_hasher(4, Default::default())
+}
 
 use codemap::Spanned;
 
@@ -17,9 +22,9 @@ use crate::{
 #[allow(clippy::type_complexity)]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Scopes {
-    pub(crate) variables: Arc<RefCell<Vec<Arc<RefCell<HashMap<Identifier, Value>>>>>>,
-    pub(crate) mixins: Arc<RefCell<Vec<Arc<RefCell<HashMap<Identifier, Mixin>>>>>>,
-    pub(crate) functions: Arc<RefCell<Vec<Arc<RefCell<HashMap<Identifier, SassFunction>>>>>>,
+    pub(crate) variables: Arc<RefCell<Vec<Arc<RefCell<FxHashMap<Identifier, Value>>>>>>,
+    pub(crate) mixins: Arc<RefCell<Vec<Arc<RefCell<FxHashMap<Identifier, Mixin>>>>>>,
+    pub(crate) functions: Arc<RefCell<Vec<Arc<RefCell<FxHashMap<Identifier, SassFunction>>>>>>,
     len: Arc<Cell<usize>>,
     pub last_variable_index: Option<(Identifier, usize)>,
 }
@@ -27,9 +32,9 @@ pub(crate) struct Scopes {
 impl Scopes {
     pub fn new() -> Self {
         Self {
-            variables: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(HashMap::new()))])),
-            mixins: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(HashMap::new()))])),
-            functions: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(HashMap::new()))])),
+            variables: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(new_scope_map()))])),
+            mixins: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(new_scope_map()))])),
+            functions: Arc::new(RefCell::new(vec![Arc::new(RefCell::new(new_scope_map()))])),
             len: Arc::new(Cell::new(1)),
             last_variable_index: None,
         }
@@ -52,16 +57,16 @@ impl Scopes {
         }
     }
 
-    pub fn global_variables(&self) -> Arc<RefCell<HashMap<Identifier, Value>>> {
+    pub fn global_variables(&self) -> Arc<RefCell<FxHashMap<Identifier, Value>>> {
         debug_assert_eq!(self.len(), (*self.variables).borrow().len());
         Arc::clone(&(*self.variables).borrow()[0])
     }
 
-    pub fn global_functions(&self) -> Arc<RefCell<HashMap<Identifier, SassFunction>>> {
+    pub fn global_functions(&self) -> Arc<RefCell<FxHashMap<Identifier, SassFunction>>> {
         Arc::clone(&(*self.functions).borrow()[0])
     }
 
-    pub fn global_mixins(&self) -> Arc<RefCell<HashMap<Identifier, Mixin>>> {
+    pub fn global_mixins(&self) -> Arc<RefCell<FxHashMap<Identifier, Mixin>>> {
         Arc::clone(&(*self.mixins).borrow()[0])
     }
 
@@ -93,13 +98,13 @@ impl Scopes {
         (*self.len).set(len + 1);
         (*self.variables)
             .borrow_mut()
-            .push(Arc::new(RefCell::new(HashMap::new())));
+            .push(Arc::new(RefCell::new(new_scope_map())));
         (*self.mixins)
             .borrow_mut()
-            .push(Arc::new(RefCell::new(HashMap::new())));
+            .push(Arc::new(RefCell::new(new_scope_map())));
         (*self.functions)
             .borrow_mut()
-            .push(Arc::new(RefCell::new(HashMap::new())));
+            .push(Arc::new(RefCell::new(new_scope_map())));
     }
 
     pub fn exit_scope(&mut self) {

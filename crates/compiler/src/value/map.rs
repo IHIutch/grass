@@ -101,7 +101,7 @@ impl SassMap {
     pub fn as_list(self) -> Vec<Value> {
         self.into_vec()
             .into_iter()
-            .map(|(k, v)| Value::List(vec![k.node, v], ListSeparator::Space, Brackets::None))
+            .map(|(k, v)| Value::List(Arc::new(vec![k.node, v]), ListSeparator::Space, Brackets::None))
             .collect()
     }
 

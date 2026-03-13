@@ -1,6 +1,7 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
+
+use rustc_hash::FxHashMap;
 
 use crate::ast::{Configuration, ConfiguredValue};
 use crate::builtin::builtin_imports::*;
@@ -36,7 +37,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
     };
 
     let configuration = if let Some(with) = with {
-        let mut values = HashMap::new();
+        let mut values = FxHashMap::default();
         for (key, value) in with {
             let name =
                 Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0);
@@ -155,7 +156,7 @@ fn calc_args(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
         })
         .collect::<SassResult<Vec<_>>>()?;
 
-    Ok(Value::List(args, ListSeparator::Comma, Brackets::None))
+    Ok(Value::List(Arc::new(args), ListSeparator::Comma, Brackets::None))
 }
 
 fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {

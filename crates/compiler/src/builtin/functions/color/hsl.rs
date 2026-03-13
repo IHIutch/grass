@@ -60,11 +60,11 @@ fn hsl_3_args(
                 "{}({})",
                 name,
                 Value::List(
-                    if args.len() == 4 {
+                    Arc::new(if args.len() == 4 {
                         vec![hue, saturation, lightness, alpha]
                     } else {
                         vec![hue, saturation, lightness]
-                    },
+                    }),
                     ListSeparator::Comma,
                     Brackets::None
                 )

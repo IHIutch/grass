@@ -77,7 +77,7 @@ pub(crate) fn map_keys(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         .get_err(0, "map")?
         .assert_map_with_name("map", args.span())?;
     Ok(Value::List(
-        map.keys(),
+        Arc::new(map.keys()),
         ListSeparator::Comma,
         Brackets::None,
     ))
@@ -89,7 +89,7 @@ pub(crate) fn map_values(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         .get_err(0, "map")?
         .assert_map_with_name("map", args.span())?;
     Ok(Value::List(
-        map.values(),
+        Arc::new(map.values()),
         ListSeparator::Comma,
         Brackets::None,
     ))

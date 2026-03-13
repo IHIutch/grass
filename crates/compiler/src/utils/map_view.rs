@@ -1,9 +1,11 @@
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt,
     sync::Arc,
 };
+
+use rustc_hash::FxHashMap;
 
 use crate::common::Identifier;
 
@@ -48,7 +50,7 @@ impl<T> MapView for Arc<dyn MapView<Value = T>> {
 }
 
 #[derive(Debug)]
-pub(crate) struct BaseMapView<T>(pub Arc<RefCell<HashMap<Identifier, T>>>);
+pub(crate) struct BaseMapView<T>(pub Arc<RefCell<FxHashMap<Identifier, T>>>);
 
 impl<T> Clone for BaseMapView<T> {
     fn clone(&self) -> Self {

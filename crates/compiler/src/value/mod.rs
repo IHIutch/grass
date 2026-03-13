@@ -37,7 +37,7 @@ pub enum Value {
     False,
     Null,
     Dimension(SassNumber),
-    List(Vec<Value>, ListSeparator, Brackets),
+    List(Arc<Vec<Value>>, ListSeparator, Brackets),
     Color(Arc<Color>),
     String(String, QuoteKind),
     Map(SassMap),
@@ -69,7 +69,7 @@ impl PartialEq for Value {
                     if sep1 != sep2 || brackets1 != brackets2 || list1.len() != list2.len() {
                         false
                     } else {
-                        for (a, b) in list1.iter().zip(list2) {
+                        for (a, b) in list1.iter().zip(list2.iter()) {
                             if a != b {
                                 return false;
                             }
@@ -116,7 +116,7 @@ impl PartialEq for Value {
                         return false;
                     }
 
-                    for (el1, el2) in list1.elems.iter().zip(list2) {
+                    for (el1, el2) in list1.elems.iter().zip(list2.iter()) {
                         if el1 != el2 {
                             return false;
                         }
@@ -261,7 +261,7 @@ impl Value {
         match self {
             Value::String(s1, _) => Value::String(s1, QuoteKind::None),
             Value::List(v, sep, bracket) => {
-                Value::List(v.into_iter().map(Value::unquote).collect(), sep, bracket)
+                Value::List(Arc::new(Arc::unwrap_or_clone(v).into_iter().map(Value::unquote).collect()), sep, bracket)
             }
             v => v,
         }
@@ -428,7 +428,7 @@ impl Value {
                     if sep1 != sep2 || brackets1 != brackets2 || list1.len() != list2.len() {
                         true
                     } else {
-                        for (a, b) in list1.iter().zip(list2) {
+                        for (a, b) in list1.iter().zip(list2.iter()) {
                             if a.not_equals(b) {
                                 return true;
                             }
@@ -444,7 +444,7 @@ impl Value {
 
     pub fn as_list(self) -> Vec<Value> {
         match self {
-            Value::List(v, ..) => v,
+            Value::List(v, ..) => Arc::unwrap_or_clone(v),
             Value::Map(m) => m.as_list(),
             Value::ArgList(v) => v.elems,
             v => vec![v],
@@ -519,6 +519,7 @@ impl Value {
             Value::String(text, ..) => text,
             Value::List(list, sep, ..) if !list.is_empty() => {
                 let mut result = Vec::new();
+                let list = Arc::unwrap_or_clone(list);
                 match sep {
                     ListSeparator::Comma => {
                         for complex in list {

@@ -10,9 +10,11 @@ use crate::{
 };
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::Arc,
 };
+
+use rustc_hash::FxHashMap;
 
 type Mutable<T> = Arc<RefCell<T>>;
 
@@ -37,9 +39,9 @@ type SourcePtr = *const RefCell<Module>;
 
 #[derive(Debug, Clone, Default)]
 struct ForwardedMemberSources {
-    variables: HashMap<Identifier, SourcePtr>,
-    functions: HashMap<Identifier, SourcePtr>,
-    mixins: HashMap<Identifier, SourcePtr>,
+    variables: FxHashMap<Identifier, SourcePtr>,
+    functions: FxHashMap<Identifier, SourcePtr>,
+    mixins: FxHashMap<Identifier, SourcePtr>,
 }
 
 impl Environment {
@@ -243,7 +245,7 @@ impl Environment {
     }
 
     pub fn to_implicit_configuration(&self) -> Configuration {
-        let mut configuration = HashMap::new();
+        let mut configuration = FxHashMap::default();
 
         // Match dart-sass: iterate scope levels from global (0) to innermost,
         // interleaving module variables and scope-local variables per level.
@@ -516,15 +518,15 @@ impl Environment {
         }
     }
 
-    pub fn global_vars(&self) -> Arc<RefCell<HashMap<Identifier, Value>>> {
+    pub fn global_vars(&self) -> Arc<RefCell<FxHashMap<Identifier, Value>>> {
         self.scopes.global_variables()
     }
 
-    pub fn global_mixins(&self) -> Arc<RefCell<HashMap<Identifier, Mixin>>> {
+    pub fn global_mixins(&self) -> Arc<RefCell<FxHashMap<Identifier, Mixin>>> {
         self.scopes.global_mixins()
     }
 
-    pub fn global_functions(&self) -> Arc<RefCell<HashMap<Identifier, SassFunction>>> {
+    pub fn global_functions(&self) -> Arc<RefCell<FxHashMap<Identifier, SassFunction>>> {
         self.scopes.global_functions()
     }
 

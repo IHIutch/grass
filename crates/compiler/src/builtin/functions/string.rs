@@ -172,7 +172,7 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             .map(|s| Value::String(s.to_string(), quote))
             .collect()
     };
-    Ok(Value::List(vec, ListSeparator::Comma, Brackets::Bracketed))
+    Ok(Value::List(Arc::new(vec), ListSeparator::Comma, Brackets::Bracketed))
 }
 
 pub(crate) fn str_index(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {

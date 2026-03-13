@@ -45,11 +45,11 @@ pub(crate) fn simple_selectors(
     };
 
     Ok(Value::List(
-        compound
+        Arc::new(compound
             .components
             .into_iter()
             .map(|simple| Value::String(simple.to_string(), QuoteKind::None))
-            .collect(),
+            .collect()),
         ListSeparator::Comma,
         Brackets::None,
     ))
