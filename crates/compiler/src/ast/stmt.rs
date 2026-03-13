@@ -303,7 +303,6 @@ pub struct ConfiguredVariable {
 #[derive(Debug, Clone)]
 pub struct Configuration {
     pub(crate) values: Arc<dyn MapView<Value = ConfiguredValue>>,
-    #[allow(unused)]
     pub(crate) original_config: Option<Rc<RefCell<Self>>>,
     pub(crate) span: Option<Span>,
 }
@@ -396,7 +395,6 @@ impl Configuration {
         self.values.is_empty()
     }
 
-    #[allow(unused)]
     pub fn original_config(config: Rc<RefCell<Configuration>>) -> Rc<RefCell<Configuration>> {
         match (*config).borrow().original_config.as_ref() {
             Some(v) => Rc::clone(v),
@@ -570,6 +568,11 @@ pub struct StyleSheet {
     /// These create variable slots in the module scope even if never executed,
     /// defaulting to `null`. This matches dart-sass's `_globalVariables` behavior.
     pub pre_declared_global_variables: HashSet<Identifier>,
+
+    /// Top-level `!default` variable declarations. Used by execute() to detect
+    /// configuration conflicts: a module "could be configured" if it has `!default`
+    /// variables matching the configuration keys.
+    pub configurable_variables: HashSet<Identifier>,
 }
 
 impl StyleSheet {
@@ -581,6 +584,7 @@ impl StyleSheet {
             uses: Vec::new(),
             forwards: Vec::new(),
             pre_declared_global_variables: HashSet::new(),
+            configurable_variables: HashSet::new(),
         }
     }
 
@@ -591,6 +595,19 @@ impl StyleSheet {
         let mut globals = HashSet::new();
         collect_globals_from_stmts(&self.body, &mut globals);
         self.pre_declared_global_variables = globals;
+    }
+
+    /// Collect top-level `!default` variable names for configuration conflict detection.
+    pub fn collect_configurable_variables(&mut self) {
+        let mut defaults = HashSet::new();
+        for stmt in &self.body {
+            if let AstStmt::VariableDecl(decl) = stmt {
+                if decl.is_guarded && !decl.is_global {
+                    defaults.insert(decl.name);
+                }
+            }
+        }
+        self.configurable_variables = defaults;
     }
 }
 

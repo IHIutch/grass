@@ -1090,6 +1090,29 @@ impl ExtensionStore {
         Ok(extended_selector)
     }
 
+    /// Register an existing `ExtendedSelector` in this store, so that
+    /// `@extend` rules can target its simple selectors. Used by `load-css`
+    /// to make CSS from cached modules visible to the caller's extends.
+    /// Also applies any pending extensions to the selector.
+    pub fn register_existing_selector(
+        &mut self,
+        selector: &ExtendedSelector,
+    ) -> SassResult<()> {
+        let mut list = selector.as_selector_list().clone();
+        if !list.is_invisible() {
+            for complex in list.components.clone() {
+                self.originals.insert(&complex);
+            }
+        }
+        // Apply pending extensions to this selector (e.g., @extend a before load-css)
+        if !self.extensions.is_empty() {
+            list = self.extend_list(list, None, &None)?;
+            selector.set_inner(list.clone());
+        }
+        self.register_selector(list, selector);
+        Ok(())
+    }
+
     /// Registers the `SimpleSelector`s in `list` to point to `selector` in
     /// `self.selectors`.
     fn register_selector(&mut self, list: SelectorList, selector: &ExtendedSelector) {

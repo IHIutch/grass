@@ -59,7 +59,7 @@ impl ExtendedSelector {
         self.0.borrow()
     }
 
-    pub fn set_inner(&mut self, selector: SelectorList) {
+    pub fn set_inner(&self, selector: SelectorList) {
         self.0.replace(selector);
     }
 

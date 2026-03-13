@@ -234,6 +234,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         style_sheet.collect_pre_declared_global_variables();
+        style_sheet.collect_configurable_variables();
 
         Ok(style_sheet)
     }

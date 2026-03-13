@@ -185,6 +185,9 @@ pub struct Visitor<'a> {
     pub(crate) is_plain_css: bool,
     plain_css_style_rule_depth: u32,
     pub(crate) modules: HashMap<PathBuf, Arc<RefCell<Module>>>,
+    /// Configuration used when each module was first loaded via execute().
+    /// Used to detect "was already loaded, so it can't be configured" errors.
+    module_configurations: HashMap<PathBuf, Option<Rc<RefCell<Configuration>>>>,
     pub(crate) active_modules: HashSet<PathBuf>,
     css_tree: CssTree,
     parent: Option<CssTreeIdx>,
@@ -259,6 +262,7 @@ impl<'a> Visitor<'a> {
             import_section_tree_count: 0,
             has_out_of_order_imports: false,
             modules: HashMap::new(),
+            module_configurations: HashMap::new(),
             active_modules: HashSet::new(),
             options,
             empty_span,
@@ -1032,8 +1036,7 @@ impl<'a> Visitor<'a> {
         &mut self,
         stylesheet: StyleSheet,
         configuration: Option<Rc<RefCell<Configuration>>>,
-        // todo: different errors based on this
-        _names_in_errors: bool,
+        names_in_errors: bool,
     ) -> SassResult<Arc<RefCell<Module>>> {
         let url = self.canonicalize(&stylesheet.url);
 
@@ -1042,7 +1045,45 @@ impl<'a> Visitor<'a> {
                 configuration.unwrap_or_else(|| Rc::clone(&self.configuration));
 
             if !current_configuration.borrow().is_implicit() {
-                // TODO: configuration conflict error
+                // Check if this is the same configuration (Rc identity on original)
+                let same_original = self
+                    .module_configurations
+                    .get(&url)
+                    .and_then(|existing| existing.as_ref())
+                    .map_or(false, |existing| {
+                        let existing_orig = Configuration::original_config(Rc::clone(existing));
+                        let current_orig =
+                            Configuration::original_config(Rc::clone(&current_configuration));
+                        Rc::ptr_eq(&existing_orig, &current_orig)
+                    });
+
+                if !same_original {
+                    // Check if module has !default vars matching the config keys
+                    let config_keys: HashSet<Identifier> =
+                        current_configuration.borrow().values.keys().into_iter().collect();
+                    let could_be_configured = stylesheet
+                        .configurable_variables
+                        .iter()
+                        .any(|v| config_keys.contains(v));
+
+                    if could_be_configured {
+                        let msg = if names_in_errors {
+                            format!(
+                                "{} was already loaded, so it can't be configured using \"with\".",
+                                url.to_string_lossy()
+                            )
+                        } else {
+                            "This module was already loaded, so it can't be configured using \"with\"."
+                                .to_owned()
+                        };
+
+                        return Err((
+                            msg,
+                            current_configuration.borrow().span.unwrap_or(self.empty_span),
+                        )
+                            .into());
+                    }
+                }
             }
 
             // Clone CSS for extend isolation in two cases:
@@ -1067,6 +1108,9 @@ impl<'a> Visitor<'a> {
         for name in &stylesheet.pre_declared_global_variables {
             env.scopes.insert_var(0, *name, Value::Null);
         }
+
+        // Save the configuration Rc for tracking before it's moved into the closure.
+        let config_for_tracking = configuration.as_ref().map(Rc::clone);
 
         // Create a fresh ExtensionStore for this module (per-module scoping).
         let mut module_extension_store = ExtensionStore::new(self.empty_span);
@@ -1190,6 +1234,8 @@ impl<'a> Visitor<'a> {
         let module = env.to_module_with_upstream(module_extension_store, module_upstream);
 
         self.modules.insert(url.clone(), Arc::clone(&module));
+        self.module_configurations
+            .insert(url.clone(), config_for_tracking);
 
         // Track modules loaded in @import context so that later @use
         // references know to clone the CSS for extend isolation.
@@ -1200,80 +1246,121 @@ impl<'a> Visitor<'a> {
         Ok(module)
     }
 
-    /// Evaluate a stylesheet for `meta.load-css()`, applying the optional
-    /// `$with` configuration. CSS is emitted into the current parent context
-    /// (preserving nesting), but variables are evaluated in a fresh environment
-    /// so that `!default` declarations see the configuration.
+    /// Evaluate a stylesheet for `meta.load-css()`, routing through `execute()`
+    /// so modules are cached. On cache hit, clones CSS instead of re-evaluating.
+    /// On first load, also clones so the originals are preserved for future clones.
     pub(crate) fn load_css_inner(
         &mut self,
         stylesheet: StyleSheet,
         configuration: Option<Rc<RefCell<Configuration>>>,
     ) -> SassResult<()> {
-        // Use a fresh environment so at_root() returns true, which allows
-        // !default variable declarations to consume the $with configuration.
-        let env = Environment::new();
+        let canonical_url = self.canonicalize(&stylesheet.url);
 
-        self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
-            let old_configuration = if let Some(ref config) = configuration {
-                Some(mem::replace(&mut visitor.configuration, Rc::clone(config)))
-            } else {
-                None
-            };
+        if self.active_modules.contains(&canonical_url) {
+            return Err((
+                "Module loop: this module is already being loaded.",
+                self.empty_span,
+            )
+                .into());
+        }
 
-            // Like execute(), evaluate with clean parent context so that
-            // @at-root and & behave as if the loaded file is a standalone module.
-            // After evaluation, resolve CSS selectors with the caller's parent.
-            let old_parent = visitor.parent;
-            let old_style_rule = visitor.style_rule_ignoring_at_root.take();
-            let old_original_selector = visitor.original_selector.take();
-            let old_media_queries = visitor.media_queries.take();
-            visitor.parent = None;
+        self.active_modules.insert(canonical_url.clone());
 
-            let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
+        // Save parent context — execute() clears these, but we need them
+        // to resolve parent selectors on the emitted CSS afterwards.
+        let old_style_rule = self.style_rule_ignoring_at_root.clone();
 
-            visitor.visit_stylesheet(stylesheet)?;
+        let root_children_before = self.css_tree.child_count(CssTree::ROOT);
 
-            // Resolve new ROOT children's selectors with the caller's parent,
-            // so that CSS from the loaded file is nested under the calling context.
-            if let Some(ref parent_selector) = old_style_rule {
-                let parent_list = parent_selector.as_selector_list().clone();
-                let new_children = visitor.css_tree.root_children_from(root_children_before);
-                for idx in &new_children {
-                    let needs_resolution = {
-                        let stmt = visitor.css_tree.get(*idx);
-                        matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
-                    };
-                    if needs_resolution {
-                        let mut stmt = visitor.css_tree.get_mut(*idx);
-                        if let Some(CssStmt::RuleSet {
-                            ref mut selector,
-                            ref mut is_group_end,
-                            ..
-                        }) = &mut *stmt
-                        {
-                            let old_list = selector.as_selector_list().clone();
-                            let resolved = old_list.resolve_parent_selectors(
-                                Some(parent_list.clone()),
-                                true,
-                            )?;
-                            selector.set_inner(resolved);
-                            *is_group_end = false;
-                        }
+        let module = self.execute(stylesheet, configuration.clone(), true)?;
+
+        self.active_modules.remove(&canonical_url);
+
+        // Check unsatisfied extends from the loaded module. With execute(),
+        // extends are in the module's own extension store. Without this check,
+        // @extend targeting non-existent selectors would silently pass.
+        {
+            let m = module.borrow();
+            if let Module::Environment {
+                ref extension_store,
+                ..
+            } = *m
+            {
+                extension_store.check_unsatisfied_extends()?;
+            }
+        }
+
+        // Check if execute() actually emitted new CSS (first load) or returned
+        // cached (subsequent load).
+        let new_children = self.css_tree.root_children_from(root_children_before);
+        if new_children.is_empty() {
+            // Cache hit — clone CSS from stored templates into ROOT
+            if let Some(indices) = self.module_css_indices.get(&canonical_url).cloned() {
+                let mut selector_map = HashMap::new();
+                for idx in &indices {
+                    self.css_tree
+                        .clone_subtree(*idx, CssTree::ROOT, &mut selector_map);
+                }
+            }
+        } else {
+            // First load — execute() emitted CSS at ROOT. Create hidden template
+            // copies BEFORE parent selector resolution so they stay pristine.
+            if let Some(indices) = self.module_css_indices.get(&canonical_url).cloned() {
+                if !indices.is_empty() {
+                    // Clone into hidden area as templates for future loads
+                    let mut template_indices = Vec::new();
+                    let mut selector_map = HashMap::new();
+                    for idx in &indices {
+                        let template_idx =
+                            self.css_tree.clone_subtree_hidden(*idx, &mut selector_map);
+                        template_indices.push(template_idx);
+                    }
+                    // Replace the stored indices with the hidden template copies
+                    self.module_css_indices
+                        .insert(canonical_url.clone(), template_indices);
+                }
+            }
+        }
+
+        // Resolve new ROOT children's selectors with the caller's parent,
+        // so that CSS from the loaded file is nested under the calling context.
+        if let Some(ref parent_selector) = old_style_rule {
+            let parent_list = parent_selector.as_selector_list().clone();
+            let new_children = self.css_tree.root_children_from(root_children_before);
+            for idx in &new_children {
+                let needs_resolution = {
+                    let stmt = self.css_tree.get(*idx);
+                    matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
+                };
+                if needs_resolution {
+                    let mut stmt = self.css_tree.get_mut(*idx);
+                    if let Some(CssStmt::RuleSet {
+                        ref mut selector,
+                        ref mut is_group_end,
+                        ..
+                    }) = &mut *stmt
+                    {
+                        let old_list = selector.as_selector_list().clone();
+                        let resolved = old_list
+                            .resolve_parent_selectors(Some(parent_list.clone()), true)?;
+                        selector.set_inner(resolved);
+                        *is_group_end = false;
                     }
                 }
             }
+        }
 
-            visitor.parent = old_parent;
-            visitor.style_rule_ignoring_at_root = old_style_rule;
-            visitor.original_selector = old_original_selector;
-            visitor.media_queries = old_media_queries;
-
-            if let Some(old_config) = old_configuration {
-                visitor.configuration = old_config;
+        // Register all CSS selectors from the loaded module in the caller's
+        // extension store, so that @extend rules in the caller can target them.
+        {
+            let all_new_children = self.css_tree.root_children_from(root_children_before);
+            for idx in &all_new_children {
+                let stmt = self.css_tree.get(*idx);
+                if let Some(CssStmt::RuleSet { ref selector, .. }) = &*stmt {
+                    self.extender.register_existing_selector(selector)?;
+                }
             }
-
-            Ok(())
-        })?;
+        }
 
         if let Some(configuration) = configuration {
             Self::assert_configuration_is_empty(&configuration, true)?;

@@ -1,6 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
 };
 
 use crate::ast::CssStmt;
@@ -12,6 +12,8 @@ pub(super) struct CssTree {
     stmts: Vec<RefCell<Option<CssStmt>>>,
     pub parent_to_child: HashMap<CssTreeIdx, Vec<CssTreeIdx>>,
     pub child_to_parent: HashMap<CssTreeIdx, CssTreeIdx>,
+    /// Nodes hidden from output but preserved for cloning (load-css templates).
+    hidden: HashSet<CssTreeIdx>,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
@@ -26,6 +28,7 @@ impl CssTree {
             stmts: Vec::new(),
             parent_to_child: HashMap::new(),
             child_to_parent: HashMap::new(),
+            hidden: HashSet::new(),
         };
 
         tree.stmts.push(RefCell::new(None));
@@ -42,10 +45,28 @@ impl CssTree {
     }
 
     pub fn finish(self) -> Vec<CssStmt> {
+        // Collect all hidden nodes and their descendants.
+        let mut all_hidden = self.hidden.clone();
+        if !all_hidden.is_empty() {
+            let mut stack: Vec<CssTreeIdx> = self.hidden.iter().copied().collect();
+            while let Some(idx) = stack.pop() {
+                if let Some(children) = self.parent_to_child.get(&idx) {
+                    for &child in children {
+                        if all_hidden.insert(child) {
+                            stack.push(child);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut idx = 1;
 
         while idx < self.stmts.len() - 1 {
-            if self.stmts[idx].borrow().is_none() || !self.has_children(CssTreeIdx(idx)) {
+            if all_hidden.contains(&CssTreeIdx(idx))
+                || self.stmts[idx].borrow().is_none()
+                || !self.has_children(CssTreeIdx(idx))
+            {
                 idx += 1;
                 continue;
             }
@@ -57,7 +78,9 @@ impl CssTree {
 
         self.stmts
             .into_iter()
-            .filter_map(RefCell::into_inner)
+            .enumerate()
+            .filter(|(i, _)| !all_hidden.contains(&CssTreeIdx(*i)))
+            .filter_map(|(_, cell)| RefCell::into_inner(cell))
             .collect()
     }
 
@@ -327,6 +350,60 @@ impl CssTree {
 
         for child_idx in children {
             self.clone_subtree(child_idx, new_idx, selector_map);
+        }
+
+        new_idx
+    }
+
+    /// Clone a subtree into a hidden area (no parent in the visible tree).
+    /// The cloned nodes are marked hidden and won't appear in finish() output,
+    /// but remain available for future clone_subtree calls.
+    pub fn clone_subtree_hidden(
+        &mut self,
+        idx: CssTreeIdx,
+        selector_map: &mut HashMap<usize, ExtendedSelector>,
+    ) -> CssTreeIdx {
+        let cloned_stmt = {
+            let stmt = self.stmts[idx.0].borrow();
+            match &*stmt {
+                None => return idx,
+                Some(CssStmt::RuleSet {
+                    selector,
+                    is_group_end,
+                    ..
+                }) => {
+                    let old_ptr = selector.rc_ptr();
+                    let new_selector =
+                        ExtendedSelector::new(selector.as_selector_list().clone());
+                    selector_map.insert(old_ptr, new_selector.clone());
+                    CssStmt::RuleSet {
+                        selector: new_selector,
+                        body: Vec::new(),
+                        is_group_end: *is_group_end,
+                        source_span: None,
+                    }
+                }
+                Some(other) => other.clone(),
+            }
+        };
+
+        let new_idx = self.add_stmt_inner(cloned_stmt);
+        self.hidden.insert(new_idx);
+
+        // Recursively clone children
+        let children: Vec<CssTreeIdx> = self
+            .parent_to_child
+            .get(&idx)
+            .cloned()
+            .unwrap_or_default();
+
+        for child_idx in children {
+            let cloned_child = self.clone_subtree_hidden(child_idx, selector_map);
+            self.parent_to_child
+                .entry(new_idx)
+                .or_default()
+                .push(cloned_child);
+            self.child_to_parent.insert(cloned_child, new_idx);
         }
 
         new_idx
