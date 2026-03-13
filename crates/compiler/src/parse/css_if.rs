@@ -90,10 +90,39 @@ fn detect_css_if_syntax<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResul
     }
     parser.toks_mut().set_cursor(start);
 
-    // `not` followed by non-identifier-body → new syntax
+    // `not` followed by whitespace → new syntax (not operator)
+    // `not(` → ambiguous: scan balanced parens and check for `:` (new) vs `,`/`)` (legacy)
     if parser.scan_identifier("not", false)? && !parser.looking_at_identifier_body() {
+        if !parser.toks().next_char_is('(') {
+            // `not` + whitespace → definitely new syntax
+            parser.toks_mut().set_cursor(start);
+            return Ok(true);
+        }
+        // `not(` — scan balanced parens, check for `:`
+        parser.scan_char('(');
+        let mut depth = 1;
+        while depth > 0 {
+            match parser.toks().peek() {
+                Some(Token { kind: '(', .. }) => {
+                    depth += 1;
+                    parser.toks_mut().next();
+                }
+                Some(Token { kind: ')', .. }) => {
+                    depth -= 1;
+                    parser.toks_mut().next();
+                }
+                Some(_) => {
+                    parser.toks_mut().next();
+                }
+                None => break,
+            }
+        }
+        parser.whitespace()?;
+        let found_colon = parser.toks().next_char_is(':');
         parser.toks_mut().set_cursor(start);
-        return Ok(true);
+        if found_colon {
+            return Ok(true);
+        }
     }
     parser.toks_mut().set_cursor(start);
 
