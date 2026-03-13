@@ -247,6 +247,30 @@ pub(crate) fn parse_channels(
 
     let original_channels = channels.clone();
 
+    // Relative color syntax: `from <color> <channels> [/ alpha]`
+    // Detect unquoted `from` keyword and pass through as CSS string.
+    {
+        let check_list = if channels.separator() == ListSeparator::Slash {
+            channels
+                .clone()
+                .as_list()
+                .into_iter()
+                .next()
+                .map(|v| v.as_list())
+                .unwrap_or_default()
+        } else {
+            channels.clone().as_list()
+        };
+
+        if let Some(Value::String(s, QuoteKind::None)) = check_list.first() {
+            if s.eq_ignore_ascii_case("from") {
+                let fn_string =
+                    function_string(name, &[original_channels], visitor, span)?;
+                return Ok(ParsedChannels::String(fn_string));
+            }
+        }
+    }
+
     let mut alpha_from_slash_list = None;
 
     if channels.separator() == ListSeparator::Slash {

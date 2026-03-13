@@ -402,6 +402,15 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         alpha_val = Some(slash_parts[1].clone());
     }
 
+    // Relative color syntax: `color(from <color> <space> <channels...>)`
+    // Detect unquoted `from` keyword and pass through as CSS string.
+    if let Some(Value::String(s, QuoteKind::None)) = items.first() {
+        if s.eq_ignore_ascii_case("from") {
+            let fn_string = function_string("color", &[description], visitor, span)?;
+            return Ok(Value::String(fn_string, QuoteKind::None));
+        }
+    }
+
     if items.is_empty() {
         return Err(("Missing color space name.", span).into());
     }
