@@ -192,6 +192,13 @@ pub struct Visitor<'a> {
     combined_import_section: Vec<CssStmt>,
     pending_import_items: Vec<CssStmt>,
     in_module_import_section: bool,
+    module_depth: usize,
+    /// Number of trailing import-section items (comments) flushed to css_tree
+    /// at the top level. These may need to be moved before out-of-order imports
+    /// in finish().
+    import_section_tree_count: usize,
+    /// Whether any out-of-order imports were added to combined_import_section.
+    has_out_of_order_imports: bool,
     pub options: &'a Options<'a>,
     pub(crate) map: &'a mut CodeMap,
     // todo: remove
@@ -248,6 +255,9 @@ impl<'a> Visitor<'a> {
             combined_import_section: Vec::new(),
             pending_import_items: Vec::new(),
             in_module_import_section: true,
+            module_depth: 0,
+            import_section_tree_count: 0,
+            has_out_of_order_imports: false,
             modules: HashMap::new(),
             active_modules: HashSet::new(),
             options,
@@ -306,8 +316,23 @@ impl<'a> Visitor<'a> {
         if self.combined_import_section.is_empty() {
             Ok(finished_tree)
         } else {
-            self.combined_import_section.append(&mut finished_tree);
-            Ok(self.combined_import_section)
+            // If there are leading items in css_tree that came from the
+            // top-level import section flush (e.g., comments before an
+            // out-of-order @import), move them before combined so they
+            // appear in front of the out-of-order imports (issue_469).
+            if self.has_out_of_order_imports
+                && self.import_section_tree_count > 0
+                && self.import_section_tree_count <= finished_tree.len()
+            {
+                let rest = finished_tree.split_off(self.import_section_tree_count);
+                let mut result = finished_tree; // import-section comments
+                result.append(&mut self.combined_import_section); // imports
+                result.extend(rest); // remaining CSS
+                Ok(result)
+            } else {
+                self.combined_import_section.append(&mut finished_tree);
+                Ok(self.combined_import_section)
+            }
         }
     }
 
@@ -347,6 +372,9 @@ impl<'a> Visitor<'a> {
                 // so they appear in the correct topological position.
                 self.combined_import_section.push(item);
             } else {
+                if !end_of_module && self.module_depth == 0 {
+                    self.import_section_tree_count += 1;
+                }
                 self.css_tree.add_stmt(item, None);
             }
         }
@@ -1069,6 +1097,7 @@ impl<'a> Visitor<'a> {
             let old_pending_imports = mem::take(&mut visitor.pending_import_items);
             let old_in_module_import_section = visitor.in_module_import_section;
             visitor.in_module_import_section = true;
+            visitor.module_depth += 1;
 
             // Swap in this module's ExtensionStore so all @extend rules and
             // selector registrations go into the module's own store.
@@ -1131,6 +1160,7 @@ impl<'a> Visitor<'a> {
             module_upstream = mem::replace(&mut visitor.upstream_modules, old_upstream);
 
             // Restore import section state for the parent module.
+            visitor.module_depth -= 1;
             visitor.pending_import_items = old_pending_imports;
             visitor.in_module_import_section = old_in_module_import_section;
 
@@ -1803,6 +1833,7 @@ impl<'a> Visitor<'a> {
             self.pending_import_items.push(node);
         } else {
             // Out-of-order import after the import section ended
+            self.has_out_of_order_imports = true;
             self.combined_import_section.push(node);
         }
 

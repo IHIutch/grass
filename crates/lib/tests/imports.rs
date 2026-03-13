@@ -674,6 +674,13 @@ error!(
     "Error: This at-rule is not allowed here."
 );
 
+// issue_469: leading comment before out-of-order @import stays before the import
+test!(
+    issue_469_comment_before_out_of_order_import,
+    "/*!\n*/\n\n@charset \"utf-8\";\n\na {\n  color: red;\n}\n\n@import url(\"x\");",
+    "/*!\n*/\n@import url(\"x\");\na {\n  color: red;\n}\n"
+);
+
 // todo: edge case tests for plain css imports moved to top
 // todo: test for calling paths, e.g. `grass b\index.scss`
 // todo: test for absolute paths (how?)
