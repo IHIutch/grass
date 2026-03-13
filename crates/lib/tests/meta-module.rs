@@ -51,7 +51,7 @@ fn load_css_simple() {
 
 #[test]
 fn load_css_explicit_args() {
-    let input = "@use \"sass:meta\";\na {\n @include meta.load-css($module: load_css_explicit_args, $with: null);\n}";
+    let input = "@use \"sass:meta\";\na {\n @include meta.load-css($url: load_css_explicit_args, $with: null);\n}";
     tempfile!("load_css_explicit_args.scss", "a { color: red; }");
     assert_eq!(
         "a a {\n  color: red;\n}\n",
@@ -63,7 +63,7 @@ fn load_css_explicit_args() {
 fn load_css_non_string_url() {
     let input = "@use \"sass:meta\";\na {\n @include meta.load-css(2);\n}";
     tempfile!("load_css_non_string_url.scss", "a { color: red; }");
-    assert_err!("Error: $module: 2 is not a string.", input);
+    assert_err!("Error: $url: 2 is not a string.", input);
 }
 
 #[test]

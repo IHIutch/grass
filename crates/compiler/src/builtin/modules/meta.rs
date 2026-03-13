@@ -23,8 +23,8 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
     let span = args.span();
 
     let url = args
-        .get_err(0, "module")?
-        .assert_string_with_name("module", args.span())?
+        .get_err(0, "url")?
+        .assert_string_with_name("url", args.span())?
         .0;
 
     let with = match args.default_arg(1, "with", Value::Null) {
