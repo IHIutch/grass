@@ -1158,7 +1158,12 @@ impl<'a> Visitor<'a> {
             visitor.flush_pending_imports(true);
 
             // Record this module's root-level CSS indices for potential cloning.
-            let new_css_indices = visitor.css_tree.root_children_from(root_children_before);
+            let new_css_indices: Vec<CssTreeIdx> = visitor
+                .css_tree
+                .root_children_from(root_children_before)
+                .into_iter()
+                .filter(|idx| !visitor.css_tree.is_hidden(*idx))
+                .collect();
             visitor.module_css_indices.insert(url.clone(), new_css_indices.clone());
 
             // When this module is being evaluated inside a nested @import
@@ -2297,6 +2302,44 @@ impl<'a> Visitor<'a> {
 
             Ok(())
         })?;
+
+        // Hide ancestors that became empty after @at-root moved their children.
+        // Two cases: (1) nodes like rulesets/media/supports that are naturally
+        // invisible when empty, and (2) nodes that were copied by @at-root
+        // (in the `included` list) and are now redundant empty shells.
+        {
+            let mut cleanup_idx = self.parent;
+            while let Some(idx) = cleanup_idx {
+                if idx == CssTree::ROOT {
+                    break;
+                }
+                let should_hide = {
+                    let stmt = self.css_tree.get(idx);
+                    match &*stmt {
+                        Some(s) => {
+                            if !self.css_tree.is_stmt_visible(idx, s) {
+                                // Naturally invisible (empty ruleset, media, supports)
+                                true
+                            } else if included.contains(&idx)
+                                && !self.css_tree.has_visible_child(idx)
+                            {
+                                // Was copied by @at-root and is now empty
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        None => false,
+                    }
+                };
+                if should_hide {
+                    self.css_tree.hide(idx);
+                    cleanup_idx = self.css_tree.child_to_parent.get(&idx).copied();
+                } else {
+                    break;
+                }
+            }
+        }
 
         Ok(None)
     }

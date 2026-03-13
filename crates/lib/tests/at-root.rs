@@ -259,9 +259,7 @@ test!(
             }
         }
     }",
-    // NOTE: dart-sass merges into a single @unknown block. grass emits two
-    // because at-root creates a copy. See grass at-root unknown at-rule merge bug.
-    "@unknown {}\n@unknown {\n  .bar {\n    a: b;\n  }\n}\n"
+    "@unknown {\n  .bar {\n    a: b;\n  }\n}\n"
 );
 test!(
     query_begins_with_interpolation,

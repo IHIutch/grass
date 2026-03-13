@@ -189,7 +189,7 @@ impl CssTree {
     /// Check if a statement would produce visible output during tree building.
     /// Unlike is_invisible(), this checks the parent_to_child map for children
     /// since CssStmt bodies are not populated until finish().
-    fn is_stmt_visible(&self, idx: CssTreeIdx, stmt: &CssStmt) -> bool {
+    pub(crate) fn is_stmt_visible(&self, idx: CssTreeIdx, stmt: &CssStmt) -> bool {
         match stmt {
             CssStmt::Media(..) | CssStmt::Supports(..) => {
                 // A media/supports rule is visible if it has any visible children
@@ -205,7 +205,7 @@ impl CssTree {
     }
 
     /// Recursively check if a node has any visible children in the tree.
-    fn has_visible_child(&self, idx: CssTreeIdx) -> bool {
+    pub(crate) fn has_visible_child(&self, idx: CssTreeIdx) -> bool {
         let Some(children) = self.parent_to_child.get(&idx) else {
             return false;
         };
