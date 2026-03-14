@@ -27,6 +27,10 @@ pub(crate) struct Scopes {
     pub(crate) functions: Rc<RefCell<Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>>>,
     len: Rc<Cell<usize>>,
     pub last_variable_index: Option<(Identifier, usize)>,
+    /// Pool of reusable scope HashMaps to avoid allocation churn
+    var_pool: Rc<RefCell<Vec<Rc<RefCell<FxHashMap<Identifier, Value>>>>>>,
+    mixin_pool: Rc<RefCell<Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>>>>,
+    fn_pool: Rc<RefCell<Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>>>,
 }
 
 impl Scopes {
@@ -37,6 +41,9 @@ impl Scopes {
             functions: Rc::new(RefCell::new(vec![Rc::new(RefCell::new(new_scope_map()))])),
             len: Rc::new(Cell::new(1)),
             last_variable_index: None,
+            var_pool: Rc::new(RefCell::new(Vec::new())),
+            mixin_pool: Rc::new(RefCell::new(Vec::new())),
+            fn_pool: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -54,6 +61,9 @@ impl Scopes {
             )),
             len: Rc::new(Cell::new(self.len())),
             last_variable_index: self.last_variable_index,
+            var_pool: Rc::clone(&self.var_pool),
+            mixin_pool: Rc::clone(&self.mixin_pool),
+            fn_pool: Rc::clone(&self.fn_pool),
         }
     }
 
@@ -92,28 +102,62 @@ impl Scopes {
         (*self.len).get()
     }
 
+    const MAX_POOL_SIZE: usize = 32;
+
+    fn take_or_alloc_var(&self) -> Rc<RefCell<FxHashMap<Identifier, Value>>> {
+        self.var_pool.borrow_mut().pop().unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())))
+    }
+
+    fn take_or_alloc_mixin(&self) -> Rc<RefCell<FxHashMap<Identifier, Mixin>>> {
+        self.mixin_pool.borrow_mut().pop().unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())))
+    }
+
+    fn take_or_alloc_fn(&self) -> Rc<RefCell<FxHashMap<Identifier, SassFunction>>> {
+        self.fn_pool.borrow_mut().pop().unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())))
+    }
+
     pub fn enter_new_scope(&mut self) {
         let len = self.len();
         debug_assert_eq!(self.len(), (*self.variables).borrow().len());
         (*self.len).set(len + 1);
-        (*self.variables)
-            .borrow_mut()
-            .push(Rc::new(RefCell::new(new_scope_map())));
-        (*self.mixins)
-            .borrow_mut()
-            .push(Rc::new(RefCell::new(new_scope_map())));
-        (*self.functions)
-            .borrow_mut()
-            .push(Rc::new(RefCell::new(new_scope_map())));
+        (*self.variables).borrow_mut().push(self.take_or_alloc_var());
+        (*self.mixins).borrow_mut().push(self.take_or_alloc_mixin());
+        (*self.functions).borrow_mut().push(self.take_or_alloc_fn());
     }
 
     pub fn exit_scope(&mut self) {
         debug_assert_eq!(self.len(), (*self.variables).borrow().len());
         let len = self.len();
         (*self.len).set(len - 1);
-        (*self.variables).borrow_mut().pop();
-        (*self.mixins).borrow_mut().pop();
-        (*self.functions).borrow_mut().pop();
+
+        if let Some(scope) = (*self.variables).borrow_mut().pop() {
+            if Rc::strong_count(&scope) == 1 {
+                scope.borrow_mut().clear();
+                let mut pool = self.var_pool.borrow_mut();
+                if pool.len() < Self::MAX_POOL_SIZE {
+                    pool.push(scope);
+                }
+            }
+        }
+        if let Some(scope) = (*self.mixins).borrow_mut().pop() {
+            if Rc::strong_count(&scope) == 1 {
+                scope.borrow_mut().clear();
+                let mut pool = self.mixin_pool.borrow_mut();
+                if pool.len() < Self::MAX_POOL_SIZE {
+                    pool.push(scope);
+                }
+            }
+        }
+        if let Some(scope) = (*self.functions).borrow_mut().pop() {
+            if Rc::strong_count(&scope) == 1 {
+                scope.borrow_mut().clear();
+                let mut pool = self.fn_pool.borrow_mut();
+                if pool.len() < Self::MAX_POOL_SIZE {
+                    pool.push(scope);
+                }
+            }
+        }
+
         self.last_variable_index = None;
     }
 }

@@ -46,16 +46,6 @@ impl SassMap {
         SassMap(Rc::new(elements))
     }
 
-    pub fn get(self, key: &Value) -> Option<Value> {
-        for (k, v) in self.into_vec() {
-            if &k.node == key {
-                return Some(v);
-            }
-        }
-
-        None
-    }
-
     pub fn get_ref(&self, key: &Value) -> Option<&Value> {
         for (k, v) in self.0.iter() {
             if &k.node == key {

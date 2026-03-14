@@ -25,7 +25,7 @@ pub(crate) fn map_get(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     // neither will be returned in the variadic args list
     let keys = args.get_variadic()?;
 
-    let mut val = map.get(&key).unwrap_or(Value::Null);
+    let mut val = map.get_ref(&key).cloned().unwrap_or(Value::Null);
     for key in keys {
         // if at any point we find a value that's not a map,
         // we return null
@@ -34,7 +34,7 @@ pub(crate) fn map_get(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
             None => return Ok(Value::Null),
         };
 
-        val = val_map.get(&key).unwrap_or(Value::Null);
+        val = val_map.get_ref(&key).cloned().unwrap_or(Value::Null);
     }
 
     Ok(val)
@@ -50,8 +50,8 @@ pub(crate) fn map_has_key(mut args: ArgumentResult, visitor: &mut Visitor) -> Sa
     // neither will be returned in the variadic args list
     let keys = args.get_variadic()?;
 
-    let mut val = match map.get(&key) {
-        Some(v) => v,
+    let mut val = match map.get_ref(&key) {
+        Some(v) => v.clone(),
         None => return Ok(Value::False),
     };
     for key in keys {
@@ -62,8 +62,8 @@ pub(crate) fn map_has_key(mut args: ArgumentResult, visitor: &mut Visitor) -> Sa
             None => return Ok(Value::False),
         };
 
-        val = match val_map.get(&key) {
-            Some(v) => v,
+        val = match val_map.get_ref(&key) {
+            Some(v) => v.clone(),
             None => return Ok(Value::False),
         };
     }
@@ -119,8 +119,9 @@ pub(crate) fn map_merge(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         let mut map_queue = Vec::new();
 
         for key in keys {
-            match current_map.get(&key) {
+            match current_map.get_ref(&key) {
                 Some(Value::Map(m1)) => {
+                    let m1 = m1.clone();
                     current_map = m1.clone();
                     map_queue.push((key, m1));
                 }
@@ -201,8 +202,9 @@ pub(crate) fn map_set(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         let mut map_queue = Vec::new();
 
         for key in keys {
-            match current_map.get(&key) {
+            match current_map.get_ref(&key) {
                 Some(Value::Map(m1)) => {
+                    let m1 = m1.clone();
                     current_map = m1.clone();
                     map_queue.push((key, m1));
                 }
