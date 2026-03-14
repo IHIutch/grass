@@ -90,7 +90,7 @@ fn hwb_inner(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
     let alpha = alpha_val.assert_number_with_name("alpha", span)?;
     let alpha = percentage_or_unitless(&alpha, 1.0, "alpha", span, visitor)?;
 
-    Ok(Value::Color(Arc::new(Color::from_hwb(
+    Ok(Value::Color(Rc::new(Color::from_hwb(
         hue,
         whiteness.num,
         blackness.num,

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, sync::Arc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -31,22 +31,22 @@ mod string;
 /// blocklist of member names.
 #[derive(Debug, Clone)]
 pub(crate) struct ShadowedModule {
-    pub(crate) inner: Arc<RefCell<Module>>,
+    pub(crate) inner: Rc<RefCell<Module>>,
     scope: ModuleScope,
 }
 
 impl ShadowedModule {
     pub fn new(
-        module: Arc<RefCell<Module>>,
+        module: Rc<RefCell<Module>>,
         variables: Option<&FxHashSet<Identifier>>,
         functions: Option<&FxHashSet<Identifier>>,
         mixins: Option<&FxHashSet<Identifier>>,
     ) -> Self {
         let module_scope = module.borrow().scope();
 
-        let variables = Self::shadowed_map(Arc::clone(&module_scope.variables), variables);
-        let functions = Self::shadowed_map(Arc::clone(&module_scope.functions), functions);
-        let mixins = Self::shadowed_map(Arc::clone(&module_scope.mixins), mixins);
+        let variables = Self::shadowed_map(Rc::clone(&module_scope.variables), variables);
+        let functions = Self::shadowed_map(Rc::clone(&module_scope.functions), functions);
+        let mixins = Self::shadowed_map(Rc::clone(&module_scope.mixins), mixins);
 
         let new_scope = ModuleScope {
             variables,
@@ -61,7 +61,7 @@ impl ShadowedModule {
     }
 
     fn needs_blocklist<V: fmt::Debug + Clone>(
-        map: Arc<dyn MapView<Value = V>>,
+        map: Rc<dyn MapView<Value = V>>,
         blocklist: Option<&FxHashSet<Identifier>>,
     ) -> bool {
         blocklist.is_some()
@@ -70,30 +70,30 @@ impl ShadowedModule {
     }
 
     fn shadowed_map<V: fmt::Debug + Clone + 'static>(
-        map: Arc<dyn MapView<Value = V>>,
+        map: Rc<dyn MapView<Value = V>>,
         blocklist: Option<&FxHashSet<Identifier>>,
-    ) -> Arc<dyn MapView<Value = V>> {
+    ) -> Rc<dyn MapView<Value = V>> {
         match blocklist {
-            Some(..) if !Self::needs_blocklist(Arc::clone(&map), blocklist) => map,
-            Some(blocklist) => Arc::new(LimitedMapView::blocklist(map, blocklist)),
+            Some(..) if !Self::needs_blocklist(Rc::clone(&map), blocklist) => map,
+            Some(blocklist) => Rc::new(LimitedMapView::blocklist(map, blocklist)),
             None => map,
         }
     }
 
     pub fn if_necessary(
-        module: Arc<RefCell<Module>>,
+        module: Rc<RefCell<Module>>,
         variables: Option<&FxHashSet<Identifier>>,
         functions: Option<&FxHashSet<Identifier>>,
         mixins: Option<&FxHashSet<Identifier>>,
-    ) -> Option<Arc<RefCell<Module>>> {
+    ) -> Option<Rc<RefCell<Module>>> {
         let module_scope = module.borrow().scope();
 
-        let needs_blocklist = Self::needs_blocklist(Arc::clone(&module_scope.variables), variables)
-            || Self::needs_blocklist(Arc::clone(&module_scope.functions), functions)
-            || Self::needs_blocklist(Arc::clone(&module_scope.mixins), mixins);
+        let needs_blocklist = Self::needs_blocklist(Rc::clone(&module_scope.variables), variables)
+            || Self::needs_blocklist(Rc::clone(&module_scope.functions), functions)
+            || Self::needs_blocklist(Rc::clone(&module_scope.mixins), mixins);
 
         if needs_blocklist {
-            Some(Arc::new(RefCell::new(Module::Shadowed(Self::new(
+            Some(Rc::new(RefCell::new(Module::Shadowed(Self::new(
                 module, variables, functions, mixins,
             )))))
         } else {
@@ -105,12 +105,12 @@ impl ShadowedModule {
 #[derive(Debug, Clone)]
 pub(crate) struct ForwardedModule {
     scope: ModuleScope,
-    pub(crate) inner: Arc<RefCell<Module>>,
+    pub(crate) inner: Rc<RefCell<Module>>,
     pub(crate) forward_rule: AstForwardRule,
 }
 
 impl ForwardedModule {
-    pub fn new(module: Arc<RefCell<Module>>, rule: AstForwardRule) -> Self {
+    pub fn new(module: Rc<RefCell<Module>>, rule: AstForwardRule) -> Self {
         let scope = (*module).borrow().scope();
 
         let variables = Self::forwarded_map(
@@ -148,11 +148,11 @@ impl ForwardedModule {
     }
 
     fn forwarded_map<T: Clone + fmt::Debug + 'static>(
-        mut map: Arc<dyn MapView<Value = T>>,
+        mut map: Rc<dyn MapView<Value = T>>,
         prefix: Option<&str>,
         safelist: Option<&FxHashSet<Identifier>>,
         blocklist: Option<&FxHashSet<Identifier>>,
-    ) -> Arc<dyn MapView<Value = T>> {
+    ) -> Rc<dyn MapView<Value = T>> {
         debug_assert!(safelist.is_none() || blocklist.is_none());
 
         if prefix.is_none() && safelist.is_none() && blocklist.is_none() {
@@ -160,23 +160,23 @@ impl ForwardedModule {
         }
 
         if let Some(prefix) = prefix {
-            map = Arc::new(PrefixedMapView(map, prefix.to_owned()));
+            map = Rc::new(PrefixedMapView(map, prefix.to_owned()));
         }
 
         // Apply show/hide after prefix, since show/hide names are in prefixed form
         if let Some(safelist) = safelist {
-            map = Arc::new(LimitedMapView::safelist(map, safelist));
+            map = Rc::new(LimitedMapView::safelist(map, safelist));
         } else if let Some(blocklist) = blocklist {
-            map = Arc::new(LimitedMapView::blocklist(map, blocklist));
+            map = Rc::new(LimitedMapView::blocklist(map, blocklist));
         }
 
         map
     }
 
     pub fn if_necessary(
-        module: Arc<RefCell<Module>>,
+        module: Rc<RefCell<Module>>,
         rule: AstForwardRule,
-    ) -> Arc<RefCell<Module>> {
+    ) -> Rc<RefCell<Module>> {
         if rule.prefix.is_none()
             && rule.shown_mixins_and_functions.is_none()
             && rule.shown_variables.is_none()
@@ -191,7 +191,7 @@ impl ForwardedModule {
         {
             module
         } else {
-            Arc::new(RefCell::new(Module::Forwarded(ForwardedModule::new(
+            Rc::new(RefCell::new(Module::Forwarded(ForwardedModule::new(
                 module, rule,
             ))))
         }
@@ -200,17 +200,17 @@ impl ForwardedModule {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ModuleScope {
-    pub variables: Arc<dyn MapView<Value = Value>>,
-    pub mixins: Arc<dyn MapView<Value = Mixin>>,
-    pub functions: Arc<dyn MapView<Value = SassFunction>>,
+    pub variables: Rc<dyn MapView<Value = Value>>,
+    pub mixins: Rc<dyn MapView<Value = Mixin>>,
+    pub functions: Rc<dyn MapView<Value = SassFunction>>,
 }
 
 impl ModuleScope {
     pub fn new() -> Self {
         Self {
-            variables: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
-            mixins: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
-            functions: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
+            variables: Rc::new(BaseMapView(Rc::new(RefCell::new(FxHashMap::default())))),
+            mixins: Rc::new(BaseMapView(Rc::new(RefCell::new(FxHashMap::default())))),
+            functions: Rc::new(BaseMapView(Rc::new(RefCell::new(FxHashMap::default())))),
         }
     }
 }
@@ -220,7 +220,7 @@ impl ModuleScope {
 pub(crate) enum Module {
     Environment {
         scope: ModuleScope,
-        upstream: Vec<Arc<RefCell<Module>>>,
+        upstream: Vec<Rc<RefCell<Module>>>,
         extension_store: ExtensionStore,
         #[allow(dead_code)]
         env: Environment,
@@ -233,7 +233,7 @@ pub(crate) enum Module {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Modules(pub FxHashMap<Identifier, Arc<RefCell<Module>>>);
+pub(crate) struct Modules(pub FxHashMap<Identifier, Rc<RefCell<Module>>>);
 
 impl Modules {
     pub fn new() -> Self {
@@ -243,7 +243,7 @@ impl Modules {
     pub fn insert(
         &mut self,
         name: Identifier,
-        module: Arc<RefCell<Module>>,
+        module: Rc<RefCell<Module>>,
         span: Span,
     ) -> SassResult<()> {
         if self.0.contains_key(&name) {
@@ -259,9 +259,9 @@ impl Modules {
         Ok(())
     }
 
-    pub fn get(&self, name: Identifier, span: Span) -> SassResult<Arc<RefCell<Module>>> {
+    pub fn get(&self, name: Identifier, span: Span) -> SassResult<Rc<RefCell<Module>>> {
         match self.0.get(&name) {
-            Some(v) => Ok(Arc::clone(v)),
+            Some(v) => Ok(Rc::clone(v)),
             None => Err((
                 format!(
                     "There is no module with the namespace \"{}\".",
@@ -277,7 +277,7 @@ impl Modules {
         &mut self,
         name: Identifier,
         span: Span,
-    ) -> SassResult<&mut Arc<RefCell<Module>>> {
+    ) -> SassResult<&mut Rc<RefCell<Module>>> {
         match self.0.get_mut(&name) {
             Some(v) => Ok(v),
             None => Err((
@@ -293,36 +293,36 @@ impl Modules {
 }
 
 fn member_map<V: fmt::Debug + Clone + 'static>(
-    local: Arc<dyn MapView<Value = V>>,
-    others: Vec<Arc<dyn MapView<Value = V>>>,
-) -> Arc<dyn MapView<Value = V>> {
+    local: Rc<dyn MapView<Value = V>>,
+    others: Vec<Rc<dyn MapView<Value = V>>>,
+) -> Rc<dyn MapView<Value = V>> {
     let local_map = PublicMemberMapView(local);
 
     if others.is_empty() {
-        return Arc::new(local_map);
+        return Rc::new(local_map);
     }
 
-    let mut all_maps: Vec<Arc<dyn MapView<Value = V>>> =
+    let mut all_maps: Vec<Rc<dyn MapView<Value = V>>> =
         others.into_iter().filter(|map| !map.is_empty()).collect();
 
-    all_maps.push(Arc::new(local_map));
+    all_maps.push(Rc::new(local_map));
 
     // todo: potential optimization when all_maps.len() == 1
-    Arc::new(MergedMapView::new(all_maps))
+    Rc::new(MergedMapView::new(all_maps))
 }
 
 impl Module {
     pub fn new_env_with_upstream(
         env: Environment,
         extension_store: ExtensionStore,
-        upstream: Vec<Arc<RefCell<Module>>>,
+        upstream: Vec<Rc<RefCell<Module>>>,
     ) -> Self {
         let variables = {
             let variables = (*env.forwarded_modules).borrow();
             let variables = variables
                 .iter()
-                .map(|module| Arc::clone(&(*module).borrow().scope().variables));
-            let this = Arc::new(BaseMapView(env.global_vars()));
+                .map(|module| Rc::clone(&(*module).borrow().scope().variables));
+            let this = Rc::new(BaseMapView(env.global_vars()));
             member_map(this, variables.collect())
         };
 
@@ -330,8 +330,8 @@ impl Module {
             let mixins = (*env.forwarded_modules).borrow();
             let mixins = mixins
                 .iter()
-                .map(|module| Arc::clone(&(*module).borrow().scope().mixins));
-            let this = Arc::new(BaseMapView(env.global_mixins()));
+                .map(|module| Rc::clone(&(*module).borrow().scope().mixins));
+            let this = Rc::new(BaseMapView(env.global_mixins()));
             member_map(this, mixins.collect())
         };
 
@@ -339,8 +339,8 @@ impl Module {
             let functions = (*env.forwarded_modules).borrow();
             let functions = functions
                 .iter()
-                .map(|module| Arc::clone(&(*module).borrow().scope().functions));
-            let this = Arc::new(BaseMapView(env.global_functions()));
+                .map(|module| Rc::clone(&(*module).borrow().scope().functions));
+            let this = Rc::new(BaseMapView(env.global_functions()));
             member_map(this, functions.collect())
         };
 

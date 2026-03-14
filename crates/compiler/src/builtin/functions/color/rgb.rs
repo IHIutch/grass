@@ -123,7 +123,7 @@ fn inner_rgb_2_arg(
 
     let color = color.assert_color_with_name("color", args.span())?;
     let alpha = alpha.assert_number_with_name("alpha", args.span())?;
-    Ok(Value::Color(Arc::new(color.with_alpha(Number(
+    Ok(Value::Color(Rc::new(color.with_alpha(Number(
         percentage_or_unitless(&alpha, 1.0, "alpha", args.span(), visitor)?,
     )))))
 }
@@ -171,7 +171,7 @@ fn inner_rgb_3_arg(
     let green = green.assert_number_with_name("green", span)?;
     let blue = blue.assert_number_with_name("blue", span)?;
 
-    Ok(Value::Color(Arc::new(Color::from_rgba_fn(
+    Ok(Value::Color(Rc::new(Color::from_rgba_fn(
         Number(percentage_or_unitless(
             &red, 255.0, "red", span, visitor,
         )?),
@@ -565,11 +565,11 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                     span,
                 ).into());
             }
-            Ok(Value::Color(Arc::new(color1.mix(&color2, weight))))
+            Ok(Value::Color(Rc::new(color1.mix(&color2, weight))))
         }
         Some(method_val) => {
             let (space, hue_method) = parse_interpolation_method(method_val, span)?;
-            Ok(Value::Color(Arc::new(
+            Ok(Value::Color(Rc::new(
                 color1.mix_with_method(&color2, weight.0, space, hue_method),
             )))
         }

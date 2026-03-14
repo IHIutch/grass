@@ -156,7 +156,7 @@ fn calc_args(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
         })
         .collect::<SassResult<Vec<_>>>()?;
 
-    Ok(Value::List(Arc::new(args), ListSeparator::Comma, Brackets::None))
+    Ok(Value::List(Rc::new(args), ListSeparator::Comma, Brackets::None))
 }
 
 fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {

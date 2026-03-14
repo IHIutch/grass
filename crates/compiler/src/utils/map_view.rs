@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, sync::Arc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -21,7 +21,7 @@ pub(crate) trait MapView: fmt::Debug {
     fn iter(&self) -> Vec<(Identifier, Self::Value)>;
 }
 
-impl<T> MapView for Arc<dyn MapView<Value = T>> {
+impl<T> MapView for Rc<dyn MapView<Value = T>> {
     type Value = T;
     fn get(&self, name: Identifier) -> Option<Self::Value> {
         (**self).get(name)
@@ -45,11 +45,11 @@ impl<T> MapView for Arc<dyn MapView<Value = T>> {
 }
 
 #[derive(Debug)]
-pub(crate) struct BaseMapView<T>(pub Arc<RefCell<FxHashMap<Identifier, T>>>);
+pub(crate) struct BaseMapView<T>(pub Rc<RefCell<FxHashMap<Identifier, T>>>);
 
 impl<T> Clone for BaseMapView<T> {
     fn clone(&self) -> Self {
-        Self(Arc::clone(&self.0))
+        Self(Rc::clone(&self.0))
     }
 }
 
@@ -260,12 +260,12 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for LimitedMa
 
 #[derive(Debug)]
 pub(crate) struct MergedMapView<V: fmt::Debug + Clone>(
-    pub Vec<Arc<dyn MapView<Value = V>>>,
+    pub Vec<Rc<dyn MapView<Value = V>>>,
     FxHashSet<Identifier>,
 );
 
 impl<V: fmt::Debug + Clone> MergedMapView<V> {
-    pub fn new(maps: Vec<Arc<dyn MapView<Value = V>>>) -> Self {
+    pub fn new(maps: Vec<Rc<dyn MapView<Value = V>>>) -> Self {
         let unique_keys: FxHashSet<Identifier> = maps.iter().fold(FxHashSet::default(), |mut keys, map| {
             keys.extend(&map.keys());
             keys

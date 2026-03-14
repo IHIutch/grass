@@ -24,7 +24,7 @@ fn slash(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> 
         return Err(("At least two elements are required.", span).into());
     }
 
-    Ok(Value::List(Arc::new(list), ListSeparator::Slash, Brackets::None))
+    Ok(Value::List(Rc::new(list), ListSeparator::Slash, Brackets::None))
 }
 
 pub(crate) fn declare(f: &mut Module) {

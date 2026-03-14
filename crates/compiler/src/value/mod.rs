@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::{cmp::Ordering, rc::Rc};
 
 use codemap::{Span, Spanned};
 use compact_str::CompactString;
@@ -38,8 +38,8 @@ pub enum Value {
     False,
     Null,
     Dimension(SassNumber),
-    List(Arc<Vec<Value>>, ListSeparator, Brackets),
-    Color(Arc<Color>),
+    List(Rc<Vec<Value>>, ListSeparator, Brackets),
+    Color(Rc<Color>),
     String(CompactString, QuoteKind),
     Map(SassMap),
     ArgList(ArgList),
@@ -141,7 +141,7 @@ impl Value {
         span: Span,
     ) -> SassResult<Self> {
         let mut number = self.assert_number(span)?;
-        number.as_slash = Some(Arc::new((numerator, denom)));
+        number.as_slash = Some(Rc::new((numerator, denom)));
         Ok(Value::Dimension(number))
     }
 
@@ -167,7 +167,7 @@ impl Value {
         }
     }
 
-    pub fn assert_color_with_name(self, name: &str, span: Span) -> SassResult<Arc<Color>> {
+    pub fn assert_color_with_name(self, name: &str, span: Span) -> SassResult<Rc<Color>> {
         match self {
             Value::Color(c) => Ok(c),
             _ => Err((
@@ -262,7 +262,7 @@ impl Value {
         match self {
             Value::String(s1, _) => Value::String(s1, QuoteKind::None),
             Value::List(v, sep, bracket) => {
-                Value::List(Arc::new(Arc::unwrap_or_clone(v).into_iter().map(Value::unquote).collect()), sep, bracket)
+                Value::List(Rc::new(Rc::unwrap_or_clone(v).into_iter().map(Value::unquote).collect()), sep, bracket)
             }
             v => v,
         }
@@ -288,7 +288,7 @@ impl Value {
         }
     }
 
-    pub fn as_slash(&self) -> Option<Arc<(SassNumber, SassNumber)>> {
+    pub fn as_slash(&self) -> Option<Rc<(SassNumber, SassNumber)>> {
         match self {
             Value::Dimension(SassNumber { as_slash, .. }) => as_slash.clone(),
             _ => None,
@@ -443,7 +443,7 @@ impl Value {
 
     pub fn as_list(self) -> Vec<Value> {
         match self {
-            Value::List(v, ..) => Arc::unwrap_or_clone(v),
+            Value::List(v, ..) => Rc::unwrap_or_clone(v),
             Value::Map(m) => m.as_list(),
             Value::ArgList(v) => v.elems,
             v => vec![v],
@@ -518,7 +518,7 @@ impl Value {
             Value::String(text, ..) => text.into(),
             Value::List(list, sep, ..) if !list.is_empty() => {
                 let mut result = Vec::new();
-                let list = Arc::unwrap_or_clone(list);
+                let list = Rc::unwrap_or_clone(list);
                 match sep {
                     ListSeparator::Comma => {
                         for complex in list {

@@ -4,10 +4,8 @@ use std::{
     ffi::OsString,
     mem,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -477,7 +475,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Each(AstEach {
             variables,
             list,
-            body: body.into_iter().map(Arc::new).collect(),
+            body: body.into_iter().map(Rc::new).collect(),
         }))
     }
 
@@ -602,7 +600,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             from,
             to,
             is_exclusive,
-            body: body.into_iter().map(Arc::new).collect(),
+            body: body.into_iter().map(Rc::new).collect(),
         }))
     }
 
@@ -671,7 +669,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 span: name_span,
             },
             arguments,
-            body: children.into_iter().map(Arc::new).collect(),
+            body: children.into_iter().map(Rc::new).collect(),
         }))
     }
 
@@ -856,7 +854,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                             buffer.add_char('(');
                         }
 
-                        buffer.add_expr(AstExpr::Supports(Arc::new(query)).span(self.empty_span()));
+                        buffer.add_expr(AstExpr::Supports(Rc::new(query)).span(self.empty_span()));
 
                         if !is_declaration {
                             buffer.add_char(')');
@@ -952,7 +950,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 StringExpr(contents, QuoteKind::None),
                 self.toks_mut().span_from(start),
             ),
-            None => AstExpr::InterpolatedFunction(Arc::new(InterpolatedFunction {
+            None => AstExpr::InterpolatedFunction(Rc::new(InterpolatedFunction {
                 name: Interpolation::new_plain("url".to_owned()),
                 arguments: self.parse_argument_invocation(false, false)?,
                 span: self.toks_mut().span_from(start),
@@ -1140,7 +1138,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let body = self.with_children(Self::parse_statement)?.node;
             content_block = Some(AstContentBlock {
                 args: content_args,
-                body: body.into_iter().map(Arc::new).collect(),
+                body: body.into_iter().map(Rc::new).collect(),
             });
             self.flags_mut()
                 .set(ContextFlags::IN_CONTENT_BLOCK, was_in_content_block);
@@ -1306,7 +1304,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Mixin(AstMixin {
             name,
             args,
-            body: body.into_iter().map(Arc::new).collect(),
+            body: body.into_iter().map(Rc::new).collect(),
             has_content,
             id: MIXIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }))
@@ -1637,7 +1635,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::While(AstWhile { condition, body: body.into_iter().map(Arc::new).collect() }))
+        Ok(AstStmt::While(AstWhile { condition, body: body.into_iter().map(Rc::new).collect() }))
     }
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt> {
         self.set_consume_newlines(true);

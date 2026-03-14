@@ -1,6 +1,6 @@
 use std::{
     ops::{Add, Div, Mul, Sub},
-    sync::Arc,
+    rc::Rc,
 };
 
 use codemap::Span;
@@ -18,7 +18,7 @@ use super::{fuzzy_as_int, Number};
 pub struct SassNumber {
     pub num: Number,
     pub unit: Unit,
-    pub as_slash: Option<Arc<(Self, Self)>>,
+    pub as_slash: Option<Rc<(Self, Self)>>,
 }
 
 pub(crate) fn conversion_factor(from: &Unit, to: &Unit) -> Option<f64> {

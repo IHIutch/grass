@@ -58,7 +58,7 @@ pub(crate) fn to_space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         )
     })?;
 
-    Ok(Value::Color(Arc::new(color.to_space(target_space))))
+    Ok(Value::Color(Rc::new(color.to_space(target_space))))
 }
 
 /// `color.is-legacy($color)` - check if color is in a legacy space
@@ -399,7 +399,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         gamut_mapped
     };
 
-    Ok(Value::Color(Arc::new(result)))
+    Ok(Value::Color(Rc::new(result)))
 }
 
 /// `color.is-powerless($color, $channel, $space: null)` - check for powerless channels

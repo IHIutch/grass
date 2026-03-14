@@ -222,7 +222,7 @@ fn construct_color_inner(
 
     use crate::color::{Color, ColorFormat};
 
-    Ok(Value::Color(Arc::new(Color::for_space(
+    Ok(Value::Color(Rc::new(Color::for_space(
         space, channels_arr, alpha,
         ColorFormat::Infer,
     ))))

@@ -45,7 +45,7 @@ pub(crate) fn simple_selectors(
     };
 
     Ok(Value::List(
-        Arc::new(compound
+        Rc::new(compound
             .components
             .into_iter()
             .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))

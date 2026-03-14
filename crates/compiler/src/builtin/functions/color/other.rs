@@ -109,7 +109,7 @@ fn parse_modern_channel(
 
 /// Handle adjust/scale/change for a modern (non-legacy) working space.
 fn update_modern(
-    color: &Arc<Color>,
+    color: &Rc<Color>,
     args: &mut ArgumentResult,
     working_space: ColorSpace,
     convert_back: bool,
@@ -205,7 +205,7 @@ fn update_modern(
                     format!(
                         "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
                         channel_defs[i].name,
-                        Value::Color(Arc::new(display_color)).inspect(span)?
+                        Value::Color(Rc::new(display_color)).inspect(span)?
                     ),
                     span,
                 )
@@ -219,7 +219,7 @@ fn update_modern(
         return Err((
             format!(
                 "$alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                Value::Color(Arc::new(display_color)).inspect(span)?
+                Value::Color(Rc::new(display_color)).inspect(span)?
             ),
             span,
         )
@@ -327,7 +327,7 @@ fn update_modern(
         result
     };
 
-    Ok(Value::Color(Arc::new(final_color)))
+    Ok(Value::Color(Rc::new(final_color)))
 }
 
 fn update_components(
@@ -611,7 +611,7 @@ fn update_components(
                     format!(
                         "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
                         channel_name,
-                        Value::Color(Arc::new(color_in_space.clone())).inspect(span)?
+                        Value::Color(Rc::new(color_in_space.clone())).inspect(span)?
                     ),
                     span,
                 )
@@ -682,7 +682,7 @@ fn update_components(
             .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
         let new_a = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
-        Arc::new(Color::for_space(
+        Rc::new(Color::for_space(
             ColorSpace::Rgb,
             [new_r, new_g, new_b],
             new_a,
@@ -723,7 +723,7 @@ fn update_components(
         if original_space != ColorSpace::Hwb {
             result = result.to_space(original_space);
         }
-        Arc::new(result)
+        Rc::new(result)
     } else if hue.is_some() || has_sl {
         let in_hsl = color.to_space(ColorSpace::Hsl);
         let hsl_ch = in_hsl.raw_channels();
@@ -768,15 +768,15 @@ fn update_components(
         } else {
             result.format = original_format.clone();
         }
-        Arc::new(result)
+        Rc::new(result)
     } else if alpha.is_some() {
         let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         match new_alpha {
-            Some(a) => Arc::new(color.with_alpha(Number(a))),
+            Some(a) => Rc::new(color.with_alpha(Number(a))),
             None => {
                 // Alpha set to `none` (missing) — use for_space to create color with None alpha
-                Arc::new(Color::for_space(
+                Rc::new(Color::for_space(
                     color.color_space(),
                     color.raw_channels(),
                     None,

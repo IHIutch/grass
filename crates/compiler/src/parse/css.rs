@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{collections::BTreeMap, path::Path, rc::Rc};
 
 use codemap::{Span, Spanned};
 
@@ -231,7 +231,7 @@ impl<'a> CssParser<'a> {
         }
 
         Ok(
-            AstExpr::InterpolatedFunction(Arc::new(InterpolatedFunction {
+            AstExpr::InterpolatedFunction(Rc::new(InterpolatedFunction {
                 name: identifier,
                 arguments: ArgumentInvocation {
                     positional: arguments,

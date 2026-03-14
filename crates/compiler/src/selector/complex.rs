@@ -1,7 +1,6 @@
 use std::{
     fmt::{self, Display, Write},
     hash::{Hash, Hasher},
-    sync::atomic::{AtomicU32, Ordering as AtomicOrdering},
 };
 
 use codemap::Span;
@@ -10,8 +9,6 @@ use rustc_hash::FxHashSet;
 use crate::error::SassResult;
 
 use super::{CompoundSelector, Pseudo, SelectorList, SimpleSelector, Specificity};
-
-pub(crate) static COMPLEX_SELECTOR_UNIQUE_ID: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ComplexSelectorHashSet(FxHashSet<ComplexSelector>);
@@ -55,10 +52,6 @@ pub(crate) struct ComplexSelector {
     /// Whether a line break should be emitted *before* this selector.
     pub line_break: bool,
 
-    /// A unique identifier for this complex selector. Used to perform a pointer
-    /// equality check, like would be done for objects in a language like JavaScript
-    /// or dart
-    unique_id: u32,
 }
 
 impl PartialEq for ComplexSelector {
@@ -148,7 +141,6 @@ impl ComplexSelector {
         Self {
             components,
             line_break,
-            unique_id: COMPLEX_SELECTOR_UNIQUE_ID.fetch_add(1, AtomicOrdering::Relaxed),
         }
     }
 

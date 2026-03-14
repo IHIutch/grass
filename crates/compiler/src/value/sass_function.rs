@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, rc::Rc};
 
 use crate::{ast::AstFunctionDecl, builtin::Builtin, common::Identifier, evaluate::Environment};
 
@@ -27,7 +27,7 @@ pub enum SassFunction {
 
 #[derive(Debug, Clone)]
 pub struct UserDefinedFunction {
-    pub(crate) function: Arc<AstFunctionDecl>,
+    pub(crate) function: Rc<AstFunctionDecl>,
     pub name: Identifier,
     pub(crate) env: Environment,
 }

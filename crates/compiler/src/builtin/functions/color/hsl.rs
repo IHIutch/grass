@@ -60,7 +60,7 @@ fn hsl_3_args(
                 "{}({})",
                 name,
                 Value::List(
-                    Arc::new(if args.len() == 4 {
+                    Rc::new(if args.len() == 4 {
                         vec![hue, saturation, lightness, alpha]
                     } else {
                         vec![hue, saturation, lightness]
@@ -85,7 +85,7 @@ fn hsl_3_args(
         visitor,
     )?;
 
-    Ok(Value::Color(Arc::new(Color::from_hsla_fn(
+    Ok(Value::Color(Rc::new(Color::from_hsla_fn(
         Number(hue.rem_euclid(360.0)),
         saturation.num / Number(100.0),
         lightness.num / Number(100.0),
@@ -230,7 +230,7 @@ pub(crate) fn adjust_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
     let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span())?;
 
-    Ok(Value::Color(Arc::new(color.adjust_hue(degrees))))
+    Ok(Value::Color(Rc::new(color.adjust_hue(degrees))))
 }
 
 fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -254,7 +254,7 @@ fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value>
 
     amount.num /= Number(100.0);
 
-    Ok(Value::Color(Arc::new(color.lighten(amount.num))))
+    Ok(Value::Color(Rc::new(color.lighten(amount.num))))
 }
 
 fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -278,7 +278,7 @@ fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> 
 
     amount.num /= Number(100.0);
 
-    Ok(Value::Color(Arc::new(color.darken(amount.num))))
+    Ok(Value::Color(Rc::new(color.darken(amount.num))))
 }
 
 fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -324,7 +324,7 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         ).into());
     }
 
-    Ok(Value::Color(Arc::new(color.saturate(amount.num))))
+    Ok(Value::Color(Rc::new(color.saturate(amount.num))))
 }
 
 fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -348,7 +348,7 @@ fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
 
     amount.num /= Number(100.0);
 
-    Ok(Value::Color(Arc::new(color.desaturate(amount.num))))
+    Ok(Value::Color(Rc::new(color.desaturate(amount.num))))
 }
 
 pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -373,7 +373,7 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
                 .into())
         }
     };
-    Ok(Value::Color(Arc::new(color.grayscale())))
+    Ok(Value::Color(Rc::new(color.grayscale())))
 }
 
 /// Global CSS filter overload: passes through var()/calc() as plain CSS.
@@ -427,13 +427,13 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
             return Err((
                 format!(
                     "$hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                    Value::Color(Arc::new(display_color)).inspect(span)?
+                    Value::Color(Rc::new(display_color)).inspect(span)?
                 ),
                 span,
             )
                 .into());
         }
-        Ok(Value::Color(Arc::new(color.complement_in_space(space))))
+        Ok(Value::Color(Rc::new(color.complement_in_space(space))))
     } else if !color.color_space().is_legacy() {
         Err((
             "$color: To use color.complement() with a non-legacy color, you must provide a $space.",
@@ -448,13 +448,13 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
             return Err((
                 format!(
                     "$hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                    Value::Color(Arc::new(in_hsl)).inspect(span)?
+                    Value::Color(Rc::new(in_hsl)).inspect(span)?
                 ),
                 span,
             )
                 .into());
         }
-        Ok(Value::Color(Arc::new(color.complement())))
+        Ok(Value::Color(Rc::new(color.complement())))
     }
 }
 
@@ -499,14 +499,14 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                             format!(
                                 "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
                                 ch_def.name,
-                                Value::Color(Arc::new(display_color)).inspect(span)?
+                                Value::Color(Rc::new(display_color)).inspect(span)?
                             ),
                             span,
                         )
                             .into());
                     }
                 }
-                Ok(Value::Color(Arc::new(
+                Ok(Value::Color(Rc::new(
                     c.invert_in_space(space, weight.unwrap_or_else(Number::one)),
                 )))
             } else if !c.color_space().is_legacy() {
@@ -526,14 +526,14 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                             format!(
                                 "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
                                 rgb_def.name,
-                                Value::Color(Arc::new(in_rgb)).inspect(span)?
+                                Value::Color(Rc::new(in_rgb)).inspect(span)?
                             ),
                             span,
                         )
                             .into());
                     }
                 }
-                Ok(Value::Color(Arc::new(
+                Ok(Value::Color(Rc::new(
                     c.invert(weight.unwrap_or_else(Number::one)),
                 )))
             }

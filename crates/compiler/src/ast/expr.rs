@@ -1,4 +1,4 @@
-use std::{iter::Iterator, sync::Arc};
+use std::{iter::Iterator, rc::Rc};
 
 use codemap::{Span, Spanned};
 
@@ -70,7 +70,7 @@ pub struct FunctionCallExpr {
     /// Original function name before underscore→dash normalization.
     /// Used for plain CSS function output to preserve the original casing/underscores.
     pub original_name: String,
-    pub arguments: Arc<ArgumentInvocation>,
+    pub arguments: Rc<ArgumentInvocation>,
     pub span: Span,
     /// True if the function name was written with literal `--` prefix (CSS custom function).
     /// False if it was written with `__` (Sass function that normalizes to `--`).
@@ -98,18 +98,18 @@ pub struct BinaryOpExpr {
 
 #[derive(Debug, Clone)]
 pub enum AstExpr {
-    BinaryOp(Arc<BinaryOpExpr>),
+    BinaryOp(Rc<BinaryOpExpr>),
     True,
     False,
     Calculation {
         name: CalculationName,
         args: Vec<Self>,
     },
-    Color(Arc<Color>),
-    CssIf(Arc<CssIfExpression>),
+    Color(Rc<Color>),
+    CssIf(Rc<CssIfExpression>),
     FunctionCall(FunctionCallExpr),
-    If(Arc<Ternary>),
-    InterpolatedFunction(Arc<InterpolatedFunction>),
+    If(Rc<Ternary>),
+    InterpolatedFunction(Rc<InterpolatedFunction>),
     List(ListExpr),
     Map(AstSassMap),
     Null,
@@ -117,11 +117,11 @@ pub enum AstExpr {
         n: Number,
         unit: Unit,
     },
-    Paren(Arc<Self>),
+    Paren(Rc<Self>),
     ParentSelector,
     String(StringExpr, Span),
-    Supports(Arc<AstSupportsCondition>),
-    UnaryOp(UnaryOp, Arc<Self>, Span),
+    Supports(Rc<AstSupportsCondition>),
+    UnaryOp(UnaryOp, Rc<Self>, Span),
     Variable {
         name: Spanned<Identifier>,
         namespace: Option<Spanned<Identifier>>,
@@ -231,7 +231,7 @@ impl AstExpr {
     }
 
     pub fn slash(left: Self, right: Self, span: Span) -> Self {
-        Self::BinaryOp(Arc::new(BinaryOpExpr {
+        Self::BinaryOp(Rc::new(BinaryOpExpr {
             lhs: left,
             op: BinaryOp::Div,
             rhs: right,

@@ -8,11 +8,11 @@ use crate::{
     selector::ExtensionStore,
     value::{SassFunction, Value},
 };
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-type Mutable<T> = Arc<RefCell<T>>;
+type Mutable<T> = Rc<RefCell<T>>;
 
 use super::{scope::Scopes, visitor::CallableContentBlock};
 
@@ -21,7 +21,7 @@ pub(crate) struct Environment {
     pub scopes: Scopes,
     pub modules: Mutable<Modules>,
     pub global_modules: Vec<Mutable<Module>>,
-    pub content: Option<Arc<CallableContentBlock>>,
+    pub content: Option<Rc<CallableContentBlock>>,
     pub forwarded_modules: Mutable<Vec<Mutable<Module>>>,
     pub imported_modules: Mutable<Vec<Mutable<Module>>>,
     #[allow(clippy::type_complexity)]
@@ -44,11 +44,11 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             scopes: Scopes::new(),
-            modules: Arc::new(RefCell::new(Modules::new())),
+            modules: Rc::new(RefCell::new(Modules::new())),
             global_modules: Vec::new(),
             content: None,
-            forwarded_modules: Arc::new(RefCell::new(Vec::new())),
-            imported_modules: Arc::new(RefCell::new(Vec::new())),
+            forwarded_modules: Rc::new(RefCell::new(Vec::new())),
+            imported_modules: Rc::new(RefCell::new(Vec::new())),
             nested_forwarded_modules: None,
             forwarded_member_sources: ForwardedMemberSources::default(),
         }
@@ -57,12 +57,12 @@ impl Environment {
     pub fn new_closure(&self) -> Self {
         Self {
             scopes: self.scopes.new_closure(),
-            modules: Arc::clone(&self.modules),
-            global_modules: self.global_modules.iter().map(Arc::clone).collect(),
-            content: self.content.as_ref().map(Arc::clone),
-            forwarded_modules: Arc::clone(&self.forwarded_modules),
-            imported_modules: Arc::clone(&self.imported_modules),
-            nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Arc::clone),
+            modules: Rc::clone(&self.modules),
+            global_modules: self.global_modules.iter().map(Rc::clone).collect(),
+            content: self.content.as_ref().map(Rc::clone),
+            forwarded_modules: Rc::clone(&self.forwarded_modules),
+            imported_modules: Rc::clone(&self.imported_modules),
+            nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Rc::clone),
             forwarded_member_sources: self.forwarded_member_sources.clone(),
         }
     }
@@ -70,17 +70,17 @@ impl Environment {
     pub fn for_import(&self) -> Self {
         Self {
             scopes: self.scopes.new_closure(),
-            modules: Arc::new(RefCell::new(Modules::new())),
+            modules: Rc::new(RefCell::new(Modules::new())),
             global_modules: Vec::new(),
-            content: self.content.as_ref().map(Arc::clone),
+            content: self.content.as_ref().map(Rc::clone),
             // Create a new forwarded_modules list for the import context.
             // The imported file's @forward rules will push to this new list,
             // and import_forwards() will process them back into the parent env.
             // Sharing the parent's list would cause @forward to leak directly
             // into the parent, bypassing import_forwards' scoping and shadowing.
-            forwarded_modules: Arc::new(RefCell::new(Vec::new())),
-            imported_modules: Arc::clone(&self.imported_modules),
-            nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Arc::clone),
+            forwarded_modules: Rc::new(RefCell::new(Vec::new())),
+            imported_modules: Rc::clone(&self.imported_modules),
+            nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Rc::clone),
             forwarded_member_sources: self.forwarded_member_sources.clone(),
         }
     }
@@ -108,27 +108,27 @@ impl Environment {
 
             // Omit modules from [forwarded] that are already globally available and
             // forwarded in this module.
-            let forwarded_modules = Arc::clone(&self.forwarded_modules);
+            let forwarded_modules = Rc::clone(&self.forwarded_modules);
             if !(*forwarded_modules).borrow().is_empty() {
                 let fwd_ptrs: FxHashSet<*const RefCell<Module>> = forwarded_modules
                     .borrow()
                     .iter()
-                    .map(Arc::as_ptr)
+                    .map(Rc::as_ptr)
                     .collect();
                 let global_ptrs: FxHashSet<*const RefCell<Module>> = self
                     .global_modules
                     .iter()
-                    .map(Arc::as_ptr)
+                    .map(Rc::as_ptr)
                     .collect();
                 let mut x = Vec::new();
                 for entry in (*forwarded).borrow().iter() {
-                    let ptr = Arc::as_ptr(entry);
+                    let ptr = Rc::as_ptr(entry);
                     if !fwd_ptrs.contains(&ptr) || !global_ptrs.contains(&ptr) {
-                        x.push(Arc::clone(entry));
+                        x.push(Rc::clone(entry));
                     }
                 }
 
-                forwarded = Arc::new(RefCell::new(x));
+                forwarded = Rc::new(RefCell::new(x));
             }
 
             let mut forwarded_var_names = FxHashSet::<Identifier>::default();
@@ -147,7 +147,7 @@ impl Environment {
                 // forwarded that would otherwise conflict with the @imported members.
                 (*self.imported_modules).borrow_mut().retain(|module| {
                     ShadowedModule::if_necessary(
-                        Arc::clone(module),
+                        Rc::clone(module),
                         Some(&forwarded_var_names),
                         Some(&forwarded_fn_names),
                         Some(&forwarded_mixin_names),
@@ -157,7 +157,7 @@ impl Environment {
 
                 (*self.forwarded_modules).borrow_mut().retain(|module| {
                     ShadowedModule::if_necessary(
-                        Arc::clone(module),
+                        Rc::clone(module),
                         Some(&forwarded_var_names),
                         Some(&forwarded_fn_names),
                         Some(&forwarded_mixin_names),
@@ -168,14 +168,14 @@ impl Environment {
                 let mut imported_modules = (*self.imported_modules).borrow_mut();
                 let mut forwarded_modules = (*self.forwarded_modules).borrow_mut();
 
-                imported_modules.extend(forwarded.borrow().iter().map(Arc::clone));
-                forwarded_modules.extend(forwarded.borrow().iter().map(Arc::clone));
+                imported_modules.extend(forwarded.borrow().iter().map(Rc::clone));
+                forwarded_modules.extend(forwarded.borrow().iter().map(Rc::clone));
             } else {
                 self.nested_forwarded_modules
                     .get_or_insert_with(|| {
-                        Arc::new(RefCell::new(
+                        Rc::new(RefCell::new(
                             (0..self.scopes.len())
-                                .map(|_| Arc::new(RefCell::new(Vec::new())))
+                                .map(|_| Rc::new(RefCell::new(Vec::new())))
                                 .collect(),
                         ))
                     })
@@ -183,7 +183,7 @@ impl Environment {
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
-                    .extend(forwarded.borrow().iter().map(Arc::clone));
+                    .extend(forwarded.borrow().iter().map(Rc::clone));
             }
 
             // Remove existing member definitions that are now shadowed by the
@@ -264,7 +264,7 @@ impl Environment {
 
     pub fn forward_module(
         &mut self,
-        module: Arc<RefCell<Module>>,
+        module: Rc<RefCell<Module>>,
         rule: AstForwardRule,
     ) -> SassResult<()> {
         let new_span = rule.span;
@@ -420,7 +420,7 @@ impl Environment {
             if !self.scopes.global_var_exists(name.node) {
                 let module_with_name = self.from_one_module(name.node, "variable", name.span, |module| {
                     if module.borrow().var_exists(*name) {
-                        Some(Arc::clone(module))
+                        Some(Rc::clone(module))
                     } else {
                         None
                     }
@@ -480,7 +480,7 @@ impl Environment {
         self.scopes.enter_new_scope();
         if let Some(ref nfm) = self.nested_forwarded_modules {
             nfm.borrow_mut()
-                .push(Arc::new(RefCell::new(Vec::new())));
+                .push(Rc::new(RefCell::new(Vec::new())));
         }
     }
 
@@ -492,15 +492,15 @@ impl Environment {
         }
     }
 
-    pub fn global_vars(&self) -> Arc<RefCell<FxHashMap<Identifier, Value>>> {
+    pub fn global_vars(&self) -> Rc<RefCell<FxHashMap<Identifier, Value>>> {
         self.scopes.global_variables()
     }
 
-    pub fn global_mixins(&self) -> Arc<RefCell<FxHashMap<Identifier, Mixin>>> {
+    pub fn global_mixins(&self) -> Rc<RefCell<FxHashMap<Identifier, Mixin>>> {
         self.scopes.global_mixins()
     }
 
-    pub fn global_functions(&self) -> Arc<RefCell<FxHashMap<Identifier, SassFunction>>> {
+    pub fn global_functions(&self) -> Rc<RefCell<FxHashMap<Identifier, SassFunction>>> {
         self.scopes.global_functions()
     }
 
@@ -508,7 +508,7 @@ impl Environment {
     /// then add its members to the cached source identity map.
     fn assert_no_conflicts(
         &mut self,
-        new_module: &Arc<RefCell<Module>>,
+        new_module: &Rc<RefCell<Module>>,
         new_span: Span,
     ) -> SassResult<()> {
         let cache = &self.forwarded_member_sources;
@@ -600,7 +600,7 @@ impl Environment {
     pub fn add_module(
         &mut self,
         namespace: Option<Identifier>,
-        module: Arc<RefCell<Module>>,
+        module: Rc<RefCell<Module>>,
         span: Span,
     ) -> SassResult<()> {
         match namespace {
@@ -618,7 +618,7 @@ impl Environment {
                     }
                 }
 
-                if !self.global_modules.iter().any(|m| Arc::ptr_eq(m, &module)) {
+                if !self.global_modules.iter().any(|m| Rc::ptr_eq(m, &module)) {
                     self.global_modules.push(module);
                 }
             }
@@ -630,11 +630,11 @@ impl Environment {
     pub fn to_module_with_upstream(
         self,
         extension_store: ExtensionStore,
-        upstream: Vec<Arc<RefCell<Module>>>,
-    ) -> Arc<RefCell<Module>> {
+        upstream: Vec<Rc<RefCell<Module>>>,
+    ) -> Rc<RefCell<Module>> {
         debug_assert!(self.at_root());
 
-        Arc::new(RefCell::new(Module::new_env_with_upstream(
+        Rc::new(RefCell::new(Module::new_env_with_upstream(
             self,
             extension_store,
             upstream,
@@ -646,7 +646,7 @@ impl Environment {
         _name: Identifier,
         ty: &str,
         span: Span,
-        callback: impl Fn(&Arc<RefCell<Module>>) -> Option<T>,
+        callback: impl Fn(&Rc<RefCell<Module>>) -> Option<T>,
     ) -> SassResult<Option<T>> {
         if let Some(nested_forwarded_modules) = &self.nested_forwarded_modules {
             for modules in nested_forwarded_modules.borrow().iter().rev() {
@@ -690,14 +690,14 @@ impl Environment {
 /// Batch-collect source identities for ALL members of a module in one tree walk.
 /// Returns maps of name → source_ptr for variables, functions, and mixins.
 /// Names are as they appear from outside the module (with prefixes applied).
-fn collect_source_identities(module: &Arc<RefCell<Module>>) -> ForwardedMemberSources {
+fn collect_source_identities(module: &Rc<RefCell<Module>>) -> ForwardedMemberSources {
     let mut result = ForwardedMemberSources::default();
     collect_inner(module, &mut result);
     result
 }
 
 fn collect_inner(
-    module: &Arc<RefCell<Module>>,
+    module: &Rc<RefCell<Module>>,
     result: &mut ForwardedMemberSources,
 ) {
     let borrowed = module.borrow();
@@ -710,7 +710,7 @@ fn collect_inner(
                 || fwd.forward_rule.hidden_variables.as_ref().is_some_and(|s| !s.is_empty())
                 || fwd.forward_rule.hidden_mixins_and_functions.as_ref().is_some_and(|s| !s.is_empty());
 
-            let inner = Arc::clone(&fwd.inner);
+            let inner = Rc::clone(&fwd.inner);
 
             if !has_prefix && !has_filter {
                 // Fast path: no prefix or show/hide — just pass through
@@ -773,7 +773,7 @@ fn collect_inner(
             let visible_mixin_keys: FxHashSet<Identifier> =
                 scope.mixins.keys().into_iter().collect();
 
-            let inner = Arc::clone(&shd.inner);
+            let inner = Rc::clone(&shd.inner);
             drop(borrowed);
 
             let mut inner_result = ForwardedMemberSources::default();
@@ -796,7 +796,7 @@ fn collect_inner(
             }
         }
         Module::Environment { env, .. } => {
-            let source_ptr = Arc::as_ptr(module);
+            let source_ptr = Rc::as_ptr(module);
 
             // Collect from forwarded modules first (they take precedence for identity)
             let forwarded = env.forwarded_modules.borrow();
@@ -826,7 +826,7 @@ fn collect_inner(
             }
         }
         Module::Builtin { .. } => {
-            let source_ptr = Arc::as_ptr(module);
+            let source_ptr = Rc::as_ptr(module);
             let scope = borrowed.scope();
             for name in scope.variables.keys() {
                 result.variables.entry(name).or_insert(source_ptr);

@@ -31,6 +31,6 @@ mod builtin_imports {
     pub(crate) use std::{
         cmp::Ordering,
         collections::{BTreeMap, BTreeSet},
-        sync::Arc,
+        rc::Rc,
     };
 }

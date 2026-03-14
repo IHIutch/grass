@@ -1,4 +1,4 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -51,7 +51,7 @@ pub struct AstFor {
     pub from: Spanned<AstExpr>,
     pub to: Spanned<AstExpr>,
     pub is_exclusive: bool,
-    pub body: Vec<Arc<AstStmt>>,
+    pub body: Vec<Rc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +87,7 @@ impl AstStyle {
 pub struct AstEach {
     pub variables: Vec<Identifier>,
     pub list: AstExpr,
-    pub body: Vec<Arc<AstStmt>>,
+    pub body: Vec<Rc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +103,7 @@ pub type CssMediaQuery = MediaQuery;
 #[derive(Debug, Clone)]
 pub struct AstWhile {
     pub condition: AstExpr,
-    pub body: Vec<Arc<AstStmt>>,
+    pub body: Vec<Rc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,7 +120,7 @@ pub struct AstVariableDecl {
 pub struct AstFunctionDecl {
     pub name: Spanned<Identifier>,
     pub arguments: ArgumentDeclaration,
-    pub body: Vec<Arc<AstStmt>>,
+    pub body: Vec<Rc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +159,7 @@ pub struct AstLoudComment {
 pub struct AstMixin {
     pub name: Identifier,
     pub args: ArgumentDeclaration,
-    pub body: Vec<Arc<AstStmt>>,
+    pub body: Vec<Rc<AstStmt>>,
     /// Whether the mixin contains a `@content` rule.
     pub has_content: bool,
     /// Unique identity for equality comparison (first-class mixins).
@@ -174,7 +174,7 @@ pub struct AstContentRule {
 #[derive(Debug, Clone)]
 pub struct AstContentBlock {
     pub args: ArgumentDeclaration,
-    pub body: Vec<Arc<AstStmt>>,
+    pub body: Vec<Rc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -298,7 +298,7 @@ pub struct ConfiguredVariable {
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
-    pub(crate) values: Arc<dyn MapView<Value = ConfiguredValue>>,
+    pub(crate) values: Rc<dyn MapView<Value = ConfiguredValue>>,
     pub(crate) original_config: Option<Rc<RefCell<Self>>>,
     pub(crate) span: Option<Span>,
 }
@@ -312,31 +312,31 @@ impl Configuration {
             return Rc::new(RefCell::new(Configuration::empty()));
         }
 
-        let mut new_values = Arc::clone(&(*config).borrow().values);
+        let mut new_values = Rc::clone(&(*config).borrow().values);
 
         // Only allow variables that are visible through the `@forward` to be
         // configured. These views support [Map.remove] so we can mark when a
         // configuration variable is used by removing it even when the underlying
         // map is wrapped.
         if let Some(prefix) = &forward.prefix {
-            new_values = Arc::new(UnprefixedMapView(new_values, prefix.clone()));
+            new_values = Rc::new(UnprefixedMapView(new_values, prefix.clone()));
         }
 
         if let Some(shown_variables) = &forward.shown_variables {
-            new_values = Arc::new(LimitedMapView::safelist(new_values, shown_variables));
+            new_values = Rc::new(LimitedMapView::safelist(new_values, shown_variables));
         } else if let Some(hidden_variables) = &forward.hidden_variables {
-            new_values = Arc::new(LimitedMapView::blocklist(new_values, hidden_variables));
+            new_values = Rc::new(LimitedMapView::blocklist(new_values, hidden_variables));
         }
 
         Rc::new(RefCell::new(Self::with_values(
             config,
-            Arc::clone(&new_values),
+            Rc::clone(&new_values),
         )))
     }
 
     fn with_values(
         config: Rc<RefCell<Self>>,
-        values: Arc<dyn MapView<Value = ConfiguredValue>>,
+        values: Rc<dyn MapView<Value = ConfiguredValue>>,
     ) -> Self {
         Self {
             values,
@@ -365,7 +365,7 @@ impl Configuration {
 
     pub fn implicit(values: FxHashMap<Identifier, ConfiguredValue>) -> Self {
         Self {
-            values: Arc::new(BaseMapView(Arc::new(RefCell::new(values)))),
+            values: Rc::new(BaseMapView(Rc::new(RefCell::new(values)))),
             original_config: None,
             span: None,
         }
@@ -373,7 +373,7 @@ impl Configuration {
 
     pub fn explicit(values: FxHashMap<Identifier, ConfiguredValue>, span: Span) -> Self {
         Self {
-            values: Arc::new(BaseMapView(Arc::new(RefCell::new(values)))),
+            values: Rc::new(BaseMapView(Rc::new(RefCell::new(values)))),
             original_config: None,
             span: Some(span),
         }
@@ -381,7 +381,7 @@ impl Configuration {
 
     pub fn empty() -> Self {
         Self {
-            values: Arc::new(BaseMapView(Arc::new(RefCell::new(FxHashMap::default())))),
+            values: Rc::new(BaseMapView(Rc::new(RefCell::new(FxHashMap::default())))),
             original_config: None,
             span: None,
         }
@@ -613,7 +613,7 @@ fn collect_globals_from_stmts(stmts: &[AstStmt], globals: &mut FxHashSet<Identif
     }
 }
 
-fn collect_globals_from_stmts_arc(stmts: &[Arc<AstStmt>], globals: &mut FxHashSet<Identifier>) {
+fn collect_globals_from_stmts_arc(stmts: &[Rc<AstStmt>], globals: &mut FxHashSet<Identifier>) {
     for stmt in stmts {
         collect_globals_from_stmt(stmt, globals);
     }

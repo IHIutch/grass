@@ -1,4 +1,4 @@
-use std::{slice::Iter, sync::Arc, vec::IntoIter};
+use std::{slice::Iter, rc::Rc, vec::IntoIter};
 
 use codemap::Spanned;
 
@@ -9,14 +9,14 @@ use crate::{
 
 /// A Sass map type. The inner Vec is Arc-wrapped so that cloning a SassMap
 /// (which happens on every variable lookup) is O(1) instead of deep-copying
-/// all keys and values. Mutations use Arc::make_mut for copy-on-write.
+/// all keys and values. Mutations use Rc::make_mut for copy-on-write.
 #[derive(Debug, Clone, Default)]
-pub struct SassMap(Arc<Vec<(Spanned<Value>, Value)>>);
+pub struct SassMap(Rc<Vec<(Spanned<Value>, Value)>>);
 
 impl PartialEq for SassMap {
     fn eq(&self, other: &Self) -> bool {
         // Fast path: same Arc pointer means same data
-        if Arc::ptr_eq(&self.0, &other.0) {
+        if Rc::ptr_eq(&self.0, &other.0) {
             return true;
         }
         if self.0.len() != other.0.len() {
@@ -39,11 +39,11 @@ impl Eq for SassMap {}
 
 impl SassMap {
     pub fn new() -> SassMap {
-        SassMap(Arc::new(Vec::new()))
+        SassMap(Rc::new(Vec::new()))
     }
 
     pub fn new_with(elements: Vec<(Spanned<Value>, Value)>) -> SassMap {
-        SassMap(Arc::new(elements))
+        SassMap(Rc::new(elements))
     }
 
     pub fn get(self, key: &Value) -> Option<Value> {
@@ -67,7 +67,7 @@ impl SassMap {
     }
 
     pub fn remove(&mut self, key: &Value) {
-        Arc::make_mut(&mut self.0).retain(|(ref k, ..)| k.not_equals(key));
+        Rc::make_mut(&mut self.0).retain(|(ref k, ..)| k.not_equals(key));
     }
 
     pub fn merge(&mut self, other: SassMap) {
@@ -101,13 +101,13 @@ impl SassMap {
     pub fn as_list(self) -> Vec<Value> {
         self.into_vec()
             .into_iter()
-            .map(|(k, v)| Value::List(Arc::new(vec![k.node, v]), ListSeparator::Space, Brackets::None))
+            .map(|(k, v)| Value::List(Rc::new(vec![k.node, v]), ListSeparator::Space, Brackets::None))
             .collect()
     }
 
     /// Returns true if the key already exists
     pub fn insert(&mut self, key: Spanned<Value>, value: Value) -> bool {
-        let inner = Arc::make_mut(&mut self.0);
+        let inner = Rc::make_mut(&mut self.0);
         for (ref k, ref mut v) in inner.iter_mut() {
             if k.node == key.node {
                 *v = value;
@@ -124,7 +124,7 @@ impl SassMap {
 
     /// Unwrap the Arc, cloning the inner Vec only if there are other references.
     fn into_vec(self) -> Vec<(Spanned<Value>, Value)> {
-        Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
+        Rc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
     }
 }
 

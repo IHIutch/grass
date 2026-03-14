@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use codemap::Spanned;
 
@@ -75,7 +75,7 @@ pub(crate) fn try_parse_css_if<'a>(
     let span = parser.toks_mut().span_from(start);
 
     Ok(Some(
-        AstExpr::CssIf(Arc::new(CssIfExpression { clauses, span })).span(span),
+        AstExpr::CssIf(Rc::new(CssIfExpression { clauses, span })).span(span),
     ))
 }
 

@@ -7,7 +7,6 @@ use std::{
     mem,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
 };
 
 use codemap::{CodeMap, Span, Spanned};
@@ -107,7 +106,7 @@ impl UserDefinedCallable for AstFunctionDecl {
     }
 }
 
-impl UserDefinedCallable for Arc<AstFunctionDecl> {
+impl UserDefinedCallable for Rc<AstFunctionDecl> {
     fn name(&self) -> Identifier {
         self.name.node
     }
@@ -127,7 +126,7 @@ impl UserDefinedCallable for AstMixin {
     }
 }
 
-impl UserDefinedCallable for Arc<CallableContentBlock> {
+impl UserDefinedCallable for Rc<CallableContentBlock> {
     fn name(&self) -> Identifier {
         Identifier::from("@content")
     }
@@ -161,7 +160,7 @@ pub struct Visitor<'a> {
 
     /// Modules loaded via @use during the current module's evaluation.
     /// Used to track upstream dependencies for per-module @extend scoping.
-    pub(crate) upstream_modules: Vec<Arc<RefCell<Module>>>,
+    pub(crate) upstream_modules: Vec<Rc<RefCell<Module>>>,
 
     /// Maps module URLs to their root-level CSS tree indices.
     /// Used to clone module CSS when the same module is loaded via @import.
@@ -179,7 +178,7 @@ pub struct Visitor<'a> {
     /// Shared clone state across all module clones within the same @import.
     /// Prevents double-cloning when diamond dependencies share upstream modules.
     import_selector_map: FxHashMap<usize, ExtendedSelector>,
-    import_cloned_modules: FxHashMap<usize, Arc<RefCell<Module>>>,
+    import_cloned_modules: FxHashMap<usize, Rc<RefCell<Module>>>,
     import_cloned_css: FxHashSet<CssTreeIdx>,
 
     /// The complete file path of the current file being visited. Imports are
@@ -187,7 +186,7 @@ pub struct Visitor<'a> {
     pub current_import_path: PathBuf,
     pub(crate) is_plain_css: bool,
     plain_css_style_rule_depth: u32,
-    pub(crate) modules: FxHashMap<PathBuf, Arc<RefCell<Module>>>,
+    pub(crate) modules: FxHashMap<PathBuf, Rc<RefCell<Module>>>,
     /// Reverse map from module Arc pointer → URL for O(1) lookup in collect_css_indices_transitive.
     module_ptr_to_url: FxHashMap<usize, PathBuf>,
     /// Configuration used when each module was first loaded via execute().
@@ -398,15 +397,15 @@ impl<'a> Visitor<'a> {
     fn clone_module_for_import(
         &mut self,
         url: &Path,
-        cached: &Arc<RefCell<Module>>,
-    ) -> (Arc<RefCell<Module>>, bool) {
+        cached: &Rc<RefCell<Module>>,
+    ) -> (Rc<RefCell<Module>>, bool) {
         // Collect ALL CSS indices transitively: this module + all upstream modules
         let mut all_css_indices = Vec::new();
         let mut visited_urls = FxHashSet::default();
         self.collect_css_indices_transitive(url, &mut all_css_indices, &mut visited_urls);
 
         if all_css_indices.is_empty() {
-            return (Arc::clone(cached), false);
+            return (Rc::clone(cached), false);
         }
 
         // Only clone CSS indices that haven't been cloned yet in this @import context
@@ -419,7 +418,7 @@ impl<'a> Visitor<'a> {
         }
 
         if self.import_selector_map.is_empty() {
-            return (Arc::clone(cached), false);
+            return (Rc::clone(cached), false);
         }
 
         // Recursively clone the entire module graph with remapped selectors,
@@ -434,12 +433,12 @@ impl<'a> Visitor<'a> {
     /// and import_selector_map fields to deduplicate across diamond dependencies.
     fn clone_module_recursive_shared(
         &mut self,
-        module: &Arc<RefCell<Module>>,
-    ) -> Arc<RefCell<Module>> {
-        let ptr = Arc::as_ptr(module) as usize;
+        module: &Rc<RefCell<Module>>,
+    ) -> Rc<RefCell<Module>> {
+        let ptr = Rc::as_ptr(module) as usize;
 
         if let Some(existing) = self.import_cloned_modules.get(&ptr) {
-            return Arc::clone(existing);
+            return Rc::clone(existing);
         }
 
         // Extract upstream list and check if it's an Environment module
@@ -452,11 +451,11 @@ impl<'a> Visitor<'a> {
         };
 
         if !is_env {
-            return Arc::clone(module);
+            return Rc::clone(module);
         }
 
         // Recursively clone upstream modules (borrow of module is dropped)
-        let cloned_upstream: Vec<Arc<RefCell<Module>>> = upstream
+        let cloned_upstream: Vec<Rc<RefCell<Module>>> = upstream
             .iter()
             .map(|up| self.clone_module_recursive_shared(up))
             .collect();
@@ -465,7 +464,7 @@ impl<'a> Visitor<'a> {
         let m = module.borrow();
         let cloned = if let Module::Environment { extension_store, .. } = &*m {
             let cloned_store = extension_store.clone_for_import(&self.import_selector_map);
-            Arc::new(RefCell::new(Module::Environment {
+            Rc::new(RefCell::new(Module::Environment {
                 scope: m.scope().clone(),
                 upstream: cloned_upstream,
                 extension_store: cloned_store,
@@ -476,7 +475,7 @@ impl<'a> Visitor<'a> {
         };
         drop(m);
 
-        self.import_cloned_modules.insert(ptr, Arc::clone(&cloned));
+        self.import_cloned_modules.insert(ptr, Rc::clone(&cloned));
         cloned
     }
 
@@ -501,7 +500,7 @@ impl<'a> Visitor<'a> {
             let m = module.borrow();
             if let Module::Environment { upstream, .. } = &*m {
                 for up in upstream {
-                    let up_ptr = Arc::as_ptr(up) as usize;
+                    let up_ptr = Rc::as_ptr(up) as usize;
                     if let Some(up_url) = self.module_ptr_to_url.get(&up_ptr) {
                         self.collect_css_indices_transitive(up_url, indices, visited);
                     }
@@ -523,20 +522,20 @@ impl<'a> Visitor<'a> {
         }
 
         // Build downstream-first topological order.
-        let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut sorted: Vec<Rc<RefCell<Module>>> = Vec::new();
         let mut seen: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
 
         fn visit_module(
-            module: &Arc<RefCell<Module>>,
-            sorted: &mut Vec<Arc<RefCell<Module>>>,
+            module: &Rc<RefCell<Module>>,
+            sorted: &mut Vec<Rc<RefCell<Module>>>,
             seen: &mut FxHashSet<*const RefCell<Module>>,
         ) {
-            let ptr = Arc::as_ptr(module);
+            let ptr = Rc::as_ptr(module);
             if !seen.insert(ptr) {
                 return;
             }
 
-            let upstream_modules: Vec<Arc<RefCell<Module>>> = {
+            let upstream_modules: Vec<Rc<RefCell<Module>>> = {
                 let m = module.borrow();
                 if let Module::Environment { upstream, .. } = &*m {
                     upstream.clone()
@@ -549,7 +548,7 @@ impl<'a> Visitor<'a> {
                 visit_module(up, sorted, seen);
             }
             // Push upstream-first; we reverse after to get downstream-first order.
-            sorted.push(Arc::clone(module));
+            sorted.push(Rc::clone(module));
         }
 
         for module in &self.upstream_modules {
@@ -577,7 +576,7 @@ impl<'a> Visitor<'a> {
         if !self.extender.is_empty() {
             let root_store_clone = self.extender.clone();
             for upstream in &self.upstream_modules {
-                let up_ptr = Arc::as_ptr(upstream);
+                let up_ptr = Rc::as_ptr(upstream);
                 downstream_stores
                     .entry(up_ptr)
                     .or_default()
@@ -587,13 +586,13 @@ impl<'a> Visitor<'a> {
 
         // Process modules in downstream-first order, propagating extensions.
         for module_ref in &sorted {
-            let ptr = Arc::as_ptr(module_ref);
+            let ptr = Rc::as_ptr(module_ref);
 
             // Get upstream pointers before mutations.
             let upstream_ptrs = {
                 let module = module_ref.borrow();
                 if let Module::Environment { upstream, .. } = &*module {
-                    upstream.iter().map(|u| Arc::as_ptr(u)).collect::<Vec<_>>()
+                    upstream.iter().map(|u| Rc::as_ptr(u)).collect::<Vec<_>>()
                 } else {
                     continue;
                 }
@@ -701,8 +700,8 @@ impl<'a> Visitor<'a> {
         Ok(Some(self.without_slash(val)))
     }
 
-    pub(crate) fn visit_stmt_arc(&mut self, stmt: Arc<AstStmt>) -> SassResult<Option<Value>> {
-        self.visit_stmt(Arc::unwrap_or_clone(stmt))
+    pub(crate) fn visit_stmt_arc(&mut self, stmt: Rc<AstStmt>) -> SassResult<Option<Value>> {
+        self.visit_stmt(Rc::unwrap_or_clone(stmt))
     }
 
     // todo: we really don't have to return Option<Value> from all of these children
@@ -768,7 +767,7 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 |visitor, module, _| {
-                    visitor.env.forward_module(Arc::clone(&module), forward_rule.clone())?;
+                    visitor.env.forward_module(Rc::clone(&module), forward_rule.clone())?;
                     visitor.upstream_modules.push(module);
 
                     Ok(())
@@ -818,7 +817,7 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 move |visitor, module, _| {
-                    visitor.env.forward_module(Arc::clone(&module), forward_rule.clone())?;
+                    visitor.env.forward_module(Rc::clone(&module), forward_rule.clone())?;
                     visitor.upstream_modules.push(module);
 
                     Ok(())
@@ -1050,7 +1049,7 @@ impl<'a> Visitor<'a> {
         stylesheet: StyleSheet,
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
-    ) -> SassResult<Arc<RefCell<Module>>> {
+    ) -> SassResult<Rc<RefCell<Module>>> {
         let url = self.canonicalize(&stylesheet.url);
 
         if let Some(already_loaded) = self.modules.get(&url).cloned() {
@@ -1127,7 +1126,7 @@ impl<'a> Visitor<'a> {
 
         // Create a fresh ExtensionStore for this module (per-module scoping).
         let mut module_extension_store = ExtensionStore::new(self.empty_span);
-        let mut module_upstream: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut module_upstream: Vec<Rc<RefCell<Module>>> = Vec::new();
 
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
@@ -1251,8 +1250,8 @@ impl<'a> Visitor<'a> {
         // Build module with its own extension store and upstream deps.
         let module = env.to_module_with_upstream(module_extension_store, module_upstream);
 
-        self.module_ptr_to_url.insert(Arc::as_ptr(&module) as usize, url.clone());
-        self.modules.insert(url.clone(), Arc::clone(&module));
+        self.module_ptr_to_url.insert(Rc::as_ptr(&module) as usize, url.clone());
+        self.modules.insert(url.clone(), Rc::clone(&module));
         self.module_configurations
             .insert(url.clone(), config_for_tracking);
 
@@ -1411,28 +1410,28 @@ impl<'a> Visitor<'a> {
     /// tree of a module, in upstream-first topological order.
     fn collect_transitive_css_indices(
         &self,
-        module: &Arc<RefCell<Module>>,
+        module: &Rc<RefCell<Module>>,
     ) -> Vec<CssTreeIdx> {
         // Build reverse mapping: module pointer → URL for looking up CSS indices.
         let ptr_to_url: FxHashMap<*const RefCell<Module>, PathBuf> = self
             .modules
             .iter()
-            .map(|(url, m)| (Arc::as_ptr(m), url.clone()))
+            .map(|(url, m)| (Rc::as_ptr(m), url.clone()))
             .collect();
 
-        let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut sorted: Vec<Rc<RefCell<Module>>> = Vec::new();
         let mut seen: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
 
         fn visit_module(
-            module: &Arc<RefCell<Module>>,
-            sorted: &mut Vec<Arc<RefCell<Module>>>,
+            module: &Rc<RefCell<Module>>,
+            sorted: &mut Vec<Rc<RefCell<Module>>>,
             seen: &mut FxHashSet<*const RefCell<Module>>,
         ) {
-            let ptr = Arc::as_ptr(module);
+            let ptr = Rc::as_ptr(module);
             if !seen.insert(ptr) {
                 return;
             }
-            let upstream: Vec<Arc<RefCell<Module>>> = {
+            let upstream: Vec<Rc<RefCell<Module>>> = {
                 let m = module.borrow();
                 if let Module::Environment { upstream, .. } = &*m {
                     upstream.clone()
@@ -1443,7 +1442,7 @@ impl<'a> Visitor<'a> {
             for up in &upstream {
                 visit_module(up, sorted, seen);
             }
-            sorted.push(Arc::clone(module));
+            sorted.push(Rc::clone(module));
         }
 
         visit_module(module, &mut sorted, &mut seen);
@@ -1453,7 +1452,7 @@ impl<'a> Visitor<'a> {
         let mut seen_indices: FxHashSet<CssTreeIdx> = FxHashSet::default();
 
         for module_ref in &sorted {
-            let ptr = Arc::as_ptr(module_ref);
+            let ptr = Rc::as_ptr(module_ref);
             if let Some(url) = ptr_to_url.get(&ptr) {
                 if let Some(indices) = self.module_css_indices.get(url) {
                     for idx in indices {
@@ -1472,27 +1471,27 @@ impl<'a> Visitor<'a> {
     /// copies of their CSS. On first load, module_css_indices points to the
     /// original CSS at ROOT. We create hidden copies so the originals are
     /// preserved for the root's output, and future clones come from templates.
-    fn ensure_hidden_templates_for_module(&mut self, module: &Arc<RefCell<Module>>) {
+    fn ensure_hidden_templates_for_module(&mut self, module: &Rc<RefCell<Module>>) {
         // Build reverse mapping: module pointer → URL
         let ptr_to_url: FxHashMap<*const RefCell<Module>, PathBuf> = self
             .modules
             .iter()
-            .map(|(url, m)| (Arc::as_ptr(m), url.clone()))
+            .map(|(url, m)| (Rc::as_ptr(m), url.clone()))
             .collect();
 
-        let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
+        let mut sorted: Vec<Rc<RefCell<Module>>> = Vec::new();
         let mut seen: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
 
         fn visit_module(
-            module: &Arc<RefCell<Module>>,
-            sorted: &mut Vec<Arc<RefCell<Module>>>,
+            module: &Rc<RefCell<Module>>,
+            sorted: &mut Vec<Rc<RefCell<Module>>>,
             seen: &mut FxHashSet<*const RefCell<Module>>,
         ) {
-            let ptr = Arc::as_ptr(module);
+            let ptr = Rc::as_ptr(module);
             if !seen.insert(ptr) {
                 return;
             }
-            let upstream: Vec<Arc<RefCell<Module>>> = {
+            let upstream: Vec<Rc<RefCell<Module>>> = {
                 let m = module.borrow();
                 if let Module::Environment { upstream, .. } = &*m {
                     upstream.clone()
@@ -1503,7 +1502,7 @@ impl<'a> Visitor<'a> {
             for up in &upstream {
                 visit_module(up, sorted, seen);
             }
-            sorted.push(Arc::clone(module));
+            sorted.push(Rc::clone(module));
         }
 
         visit_module(module, &mut sorted, &mut seen);
@@ -1513,7 +1512,7 @@ impl<'a> Visitor<'a> {
         let mut selector_map = FxHashMap::default();
 
         for module_ref in &sorted {
-            let ptr = Arc::as_ptr(module_ref);
+            let ptr = Rc::as_ptr(module_ref);
             if let Some(url) = ptr_to_url.get(&ptr) {
                 if let Some(indices) = self.module_css_indices.get(url) {
                     for &idx in indices {
@@ -1535,7 +1534,7 @@ impl<'a> Visitor<'a> {
 
         // Second pass: update module_css_indices to point to hidden copies.
         for module_ref in &sorted {
-            let ptr = Arc::as_ptr(module_ref);
+            let ptr = Rc::as_ptr(module_ref);
             if let Some(url) = ptr_to_url.get(&ptr) {
                 if let Some(indices) = self.module_css_indices.get(url).cloned() {
                     let new_indices: Vec<CssTreeIdx> = indices
@@ -1554,7 +1553,7 @@ impl<'a> Visitor<'a> {
     /// Operates only on the cloned ExtendedSelectors (via selector_map), leaving
     /// original module selectors untouched.
     fn extend_cloned_selectors(
-        module: &Arc<RefCell<Module>>,
+        module: &Rc<RefCell<Module>>,
         selector_map: &FxHashMap<usize, ExtendedSelector>,
     ) -> SassResult<()> {
         // Get the loaded module's extensions.
@@ -1591,7 +1590,7 @@ impl<'a> Visitor<'a> {
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
         span: Span,
-        callback: impl Fn(&mut Self, Arc<RefCell<Module>>, StyleSheet) -> SassResult<()>,
+        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, StyleSheet) -> SassResult<()>,
     ) -> SassResult<()> {
         let builtin = match url.to_string_lossy().as_ref() {
             "sass:color" => Some(declare_module_color()),
@@ -1626,7 +1625,7 @@ impl<'a> Visitor<'a> {
 
             callback(
                 self,
-                Arc::new(RefCell::new(builtin)),
+                Rc::new(RefCell::new(builtin)),
                 StyleSheet::new(false, url.to_path_buf()),
             )?;
             return Ok(());
@@ -1689,7 +1688,7 @@ impl<'a> Visitor<'a> {
             false,
             span,
             |visitor, module, _| {
-                visitor.env.add_module(namespace, Arc::clone(&module), span)?;
+                visitor.env.add_module(namespace, Rc::clone(&module), span)?;
                 visitor.upstream_modules.push(module);
 
                 Ok(())
@@ -2163,7 +2162,7 @@ impl<'a> Visitor<'a> {
             #[allow(mutable_borrow_reservation_conflict)]
             self.run_user_defined_callable(
                 MaybeEvaledArguments::Invocation(content_rule.args),
-                Arc::clone(content),
+                Rc::clone(content),
                 &content.env.clone(),
                 span,
                 |content, visitor| {
@@ -2414,7 +2413,7 @@ impl<'a> Visitor<'a> {
         // todo: independency
 
         let func = SassFunction::UserDefined(UserDefinedFunction {
-            function: Arc::new(fn_decl),
+            function: Rc::new(fn_decl),
             name,
             env: self.env.new_closure(),
         });
@@ -2945,7 +2944,7 @@ impl<'a> Visitor<'a> {
 
     pub(crate) fn with_content<T>(
         &mut self,
-        content: Option<Arc<CallableContentBlock>>,
+        content: Option<Rc<CallableContentBlock>>,
         callback: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let old_content = self.env.content.take();
@@ -2979,7 +2978,7 @@ impl<'a> Visitor<'a> {
                 let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
 
                 if let Some(content) = include_stmt.content {
-                    let callable_content = Arc::new(CallableContentBlock {
+                    let callable_content = Rc::new(CallableContentBlock {
                         content,
                         env: self.env.new_closure(),
                     });
@@ -3003,7 +3002,7 @@ impl<'a> Visitor<'a> {
                 self.flags.set(ContextFlags::IN_MIXIN, true);
 
                 let callable_content = content.map(|c| {
-                    Arc::new(CallableContentBlock {
+                    Rc::new(CallableContentBlock {
                         content: c,
                         env: self.env.new_closure(),
                     })
@@ -3405,7 +3404,7 @@ impl<'a> Visitor<'a> {
             Value::Map(rest) => self.add_rest_map(&mut named, rest)?,
             Value::List(elems, list_separator, _) => {
                 positional.extend(
-                    Arc::unwrap_or_clone(elems)
+                    Rc::unwrap_or_clone(elems)
                         .into_iter()
                         .map(|e| self.without_slash(e)),
                 );
@@ -3758,7 +3757,7 @@ impl<'a> Visitor<'a> {
             })
             .collect::<SassResult<Vec<_>>>()?;
 
-        Ok(Value::List(Arc::new(elems), list.separator, list.brackets))
+        Ok(Value::List(Rc::new(elems), list.separator, list.brackets))
     }
 
     fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {
@@ -3773,7 +3772,7 @@ impl<'a> Visitor<'a> {
                     name,
                     original_name,
                 },
-                Arc::unwrap_or_clone(func_call.arguments),
+                Rc::unwrap_or_clone(func_call.arguments),
                 func_call.span,
             );
         }
@@ -3803,7 +3802,7 @@ impl<'a> Visitor<'a> {
         let old_in_function = self.flags.in_function();
         self.flags.set(ContextFlags::IN_FUNCTION, true);
         let value =
-            self.run_function_callable(func, Arc::unwrap_or_clone(func_call.arguments), func_call.span)?;
+            self.run_function_callable(func, Rc::unwrap_or_clone(func_call.arguments), func_call.span)?;
         self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
 
         Ok(value)
@@ -3868,7 +3867,7 @@ impl<'a> Visitor<'a> {
             AstExpr::List(list) => self.visit_list_expr(list)?,
             AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text, quote)?,
             AstExpr::BinaryOp(binop) => {
-                let binop = Arc::unwrap_or_clone(binop);
+                let binop = Rc::unwrap_or_clone(binop);
                 self.visit_bin_op(binop.lhs, binop.op, binop.rhs, binop.allows_slash, binop.span)?
             }
             AstExpr::True => Value::True,
@@ -3910,22 +3909,22 @@ impl<'a> Visitor<'a> {
                     self.visit_calculation_expr(name, args, self.empty_span)?
                 }
             }
-            AstExpr::CssIf(css_if) => self.visit_css_if(Arc::unwrap_or_clone(css_if))?,
+            AstExpr::CssIf(css_if) => self.visit_css_if(Rc::unwrap_or_clone(css_if))?,
             AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
-            AstExpr::If(if_expr) => self.visit_ternary(Arc::unwrap_or_clone(if_expr))?,
+            AstExpr::If(if_expr) => self.visit_ternary(Rc::unwrap_or_clone(if_expr))?,
             AstExpr::InterpolatedFunction(func) => {
-                self.visit_interpolated_func_expr(Arc::unwrap_or_clone(func))?
+                self.visit_interpolated_func_expr(Rc::unwrap_or_clone(func))?
             }
             AstExpr::Map(map) => self.visit_map(map)?,
             AstExpr::Null => Value::Null,
-            AstExpr::Paren(expr) => self.visit_expr(Arc::unwrap_or_clone(expr))?,
+            AstExpr::Paren(expr) => self.visit_expr(Rc::unwrap_or_clone(expr))?,
             AstExpr::ParentSelector => self.visit_parent_selector(),
             AstExpr::UnaryOp(op, expr, span) => {
-                self.visit_unary_op(op, Arc::unwrap_or_clone(expr), span)?
+                self.visit_unary_op(op, Rc::unwrap_or_clone(expr), span)?
             }
             AstExpr::Variable { name, namespace } => self.env.get_var(name, namespace)?,
             AstExpr::Supports(condition) => Value::String(
-                self.visit_supports_condition(Arc::unwrap_or_clone(condition))?.into(),
+                self.visit_supports_condition(Rc::unwrap_or_clone(condition))?.into(),
                 QuoteKind::None,
             ),
         })
@@ -3962,7 +3961,7 @@ impl<'a> Visitor<'a> {
         Ok(match expr {
             AstExpr::Paren(inner) => {
                 let result =
-                    self.visit_calculation_value(Arc::unwrap_or_clone(inner), in_min_or_max, span)?;
+                    self.visit_calculation_value(Rc::unwrap_or_clone(inner), in_min_or_max, span)?;
 
                 match result {
                     CalculationArg::String(text) => {
@@ -3989,7 +3988,7 @@ impl<'a> Visitor<'a> {
                 }
             }
             AstExpr::BinaryOp(binop) => {
-                let binop = Arc::unwrap_or_clone(binop);
+                let binop = Rc::unwrap_or_clone(binop);
                 SassCalculation::operate_internal(
                     binop.op,
                     self.visit_calculation_value(binop.lhs, in_min_or_max, span)?,
