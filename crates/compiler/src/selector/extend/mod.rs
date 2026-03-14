@@ -397,7 +397,7 @@ impl ExtensionStore {
         let mut extended: Option<Vec<ComplexSelector>> = None;
         for (i, complex) in list.components.iter().enumerate() {
             if let Some(result) =
-                self.extend_complex(complex.clone(), extensions, media_query_context)?
+                self.extend_complex(complex, extensions, media_query_context)?
             {
                 if extended.is_none() {
                     extended = Some(if i == 0 {
@@ -430,7 +430,7 @@ impl ExtensionStore {
     /// `SelectorList`.
     fn extend_complex(
         &mut self,
-        complex: ComplexSelector,
+        complex: &ComplexSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
@@ -466,11 +466,10 @@ impl ExtensionStore {
                         extended_not_expanded = Some(
                             complex
                                 .components
-                                .clone()
-                                .into_iter()
+                                .iter()
                                 .take(i)
                                 .map(|component| {
-                                    vec![ComplexSelector::new(vec![component], complex.line_break)]
+                                    vec![ComplexSelector::new(vec![component.clone()], complex.line_break)]
                                 })
                                 .collect(),
                         );
@@ -566,7 +565,7 @@ impl ExtensionStore {
         let mut options: Option<Vec<Vec<Extension>>> = None;
 
         for i in 0..compound.components.len() {
-            let simple = compound.components.get(i).cloned().unwrap();
+            let simple = compound.components[i].clone();
 
             match self.extend_simple(
                 simple.clone(),
@@ -1283,7 +1282,7 @@ impl ExtensionStore {
 
             // `extend_existing_selectors` would have thrown already.
             let selectors: Vec<ComplexSelector> = if let Some(v) = self.extend_complex(
-                extension.extender.clone(),
+                &extension.extender,
                 Some(new_extensions),
                 &extension.media_context,
             )? {
