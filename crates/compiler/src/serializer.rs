@@ -1127,33 +1127,28 @@ impl<'a> Serializer<'a> {
                 self.buffer.extend_from_slice(trimmed.as_bytes());
             }
         } else {
-            // Use {:.10} for 10 decimal places, but fall back to shortest
-            // round-trip representation when {:.10} shows f64 artifacts
-            // (more significant digits than the value actually has).
-            let fixed = format!("{:.10}", num);
-            let short = format!("{}", num);
+            // Use ryu for fast shortest-representation formatting, falling
+            // back to {:.10} when ryu uses scientific notation or exceeds
+            // 10 decimal places.
+            let mut ryu_buf = ryu::Buffer::new();
+            let short = ryu_buf.format(num);
 
-            // Use the shorter representation if it has <= 10 decimal places
-            // and gives fewer total significant chars (avoids f64 artifacts)
-            let formatted = if let Some(dot_pos) = short.find('.') {
+            let fixed;
+            let trimmed = if short.contains('e') || short.contains('E') {
+                // ryu used scientific notation — CSS needs decimal form
+                fixed = format!("{:.10}", num);
+                fixed.trim_end_matches('0').trim_end_matches('.')
+            } else if let Some(dot_pos) = short.find('.') {
                 let short_decimals = short.len() - dot_pos - 1;
-                if short_decimals <= 10 && short.len() < fixed.len() {
-                    short
+                if short_decimals <= 10 {
+                    short.trim_end_matches('0').trim_end_matches('.')
                 } else {
-                    fixed
+                    fixed = format!("{:.10}", num);
+                    fixed.trim_end_matches('0').trim_end_matches('.')
                 }
             } else {
-                // No decimal point in short form — integer
+                // No decimal point — integer
                 short
-            };
-
-            // Only trim trailing zeros after a decimal point
-            let trimmed = if formatted.contains('.') {
-                formatted
-                    .trim_end_matches('0')
-                    .trim_end_matches('.')
-            } else {
-                &formatted
             };
 
             if self.options.is_compressed() && num < 1.0 && trimmed.starts_with('0') {

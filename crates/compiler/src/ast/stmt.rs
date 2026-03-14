@@ -51,7 +51,7 @@ pub struct AstFor {
     pub from: Spanned<AstExpr>,
     pub to: Spanned<AstExpr>,
     pub is_exclusive: bool,
-    pub body: Arc<Vec<AstStmt>>,
+    pub body: Vec<Arc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +87,7 @@ impl AstStyle {
 pub struct AstEach {
     pub variables: Vec<Identifier>,
     pub list: AstExpr,
-    pub body: Arc<Vec<AstStmt>>,
+    pub body: Vec<Arc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +103,7 @@ pub type CssMediaQuery = MediaQuery;
 #[derive(Debug, Clone)]
 pub struct AstWhile {
     pub condition: AstExpr,
-    pub body: Arc<Vec<AstStmt>>,
+    pub body: Vec<Arc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,7 +120,7 @@ pub struct AstVariableDecl {
 pub struct AstFunctionDecl {
     pub name: Spanned<Identifier>,
     pub arguments: ArgumentDeclaration,
-    pub body: Arc<Vec<AstStmt>>,
+    pub body: Vec<Arc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +159,7 @@ pub struct AstLoudComment {
 pub struct AstMixin {
     pub name: Identifier,
     pub args: ArgumentDeclaration,
-    pub body: Arc<Vec<AstStmt>>,
+    pub body: Vec<Arc<AstStmt>>,
     /// Whether the mixin contains a `@content` rule.
     pub has_content: bool,
     /// Unique identity for equality comparison (first-class mixins).
@@ -174,7 +174,7 @@ pub struct AstContentRule {
 #[derive(Debug, Clone)]
 pub struct AstContentBlock {
     pub args: ArgumentDeclaration,
-    pub body: Arc<Vec<AstStmt>>,
+    pub body: Vec<Arc<AstStmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -613,6 +613,12 @@ fn collect_globals_from_stmts(stmts: &[AstStmt], globals: &mut FxHashSet<Identif
     }
 }
 
+fn collect_globals_from_stmts_arc(stmts: &[Arc<AstStmt>], globals: &mut FxHashSet<Identifier>) {
+    for stmt in stmts {
+        collect_globals_from_stmt(stmt, globals);
+    }
+}
+
 fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>) {
     match stmt {
         AstStmt::VariableDecl(decl) => {
@@ -628,9 +634,9 @@ fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>
                 collect_globals_from_stmts(else_clause, globals);
             }
         }
-        AstStmt::For(for_stmt) => collect_globals_from_stmts(&for_stmt.body, globals),
-        AstStmt::Each(each_stmt) => collect_globals_from_stmts(&each_stmt.body, globals),
-        AstStmt::While(while_stmt) => collect_globals_from_stmts(&while_stmt.body, globals),
+        AstStmt::For(for_stmt) => collect_globals_from_stmts_arc(&for_stmt.body, globals),
+        AstStmt::Each(each_stmt) => collect_globals_from_stmts_arc(&each_stmt.body, globals),
+        AstStmt::While(while_stmt) => collect_globals_from_stmts_arc(&while_stmt.body, globals),
         AstStmt::RuleSet(rule_set) => collect_globals_from_stmts(&rule_set.body, globals),
         AstStmt::Media(media) => collect_globals_from_stmts(&media.body, globals),
         AstStmt::Supports(supports) => collect_globals_from_stmts(&supports.body, globals),
@@ -642,11 +648,11 @@ fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>
         }
         AstStmt::Include(include) => {
             if let Some(content) = &include.content {
-                collect_globals_from_stmts(&content.body, globals);
+                collect_globals_from_stmts_arc(&content.body, globals);
             }
         }
-        AstStmt::Mixin(mixin) => collect_globals_from_stmts(&mixin.body, globals),
-        AstStmt::FunctionDecl(func) => collect_globals_from_stmts(&func.body, globals),
+        AstStmt::Mixin(mixin) => collect_globals_from_stmts_arc(&mixin.body, globals),
+        AstStmt::FunctionDecl(func) => collect_globals_from_stmts_arc(&func.body, globals),
         AstStmt::Style(_)
         | AstStmt::Return(_)
         | AstStmt::LoudComment(_)

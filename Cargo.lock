@@ -279,6 +279,7 @@ dependencies = [
  "phf",
  "rand",
  "rustc-hash",
+ "ryu",
  "wasm-bindgen",
 ]
 

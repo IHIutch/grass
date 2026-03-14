@@ -701,6 +701,10 @@ impl<'a> Visitor<'a> {
         Ok(Some(self.without_slash(val)))
     }
 
+    pub(crate) fn visit_stmt_arc(&mut self, stmt: Arc<AstStmt>) -> SassResult<Option<Value>> {
+        self.visit_stmt(Arc::unwrap_or_clone(stmt))
+    }
+
     // todo: we really don't have to return Option<Value> from all of these children
     pub(crate) fn visit_stmt(&mut self, stmt: AstStmt) -> SassResult<Option<Value>> {
         match stmt {
@@ -2166,7 +2170,7 @@ impl<'a> Visitor<'a> {
                     let old_in_mixin = visitor.flags.in_mixin();
                     visitor.flags.set(ContextFlags::IN_MIXIN, false);
                     for stmt in content.content.body.iter().cloned() {
-                        let result = visitor.visit_stmt(stmt)?;
+                        let result = visitor.visit_stmt_arc(stmt)?;
                         debug_assert!(result.is_none());
                     }
                     visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
@@ -3016,7 +3020,7 @@ impl<'a> Visitor<'a> {
                     |mixin, visitor| {
                         visitor.with_content(callable_content, |visitor| {
                             for stmt in mixin.body.iter().cloned() {
-                                let result = visitor.visit_stmt(stmt)?;
+                                let result = visitor.visit_stmt_arc(stmt)?;
                                 debug_assert!(result.is_none());
                             }
                             Ok(())
@@ -3066,7 +3070,7 @@ impl<'a> Visitor<'a> {
             }
 
             for stmt in each_stmt.body.iter().cloned() {
-                let val = self.visit_stmt(stmt)?;
+                let val = self.visit_stmt_arc(stmt)?;
                 if val.is_some() {
                     result = val;
                     break 'outer;
@@ -3137,7 +3141,7 @@ impl<'a> Visitor<'a> {
             );
 
             for stmt in for_stmt.body.iter().cloned() {
-                let val = self.visit_stmt(stmt)?;
+                let val = self.visit_stmt_arc(stmt)?;
                 if val.is_some() {
                     result = val;
                     break 'outer;
@@ -3161,7 +3165,7 @@ impl<'a> Visitor<'a> {
                 .is_truthy()
             {
                 for stmt in while_stmt.body.iter().cloned() {
-                    let val = visitor.visit_stmt(stmt)?;
+                    let val = visitor.visit_stmt_arc(stmt)?;
                     if val.is_some() {
                         result = val;
                         break 'outer;
@@ -3638,7 +3642,7 @@ impl<'a> Visitor<'a> {
                     let old_in_mixin = visitor.flags.in_mixin();
                     visitor.flags.set(ContextFlags::IN_MIXIN, false);
                     for stmt in function.body.iter().cloned() {
-                        let result = visitor.visit_stmt(stmt)?;
+                        let result = visitor.visit_stmt_arc(stmt)?;
 
                         if let Some(val) = result {
                             visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);

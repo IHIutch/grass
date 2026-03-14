@@ -477,7 +477,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Each(AstEach {
             variables,
             list,
-            body: Arc::new(body),
+            body: body.into_iter().map(Arc::new).collect(),
         }))
     }
 
@@ -602,7 +602,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             from,
             to,
             is_exclusive,
-            body: Arc::new(body),
+            body: body.into_iter().map(Arc::new).collect(),
         }))
     }
 
@@ -671,7 +671,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 span: name_span,
             },
             arguments,
-            body: Arc::new(children),
+            body: children.into_iter().map(Arc::new).collect(),
         }))
     }
 
@@ -1140,7 +1140,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let body = self.with_children(Self::parse_statement)?.node;
             content_block = Some(AstContentBlock {
                 args: content_args,
-                body: Arc::new(body),
+                body: body.into_iter().map(Arc::new).collect(),
             });
             self.flags_mut()
                 .set(ContextFlags::IN_CONTENT_BLOCK, was_in_content_block);
@@ -1306,7 +1306,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Mixin(AstMixin {
             name,
             args,
-            body: Arc::new(body),
+            body: body.into_iter().map(Arc::new).collect(),
             has_content,
             id: MIXIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }))
@@ -1637,7 +1637,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::While(AstWhile { condition, body: Arc::new(body) }))
+        Ok(AstStmt::While(AstWhile { condition, body: body.into_iter().map(Arc::new).collect() }))
     }
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt> {
         self.set_consume_newlines(true);

@@ -37,6 +37,7 @@ indexmap = "2"
 lasso = "0.7"
 rustc-hash = "2"
 compact_str = "0.8"
+ryu = "1"
 
 [features]
 default = ["random", "custom-builtin-fns"]

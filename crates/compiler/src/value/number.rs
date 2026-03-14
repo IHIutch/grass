@@ -309,18 +309,31 @@ impl Number {
 
         let num = self.0.abs();
 
-        if is_compressed && num < 1.0 {
-            buffer.push_str(
-                format!("{:.10}", num)[1..]
-                    .trim_end_matches('0')
-                    .trim_end_matches('.'),
-            );
+        let mut ryu_buf = ryu::Buffer::new();
+        let short = ryu_buf.format(num);
+
+        // Use ryu's shortest representation when it doesn't use scientific
+        // notation and has <= 10 decimal places; otherwise fall back to {:.10}
+        let formatted;
+        let trimmed = if short.contains('e') || short.contains('E') {
+            formatted = format!("{:.10}", num);
+            formatted.trim_end_matches('0').trim_end_matches('.')
+        } else if let Some(dot_pos) = short.find('.') {
+            let short_decimals = short.len() - dot_pos - 1;
+            if short_decimals <= 10 {
+                short.trim_end_matches('0').trim_end_matches('.')
+            } else {
+                formatted = format!("{:.10}", num);
+                formatted.trim_end_matches('0').trim_end_matches('.')
+            }
         } else {
-            buffer.push_str(
-                format!("{:.10}", num)
-                    .trim_end_matches('0')
-                    .trim_end_matches('.'),
-            );
+            short
+        };
+
+        if is_compressed && num < 1.0 && trimmed.starts_with('0') {
+            buffer.push_str(&trimmed[1..]);
+        } else {
+            buffer.push_str(trimmed);
         }
 
         if buffer.is_empty() || buffer == "-" || buffer == "-0" {
