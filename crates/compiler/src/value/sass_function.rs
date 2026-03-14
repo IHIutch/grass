@@ -1,5 +1,7 @@
 use std::{fmt, rc::Rc};
 
+use compact_str::CompactString;
+
 use crate::{ast::AstFunctionDecl, builtin::Builtin, common::Identifier, evaluate::Environment};
 
 /// A Sass function
@@ -21,7 +23,7 @@ pub enum SassFunction {
     Plain {
         name: Identifier,
         /// Original function name before normalization, for CSS output
-        original_name: String,
+        original_name: CompactString,
     },
 }
 

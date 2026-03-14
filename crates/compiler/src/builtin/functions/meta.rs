@@ -1,3 +1,5 @@
+use compact_str::CompactString;
+
 use crate::builtin::builtin_imports::*;
 
 // todo: this should be a constant of some sort. we shouldn't be allocating this
@@ -248,7 +250,7 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
 
     let func = if css {
         Some(SassFunction::Plain {
-            original_name: name.as_str().to_owned(),
+            original_name: CompactString::from(name.as_str()),
             name,
         })
     } else if let Some(module_name) = module {
@@ -370,7 +372,7 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
                 None => match GLOBAL_FUNCTIONS.get(name.as_str()) {
                     Some(f) => SassFunction::Builtin(f.clone(), name),
                     None => SassFunction::Plain {
-                        original_name: name.as_str().to_owned(),
+                        original_name: CompactString::from(name.as_str()),
                         name,
                     },
                 },

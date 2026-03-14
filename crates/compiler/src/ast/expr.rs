@@ -1,6 +1,7 @@
 use std::{iter::Iterator, rc::Rc};
 
 use codemap::{Span, Spanned};
+use compact_str::CompactString;
 
 use crate::{
     color::Color,
@@ -69,7 +70,7 @@ pub struct FunctionCallExpr {
     pub name: Identifier,
     /// Original function name before underscore→dash normalization.
     /// Used for plain CSS function output to preserve the original casing/underscores.
-    pub original_name: String,
+    pub original_name: CompactString,
     pub arguments: Rc<ArgumentInvocation>,
     pub span: Span,
     /// True if the function name was written with literal `--` prefix (CSS custom function).
