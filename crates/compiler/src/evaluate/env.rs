@@ -110,18 +110,20 @@ impl Environment {
             // forwarded in this module.
             let forwarded_modules = Arc::clone(&self.forwarded_modules);
             if !(*forwarded_modules).borrow().is_empty() {
-                // todo: intermediate name
+                let fwd_ptrs: FxHashSet<*const RefCell<Module>> = forwarded_modules
+                    .borrow()
+                    .iter()
+                    .map(Arc::as_ptr)
+                    .collect();
+                let global_ptrs: FxHashSet<*const RefCell<Module>> = self
+                    .global_modules
+                    .iter()
+                    .map(Arc::as_ptr)
+                    .collect();
                 let mut x = Vec::new();
                 for entry in (*forwarded).borrow().iter() {
-                    if !forwarded_modules
-                        .borrow()
-                        .iter()
-                        .any(|module| Arc::ptr_eq(module, entry))
-                        || !self
-                            .global_modules
-                            .iter()
-                            .any(|module| Arc::ptr_eq(module, entry))
-                    {
+                    let ptr = Arc::as_ptr(entry);
+                    if !fwd_ptrs.contains(&ptr) || !global_ptrs.contains(&ptr) {
                         x.push(Arc::clone(entry));
                     }
                 }
@@ -129,66 +131,42 @@ impl Environment {
                 forwarded = Arc::new(RefCell::new(x));
             }
 
-            let forwarded_var_names = forwarded
-                .borrow()
-                .iter()
-                .flat_map(|module| (*module).borrow().scope().variables.keys())
-                .collect::<FxHashSet<Identifier>>();
-            let forwarded_fn_names = forwarded
-                .borrow()
-                .iter()
-                .flat_map(|module| (*module).borrow().scope().functions.keys())
-                .collect::<FxHashSet<Identifier>>();
-            let forwarded_mixin_names = forwarded
-                .borrow()
-                .iter()
-                .flat_map(|module| (*module).borrow().scope().mixins.keys())
-                .collect::<FxHashSet<Identifier>>();
+            let mut forwarded_var_names = FxHashSet::<Identifier>::default();
+            let mut forwarded_fn_names = FxHashSet::<Identifier>::default();
+            let mut forwarded_mixin_names = FxHashSet::<Identifier>::default();
+            for module in forwarded.borrow().iter() {
+                let m = (*module).borrow();
+                let scope = m.scope();
+                forwarded_var_names.extend(scope.variables.keys());
+                forwarded_fn_names.extend(scope.functions.keys());
+                forwarded_mixin_names.extend(scope.mixins.keys());
+            }
 
             if self.at_root() {
-                let mut to_remove = Vec::new();
-
                 // Hide members from modules that have already been imported or
                 // forwarded that would otherwise conflict with the @imported members.
-                for (idx, module) in (*self.imported_modules).borrow().iter().enumerate() {
-                    let shadowed = ShadowedModule::if_necessary(
+                (*self.imported_modules).borrow_mut().retain(|module| {
+                    ShadowedModule::if_necessary(
                         Arc::clone(module),
                         Some(&forwarded_var_names),
                         Some(&forwarded_fn_names),
                         Some(&forwarded_mixin_names),
-                    );
+                    )
+                    .is_none()
+                });
 
-                    if shadowed.is_some() {
-                        to_remove.push(idx);
-                    }
-                }
+                (*self.forwarded_modules).borrow_mut().retain(|module| {
+                    ShadowedModule::if_necessary(
+                        Arc::clone(module),
+                        Some(&forwarded_var_names),
+                        Some(&forwarded_fn_names),
+                        Some(&forwarded_mixin_names),
+                    )
+                    .is_none()
+                });
 
                 let mut imported_modules = (*self.imported_modules).borrow_mut();
-
-                for &idx in to_remove.iter().rev() {
-                    imported_modules.remove(idx);
-                }
-
-                to_remove.clear();
-
-                for (idx, module) in (*self.forwarded_modules).borrow().iter().enumerate() {
-                    let shadowed = ShadowedModule::if_necessary(
-                        Arc::clone(module),
-                        Some(&forwarded_var_names),
-                        Some(&forwarded_fn_names),
-                        Some(&forwarded_mixin_names),
-                    );
-
-                    if shadowed.is_some() {
-                        to_remove.push(idx);
-                    }
-                }
-
                 let mut forwarded_modules = (*self.forwarded_modules).borrow_mut();
-
-                for &idx in to_remove.iter().rev() {
-                    forwarded_modules.remove(idx);
-                }
 
                 imported_modules.extend(forwarded.borrow().iter().map(Arc::clone));
                 forwarded_modules.extend(forwarded.borrow().iter().map(Arc::clone));

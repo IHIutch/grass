@@ -1232,9 +1232,13 @@ impl<'a> Serializer<'a> {
             return;
         }
 
-        self.buffer.reserve(self.indentation);
-        for _ in 0..self.indentation {
-            self.buffer.push(b' ');
+        // Use a static buffer for common indentation depths to avoid per-byte pushes
+        const SPACES: [u8; 32] = [b' '; 32];
+        let n = self.indentation;
+        if n <= 32 {
+            self.buffer.extend_from_slice(&SPACES[..n]);
+        } else {
+            self.buffer.resize(self.buffer.len() + n, b' ');
         }
     }
 

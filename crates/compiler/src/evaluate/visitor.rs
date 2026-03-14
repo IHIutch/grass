@@ -11,8 +11,10 @@ use std::{
 };
 
 use codemap::{CodeMap, Span, Spanned};
-use indexmap::IndexSet;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+
+/// IndexSet using FxHash instead of SipHash for faster hashing.
+type FxIndexSet<V> = indexmap::IndexSet<V, FxBuildHasher>;
 
 use crate::{
     ast::*,
@@ -154,7 +156,7 @@ pub struct Visitor<'a> {
     // avoid emitting duplicate warnings for the same span
     pub(crate) warnings_emitted: FxHashSet<Span>,
     pub(crate) media_queries: Option<Vec<MediaQuery>>,
-    pub(crate) media_query_sources: Option<IndexSet<MediaQuery>>,
+    pub(crate) media_query_sources: Option<FxIndexSet<MediaQuery>>,
     pub(crate) extender: ExtensionStore,
 
     /// Modules loaded via @use during the current module's evaluation.
@@ -186,6 +188,8 @@ pub struct Visitor<'a> {
     pub(crate) is_plain_css: bool,
     plain_css_style_rule_depth: u32,
     pub(crate) modules: FxHashMap<PathBuf, Arc<RefCell<Module>>>,
+    /// Reverse map from module Arc pointer → URL for O(1) lookup in collect_css_indices_transitive.
+    module_ptr_to_url: FxHashMap<usize, PathBuf>,
     /// Configuration used when each module was first loaded via execute().
     /// Used to detect "was already loaded, so it can't be configured" errors.
     module_configurations: FxHashMap<PathBuf, Option<Rc<RefCell<Configuration>>>>,
@@ -263,6 +267,7 @@ impl<'a> Visitor<'a> {
             import_section_tree_count: 0,
             has_out_of_order_imports: false,
             modules: FxHashMap::default(),
+            module_ptr_to_url: FxHashMap::default(),
             module_configurations: FxHashMap::default(),
             active_modules: FxHashSet::default(),
             options,
@@ -491,18 +496,14 @@ impl<'a> Visitor<'a> {
             indices.extend(css_indices);
         }
 
-        // Recurse into upstream modules
+        // Recurse into upstream modules using the pre-built pointer→URL map
         if let Some(module) = self.modules.get(url) {
             let m = module.borrow();
             if let Module::Environment { upstream, .. } = &*m {
                 for up in upstream {
-                    // Find this upstream module's URL by pointer identity in modules map
                     let up_ptr = Arc::as_ptr(up) as usize;
-                    for (mod_url, mod_ref) in &self.modules {
-                        if Arc::as_ptr(mod_ref) as usize == up_ptr {
-                            self.collect_css_indices_transitive(mod_url, indices, visited);
-                            break;
-                        }
+                    if let Some(up_url) = self.module_ptr_to_url.get(&up_ptr) {
+                        self.collect_css_indices_transitive(up_url, indices, visited);
                     }
                 }
             }
@@ -547,13 +548,15 @@ impl<'a> Visitor<'a> {
             for up in &upstream_modules {
                 visit_module(up, sorted, seen);
             }
-            // Insert at front so downstream modules come first.
-            sorted.insert(0, Arc::clone(module));
+            // Push upstream-first; we reverse after to get downstream-first order.
+            sorted.push(Arc::clone(module));
         }
 
         for module in &self.upstream_modules {
             visit_module(module, &mut sorted, &mut seen);
         }
+        // Reverse to get downstream-first order (visit_module pushes upstream-first).
+        sorted.reverse();
 
         // Map from module pointer → list of cloned downstream ExtensionStores
         // to apply to that module.
@@ -1244,6 +1247,7 @@ impl<'a> Visitor<'a> {
         // Build module with its own extension store and upstream deps.
         let module = env.to_module_with_upstream(module_extension_store, module_upstream);
 
+        self.module_ptr_to_url.insert(Arc::as_ptr(&module) as usize, url.clone());
         self.modules.insert(url.clone(), Arc::clone(&module));
         self.module_configurations
             .insert(url.clone(), config_for_tracking);
@@ -2529,7 +2533,7 @@ impl<'a> Visitor<'a> {
 
         // In nested CSS, don't merge media queries — they stay as written
         let (merged_queries, merged_sources) = if nest_at_rule {
-            (None, IndexSet::new())
+            (None, FxIndexSet::default())
         } else {
             // todo: superfluous clone?
             let queries2 = self.media_queries.clone();
@@ -2540,13 +2544,13 @@ impl<'a> Visitor<'a> {
             let sources = match &merged {
                 Some(merged_queries) if merged_queries.is_empty() => return Ok(None),
                 Some(..) => {
-                    let mut set = IndexSet::new();
+                    let mut set = FxIndexSet::default();
                     set.extend(self.media_query_sources.clone().unwrap());
                     set.extend(self.media_queries.clone().unwrap());
                     set.extend(queries1.clone());
                     set
                 }
-                None => IndexSet::new(),
+                None => FxIndexSet::default(),
             };
 
             (merged, sources)
@@ -2771,7 +2775,7 @@ impl<'a> Visitor<'a> {
     fn with_media_queries<T>(
         &mut self,
         queries: Option<Vec<MediaQuery>>,
-        sources: Option<IndexSet<MediaQuery>>,
+        sources: Option<FxIndexSet<MediaQuery>>,
         callback: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let old_media_queries = self.media_queries.take();
@@ -3491,12 +3495,6 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<V> {
         let mut evaluated = self.eval_maybe_args(arguments, span)?;
 
-        let mut name = func.name().to_string();
-
-        if name != "@content" {
-            name.push_str("()");
-        }
-
         self.with_environment(env.new_closure(), |visitor| {
             visitor.with_scope(false, true, move |visitor| {
                 func.arguments().verify(
@@ -3510,11 +3508,11 @@ impl<'a> Visitor<'a> {
 
                 let positional_len = evaluated.positional.len();
 
-                #[allow(clippy::needless_range_loop)]
-                for i in (0..min_len).rev() {
+                // Drain positional args in forward order (O(n) total vs O(n²) from remove())
+                for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
                     visitor.env.scopes_mut().insert_var_last(
                         declared_arguments[i].name,
-                        evaluated.positional.remove(i),
+                        val,
                     );
                 }
 
@@ -3538,17 +3536,16 @@ impl<'a> Visitor<'a> {
                     visitor.env.scopes_mut().insert_var_last(name, value);
                 }
 
-                let were_keywords_accessed = Rc::new(Cell::new(false));
-
                 let num_named_args = evaluated.named.len();
 
-                let has_arg_list = if let Some(rest_arg) = func.arguments().rest {
+                let were_keywords_accessed = if let Some(rest_arg) = func.arguments().rest {
                     let rest = if !evaluated.positional.is_empty() {
                         evaluated.positional
                     } else {
                         Vec::new()
                     };
 
+                    let were_keywords_accessed = Rc::new(Cell::new(false));
                     let arg_list = Value::ArgList(ArgList::new(
                         rest,
                         Rc::clone(&were_keywords_accessed),
@@ -3563,14 +3560,19 @@ impl<'a> Visitor<'a> {
 
                     visitor.env.scopes_mut().insert_var_last(rest_arg, arg_list);
 
-                    true
+                    Some(were_keywords_accessed)
                 } else {
-                    false
+                    None
                 };
 
                 let val = run(func, visitor)?;
 
-                if !has_arg_list || num_named_args == 0 {
+                let were_keywords_accessed = match were_keywords_accessed {
+                    Some(w) => w,
+                    None => return Ok(val),
+                };
+
+                if num_named_args == 0 {
                     return Ok(val);
                 }
 
@@ -4084,63 +4086,56 @@ impl<'a> Visitor<'a> {
         match name {
             CalculationName::Calc => {
                 debug_assert_eq!(args.len(), 1);
-                Ok(SassCalculation::calc(args.remove(0)))
+                Ok(SassCalculation::calc(args.pop().unwrap()))
             }
             CalculationName::Min => SassCalculation::min(args, self.options, span),
             CalculationName::Max => SassCalculation::max(args, self.options, span),
             CalculationName::Clamp => {
-                let min = args.remove(0);
-                let value = if args.is_empty() {
-                    None
-                } else {
-                    Some(args.remove(0))
-                };
-                let max = if args.is_empty() {
-                    None
-                } else {
-                    Some(args.remove(0))
-                };
+                let mut iter = args.into_iter();
+                let min = iter.next().unwrap();
+                let value = iter.next();
+                let max = iter.next();
                 SassCalculation::clamp(min, value, max, self.options, span)
             }
             CalculationName::Abs => {
                 Self::check_calc_args(&args, 1, "abs", span)?;
-                SassCalculation::abs(args.remove(0), self.options, span)
+                SassCalculation::abs(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Exp => {
                 Self::check_calc_args(&args, 1, "exp", span)?;
-                SassCalculation::exp(args.remove(0), self.options, span)
+                SassCalculation::exp(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Sign => {
                 Self::check_calc_args(&args, 1, "sign", span)?;
-                SassCalculation::sign(args.remove(0), self.options, span)
+                SassCalculation::sign(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Sin => {
                 Self::check_calc_args(&args, 1, "sin", span)?;
-                SassCalculation::sin(args.remove(0), self.options, span)
+                SassCalculation::sin(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Cos => {
                 Self::check_calc_args(&args, 1, "cos", span)?;
-                SassCalculation::cos(args.remove(0), self.options, span)
+                SassCalculation::cos(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Tan => {
                 Self::check_calc_args(&args, 1, "tan", span)?;
-                SassCalculation::tan(args.remove(0), self.options, span)
+                SassCalculation::tan(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Asin => {
                 Self::check_calc_args(&args, 1, "asin", span)?;
-                SassCalculation::asin(args.remove(0), self.options, span)
+                SassCalculation::asin(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Acos => {
                 Self::check_calc_args(&args, 1, "acos", span)?;
-                SassCalculation::acos(args.remove(0), self.options, span)
+                SassCalculation::acos(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Atan => {
                 Self::check_calc_args(&args, 1, "atan", span)?;
-                SassCalculation::atan(args.remove(0), self.options, span)
+                SassCalculation::atan(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Sqrt => {
                 Self::check_calc_args(&args, 1, "sqrt", span)?;
-                SassCalculation::sqrt(args.remove(0), self.options, span)
+                SassCalculation::sqrt(args.pop().unwrap(), self.options, span)
             }
             CalculationName::Atan2 => {
                 Self::check_calc_args(&args, 2, "atan2", span)?;

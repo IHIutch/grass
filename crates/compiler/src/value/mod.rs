@@ -298,9 +298,7 @@ impl Value {
     pub fn without_slash(self) -> Self {
         match self {
             Value::Dimension(SassNumber {
-                num,
-                unit,
-                as_slash: _,
+                as_slash: Some(_), num, unit,
             }) => Value::Dimension(SassNumber {
                 num,
                 unit,
