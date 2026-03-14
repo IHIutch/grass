@@ -36,7 +36,7 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
 
         if let Value::String(s, QuoteKind::None) = &color {
             if is_ms_filter(s) {
-                return Ok(Value::String(format!("alpha({})", s), QuoteKind::None));
+                return Ok(Value::String(format!("alpha({})", s).into(), QuoteKind::None));
             }
         }
 
@@ -62,10 +62,10 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
                     unreachable!()
                 }
             })
-            .collect::<SassResult<Vec<String>>>()?;
+            .collect::<SassResult<Vec<_>>>()?;
 
         Ok(Value::String(
-            format!("alpha({})", args.join(", "),),
+            format!("alpha({})", args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")).into(),
             QuoteKind::None,
         ))
     }
@@ -81,11 +81,11 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
             unit,
             as_slash: _,
         }) => Ok(Value::String(
-            format!("opacity({}{})", num.inspect(), unit),
+            format!("opacity({}{})", num.inspect(), unit).into(),
             QuoteKind::None,
         )),
         v if v.is_special_function() => Ok(Value::String(
-            format!("opacity({})", v.to_css_string(span, visitor.options.is_compressed())?),
+            format!("opacity({})", v.to_css_string(span, visitor.options.is_compressed())?).into(),
             QuoteKind::None,
         )),
         v => Err((
@@ -153,7 +153,7 @@ pub(crate) fn module_opacity(mut args: ArgumentResult, _visitor: &mut Visitor) -
             unit,
             as_slash: _,
         }) => Ok(Value::String(
-            format!("opacity({}{})", num.inspect(), unit),
+            format!("opacity({}{})", num.inspect(), unit).into(),
             QuoteKind::None,
         )),
         v => Err((

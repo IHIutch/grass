@@ -40,7 +40,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
         let mut values = FxHashMap::default();
         for (key, value) in with {
             let name =
-                Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0);
+                Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0.as_str());
 
             if values.contains_key(&name) {
                 return Err((
@@ -146,10 +146,10 @@ fn calc_args(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
                 CalculationArg::Number(num) => Value::Dimension(num),
                 CalculationArg::Calculation(calc) => Value::Calculation(calc),
                 CalculationArg::String(s) | CalculationArg::Interpolation(s) => {
-                    Value::String(s, QuoteKind::None)
+                    Value::String(s.into(), QuoteKind::None)
                 }
                 CalculationArg::Operation { .. } => Value::String(
-                    serialize_calculation_arg(&arg, visitor.options, args.span())?,
+                    serialize_calculation_arg(&arg, visitor.options, args.span())?.into(),
                     QuoteKind::None,
                 ),
             })
@@ -173,7 +173,7 @@ fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Val
         }
     };
 
-    Ok(Value::String(calc.name.to_string(), QuoteKind::Quoted))
+    Ok(Value::String(calc.name.to_string().into(), QuoteKind::Quoted))
 }
 
 fn module_mixins(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {

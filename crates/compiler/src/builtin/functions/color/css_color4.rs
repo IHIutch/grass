@@ -149,7 +149,7 @@ fn construct_color_inner(
             result.push_str(&ch.to_css_string(span, is_compressed)?);
         }
         result.push(')');
-        return Ok(Value::String(result, QuoteKind::None));
+        return Ok(Value::String(result.into(), QuoteKind::None));
     }
 
     let channel_defs = space.channels();
@@ -241,7 +241,7 @@ pub(crate) fn lab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         span,
     )?;
     match &parsed {
-        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::String(s) => Ok(Value::String(s.clone().into(), QuoteKind::None)),
         ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
             let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
@@ -270,7 +270,7 @@ pub(crate) fn lch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         span,
     )?;
     match &parsed {
-        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::String(s) => Ok(Value::String(s.clone().into(), QuoteKind::None)),
         ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
             let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
@@ -299,7 +299,7 @@ pub(crate) fn oklab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         span,
     )?;
     match &parsed {
-        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::String(s) => Ok(Value::String(s.clone().into(), QuoteKind::None)),
         ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
             let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
@@ -328,7 +328,7 @@ pub(crate) fn oklch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         span,
     )?;
     match &parsed {
-        ParsedChannels::String(s) => Ok(Value::String(s.clone(), QuoteKind::None)),
+        ParsedChannels::String(s) => Ok(Value::String(s.clone().into(), QuoteKind::None)),
         ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
             let is_slash_list = matches!(parsed, ParsedChannels::SlashList(_));
             let has_alpha = list.len() > 3;
@@ -354,7 +354,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 
     if description.is_var() {
         let fn_string = function_string("color", &[description], visitor, span)?;
-        return Ok(Value::String(fn_string, QuoteKind::None));
+        return Ok(Value::String(fn_string.into(), QuoteKind::None));
     }
 
     // Validate list format
@@ -407,7 +407,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     if let Some(Value::String(s, QuoteKind::None)) = items.first() {
         if s.eq_ignore_ascii_case("from") {
             let fn_string = function_string("color", &[description], visitor, span)?;
-            return Ok(Value::String(fn_string, QuoteKind::None));
+            return Ok(Value::String(fn_string.into(), QuoteKind::None));
         }
     }
 
@@ -420,7 +420,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         Value::String(s, QuoteKind::None) => s.clone(),
         v if v.is_special_function() || v.is_var() => {
             let fn_string = function_string("color", &[description], visitor, span)?;
-            return Ok(Value::String(fn_string, QuoteKind::None));
+            return Ok(Value::String(fn_string.into(), QuoteKind::None));
         }
         v => {
             return Err((
@@ -489,7 +489,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
                 result.push_str(&alpha.to_css_string(span, is_compressed)?);
             }
             result.push(')');
-            return Ok(Value::String(result, QuoteKind::None));
+            return Ok(Value::String(result.into(), QuoteKind::None));
         }
         let channel_defs = space.channels();
         let missing = channel_defs.get(channel_items.len()).map_or("channel", |c| c.name);
@@ -525,7 +525,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             result.push_str(&alpha.to_css_string(span, is_compressed)?);
         }
         result.push(')');
-        return Ok(Value::String(result, QuoteKind::None));
+        return Ok(Value::String(result.into(), QuoteKind::None));
     }
 
     // Build channels list with optional alpha

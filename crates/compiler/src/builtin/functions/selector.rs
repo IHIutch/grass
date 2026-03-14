@@ -48,7 +48,7 @@ pub(crate) fn simple_selectors(
         Arc::new(compound
             .components
             .into_iter()
-            .map(|simple| Value::String(simple.to_string(), QuoteKind::None))
+            .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))
             .collect()),
         ListSeparator::Comma,
         Brackets::None,

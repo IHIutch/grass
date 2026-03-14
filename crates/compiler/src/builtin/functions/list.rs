@@ -45,7 +45,7 @@ pub(crate) fn nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
 pub(crate) fn list_separator(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
     Ok(Value::String(
-        args.get_err(0, "list")?.separator().name().to_owned(),
+        args.get_err(0, "list")?.separator().name().into(),
         QuoteKind::None,
     ))
 }
@@ -116,7 +116,7 @@ pub(crate) fn append(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     let sep = match args.default_arg(
         2,
         "separator",
-        Value::String("auto".to_owned(), QuoteKind::None),
+        Value::String("auto".into(), QuoteKind::None),
     ) {
         Value::String(s, ..) => match s.as_str() {
             "auto" => {
@@ -182,7 +182,7 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     let sep = match args.default_arg(
         2,
         "separator",
-        Value::String("auto".to_owned(), QuoteKind::None),
+        Value::String("auto".into(), QuoteKind::None),
     ) {
         Value::String(s, ..) => match s.as_str() {
             "auto" => {
@@ -217,7 +217,7 @@ pub(crate) fn join(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     let brackets = match args.default_arg(
         3,
         "bracketed",
-        Value::String("auto".to_owned(), QuoteKind::None),
+        Value::String("auto".into(), QuoteKind::None),
     ) {
         Value::String(s, ..) => match s.as_str() {
             "auto" => brackets,

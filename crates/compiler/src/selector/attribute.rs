@@ -194,7 +194,7 @@ impl Display for Attribute {
                 // or having special emitter for quoted strings?
                 // (also avoids the clone because we can consume/modify self)
                 f.write_str(
-                    &Value::String(self.value.clone(), QuoteKind::Quoted)
+                    &Value::String(self.value.clone().into(), QuoteKind::Quoted)
                         .to_css_string(self.span, false)
                         .unwrap(),
                 )?;

@@ -76,7 +76,7 @@ fn hwb_inner(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
             result.push_str(&alpha_val.to_css_string(span, is_compressed)?);
         }
         result.push(')');
-        return Ok(Value::String(result, QuoteKind::None));
+        return Ok(Value::String(result.into(), QuoteKind::None));
     }
 
     let hue = angle_value(hue_val, "hue", span)?;
@@ -110,7 +110,7 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             visitor,
             span,
         )? {
-            ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
+            ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
             ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel is `none` or a special function — if so, use modern Color 4 path
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));

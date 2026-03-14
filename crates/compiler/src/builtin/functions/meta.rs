@@ -66,13 +66,13 @@ pub(crate) fn unit(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         .get_err(0, "number")?
         .assert_number_with_name("number", args.span())?;
 
-    Ok(Value::String(number.unit.to_string(), QuoteKind::Quoted))
+    Ok(Value::String(number.unit.to_string().into(), QuoteKind::Quoted))
 }
 
 pub(crate) fn type_of(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
     let value = args.get_err(0, "value")?;
-    Ok(Value::String(value.kind().to_owned(), QuoteKind::None))
+    Ok(Value::String(value.kind().into(), QuoteKind::None))
 }
 
 pub(crate) fn unitless(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -88,7 +88,7 @@ pub(crate) fn inspect(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     args.max_args(1)?;
     let value = args.get_err(0, "value")?;
     Ok(Value::String(
-        value.inspect(args.span())?,
+        value.inspect(args.span())?.into(),
         QuoteKind::None,
     ))
 }
@@ -102,7 +102,8 @@ pub(crate) fn variable_exists(
     let name = Identifier::from(
         args.get_err(0, "name")?
             .assert_string_with_name("name", args.span())?
-            .0,
+            .0
+            .as_str(),
     );
 
     Ok(Value::bool(visitor.env.var_exists(name, None, args.span())?))
@@ -117,7 +118,8 @@ pub(crate) fn global_variable_exists(
     let name = Identifier::from(
         args.get_err(0, "name")?
             .assert_string_with_name("name", args.span())?
-            .0,
+            .0
+            .as_str(),
     );
 
     let module = match args.default_arg(1, "module", Value::Null) {
@@ -148,7 +150,8 @@ pub(crate) fn mixin_exists(mut args: ArgumentResult, visitor: &mut Visitor) -> S
     let name = Identifier::from(
         args.get_err(0, "name")?
             .assert_string_with_name("name", args.span())?
-            .0,
+            .0
+            .as_str(),
     );
 
     let module = match args.default_arg(1, "module", Value::Null) {
@@ -183,7 +186,8 @@ pub(crate) fn function_exists(
     let name = Identifier::from(
         args.get_err(0, "name")?
             .assert_string_with_name("name", args.span())?
-            .0,
+            .0
+            .as_str(),
     );
 
     let module = match args.default_arg(1, "module", Value::Null) {
@@ -212,7 +216,7 @@ pub(crate) fn function_exists(
 pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(3)?;
     let name: Identifier = match args.get_err(0, "name")? {
-        Value::String(s, _) => s.into(),
+        Value::String(s, _) => Identifier::from(s.as_str()),
         v => {
             return Err((
                 format!("$name: {} is not a string.", v.inspect(args.span())?),
@@ -274,7 +278,7 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
 pub(crate) fn get_mixin(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
     let name: Identifier = match args.get_err(0, "name")? {
-        Value::String(s, _) => s.into(),
+        Value::String(s, _) => Identifier::from(s.as_str()),
         v => {
             return Err((
                 format!("$name: {} is not a string.", v.inspect(args.span())?),
@@ -359,7 +363,7 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     let func = match args.get_err(0, "function")? {
         Value::FunctionRef(f) => *f,
         Value::String(name, ..) => {
-            let name = Identifier::from(name);
+            let name = Identifier::from(name.as_str());
 
             match visitor.env.get_fn(name, None, span)? {
                 Some(f) => f,
@@ -423,7 +427,7 @@ pub(crate) fn keywords(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             .into_iter()
             .map(|(name, val)| {
                 (
-                    Value::String(name.to_string(), QuoteKind::None).span(span),
+                    Value::String(name.to_string().into(), QuoteKind::None).span(span),
                     val,
                 )
             })

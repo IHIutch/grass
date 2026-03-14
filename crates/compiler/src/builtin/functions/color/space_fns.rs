@@ -14,7 +14,7 @@ pub(crate) fn space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         .assert_color_with_name("color", args.span())?;
 
     Ok(Value::String(
-        color.color_space().name().to_owned(),
+        color.color_space().name().to_owned().into(),
         QuoteKind::None,
     ))
 }
@@ -171,7 +171,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
                 Value::String(s, QuoteKind::None) => s.clone(),
                 Value::Null => {
                     // null means use the color's own space
-                    color.color_space().name().to_owned()
+                    color.color_space().name().to_owned().into()
                 }
                 v => {
                     return Err((
@@ -274,7 +274,7 @@ pub(crate) fn is_in_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> Sa
                         .into());
                 }
                 Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => color.color_space().name().to_owned(),
+                Value::Null => color.color_space().name().into(),
                 v => {
                     return Err((
                         format!(
@@ -324,7 +324,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
                         .into());
                 }
                 Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => color.color_space().name().to_owned(),
+                Value::Null => color.color_space().name().into(),
                 v => {
                     return Err((
                         format!(
@@ -445,7 +445,7 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
                         .into());
                 }
                 Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => color.color_space().name().to_owned(),
+                Value::Null => color.color_space().name().into(),
                 v => {
                     return Err((
                         format!(

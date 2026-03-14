@@ -8,9 +8,9 @@ use super::ParsedChannels;
 /// CSS functions (var(), calc(), env(), attr(), min(), max(), clamp()).
 pub(crate) fn parse_slash_part(s: &str) -> Option<Value> {
     if s == "none" {
-        Some(Value::String("none".to_owned(), QuoteKind::None))
+        Some(Value::String("none".into(), QuoteKind::None))
     } else if crate::utils::is_special_function(s) {
-        Some(Value::String(s.to_owned(), QuoteKind::None))
+        Some(Value::String(s.to_owned().into(), QuoteKind::None))
     } else if let Some(num_str) = s.strip_suffix('%') {
         num_str
             .parse::<f64>()
@@ -80,7 +80,7 @@ fn inner_rgb_2_arg(
 
     if color.is_var() {
         return Ok(Value::String(
-            function_string(name, &[color, alpha], visitor, args.span())?,
+            function_string(name, &[color, alpha], visitor, args.span())?.into(),
             QuoteKind::None,
         ));
     } else if alpha.is_var() {
@@ -94,13 +94,13 @@ fn inner_rgb_2_arg(
                         color.green().to_string(is_compressed),
                         color.blue().to_string(is_compressed),
                         alpha.to_css_string(args.span(), is_compressed)?
-                    ),
+                    ).into(),
                     QuoteKind::None,
                 ));
             }
             _ => {
                 return Ok(Value::String(
-                    function_string(name, &[color, alpha], visitor, args.span())?,
+                    function_string(name, &[color, alpha], visitor, args.span())?.into(),
                     QuoteKind::None,
                 ))
             }
@@ -116,7 +116,7 @@ fn inner_rgb_2_arg(
                 color.green().to_string(is_compressed),
                 color.blue().to_string(is_compressed),
                 alpha.to_css_string(args.span(), is_compressed)?
-            ),
+            ).into(),
             QuoteKind::None,
         ));
     }
@@ -162,7 +162,7 @@ fn inner_rgb_3_arg(
             function_string(name, &[red, green, blue], visitor, args.span())?
         };
 
-        return Ok(Value::String(fn_string, QuoteKind::None));
+        return Ok(Value::String(fn_string.into(), QuoteKind::None));
     }
 
     let span = args.span();
@@ -418,7 +418,7 @@ fn inner_rgb(
                 visitor,
                 span,
             )? {
-                ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
+                ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
                 ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                     // Check if any channel is `none` — if so, use modern Color 4 path
                     let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
@@ -583,7 +583,7 @@ fn parse_interpolation_method(
     use crate::color::HueInterpolationMethod;
 
     let parts: Vec<String> = match &value {
-        Value::String(s, QuoteKind::None) => vec![s.clone()],
+        Value::String(s, QuoteKind::None) => vec![s.to_string()],
         Value::String(_, QuoteKind::Quoted) => {
             return Err((
                 format!(
@@ -597,7 +597,7 @@ fn parse_interpolation_method(
             let mut parts = Vec::new();
             for item in items.iter() {
                 match item {
-                    Value::String(s, QuoteKind::None) => parts.push(s.clone()),
+                    Value::String(s, QuoteKind::None) => parts.push(s.to_string()),
                     _ => {
                         return Err((
                             format!(

@@ -808,7 +808,7 @@ pub(crate) fn ie_hex_str(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     let color = args
         .get_err(0, "color")?
         .assert_color_with_name("color", args.span())?;
-    Ok(Value::String(color.to_ie_hex_str(), QuoteKind::None))
+    Ok(Value::String(color.to_ie_hex_str().into(), QuoteKind::None))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

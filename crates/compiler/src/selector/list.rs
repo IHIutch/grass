@@ -108,7 +108,7 @@ impl SelectorList {
                             .components
                             .into_iter()
                             .map(|complex_component| {
-                                Value::String(complex_component.to_string(), QuoteKind::None)
+                                Value::String(complex_component.to_string().into(), QuoteKind::None)
                             })
                             .collect()),
                         ListSeparator::Space,

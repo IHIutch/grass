@@ -69,7 +69,7 @@ fn hsl_3_args(
                     Brackets::None
                 )
                 .to_css_string(args.span(), false)?
-            ),
+            ).into(),
             QuoteKind::None,
         ));
     }
@@ -111,7 +111,7 @@ fn inner_hsl(
             visitor,
             args.span(),
         )? {
-            ParsedChannels::String(s) => Ok(Value::String(s, QuoteKind::None)),
+            ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
             ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel or alpha is `none` — if so, use modern Color 4 path
                 let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
@@ -136,7 +136,7 @@ fn inner_hsl(
 
         if hue.is_var() || saturation.is_var() {
             Ok(Value::String(
-                function_string(name, &[hue, saturation], visitor, span)?,
+                function_string(name, &[hue, saturation], visitor, span)?.into(),
                 QuoteKind::None,
             ))
         } else {
@@ -289,7 +289,7 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         // Pass through special functions like var() and calc()
         if val.is_special_function() {
             return Ok(Value::String(
-                format!("saturate({})", val.to_css_string(args.span(), false)?),
+                format!("saturate({})", val.to_css_string(args.span(), false)?).into(),
                 QuoteKind::None,
             ));
         }
@@ -300,7 +300,7 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
             format!(
                 "saturate({})",
                 serialize_number(&amount, &Options::default(), args.span())?,
-            ),
+            ).into(),
             QuoteKind::None,
         ));
     }
@@ -361,7 +361,7 @@ pub(crate) fn grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             as_slash: _,
         }) => {
             return Ok(Value::String(
-                format!("grayscale({}{})", n.inspect(), u),
+                format!("grayscale({}{})", n.inspect(), u).into(),
                 QuoteKind::None,
             ))
         }
@@ -384,7 +384,7 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     // Pass through special functions like var() and calc()
     if val.is_special_function() {
         return Ok(Value::String(
-            format!("grayscale({})", val.to_css_string(span, false)?),
+            format!("grayscale({})", val.to_css_string(span, false)?).into(),
             QuoteKind::None,
         ));
     }
@@ -551,7 +551,7 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                     .into());
             }
             Ok(Value::String(
-                format!("invert({}{})", n.inspect(), u),
+                format!("invert({}{})", n.inspect(), u).into(),
                 QuoteKind::None,
             ))
         }
@@ -566,7 +566,7 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                         .into());
                 }
                 return Ok(Value::String(
-                    format!("invert({})", v.to_css_string(span, false)?),
+                    format!("invert({})", v.to_css_string(span, false)?).into(),
                     QuoteKind::None,
                 ));
             }

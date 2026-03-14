@@ -36,6 +36,7 @@ indexmap = "2"
 # todo: do we really need interning for things?
 lasso = "0.7"
 rustc-hash = "2"
+compact_str = "0.8"
 
 [features]
 default = ["random", "custom-builtin-fns"]

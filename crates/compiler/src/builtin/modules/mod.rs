@@ -520,7 +520,7 @@ impl Module {
                 .filter(|(key, _)| !key.as_str().starts_with('-'))
                 .map(|(key, value)| {
                     (
-                        Value::String(key.to_string(), QuoteKind::Quoted).span(span),
+                        Value::String(key.to_string().into(), QuoteKind::Quoted).span(span),
                         Value::FunctionRef(Box::new(value)),
                     )
                 })
@@ -537,7 +537,7 @@ impl Module {
                 .filter(|(key, _)| !key.as_str().starts_with('-'))
                 .map(|(key, value)| {
                     (
-                        Value::String(key.to_string(), QuoteKind::Quoted).span(span),
+                        Value::String(key.to_string().into(), QuoteKind::Quoted).span(span),
                         Value::MixinRef(Box::new(SassMixin {
                             name: key,
                             mixin: value,
@@ -557,7 +557,7 @@ impl Module {
                 .filter(|(key, _)| !key.as_str().starts_with('-'))
                 .map(|(key, value)| {
                     (
-                        Value::String(key.to_string(), QuoteKind::Quoted).span(span),
+                        Value::String(key.to_string().into(), QuoteKind::Quoted).span(span),
                         value,
                     )
                 })

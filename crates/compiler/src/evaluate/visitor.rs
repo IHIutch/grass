@@ -3460,7 +3460,7 @@ impl<'a> Visitor<'a> {
             match key.node {
                 Value::String(text, ..) => {
                     let val = self.without_slash(val);
-                    named.insert(Identifier::from(text), val);
+                    named.insert(Identifier::from(text.as_str()), val);
                 }
                 _ => {
                     return Err((
@@ -3716,7 +3716,7 @@ impl<'a> Visitor<'a> {
                 }
                 buffer.push(')');
 
-                Ok(Value::String(buffer, QuoteKind::None))
+                Ok(Value::String(buffer.into(), QuoteKind::None))
             }
         }
     }
@@ -3837,7 +3837,7 @@ impl<'a> Visitor<'a> {
 
         buffer.push(')');
 
-        Ok(Value::String(buffer, QuoteKind::None))
+        Ok(Value::String(buffer.into(), QuoteKind::None))
     }
 
     fn visit_parent_selector(&self) -> Value {
@@ -3919,7 +3919,7 @@ impl<'a> Visitor<'a> {
             AstExpr::UnaryOp(op, expr, span) => self.visit_unary_op(op, (*expr).clone(), span)?,
             AstExpr::Variable { name, namespace } => self.env.get_var(name, namespace)?,
             AstExpr::Supports(condition) => Value::String(
-                self.visit_supports_condition((*condition).clone())?,
+                self.visit_supports_condition((*condition).clone())?.into(),
                 QuoteKind::None,
             ),
         })
@@ -4010,7 +4010,7 @@ impl<'a> Visitor<'a> {
                         as_slash,
                     }),
                     Value::Calculation(calc) => CalculationArg::Calculation(calc),
-                    Value::String(s, QuoteKind::None) => CalculationArg::String(s),
+                    Value::String(s, QuoteKind::None) => CalculationArg::String(s.into()),
                     value => {
                         return Err((
                             format!(
@@ -4352,7 +4352,7 @@ impl<'a> Visitor<'a> {
         }
 
         let output = format!("if({})", parts.join("; "));
-        Ok(Value::String(output, QuoteKind::None))
+        Ok(Value::String(output.into(), QuoteKind::None))
     }
 
     fn eval_if_condition(&mut self, condition: &IfCondition) -> SassResult<ConditionResult> {
@@ -4566,7 +4566,7 @@ impl<'a> Visitor<'a> {
                 Some(InterpolationPart::String(s)) => s,
                 Some(InterpolationPart::Expr(Spanned { node, span })) => {
                     match self.visit_expr(node)? {
-                        Value::String(s, ..) => s,
+                        Value::String(s, ..) => s.to_string(),
                         e => self.serialize(e, QuoteKind::None, span)?,
                     }
                 }
@@ -4579,7 +4579,7 @@ impl<'a> Visitor<'a> {
                     InterpolationPart::String(s) => Ok(s),
                     InterpolationPart::Expr(Spanned { node, span }) => {
                         match self.visit_expr(node)? {
-                            Value::String(s, ..) => Ok(s),
+                            Value::String(s, ..) => Ok(s.to_string()),
                             e => self.serialize(e, QuoteKind::None, span),
                         }
                     }
@@ -4592,7 +4592,7 @@ impl<'a> Visitor<'a> {
             old_in_supports_declaration,
         );
 
-        Ok(Value::String(result, quote))
+        Ok(Value::String(result.into(), quote))
     }
 
     fn visit_map(&mut self, map: AstSassMap) -> SassResult<Value> {

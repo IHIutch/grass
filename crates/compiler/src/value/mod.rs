@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use codemap::{Span, Spanned};
+use compact_str::CompactString;
 
 use crate::{
     ast::SassMixin,
@@ -39,7 +40,7 @@ pub enum Value {
     Dimension(SassNumber),
     List(Arc<Vec<Value>>, ListSeparator, Brackets),
     Color(Arc<Color>),
-    String(String, QuoteKind),
+    String(CompactString, QuoteKind),
     Map(SassMap),
     ArgList(ArgList),
     /// Returned by `get-function()`
@@ -202,7 +203,7 @@ impl Value {
         self,
         name: &str,
         span: Span,
-    ) -> SassResult<(String, QuoteKind)> {
+    ) -> SassResult<(CompactString, QuoteKind)> {
         match self {
             Value::String(s, quotes) => Ok((s, quotes)),
             _ => Err((
@@ -516,7 +517,7 @@ impl Value {
 
     fn selector_string(self) -> SassResult<Option<String>> {
         Ok(Some(match self {
-            Value::String(text, ..) => text,
+            Value::String(text, ..) => text.into(),
             Value::List(list, sep, ..) if !list.is_empty() => {
                 let mut result = Vec::new();
                 let list = Arc::unwrap_or_clone(list);
@@ -524,7 +525,7 @@ impl Value {
                     ListSeparator::Comma => {
                         for complex in list {
                             if let Value::String(text, ..) = complex {
-                                result.push(text);
+                                result.push(text.into());
                             } else if let Value::List(
                                 _,
                                 ListSeparator::Space | ListSeparator::Undecided,
@@ -544,7 +545,7 @@ impl Value {
                     ListSeparator::Space | ListSeparator::Undecided => {
                         for compound in list {
                             if let Value::String(text, ..) = compound {
-                                result.push(text);
+                                result.push(text.into());
                             } else {
                                 return Ok(None);
                             }
@@ -572,7 +573,8 @@ impl Value {
                 format!(
                     "+{}",
                     &self.to_css_string(span, visitor.options.is_compressed())?
-                ),
+                )
+                .into(),
                 QuoteKind::None,
             ),
         })
@@ -600,7 +602,8 @@ impl Value {
                 format!(
                     "-{}",
                     &self.to_css_string(span, visitor.options.is_compressed())?
-                ),
+                )
+                .into(),
                 QuoteKind::None,
             ),
         })
@@ -611,7 +614,8 @@ impl Value {
             format!(
                 "/{}",
                 &self.to_css_string(span, visitor.options.is_compressed())?
-            ),
+            )
+            .into(),
             QuoteKind::None,
         ))
     }

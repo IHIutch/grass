@@ -102,7 +102,7 @@ pub(crate) fn str_slice(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     let end = (end.max(0) as usize).min(str_len + 1);
 
     if start > end || start > str_len {
-        Ok(Value::String(String::new(), quotes))
+        Ok(Value::String("".into(), quotes))
     } else {
         Ok(Value::String(
             string
@@ -146,15 +146,15 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
                 Vec::new()
             } else {
                 s1.chars()
-                    .map(|c| Value::String(c.to_string(), quote))
+                    .map(|c| Value::String(c.to_string().into(), quote))
                     .collect()
             }
         } else if s1.is_empty() {
             // Empty string with non-empty separator returns empty list
             Vec::new()
         } else {
-            s1.split(&separator)
-                .map(|s| Value::String(s.to_string(), quote))
+            s1.split(separator.as_str())
+                .map(|s| Value::String(s.to_string().into(), quote))
                 .collect()
         }
     } else {
@@ -168,8 +168,8 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
                 .into());
         }
         // note: `1 + limit_int` is required to match dart-sass
-        s1.splitn(limit_int.saturating_add(1) as usize, &separator)
-            .map(|s| Value::String(s.to_string(), quote))
+        s1.splitn(limit_int.saturating_add(1) as usize, separator.as_str())
+            .map(|s| Value::String(s.to_string().into(), quote))
             .collect()
     };
     Ok(Value::List(Arc::new(vec), ListSeparator::Comma, Brackets::Bracketed))
@@ -187,7 +187,7 @@ pub(crate) fn str_index(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         .assert_string_with_name("substring", args.span())?
         .0;
 
-    let char_position = match s1.find(&substr) {
+    let char_position = match s1.find(substr.as_str()) {
         Some(i) => s1[0..i].chars().count() + 1,
         None => return Ok(Value::Null),
     };
@@ -221,7 +221,7 @@ pub(crate) fn str_insert(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     let len = s1.chars().count();
 
     // Insert substring at char position, rather than byte position
-    let insert = |idx, s1: String, s2| {
+    let insert = |idx, s1: &str, s2: &str| -> String {
         s1.chars()
             .enumerate()
             .map(|(i, c)| {
@@ -237,15 +237,15 @@ pub(crate) fn str_insert(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     };
 
     let string = if index_int > 0 {
-        insert((index_int as usize - 1).min(len), s1, &substr)
+        insert((index_int as usize - 1).min(len), &s1, &substr)
     } else if index_int == 0 {
-        insert(0, s1, &substr)
+        insert(0, &s1, &substr)
     } else {
         let idx = (len as i64 + index_int + 1).max(0) as usize;
-        insert(idx, s1, &substr)
+        insert(idx, &s1, &substr)
     };
 
-    Ok(Value::String(string, quotes))
+    Ok(Value::String(string.into(), quotes))
 }
 
 #[cfg(feature = "random")]
@@ -258,7 +258,7 @@ pub(crate) fn unique_id(args: ArgumentResult, _: &mut Visitor) -> SassResult<Val
         .map(char::from)
         .take(12)
         .collect();
-    Ok(Value::String(format!("id-{}", string), QuoteKind::None))
+    Ok(Value::String(format!("id-{}", string).into(), QuoteKind::None))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
