@@ -272,6 +272,7 @@ dependencies = [
 name = "grass_compiler"
 version = "0.13.4"
 dependencies = [
+ "bumpalo",
  "codemap",
  "compact_str",
  "indexmap",
