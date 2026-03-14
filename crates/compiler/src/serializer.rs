@@ -25,8 +25,7 @@ pub(crate) fn serialize_selector_list(
     options: &Options,
     span: Span,
 ) -> String {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, false, span);
+    let mut serializer = Serializer::new_expr(options, false, span);
 
     serializer.write_selector_list(list);
 
@@ -38,8 +37,7 @@ pub(crate) fn serialize_calculation_arg(
     options: &Options,
     span: Span,
 ) -> SassResult<String> {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, false, span);
+    let mut serializer = Serializer::new_expr(options, false, span);
 
     serializer.write_calculation_arg(arg)?;
 
@@ -51,8 +49,7 @@ pub(crate) fn serialize_number(
     options: &Options,
     span: Span,
 ) -> SassResult<String> {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, false, span);
+    let mut serializer = Serializer::new_expr(options, false, span);
 
     serializer.visit_number(number)?;
 
@@ -60,8 +57,7 @@ pub(crate) fn serialize_number(
 }
 
 pub(crate) fn serialize_value(val: &Value, options: &Options, span: Span) -> SassResult<String> {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, false, span);
+    let mut serializer = Serializer::new_expr(options, false, span);
 
     serializer.visit_value(val, span)?;
 
@@ -69,8 +65,7 @@ pub(crate) fn serialize_value(val: &Value, options: &Options, span: Span) -> Sas
 }
 
 pub(crate) fn inspect_value(val: &Value, options: &Options, span: Span) -> SassResult<String> {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, true, span);
+    let mut serializer = Serializer::new_expr(options, true, span);
 
     serializer.visit_value(val, span)?;
 
@@ -78,8 +73,7 @@ pub(crate) fn inspect_value(val: &Value, options: &Options, span: Span) -> SassR
 }
 
 pub(crate) fn inspect_float(number: f64, options: &Options, span: Span) -> String {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, true, span);
+    let mut serializer = Serializer::new_expr(options, true, span);
 
     serializer.write_float(number);
 
@@ -87,8 +81,7 @@ pub(crate) fn inspect_float(number: f64, options: &Options, span: Span) -> Strin
 }
 
 pub(crate) fn inspect_map(map: &SassMap, options: &Options, span: Span) -> SassResult<String> {
-    let code_map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &code_map, true, span);
+    let mut serializer = Serializer::new_expr(options, true, span);
 
     serializer.visit_map(map, span)?;
 
@@ -100,8 +93,7 @@ pub(crate) fn inspect_function_ref(
     options: &Options,
     span: Span,
 ) -> SassResult<String> {
-    let code_map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &code_map, true, span);
+    let mut serializer = Serializer::new_expr(options, true, span);
 
     serializer.visit_function_ref(func, span)?;
 
@@ -113,8 +105,7 @@ pub(crate) fn inspect_mixin_ref(
     options: &Options,
     span: Span,
 ) -> SassResult<String> {
-    let code_map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &code_map, true, span);
+    let mut serializer = Serializer::new_expr(options, true, span);
 
     serializer.visit_mixin_ref(mixin, span)?;
 
@@ -126,8 +117,7 @@ pub(crate) fn inspect_number(
     options: &Options,
     span: Span,
 ) -> SassResult<String> {
-    let map = CodeMap::new();
-    let mut serializer = Serializer::new(options, &map, true, span);
+    let mut serializer = Serializer::new_expr(options, true, span);
 
     serializer.visit_number(number)?;
 
@@ -142,7 +132,7 @@ pub(crate) struct Serializer<'a> {
     // todo: use this field
     _quote: bool,
     buffer: Vec<u8>,
-    map: &'a CodeMap,
+    map: Option<&'a CodeMap>,
     _span: Span,
     in_calculation: bool,
     in_custom_property: bool,
@@ -157,7 +147,24 @@ impl<'a> Serializer<'a> {
             indent_width: 2,
             options,
             buffer: Vec::new(),
-            map,
+            map: Some(map),
+            _span: span,
+            in_calculation: false,
+            in_custom_property: false,
+        }
+    }
+
+    /// Create a serializer for expression formatting (no CodeMap needed).
+    /// Used by utility functions that serialize individual values/selectors.
+    fn new_expr(options: &'a Options<'a>, inspect: bool, span: Span) -> Self {
+        Self {
+            inspect,
+            _quote: true,
+            indentation: 0,
+            indent_width: 2,
+            options,
+            buffer: Vec::new(),
+            map: None,
             _span: span,
             in_calculation: false,
             in_custom_property: false,
@@ -1588,9 +1595,7 @@ impl<'a> Serializer<'a> {
             self.in_custom_property = false;
             let name_col = self
                 .map
-                .look_up_pos(style.property_span.low())
-                .position
-                .column;
+                .map_or(0, |m| m.look_up_pos(style.property_span.low()).position.column);
             self.reindent_buffer_from(start, name_col);
         } else {
             self.visit_value(&style.value.node, style.value.span)?;
@@ -1729,7 +1734,7 @@ impl<'a> Serializer<'a> {
         }
 
         self.write_indentation();
-        let col = self.map.look_up_pos(span.low()).position.column;
+        let col = self.map.map_or(0, |m| m.look_up_pos(span.low()).position.column);
         let mut lines = comment.lines();
 
         if let Some(line) = lines.next() {
@@ -1776,7 +1781,7 @@ impl<'a> Serializer<'a> {
 
     /// Get the source line number for a span position
     fn source_line(&self, pos: codemap::Pos) -> usize {
-        self.map.look_up_pos(pos).position.line
+        self.map.map_or(0, |m| m.look_up_pos(pos).position.line)
     }
 
     /// Write a comment inline (after a semicolon or opening brace) without indentation
@@ -1793,7 +1798,7 @@ impl<'a> Serializer<'a> {
 
         self.buffer.push(b' ');
         // For inline comments, write on the same line without indentation
-        let col = self.map.look_up_pos(span.low()).position.column;
+        let col = self.map.map_or(0, |m| m.look_up_pos(span.low()).position.column);
         let mut lines = comment.lines();
 
         if let Some(line) = lines.next() {
