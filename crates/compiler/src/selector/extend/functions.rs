@@ -189,9 +189,9 @@ fn weave_parents(
     let lcs = longest_common_subsequence(
         groups_two.as_slices().0,
         groups_one.as_slices().0,
-        Some(&|group_one, group_two| {
+        Some(&|group_one: &Vec<ComplexSelectorComponent>, group_two: &Vec<ComplexSelectorComponent>| {
             if group_one == group_two {
-                return Some(group_one);
+                return Some(group_one.clone());
             }
 
             if let ComplexSelectorComponent::Combinator(..) = group_one.first()? {
@@ -201,18 +201,18 @@ fn weave_parents(
                 return None;
             }
 
-            if complex_is_parent_superselector(group_one.clone(), group_two.clone()) {
-                return Some(group_two);
+            if complex_is_parent_superselector(group_one.as_slice(), group_two.as_slice()) {
+                return Some(group_two.clone());
             }
-            if complex_is_parent_superselector(group_two.clone(), group_one.clone()) {
-                return Some(group_one);
+            if complex_is_parent_superselector(group_two.as_slice(), group_one.as_slice()) {
+                return Some(group_one.clone());
             }
 
-            if !must_unify(&group_one, &group_two) {
+            if !must_unify(group_one, group_two) {
                 return None;
             }
 
-            let unified = unify_complex(vec![group_one, group_two])?;
+            let unified = unify_complex(vec![group_one.clone(), group_two.clone()])?;
             if unified.len() > 1 {
                 return None;
             }
@@ -229,13 +229,10 @@ fn weave_parents(
     for group in lcs {
         choices.push(
             chunks(&mut groups_one, &mut groups_two, |sequence| {
-                complex_is_parent_superselector(
-                    match sequence.front() {
-                        Some(v) => v.clone(),
-                        None => return true,
-                    },
-                    group.clone(),
-                )
+                match sequence.front() {
+                    Some(v) => complex_is_parent_superselector(v.as_slice(), group.as_slice()),
+                    None => true,
+                }
             })
             .into_iter()
             .map(|chunk| chunk.into_iter().flatten().collect())
@@ -315,15 +312,19 @@ fn merge_initial_combinators(
 fn longest_common_subsequence<T: PartialEq + Clone>(
     list_one: &[T],
     list_two: &[T],
-    select: Option<&dyn Fn(T, T) -> Option<T>>,
+    select: Option<&dyn Fn(&T, &T) -> Option<T>>,
 ) -> Vec<T> {
-    let select = select.unwrap_or(&|element_one, element_two| {
+    let default_select = |element_one: &T, element_two: &T| -> Option<T> {
         if element_one == element_two {
-            Some(element_one)
+            Some(element_one.clone())
         } else {
             None
         }
-    });
+    };
+    let select: &dyn Fn(&T, &T) -> Option<T> = match select {
+        Some(f) => f,
+        None => &default_select,
+    };
 
     let mut lengths = vec![vec![0; list_two.len() + 1]; list_one.len() + 1];
 
@@ -331,10 +332,7 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
 
     for i in 0..list_one.len() {
         for j in 0..list_two.len() {
-            let selection = select(
-                list_one.get(i).unwrap().clone(),
-                list_two.get(j).unwrap().clone(),
-            );
+            let selection = select(&list_one[i], &list_two[j]);
             selections[i][j] = selection.clone();
             lengths[i + 1][j + 1] = if selection.is_none() {
                 std::cmp::max(lengths[i + 1][j], lengths[i][j + 1])
@@ -724,8 +722,8 @@ fn chunks<T: Clone>(
 /// match elements that match `A`. However, it *is* a parent superselector,
 /// since `B X` is a superselector of `B A X`.
 fn complex_is_parent_superselector(
-    mut complex_one: Vec<ComplexSelectorComponent>,
-    mut complex_two: Vec<ComplexSelectorComponent>,
+    complex_one: &[ComplexSelectorComponent],
+    complex_two: &[ComplexSelectorComponent],
 ) -> bool {
     if let Some(ComplexSelectorComponent::Combinator(..)) = complex_one.first() {
         return false;
@@ -739,11 +737,13 @@ fn complex_is_parent_superselector(
     let base = CompoundSelector {
         components: vec![SimpleSelector::Placeholder(String::new())],
     };
-    complex_one.push(ComplexSelectorComponent::Compound(base.clone()));
-    complex_two.push(ComplexSelectorComponent::Compound(base));
+    let mut one = complex_one.to_vec();
+    let mut two = complex_two.to_vec();
+    one.push(ComplexSelectorComponent::Compound(base.clone()));
+    two.push(ComplexSelectorComponent::Compound(base));
 
-    ComplexSelector::new(complex_one, false)
-        .is_super_selector(&ComplexSelector::new(complex_two, false))
+    ComplexSelector::new(one, false)
+        .is_super_selector(&ComplexSelector::new(two, false))
 }
 
 /// Returns a list of all possible paths through the given lists.

@@ -130,9 +130,9 @@ impl SelectorList {
             .components
             .into_iter()
             .flat_map(|c1| {
-                other.clone().components.into_iter().flat_map(move |c2| {
+                other.components.iter().flat_map(move |c2| {
                     let unified: Option<Vec<Vec<ComplexSelectorComponent>>> =
-                        unify_complex(vec![c1.components.clone(), c2.components]);
+                        unify_complex(vec![c1.components.clone(), c2.components.clone()]);
                     if let Some(u) = unified {
                         u.into_iter()
                             .map(|c| ComplexSelector::new(c, false))
@@ -191,12 +191,11 @@ impl SelectorList {
                                 return Ok(vec![complex]);
                             }
                             return Ok(parent
-                                .clone()
                                 .components
-                                .into_iter()
-                                .map(move |parent_complex| {
-                                    let mut components = parent_complex.components;
-                                    components.append(&mut complex.components.clone());
+                                .iter()
+                                .map(|parent_complex| {
+                                    let mut components = parent_complex.components.clone();
+                                    components.extend_from_slice(&complex.components);
                                     ComplexSelector::new(
                                         components,
                                         complex.line_break || parent_complex.line_break,

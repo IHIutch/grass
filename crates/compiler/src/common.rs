@@ -42,6 +42,27 @@ impl BinaryOp {
     }
 }
 
+impl BinaryOp {
+    pub fn as_bytes(self) -> &'static [u8] {
+        match self {
+            BinaryOp::SingleEq => b"=",
+            BinaryOp::Equal => b"==",
+            BinaryOp::NotEqual => b"!=",
+            BinaryOp::GreaterThanEqual => b">=",
+            BinaryOp::LessThanEqual => b"<=",
+            BinaryOp::GreaterThan => b">",
+            BinaryOp::LessThan => b"<",
+            BinaryOp::Plus => b"+",
+            BinaryOp::Minus => b"-",
+            BinaryOp::Mul => b"*",
+            BinaryOp::Div => b"/",
+            BinaryOp::Rem => b"%",
+            BinaryOp::And => b"and",
+            BinaryOp::Or => b"or",
+        }
+    }
+}
+
 impl Display for BinaryOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

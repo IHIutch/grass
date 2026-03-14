@@ -433,8 +433,7 @@ impl<'a> Serializer<'a> {
                     self.buffer.push(b' ');
                 }
 
-                // todo: avoid allocation with `write_binary_operator` method
-                self.buffer.extend_from_slice(op.to_string().as_bytes());
+                self.buffer.extend_from_slice(op.as_bytes());
 
                 if operator_whitespace {
                     self.buffer.push(b' ');
