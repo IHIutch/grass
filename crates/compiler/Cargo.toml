@@ -38,6 +38,7 @@ lasso = "0.7"
 rustc-hash = "2"
 compact_str = "0.8"
 ryu = "1"
+bumpalo = { version = "3", features = ["collections"] }
 
 [features]
 default = ["random", "custom-builtin-fns"]
