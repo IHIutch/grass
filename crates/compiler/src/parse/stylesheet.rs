@@ -4,7 +4,6 @@ use std::{
     ffi::OsString,
     mem,
     path::{Path, PathBuf},
-    rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -57,7 +56,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     /// Convert a Vec of statements to an arena-allocated slice.
     fn alloc_stmts(&self, stmts: Vec<AstStmt<'a>>) -> &'a [AstStmt<'a>] {
-        self.arena().alloc_slice_fill_iter(stmts.into_iter())
+        self.arena().alloc_slice_fill_iter(stmts)
     }
 
     fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
@@ -973,7 +972,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let try_url = if self.is_indented() {
                 let saved = self.toks().cursor();
                 let is_url = self.scan_identifier("url", false)?
-                    && self.toks().peek().map_or(false, |t| t.kind == '(');
+                    && self.toks().peek().is_some_and(|t| t.kind == '(');
                 self.toks_mut().set_cursor(saved);
                 is_url
             } else {
@@ -1264,7 +1263,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
         self.set_consume_newlines(was_consuming_newlines);
         // Parse raw name first to check for CSS custom mixin prefix
-        let raw_name_start = self.toks().cursor();
+        let _raw_name_start = self.toks().cursor();
         let raw_name = self.parse_identifier(false, false)?;
         if raw_name.starts_with("--") {
             return Err((
@@ -1328,7 +1327,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         // Strip comments from @-moz-document values (dart-sass compatibility)
         let omit_comments = name.as_plain()
-            .map_or(false, |n| n.eq_ignore_ascii_case("-moz-document"));
+            .is_some_and(|n| n.eq_ignore_ascii_case("-moz-document"));
 
         let value: Option<Interpolation<'a>> =
             if !self.toks_mut().next_char_is('!') && !self.at_end_of_statement() {
@@ -1339,8 +1338,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         // CSS custom function: @function --name() or @FUNCTION --name()
         let is_css_function = name.as_plain()
-            .map_or(false, |n| n.eq_ignore_ascii_case("function"))
-            && value.as_ref().map_or(false, |v| v.initial_plain().starts_with("--"));
+            .is_some_and(|n| n.eq_ignore_ascii_case("function"))
+            && value.as_ref().is_some_and(|v| v.initial_plain().starts_with("--"));
         let was_in_css_function = self.flags().in_css_function_body();
         if is_css_function {
             self.flags_mut().set(ContextFlags::IN_CSS_FUNCTION_BODY, true);
@@ -1363,7 +1362,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::UnknownAtRule(Box::new(AstUnknownAtRule {
             name,
             value,
-            body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c.into_iter())),
+            body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c)),
             span: self.toks_mut().span_from(start),
         })))
     }

@@ -1654,7 +1654,7 @@ impl<'a> Serializer<'a> {
 
         while pos < rest_bytes.len() {
             // Scan forward past whitespace/newlines to find the next non-empty line start
-            let scan_start = pos;
+            let _scan_start = pos;
             let mut newlines = 1; // We already consumed one \n
             let mut line_start = pos;
 
@@ -2178,9 +2178,6 @@ fn normalize_whitespace(s: &str) -> String {
                         last_was_space = true;
                     }
                 } else {
-                    if c == '\n' {
-                        last_was_space = false;
-                    }
                     result.push(c);
                     last_was_space = false;
                 }

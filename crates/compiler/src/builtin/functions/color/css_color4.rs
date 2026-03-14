@@ -249,9 +249,9 @@ pub(crate) fn lab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                 return Err(("Missing element $a.", span).into());
             }
             if is_slash_list {
-                construct_color_slash_list("lab", ColorSpace::Lab, &list, has_alpha, span, visitor)
+                construct_color_slash_list("lab", ColorSpace::Lab, list, has_alpha, span, visitor)
             } else {
-                construct_color("lab", ColorSpace::Lab, &list, has_alpha, span, visitor)
+                construct_color("lab", ColorSpace::Lab, list, has_alpha, span, visitor)
             }
         }
     }
@@ -278,9 +278,9 @@ pub(crate) fn lch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                 return Err(("Missing element $chroma.", span).into());
             }
             if is_slash_list {
-                construct_color_slash_list("lch", ColorSpace::Lch, &list, has_alpha, span, visitor)
+                construct_color_slash_list("lch", ColorSpace::Lch, list, has_alpha, span, visitor)
             } else {
-                construct_color("lch", ColorSpace::Lch, &list, has_alpha, span, visitor)
+                construct_color("lch", ColorSpace::Lch, list, has_alpha, span, visitor)
             }
         }
     }
@@ -307,9 +307,9 @@ pub(crate) fn oklab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
                 return Err(("Missing element $a.", span).into());
             }
             if is_slash_list {
-                construct_color_slash_list("oklab", ColorSpace::Oklab, &list, has_alpha, span, visitor)
+                construct_color_slash_list("oklab", ColorSpace::Oklab, list, has_alpha, span, visitor)
             } else {
-                construct_color("oklab", ColorSpace::Oklab, &list, has_alpha, span, visitor)
+                construct_color("oklab", ColorSpace::Oklab, list, has_alpha, span, visitor)
             }
         }
     }
@@ -336,9 +336,9 @@ pub(crate) fn oklch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
                 return Err(("Missing element $chroma.", span).into());
             }
             if is_slash_list {
-                construct_color_slash_list("oklch", ColorSpace::Oklch, &list, has_alpha, span, visitor)
+                construct_color_slash_list("oklch", ColorSpace::Oklch, list, has_alpha, span, visitor)
             } else {
-                construct_color("oklch", ColorSpace::Oklch, &list, has_alpha, span, visitor)
+                construct_color("oklch", ColorSpace::Oklch, list, has_alpha, span, visitor)
             }
         }
     }
@@ -511,7 +511,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     }
 
     // Check if any channel or alpha is a special function — pass through as CSS string
-    let alpha_is_special = alpha_val.as_ref().map_or(false, |a| a.is_special_function());
+    let alpha_is_special = alpha_val.as_ref().is_some_and(|a| a.is_special_function());
     if channel_items.iter().any(|v| v.is_special_function()) || alpha_is_special {
         let is_compressed = visitor.options.is_compressed();
         let mut result = format!("color({}", space_name);

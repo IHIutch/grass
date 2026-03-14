@@ -28,6 +28,7 @@ mod unknown;
 ///
 /// The arena is created at the entry point (lib.rs) and lives until the
 /// compilation result is returned to the caller.
+#[allow(dead_code)]
 pub(crate) unsafe fn erase_fn_decl_lifetime<'a>(
     decl: AstFunctionDecl<'a>,
 ) -> AstFunctionDecl<'static> {
@@ -35,6 +36,7 @@ pub(crate) unsafe fn erase_fn_decl_lifetime<'a>(
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
+#[allow(dead_code)]
 pub(crate) unsafe fn erase_mixin_lifetime<'a>(
     mixin: AstMixin<'a>,
 ) -> AstMixin<'static> {
@@ -42,6 +44,7 @@ pub(crate) unsafe fn erase_mixin_lifetime<'a>(
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
+#[allow(dead_code)]
 pub(crate) unsafe fn erase_content_block_lifetime<'a>(
     block: AstContentBlock<'a>,
 ) -> AstContentBlock<'static> {
@@ -49,6 +52,7 @@ pub(crate) unsafe fn erase_content_block_lifetime<'a>(
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
+#[allow(dead_code)]
 pub(crate) unsafe fn erase_forward_rule_lifetime<'a>(
     rule: AstForwardRule<'a>,
 ) -> AstForwardRule<'static> {
@@ -63,6 +67,7 @@ pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
+#[allow(dead_code)]
 pub(crate) unsafe fn erase_stmt_lifetime<'a>(
     stmt: AstStmt<'a>,
 ) -> AstStmt<'static> {
@@ -70,6 +75,7 @@ pub(crate) unsafe fn erase_stmt_lifetime<'a>(
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
+#[allow(dead_code)]
 pub(crate) unsafe fn erase_configured_variable_lifetime<'a>(
     cv: ConfiguredVariable<'a>,
 ) -> ConfiguredVariable<'static> {

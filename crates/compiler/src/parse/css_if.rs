@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use codemap::Spanned;
 
 use crate::{

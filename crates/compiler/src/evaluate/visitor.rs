@@ -92,6 +92,7 @@ fn unwrap_paren(cond: IfCondition<'static>) -> IfCondition<'static> {
 }
 
 pub(crate) trait UserDefinedCallable {
+    #[allow(dead_code)]
     fn name(&self) -> Identifier;
     fn arguments(&self) -> &ArgumentDeclaration<'static>;
 }
@@ -223,6 +224,7 @@ pub struct Visitor<'a> {
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
 }
 
+#[allow(dead_code)]
 impl<'a> Visitor<'a> {
     pub fn new(
         path: &Path,
@@ -595,7 +597,7 @@ impl<'a> Visitor<'a> {
             let upstream_ptrs = {
                 let module = module_ref.borrow();
                 if let Module::Environment { upstream, .. } = &*module {
-                    upstream.iter().map(|u| Rc::as_ptr(u)).collect::<Vec<_>>()
+                    upstream.iter().map(Rc::as_ptr).collect::<Vec<_>>()
                 } else {
                     continue;
                 }
@@ -907,10 +909,7 @@ impl<'a> Visitor<'a> {
                 .into());
         }
 
-        let mut name = {
-            let result = self.perform_interpolation_ref(&style.name, true)?;
-            result
-        };
+        let mut name = self.perform_interpolation_ref(&style.name, true)?;
 
         if let Some(declaration_name) = &self.declaration_name {
             name = format!("{}-{}", declaration_name, name);
@@ -1273,7 +1272,7 @@ impl<'a> Visitor<'a> {
                     .module_configurations
                     .get(&url)
                     .and_then(|existing| existing.as_ref())
-                    .map_or(false, |existing| {
+                    .is_some_and(|existing| {
                         let existing_orig = Configuration::original_config(Rc::clone(existing));
                         let current_orig =
                             Configuration::original_config(Rc::clone(&current_configuration));
@@ -1785,7 +1784,7 @@ impl<'a> Visitor<'a> {
         // and register cloned selectors in it. The registration process
         // will apply matching extensions via set_inner on the clones.
         let mut temp_store = extensions;
-        for (_old_ptr, new_selector) in selector_map {
+        for new_selector in selector_map.values() {
             temp_store.register_existing_selector(new_selector)?;
         }
 
@@ -3080,27 +3079,29 @@ impl<'a> Visitor<'a> {
         let parent = self.parent.unwrap_or(CssTree::ROOT);
 
         // A non-comment, non-import statement at ROOT ends the import section.
-        if parent == CssTree::ROOT && self.in_module_import_section {
-            if !matches!(node, CssStmt::Comment(..) | CssStmt::Import(..)) {
-                self.flush_pending_imports(false);
-                self.in_module_import_section = false;
-            }
+        if parent == CssTree::ROOT
+            && self.in_module_import_section
+            && !matches!(node, CssStmt::Comment(..) | CssStmt::Import(..))
+        {
+            self.flush_pending_imports(false);
+            self.in_module_import_section = false;
         }
 
         // Only check interleaving inside style rules
-        if self.style_rule_exists() && parent != CssTree::ROOT {
-            if self.css_tree.has_following_sibling(parent) {
-                let grandparent = self.css_tree.child_to_parent.get(&parent).copied().unwrap();
-                let parent_copy = self
-                    .css_tree
-                    .get(parent)
-                    .as_ref()
-                    .map(CssStmt::copy_without_children)
-                    .unwrap();
-                let new_parent = self.css_tree.add_child(parent_copy, grandparent);
-                self.parent = Some(new_parent);
-                return self.css_tree.add_child(node, new_parent);
-            }
+        if self.style_rule_exists()
+            && parent != CssTree::ROOT
+            && self.css_tree.has_following_sibling(parent)
+        {
+            let grandparent = self.css_tree.child_to_parent.get(&parent).copied().unwrap();
+            let parent_copy = self
+                .css_tree
+                .get(parent)
+                .as_ref()
+                .map(CssStmt::copy_without_children)
+                .unwrap();
+            let new_parent = self.css_tree.add_child(parent_copy, grandparent);
+            self.parent = Some(new_parent);
+            return self.css_tree.add_child(node, new_parent);
         }
 
         self.css_tree.add_stmt(node, self.parent)
@@ -4153,7 +4154,7 @@ impl<'a> Visitor<'a> {
     fn check_calc_args(
         args: &[CalculationArg],
         required: usize,
-        name: &str,
+        _name: &str,
         span: Span,
     ) -> SassResult<()> {
         if args.len() < required {

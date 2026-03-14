@@ -162,6 +162,7 @@ impl ExtensionStore {
             new_selectors.insert(simple.clone(), new_set);
         }
 
+        #[allow(clippy::mutable_key_type)]
         let mut new_media_contexts = FxHashMap::default();
         for (sel, queries) in &self.media_contexts {
             let ptr = sel.rc_ptr();
@@ -455,7 +456,7 @@ impl ExtensionStore {
 
         let complex_has_line_break = complex.line_break;
 
-        let is_original = self.originals.contains(&complex);
+        let is_original = self.originals.contains(complex);
 
         for (i, component) in complex.components.iter().enumerate() {
             if let ComplexSelectorComponent::Compound(component) = component {
@@ -525,7 +526,7 @@ impl ExtensionStore {
                         // Make sure that copies of `complex` retain their status as "original"
                         // selectors. This includes selectors that are modified because a :not()
                         // was extended into.
-                        if first && self.originals.contains(&complex) {
+                        if first && self.originals.contains(complex) {
                             self.originals.insert(&output_complex);
                         }
                         first = false;

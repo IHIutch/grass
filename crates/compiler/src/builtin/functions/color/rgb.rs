@@ -43,7 +43,7 @@ fn parse_number_with_unit(s: &str) -> Option<(&str, Unit)> {
     ];
     for (suffix, unit) in &units {
         if let Some(num_str) = s.strip_suffix(suffix) {
-            if !num_str.is_empty() && num_str.bytes().last().map_or(false, |b| b.is_ascii_digit() || b == b'.') {
+            if !num_str.is_empty() && num_str.bytes().last().is_some_and(|b| b.is_ascii_digit() || b == b'.') {
                 return Some((num_str, unit.clone()));
             }
         }

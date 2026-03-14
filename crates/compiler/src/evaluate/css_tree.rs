@@ -257,6 +257,7 @@ impl CssTree {
     /// Used to re-parent CSS nodes that were added to ROOT during module
     /// evaluation but need to be nested under a different parent (e.g., for
     /// nested @import).
+    #[allow(dead_code)]
     pub fn reparent_children(
         &mut self,
         from_parent: CssTreeIdx,
