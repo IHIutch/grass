@@ -522,33 +522,36 @@ pub struct AstSupportsRule {
     pub span: Span,
 }
 
+/// AST statement node. Large variants are boxed to keep the enum small
+/// (~96 bytes instead of ~272 bytes), improving cache utilization and
+/// reducing the cost of cloning statements in loop bodies.
 #[derive(Debug, Clone)]
 pub enum AstStmt {
     If(AstIf),
-    For(AstFor),
+    For(Box<AstFor>),
     Return(AstReturn),
     RuleSet(AstRuleSet),
-    Style(AstStyle),
-    Each(AstEach),
+    Style(Box<AstStyle>),
+    Each(Box<AstEach>),
     Media(AstMedia),
-    Include(AstInclude),
-    While(AstWhile),
-    VariableDecl(AstVariableDecl),
+    Include(Box<AstInclude>),
+    While(Box<AstWhile>),
+    VariableDecl(Box<AstVariableDecl>),
     LoudComment(AstLoudComment),
     SilentComment(AstSilentComment),
     FunctionDecl(AstFunctionDecl),
     Mixin(AstMixin),
-    ContentRule(AstContentRule),
+    ContentRule(Box<AstContentRule>),
     Warn(AstWarn),
-    UnknownAtRule(AstUnknownAtRule),
+    UnknownAtRule(Box<AstUnknownAtRule>),
     ErrorRule(AstErrorRule),
     Extend(AstExtendRule),
     AtRootRule(AstAtRootRule),
     Debug(AstDebugRule),
     ImportRule(AstImportRule),
-    Use(AstUseRule),
-    Forward(AstForwardRule),
-    Supports(AstSupportsRule),
+    Use(Box<AstUseRule>),
+    Forward(Box<AstForwardRule>),
+    Supports(Box<AstSupportsRule>),
 }
 
 #[derive(Debug, Clone)]
@@ -665,5 +668,18 @@ fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>
         | AstStmt::ImportRule(_)
         | AstStmt::Use(_)
         | AstStmt::Forward(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    /// Verify AstStmt stays ≤ 96 bytes. Large variants are boxed.
+    /// If this fails, a new large variant was added without boxing.
+    #[test]
+    fn ast_stmt_size() {
+        assert!(size_of::<AstStmt>() <= 96, "AstStmt grew to {} bytes", size_of::<AstStmt>());
     }
 }

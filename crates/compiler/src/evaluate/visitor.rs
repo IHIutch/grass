@@ -708,16 +708,16 @@ impl<'a> Visitor<'a> {
     pub(crate) fn visit_stmt(&mut self, stmt: AstStmt) -> SassResult<Option<Value>> {
         match stmt {
             AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset),
-            AstStmt::Style(style) => self.visit_style(style),
+            AstStmt::Style(style) => self.visit_style(*style),
             AstStmt::SilentComment(..) => Ok(None),
             AstStmt::If(if_stmt) => self.visit_if_stmt(if_stmt),
-            AstStmt::For(for_stmt) => self.visit_for_stmt(for_stmt),
+            AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt),
             AstStmt::Return(ret) => self.visit_return_rule(ret),
-            AstStmt::Each(each_stmt) => self.visit_each_stmt(each_stmt),
+            AstStmt::Each(each_stmt) => self.visit_each_stmt(*each_stmt),
             AstStmt::Media(media_rule) => self.visit_media_rule(media_rule),
-            AstStmt::Include(include_stmt) => self.visit_include_stmt(include_stmt),
+            AstStmt::Include(include_stmt) => self.visit_include_stmt(*include_stmt),
             AstStmt::While(while_stmt) => self.visit_while_stmt(&while_stmt),
-            AstStmt::VariableDecl(decl) => self.visit_variable_decl(decl),
+            AstStmt::VariableDecl(decl) => self.visit_variable_decl(*decl),
             AstStmt::LoudComment(comment) => self.visit_loud_comment(comment),
             AstStmt::ImportRule(import_rule) => self.visit_import_rule(import_rule),
             AstStmt::FunctionDecl(func) => {
@@ -728,26 +728,26 @@ impl<'a> Visitor<'a> {
                 self.visit_mixin_decl(mixin);
                 Ok(None)
             }
-            AstStmt::ContentRule(content_rule) => self.visit_content_rule(content_rule),
+            AstStmt::ContentRule(content_rule) => self.visit_content_rule(*content_rule),
             AstStmt::Warn(warn_rule) => {
                 self.visit_warn_rule(warn_rule)?;
                 Ok(None)
             }
-            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule(unknown_at_rule),
+            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule(*unknown_at_rule),
             AstStmt::ErrorRule(error_rule) => Err(self.visit_error_rule(error_rule)?),
             AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule),
             AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule),
             AstStmt::Debug(debug_rule) => self.visit_debug_rule(debug_rule),
             AstStmt::Use(use_rule) => {
-                self.visit_use_rule(use_rule)?;
+                self.visit_use_rule(*use_rule)?;
                 Ok(None)
             }
             AstStmt::Forward(forward_rule) => {
-                self.visit_forward_rule(forward_rule)?;
+                self.visit_forward_rule(*forward_rule)?;
                 Ok(None)
             }
             AstStmt::Supports(supports_rule) => {
-                self.visit_supports_rule(supports_rule)?;
+                self.visit_supports_rule(*supports_rule)?;
                 Ok(None)
             }
         }

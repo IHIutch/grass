@@ -652,9 +652,9 @@ impl<'a> SassParser<'a> {
             Some(Token {
                 kind: '\n' | '\r', ..
             }) => return Ok(None),
-            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(
+            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(Box::new(
                 self.parse_variable_declaration_without_namespace(None, None)?,
-            ),
+            )),
             Some(Token { kind: '/', .. }) => match self.toks.peek_n(1) {
                 Some(Token { kind: '/', .. }) => self.parse_silent_comment()?,
                 Some(Token { kind: '*', .. }) => AstStmt::LoudComment(self.parse_loud_comment()?),

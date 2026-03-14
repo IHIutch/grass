@@ -244,3 +244,16 @@ impl AstExpr {
         Spanned { node: self, span }
     }
 }
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    /// Verify AstExpr stays ≤ 64 bytes. If this fails, a new large variant
+    /// was added without boxing — check which variant grew and box it.
+    #[test]
+    fn ast_expr_size() {
+        assert!(size_of::<AstExpr>() <= 64, "AstExpr grew to {} bytes", size_of::<AstExpr>());
+    }
+}
