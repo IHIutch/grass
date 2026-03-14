@@ -704,6 +704,223 @@ impl<'a> Visitor<'a> {
         self.visit_stmt(Rc::unwrap_or_clone(stmt))
     }
 
+    /// Visit a statement by reference, avoiding deep clones for common variants.
+    /// Used by loop body and function body iteration to eliminate the Rc::unwrap_or_clone
+    /// deep clone that happened on every iteration.
+    pub(crate) fn visit_stmt_ref(&mut self, stmt: &AstStmt) -> SassResult<Option<Value>> {
+        match stmt {
+            AstStmt::SilentComment(..) => Ok(None),
+            AstStmt::VariableDecl(decl) => self.visit_variable_decl_ref(decl),
+            AstStmt::Return(ret) => {
+                let val = self.visit_expr_ref(&ret.val)?;
+                Ok(Some(self.without_slash(val)))
+            }
+            AstStmt::Style(style) => self.visit_style_ref(style),
+            AstStmt::If(if_stmt) => self.visit_if_stmt_ref(if_stmt),
+            AstStmt::LoudComment(comment) => self.visit_loud_comment_ref(comment),
+            AstStmt::Warn(warn) => {
+                if self.warnings_emitted.insert(warn.span) {
+                    let value = self.visit_expr_ref(&warn.value)?;
+                    let message = value.to_css_string(warn.span, self.options.is_compressed())?;
+                    self.emit_warning(&message, warn.span);
+                }
+                Ok(None)
+            }
+            AstStmt::Debug(debug) => {
+                if !self.options.quiet {
+                    let message = self.visit_expr_ref(&debug.value)?;
+                    let message = message.inspect(debug.span)?;
+                    let loc = self.map.look_up_span(debug.span);
+                    self.options.logger.debug(loc, message.as_str());
+                }
+                Ok(None)
+            }
+            AstStmt::ErrorRule(err) => {
+                let value = self.visit_expr_ref(&err.value)?
+                    .inspect(err.span)?;
+                Err((value, err.span).into())
+            }
+            // For everything else, clone and delegate to owned visitor
+            other => self.visit_stmt(other.clone()),
+        }
+    }
+
+    /// Reference-based variable declaration visitor.
+    fn visit_variable_decl_ref(&mut self, decl: &AstVariableDecl) -> SassResult<Option<Value>> {
+        let name = Spanned {
+            node: decl.name,
+            span: decl.span,
+        };
+
+        if decl.is_guarded {
+            if decl.namespace.is_none() && self.env.at_root() {
+                let var_override = (*self.configuration).borrow_mut().remove(decl.name);
+                if !matches!(
+                    var_override,
+                    Some(ConfiguredValue {
+                        value: Value::Null,
+                        ..
+                    }) | None
+                ) {
+                    self.env.insert_var(
+                        name,
+                        None,
+                        var_override.unwrap().value,
+                        true,
+                        self.flags.in_semi_global_scope(),
+                    )?;
+                    return Ok(None);
+                }
+            }
+
+            if self.env.var_exists(decl.name, decl.namespace, decl.span)? {
+                let value = self.env.get_var(name, decl.namespace).unwrap();
+
+                if value != Value::Null {
+                    return Ok(None);
+                }
+            }
+        }
+
+        let value = self.visit_expr_ref(&decl.value)?;
+        let value = self.without_slash(value);
+
+        self.env.insert_var(
+            name,
+            decl.namespace,
+            value,
+            decl.is_global,
+            self.flags.in_semi_global_scope(),
+        )?;
+
+        Ok(None)
+    }
+
+    /// Reference-based loud comment visitor.
+    fn visit_loud_comment_ref(&mut self, comment: &AstLoudComment) -> SassResult<Option<Value>> {
+        if self.flags.in_function() {
+            return Ok(None);
+        }
+
+        let css_comment = CssStmt::Comment(
+            self.perform_interpolation_ref(&comment.text, false)?,
+            comment.span,
+        );
+
+        let at_root = self.parent.is_none() || self.parent == Some(CssTree::ROOT);
+        if at_root && self.in_module_import_section {
+            self.pending_import_items.push(css_comment);
+        } else {
+            self.add_child_to_current_parent(css_comment);
+        }
+
+        Ok(None)
+    }
+
+    /// Reference-based if-statement visitor.
+    fn visit_if_stmt_ref(&mut self, if_stmt: &AstIf) -> SassResult<Option<Value>> {
+        let mut matched_body: Option<&Vec<AstStmt>> = None;
+        for clause in &if_stmt.if_clauses {
+            if self.visit_expr_ref(&clause.condition)?.is_truthy() {
+                matched_body = Some(&clause.body);
+                break;
+            }
+        }
+
+        if matched_body.is_none() {
+            matched_body = if_stmt.else_clause.as_ref();
+        }
+
+        self.env.scope_enter();
+
+        let mut result = None;
+
+        if let Some(stmts) = matched_body {
+            for stmt in stmts {
+                let val = self.visit_stmt_ref(stmt)?;
+                if val.is_some() {
+                    result = val;
+                    break;
+                }
+            }
+        }
+
+        self.env.scope_exit();
+
+        Ok(result)
+    }
+
+    /// Reference-based style rule visitor — the most common statement in loop bodies.
+    fn visit_style_ref(&mut self, style: &AstStyle) -> SassResult<Option<Value>> {
+        if !self.style_rule_exists()
+            && !self.flags.in_unknown_at_rule()
+            && !self.flags.in_keyframes()
+        {
+            return Err((
+                "Declarations may only be used within style rules.",
+                style.span,
+            )
+                .into());
+        }
+
+        let is_custom_property = style.is_custom_property();
+
+        if is_custom_property && self.declaration_name.is_some() {
+            return Err((
+                "Declarations whose names begin with \"--\" may not be nested.",
+                style.span,
+            )
+                .into());
+        }
+
+        let mut name = {
+            let result = self.perform_interpolation_ref(&style.name, true)?;
+            result
+        };
+
+        if let Some(declaration_name) = &self.declaration_name {
+            name = format!("{}-{}", declaration_name, name);
+        }
+
+        if let Some(value) = style
+            .value
+            .as_ref()
+            .map(|s| {
+                SassResult::Ok(Spanned {
+                    node: self.visit_expr_ref(&s.node)?,
+                    span: s.span,
+                })
+            })
+            .transpose()?
+        {
+            if !value.is_blank() || value.is_empty_list() || is_custom_property {
+                self.add_child_to_current_parent(
+                    CssStmt::Style(Style {
+                        property: InternedString::get_or_intern(&name),
+                        value: Box::new(value),
+                        declared_as_custom_property: is_custom_property,
+                        property_span: style.span,
+                    }),
+                );
+            }
+        }
+
+        if !style.body.is_empty() {
+            let old_declaration_name = self.declaration_name.take();
+            self.declaration_name = Some(name);
+            self.with_scope::<SassResult<()>, _>(false, true, |visitor| {
+                for stmt in &style.body {
+                    let result = visitor.visit_stmt_ref(stmt)?;
+                    debug_assert!(result.is_none());
+                }
+                Ok(())
+            })?;
+            self.declaration_name = old_declaration_name;
+        }
+
+        Ok(None)
+    }
+
     // todo: we really don't have to return Option<Value> from all of these children
     pub(crate) fn visit_stmt(&mut self, stmt: AstStmt) -> SassResult<Option<Value>> {
         match stmt {
@@ -2168,8 +2385,8 @@ impl<'a> Visitor<'a> {
                 |content, visitor| {
                     let old_in_mixin = visitor.flags.in_mixin();
                     visitor.flags.set(ContextFlags::IN_MIXIN, false);
-                    for stmt in content.content.body.iter().cloned() {
-                        let result = visitor.visit_stmt_arc(stmt)?;
+                    for stmt in content.content.body.iter() {
+                        let result = visitor.visit_stmt_ref(stmt)?;
                         debug_assert!(result.is_none());
                     }
                     visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
@@ -3018,8 +3235,8 @@ impl<'a> Visitor<'a> {
                     include_stmt.name.span,
                     |mixin, visitor| {
                         visitor.with_content(callable_content, |visitor| {
-                            for stmt in mixin.body.iter().cloned() {
-                                let result = visitor.visit_stmt_arc(stmt)?;
+                            for stmt in mixin.body.iter() {
+                                let result = visitor.visit_stmt_ref(stmt)?;
                                 debug_assert!(result.is_none());
                             }
                             Ok(())
@@ -3068,8 +3285,8 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            for stmt in each_stmt.body.iter().cloned() {
-                let val = self.visit_stmt_arc(stmt)?;
+            for stmt in each_stmt.body.iter() {
+                let val = self.visit_stmt_ref(stmt)?;
                 if val.is_some() {
                     result = val;
                     break 'outer;
@@ -3139,8 +3356,8 @@ impl<'a> Visitor<'a> {
                 }),
             );
 
-            for stmt in for_stmt.body.iter().cloned() {
-                let val = self.visit_stmt_arc(stmt)?;
+            for stmt in for_stmt.body.iter() {
+                let val = self.visit_stmt_ref(stmt)?;
                 if val.is_some() {
                     result = val;
                     break 'outer;
@@ -3163,8 +3380,8 @@ impl<'a> Visitor<'a> {
                 .visit_expr(while_stmt.condition.clone())?
                 .is_truthy()
             {
-                for stmt in while_stmt.body.iter().cloned() {
-                    let val = visitor.visit_stmt_arc(stmt)?;
+                for stmt in while_stmt.body.iter() {
+                    let val = visitor.visit_stmt_ref(stmt)?;
                     if val.is_some() {
                         result = val;
                         break 'outer;
@@ -3292,6 +3509,40 @@ impl<'a> Visitor<'a> {
         } else {
             result
         })
+    }
+
+    /// Resolve interpolation by reference, cloning only string parts and
+    /// evaluating expressions via visit_expr_ref.
+    fn perform_interpolation_ref(
+        &mut self,
+        interpolation: &Interpolation,
+        _warn_for_color: bool,
+    ) -> SassResult<String> {
+        let result = match interpolation.contents.len() {
+            0 => String::new(),
+            1 => match &interpolation.contents[0] {
+                InterpolationPart::String(s) => s.clone(),
+                InterpolationPart::Expr(e) => {
+                    let span = e.span;
+                    let result = self.visit_expr_ref(&e.node)?;
+                    self.serialize(result, QuoteKind::None, span)?
+                }
+            },
+            _ => interpolation
+                .contents
+                .iter()
+                .map(|part| match part {
+                    InterpolationPart::String(s) => Ok(s.clone()),
+                    InterpolationPart::Expr(e) => {
+                        let span = e.span;
+                        let result = self.visit_expr_ref(&e.node)?;
+                        self.serialize(result, QuoteKind::None, span)
+                    }
+                })
+                .collect::<SassResult<String>>()?,
+        };
+
+        Ok(result)
     }
 
     fn perform_interpolation(
@@ -3640,8 +3891,8 @@ impl<'a> Visitor<'a> {
                 .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
                     let old_in_mixin = visitor.flags.in_mixin();
                     visitor.flags.set(ContextFlags::IN_MIXIN, false);
-                    for stmt in function.body.iter().cloned() {
-                        let result = visitor.visit_stmt_arc(stmt)?;
+                    for stmt in function.body.iter() {
+                        let result = visitor.visit_stmt_ref(stmt)?;
 
                         if let Some(val) = result {
                             visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
@@ -3854,6 +4105,35 @@ impl<'a> Visitor<'a> {
             Some(selector) => selector.clone().to_sass_list(),
             None => Value::Null,
         }
+    }
+
+    /// Evaluate an expression by reference, avoiding clones for common variants.
+    /// Falls back to cloning for complex/rare variants.
+    fn visit_expr_ref(&mut self, expr: &AstExpr) -> SassResult<Value> {
+        Ok(match expr {
+            AstExpr::True => Value::True,
+            AstExpr::False => Value::False,
+            AstExpr::Null => Value::Null,
+            AstExpr::Color(c) => Value::Color(Rc::clone(c)),
+            AstExpr::Number { n, unit } => Value::Dimension(SassNumber {
+                num: *n,
+                unit: unit.clone(),
+                as_slash: None,
+            }),
+            AstExpr::Variable { name, namespace } => self.env.get_var(*name, *namespace)?,
+            AstExpr::ParentSelector => self.visit_parent_selector(),
+            // Rc-wrapped variants: Rc::clone is cheap, inner unwrap may clone
+            AstExpr::BinaryOp(rc) => {
+                let binop = Rc::unwrap_or_clone(Rc::clone(rc));
+                self.visit_bin_op(binop.lhs, binop.op, binop.rhs, binop.allows_slash, binop.span)?
+            }
+            AstExpr::Paren(rc) => self.visit_expr_ref(rc)?,
+            AstExpr::UnaryOp(op, rc, span) => {
+                self.visit_unary_op(*op, Rc::unwrap_or_clone(Rc::clone(rc)), *span)?
+            }
+            // Everything else: clone and delegate to owned visitor
+            other => self.visit_expr(other.clone())?,
+        })
     }
 
     fn visit_expr(&mut self, expr: AstExpr) -> SassResult<Value> {
