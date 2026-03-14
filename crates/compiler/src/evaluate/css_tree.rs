@@ -1,7 +1,6 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::{HashMap, HashSet},
-};
+use std::cell::{Ref, RefCell, RefMut};
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast::CssStmt;
 use crate::selector::ExtendedSelector;
@@ -10,13 +9,13 @@ use crate::selector::ExtendedSelector;
 pub(super) struct CssTree {
     // None is tombstone
     stmts: Vec<RefCell<Option<CssStmt>>>,
-    pub parent_to_child: HashMap<CssTreeIdx, Vec<CssTreeIdx>>,
-    pub child_to_parent: HashMap<CssTreeIdx, CssTreeIdx>,
+    pub parent_to_child: FxHashMap<CssTreeIdx, Vec<CssTreeIdx>>,
+    pub child_to_parent: FxHashMap<CssTreeIdx, CssTreeIdx>,
     /// Maps each child to its index within its parent's children list.
     /// Enables O(1) lookup in has_following_sibling instead of O(n) scan.
-    child_position: HashMap<CssTreeIdx, usize>,
+    child_position: FxHashMap<CssTreeIdx, usize>,
     /// Nodes hidden from output but preserved for cloning (load-css templates).
-    hidden: HashSet<CssTreeIdx>,
+    hidden: FxHashSet<CssTreeIdx>,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
@@ -29,10 +28,10 @@ impl CssTree {
     pub fn new() -> Self {
         let mut tree = Self {
             stmts: Vec::new(),
-            parent_to_child: HashMap::new(),
-            child_to_parent: HashMap::new(),
-            child_position: HashMap::new(),
-            hidden: HashSet::new(),
+            parent_to_child: FxHashMap::default(),
+            child_to_parent: FxHashMap::default(),
+            child_position: FxHashMap::default(),
+            hidden: FxHashSet::default(),
         };
 
         tree.stmts.push(RefCell::new(None));
@@ -307,7 +306,7 @@ impl CssTree {
         &mut self,
         idx: CssTreeIdx,
         new_parent: CssTreeIdx,
-        selector_map: &mut HashMap<usize, ExtendedSelector>,
+        selector_map: &mut FxHashMap<usize, ExtendedSelector>,
     ) -> CssTreeIdx {
         let cloned_stmt = {
             let stmt = self.stmts[idx.0].borrow();
@@ -363,7 +362,7 @@ impl CssTree {
     pub fn clone_subtree_hidden(
         &mut self,
         idx: CssTreeIdx,
-        selector_map: &mut HashMap<usize, ExtendedSelector>,
+        selector_map: &mut FxHashMap<usize, ExtendedSelector>,
     ) -> CssTreeIdx {
         let cloned_stmt = {
             let stmt = self.stmts[idx.0].borrow();

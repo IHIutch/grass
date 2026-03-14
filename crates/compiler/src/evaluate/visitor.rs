@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fmt,
     iter::FromIterator,
@@ -12,7 +12,7 @@ use std::{
 
 use codemap::{CodeMap, Span, Spanned};
 use indexmap::IndexSet;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     ast::*,
@@ -152,7 +152,7 @@ pub struct Visitor<'a> {
     /// Used by `&` in value context, matching dart-sass's `originalSelector`.
     pub(crate) original_selector: Option<SelectorList>,
     // avoid emitting duplicate warnings for the same span
-    pub(crate) warnings_emitted: HashSet<Span>,
+    pub(crate) warnings_emitted: FxHashSet<Span>,
     pub(crate) media_queries: Option<Vec<MediaQuery>>,
     pub(crate) media_query_sources: Option<IndexSet<MediaQuery>>,
     pub(crate) extender: ExtensionStore,
@@ -163,12 +163,12 @@ pub struct Visitor<'a> {
 
     /// Maps module URLs to their root-level CSS tree indices.
     /// Used to clone module CSS when the same module is loaded via @import.
-    module_css_indices: HashMap<PathBuf, Vec<CssTreeIdx>>,
+    module_css_indices: FxHashMap<PathBuf, Vec<CssTreeIdx>>,
 
     /// Modules that were first loaded inside an @import context.
     /// When these modules are later @use'd in a non-import context, their
     /// CSS must be cloned so extends from the @import don't leak.
-    modules_loaded_in_import: HashSet<PathBuf>,
+    modules_loaded_in_import: FxHashSet<PathBuf>,
 
     /// When true, cached modules should have their CSS cloned (not shared)
     /// so that @extend mutations are isolated per-import context.
@@ -176,20 +176,20 @@ pub struct Visitor<'a> {
 
     /// Shared clone state across all module clones within the same @import.
     /// Prevents double-cloning when diamond dependencies share upstream modules.
-    import_selector_map: HashMap<usize, ExtendedSelector>,
-    import_cloned_modules: HashMap<usize, Arc<RefCell<Module>>>,
-    import_cloned_css: HashSet<CssTreeIdx>,
+    import_selector_map: FxHashMap<usize, ExtendedSelector>,
+    import_cloned_modules: FxHashMap<usize, Arc<RefCell<Module>>>,
+    import_cloned_css: FxHashSet<CssTreeIdx>,
 
     /// The complete file path of the current file being visited. Imports are
     /// resolved relative to this path
     pub current_import_path: PathBuf,
     pub(crate) is_plain_css: bool,
     plain_css_style_rule_depth: u32,
-    pub(crate) modules: HashMap<PathBuf, Arc<RefCell<Module>>>,
+    pub(crate) modules: FxHashMap<PathBuf, Arc<RefCell<Module>>>,
     /// Configuration used when each module was first loaded via execute().
     /// Used to detect "was already loaded, so it can't be configured" errors.
-    module_configurations: HashMap<PathBuf, Option<Rc<RefCell<Configuration>>>>,
-    pub(crate) active_modules: HashSet<PathBuf>,
+    module_configurations: FxHashMap<PathBuf, Option<Rc<RefCell<Configuration>>>>,
+    pub(crate) active_modules: FxHashSet<PathBuf>,
     css_tree: CssTree,
     parent: Option<CssTreeIdx>,
     pub(crate) configuration: Rc<RefCell<Configuration>>,
@@ -207,16 +207,16 @@ pub struct Visitor<'a> {
     pub(crate) map: &'a mut CodeMap,
     // todo: remove
     empty_span: Span,
-    import_cache: HashMap<PathBuf, StyleSheet>,
+    import_cache: FxHashMap<PathBuf, StyleSheet>,
     /// As a simple heuristic, we don't cache the results of an import unless it
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
-    files_seen: HashSet<PathBuf>,
+    files_seen: FxHashSet<PathBuf>,
     /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
     /// Avoids redundant filesystem probing for the same import path from the same context.
-    import_path_cache: HashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
+    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
-    canonicalize_cache: HashMap<PathBuf, PathBuf>,
+    canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
 }
 
 impl<'a> Visitor<'a> {
@@ -238,18 +238,18 @@ impl<'a> Visitor<'a> {
             style_rule_ignoring_at_root: None,
             original_selector: None,
             flags,
-            warnings_emitted: HashSet::new(),
+            warnings_emitted: FxHashSet::default(),
             media_queries: None,
             media_query_sources: None,
             env: Environment::new(),
             extender,
             upstream_modules: Vec::new(),
-            module_css_indices: HashMap::new(),
-            modules_loaded_in_import: HashSet::new(),
+            module_css_indices: FxHashMap::default(),
+            modules_loaded_in_import: FxHashSet::default(),
             in_import_context: false,
-            import_selector_map: HashMap::new(),
-            import_cloned_modules: HashMap::new(),
-            import_cloned_css: HashSet::new(),
+            import_selector_map: FxHashMap::default(),
+            import_cloned_modules: FxHashMap::default(),
+            import_cloned_css: FxHashSet::default(),
             css_tree: CssTree::new(),
             parent: None,
             current_import_path,
@@ -262,16 +262,16 @@ impl<'a> Visitor<'a> {
             module_depth: 0,
             import_section_tree_count: 0,
             has_out_of_order_imports: false,
-            modules: HashMap::new(),
-            module_configurations: HashMap::new(),
-            active_modules: HashSet::new(),
+            modules: FxHashMap::default(),
+            module_configurations: FxHashMap::default(),
+            active_modules: FxHashSet::default(),
             options,
             empty_span,
             map,
-            import_cache: HashMap::new(),
-            files_seen: HashSet::new(),
-            import_path_cache: HashMap::new(),
-            canonicalize_cache: HashMap::new(),
+            import_cache: FxHashMap::default(),
+            files_seen: FxHashSet::default(),
+            import_path_cache: FxHashMap::default(),
+            canonicalize_cache: FxHashMap::default(),
         }
     }
 
@@ -397,7 +397,7 @@ impl<'a> Visitor<'a> {
     ) -> (Arc<RefCell<Module>>, bool) {
         // Collect ALL CSS indices transitively: this module + all upstream modules
         let mut all_css_indices = Vec::new();
-        let mut visited_urls = HashSet::new();
+        let mut visited_urls = FxHashSet::default();
         self.collect_css_indices_transitive(url, &mut all_css_indices, &mut visited_urls);
 
         if all_css_indices.is_empty() {
@@ -480,7 +480,7 @@ impl<'a> Visitor<'a> {
         &self,
         url: &Path,
         indices: &mut Vec<CssTreeIdx>,
-        visited: &mut HashSet<PathBuf>,
+        visited: &mut FxHashSet<PathBuf>,
     ) {
         if !visited.insert(url.to_path_buf()) {
             return;
@@ -523,12 +523,12 @@ impl<'a> Visitor<'a> {
 
         // Build downstream-first topological order.
         let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
-        let mut seen: HashSet<*const RefCell<Module>> = HashSet::new();
+        let mut seen: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
 
         fn visit_module(
             module: &Arc<RefCell<Module>>,
             sorted: &mut Vec<Arc<RefCell<Module>>>,
-            seen: &mut HashSet<*const RefCell<Module>>,
+            seen: &mut FxHashSet<*const RefCell<Module>>,
         ) {
             let ptr = Arc::as_ptr(module);
             if !seen.insert(ptr) {
@@ -557,8 +557,8 @@ impl<'a> Visitor<'a> {
 
         // Map from module pointer → list of cloned downstream ExtensionStores
         // to apply to that module.
-        let mut downstream_stores: HashMap<*const RefCell<Module>, Vec<ExtensionStore>> =
-            HashMap::new();
+        let mut downstream_stores: FxHashMap<*const RefCell<Module>, Vec<ExtensionStore>> =
+            FxHashMap::default();
 
         // Collect unsatisfied extensions (dart-sass style).
         let mut unsatisfied: Vec<Extension> = Vec::new();
@@ -625,7 +625,11 @@ impl<'a> Visitor<'a> {
 
             // Apply downstream extension stores to this module.
             if let Some(stores) = downstream_stores.remove(&ptr) {
-                let store_refs: Vec<&ExtensionStore> = stores.iter().collect();
+                let store_refs: Vec<&ExtensionStore> = {
+                    let mut v = Vec::with_capacity(stores.len());
+                    v.extend(stores.iter());
+                    v
+                };
                 let mut module = module_ref.borrow_mut();
                 if let Module::Environment {
                     extension_store, ..
@@ -779,7 +783,7 @@ impl<'a> Visitor<'a> {
             // `@forward` before checking that the configuration is empty. Errors for
             // outer `with` clauses will be thrown once those clauses finish
             // executing.
-            let configured_variables: HashSet<Identifier> = forward_rule
+            let configured_variables: FxHashSet<Identifier> = forward_rule
                 .configuration
                 .iter()
                 .map(|var| var.name.node)
@@ -869,7 +873,7 @@ impl<'a> Visitor<'a> {
     fn remove_used_configuration(
         upstream: &Rc<RefCell<Configuration>>,
         downstream: &Rc<RefCell<Configuration>>,
-        except: &HashSet<Identifier>,
+        except: &FxHashSet<Identifier>,
     ) {
         let mut names_to_remove = Vec::new();
         let downstream_keys = (*downstream).borrow().values.keys();
@@ -1061,7 +1065,7 @@ impl<'a> Visitor<'a> {
 
                 if !same_original {
                     // Check if module has !default vars matching the config keys
-                    let config_keys: HashSet<Identifier> =
+                    let config_keys: FxHashSet<Identifier> =
                         current_configuration.borrow().values.keys().into_iter().collect();
                     let could_be_configured = stylesheet
                         .configurable_variables
@@ -1307,8 +1311,8 @@ impl<'a> Visitor<'a> {
         // For plain CSS files, `&` is a CSS nesting selector that must be
         // preserved literally (not resolved to the parent). We wrap such
         // subtrees in a RuleSet with the parent selector instead.
-        let mut selector_map = HashMap::new();
-        let mut wrapper_indices: HashSet<CssTreeIdx> = HashSet::new();
+        let mut selector_map = FxHashMap::default();
+        let mut wrapper_indices: FxHashSet<CssTreeIdx> = FxHashSet::default();
         for idx in &all_css_indices {
             let needs_wrapper = is_plain_css && old_style_rule.is_some() && {
                 let stmt = self.css_tree.get(*idx);
@@ -1402,19 +1406,19 @@ impl<'a> Visitor<'a> {
         module: &Arc<RefCell<Module>>,
     ) -> Vec<CssTreeIdx> {
         // Build reverse mapping: module pointer → URL for looking up CSS indices.
-        let ptr_to_url: HashMap<*const RefCell<Module>, PathBuf> = self
+        let ptr_to_url: FxHashMap<*const RefCell<Module>, PathBuf> = self
             .modules
             .iter()
             .map(|(url, m)| (Arc::as_ptr(m), url.clone()))
             .collect();
 
         let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
-        let mut seen: HashSet<*const RefCell<Module>> = HashSet::new();
+        let mut seen: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
 
         fn visit_module(
             module: &Arc<RefCell<Module>>,
             sorted: &mut Vec<Arc<RefCell<Module>>>,
-            seen: &mut HashSet<*const RefCell<Module>>,
+            seen: &mut FxHashSet<*const RefCell<Module>>,
         ) {
             let ptr = Arc::as_ptr(module);
             if !seen.insert(ptr) {
@@ -1438,7 +1442,7 @@ impl<'a> Visitor<'a> {
 
         // Collect CSS indices from each module, deduplicating.
         let mut all_indices = Vec::new();
-        let mut seen_indices: HashSet<CssTreeIdx> = HashSet::new();
+        let mut seen_indices: FxHashSet<CssTreeIdx> = FxHashSet::default();
 
         for module_ref in &sorted {
             let ptr = Arc::as_ptr(module_ref);
@@ -1462,19 +1466,19 @@ impl<'a> Visitor<'a> {
     /// preserved for the root's output, and future clones come from templates.
     fn ensure_hidden_templates_for_module(&mut self, module: &Arc<RefCell<Module>>) {
         // Build reverse mapping: module pointer → URL
-        let ptr_to_url: HashMap<*const RefCell<Module>, PathBuf> = self
+        let ptr_to_url: FxHashMap<*const RefCell<Module>, PathBuf> = self
             .modules
             .iter()
             .map(|(url, m)| (Arc::as_ptr(m), url.clone()))
             .collect();
 
         let mut sorted: Vec<Arc<RefCell<Module>>> = Vec::new();
-        let mut seen: HashSet<*const RefCell<Module>> = HashSet::new();
+        let mut seen: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
 
         fn visit_module(
             module: &Arc<RefCell<Module>>,
             sorted: &mut Vec<Arc<RefCell<Module>>>,
-            seen: &mut HashSet<*const RefCell<Module>>,
+            seen: &mut FxHashSet<*const RefCell<Module>>,
         ) {
             let ptr = Arc::as_ptr(module);
             if !seen.insert(ptr) {
@@ -1497,8 +1501,8 @@ impl<'a> Visitor<'a> {
         visit_module(module, &mut sorted, &mut seen);
 
         // First pass: create ONE hidden copy per unique original index.
-        let mut original_to_hidden: HashMap<CssTreeIdx, CssTreeIdx> = HashMap::new();
-        let mut selector_map = HashMap::new();
+        let mut original_to_hidden: FxHashMap<CssTreeIdx, CssTreeIdx> = FxHashMap::default();
+        let mut selector_map = FxHashMap::default();
 
         for module_ref in &sorted {
             let ptr = Arc::as_ptr(module_ref);
@@ -1543,7 +1547,7 @@ impl<'a> Visitor<'a> {
     /// original module selectors untouched.
     fn extend_cloned_selectors(
         module: &Arc<RefCell<Module>>,
-        selector_map: &HashMap<usize, ExtendedSelector>,
+        selector_map: &FxHashMap<usize, ExtendedSelector>,
     ) -> SassResult<()> {
         // Get the loaded module's extensions.
         let extensions = {
@@ -2485,7 +2489,7 @@ impl<'a> Visitor<'a> {
         queries1: &[MediaQuery],
         queries2: &[MediaQuery],
     ) -> Option<Vec<MediaQuery>> {
-        let mut queries = Vec::new();
+        let mut queries = Vec::with_capacity(queries1.len() * queries2.len());
 
         for query1 in queries1 {
             for query2 in queries2 {
@@ -3392,11 +3396,11 @@ impl<'a> Visitor<'a> {
         match rest {
             Value::Map(rest) => self.add_rest_map(&mut named, rest)?,
             Value::List(elems, list_separator, _) => {
-                let mut list = Arc::unwrap_or_clone(elems)
-                    .into_iter()
-                    .map(|e| self.without_slash(e))
-                    .collect::<Vec<_>>();
-                positional.append(&mut list);
+                positional.extend(
+                    Arc::unwrap_or_clone(elems)
+                        .into_iter()
+                        .map(|e| self.without_slash(e)),
+                );
                 separator = list_separator;
             }
             Value::ArgList(arglist) => {
@@ -3405,12 +3409,9 @@ impl<'a> Visitor<'a> {
                     named.insert(key, self.without_slash(value.clone()));
                 }
 
-                let mut list = arglist
-                    .elems
-                    .into_iter()
-                    .map(|e| self.without_slash(e))
-                    .collect::<Vec<_>>();
-                positional.append(&mut list);
+                positional.extend(
+                    arglist.elems.into_iter().map(|e| self.without_slash(e)),
+                );
                 separator = arglist.separator;
             }
             _ => {
@@ -3661,7 +3662,7 @@ impl<'a> Visitor<'a> {
                         has_named = !args.named.is_empty() || args.keyword_rest.is_some();
                         rest = args.rest;
 
-                        let mut result = Vec::new();
+                        let mut result = Vec::with_capacity(args.positional.len());
                         for arg in args.positional {
                             let value = self.visit_expr(arg)?;
 
@@ -3766,7 +3767,7 @@ impl<'a> Visitor<'a> {
                     name,
                     original_name,
                 },
-                (*func_call.arguments).clone(),
+                Arc::unwrap_or_clone(func_call.arguments),
                 func_call.span,
             );
         }
@@ -3796,7 +3797,7 @@ impl<'a> Visitor<'a> {
         let old_in_function = self.flags.in_function();
         self.flags.set(ContextFlags::IN_FUNCTION, true);
         let value =
-            self.run_function_callable(func, (*func_call.arguments).clone(), func_call.span)?;
+            self.run_function_callable(func, Arc::unwrap_or_clone(func_call.arguments), func_call.span)?;
         self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
 
         Ok(value)
@@ -3860,13 +3861,10 @@ impl<'a> Visitor<'a> {
             }),
             AstExpr::List(list) => self.visit_list_expr(list)?,
             AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text, quote)?,
-            AstExpr::BinaryOp(binop) => self.visit_bin_op(
-                binop.lhs.clone(),
-                binop.op,
-                binop.rhs.clone(),
-                binop.allows_slash,
-                binop.span,
-            )?,
+            AstExpr::BinaryOp(binop) => {
+                let binop = Arc::unwrap_or_clone(binop);
+                self.visit_bin_op(binop.lhs, binop.op, binop.rhs, binop.allows_slash, binop.span)?
+            }
             AstExpr::True => Value::True,
             AstExpr::False => Value::False,
             AstExpr::Calculation { name, args } => {
@@ -3906,20 +3904,22 @@ impl<'a> Visitor<'a> {
                     self.visit_calculation_expr(name, args, self.empty_span)?
                 }
             }
-            AstExpr::CssIf(css_if) => self.visit_css_if((*css_if).clone())?,
+            AstExpr::CssIf(css_if) => self.visit_css_if(Arc::unwrap_or_clone(css_if))?,
             AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
-            AstExpr::If(if_expr) => self.visit_ternary((*if_expr).clone())?,
+            AstExpr::If(if_expr) => self.visit_ternary(Arc::unwrap_or_clone(if_expr))?,
             AstExpr::InterpolatedFunction(func) => {
-                self.visit_interpolated_func_expr((*func).clone())?
+                self.visit_interpolated_func_expr(Arc::unwrap_or_clone(func))?
             }
             AstExpr::Map(map) => self.visit_map(map)?,
             AstExpr::Null => Value::Null,
-            AstExpr::Paren(expr) => self.visit_expr((*expr).clone())?,
+            AstExpr::Paren(expr) => self.visit_expr(Arc::unwrap_or_clone(expr))?,
             AstExpr::ParentSelector => self.visit_parent_selector(),
-            AstExpr::UnaryOp(op, expr, span) => self.visit_unary_op(op, (*expr).clone(), span)?,
+            AstExpr::UnaryOp(op, expr, span) => {
+                self.visit_unary_op(op, Arc::unwrap_or_clone(expr), span)?
+            }
             AstExpr::Variable { name, namespace } => self.env.get_var(name, namespace)?,
             AstExpr::Supports(condition) => Value::String(
-                self.visit_supports_condition((*condition).clone())?.into(),
+                self.visit_supports_condition(Arc::unwrap_or_clone(condition))?.into(),
                 QuoteKind::None,
             ),
         })
@@ -3956,7 +3956,7 @@ impl<'a> Visitor<'a> {
         Ok(match expr {
             AstExpr::Paren(inner) => {
                 let result =
-                    self.visit_calculation_value((*inner).clone(), in_min_or_max, span)?;
+                    self.visit_calculation_value(Arc::unwrap_or_clone(inner), in_min_or_max, span)?;
 
                 match result {
                     CalculationArg::String(text) => {
@@ -3982,15 +3982,18 @@ impl<'a> Visitor<'a> {
                     CalculationArg::Interpolation(text)
                 }
             }
-            AstExpr::BinaryOp(binop) => SassCalculation::operate_internal(
-                binop.op,
-                self.visit_calculation_value(binop.lhs.clone(), in_min_or_max, span)?,
-                self.visit_calculation_value(binop.rhs.clone(), in_min_or_max, span)?,
-                in_min_or_max,
-                !self.flags.in_supports_declaration(),
-                self.options,
-                span,
-            )?,
+            AstExpr::BinaryOp(binop) => {
+                let binop = Arc::unwrap_or_clone(binop);
+                SassCalculation::operate_internal(
+                    binop.op,
+                    self.visit_calculation_value(binop.lhs, in_min_or_max, span)?,
+                    self.visit_calculation_value(binop.rhs, in_min_or_max, span)?,
+                    in_min_or_max,
+                    !self.flags.in_supports_declaration(),
+                    self.options,
+                    span,
+                )?
+            }
             AstExpr::Number { .. }
             | AstExpr::Calculation { .. }
             | AstExpr::Variable { .. }

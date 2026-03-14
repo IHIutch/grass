@@ -1,6 +1,6 @@
 use std::{
     cell::Cell,
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     ffi::OsString,
     mem,
     path::{Path, PathBuf},
@@ -13,6 +13,7 @@ use std::{
 static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use codemap::{Span, Spanned};
+use rustc_hash::FxHashSet;
 
 use crate::{
     ast::*,
@@ -267,7 +268,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
 
         let mut arguments = Vec::new();
-        let mut named = HashSet::new();
+        let mut named = FxHashSet::default();
 
         let mut rest_argument: Option<Identifier> = None;
 
@@ -1657,10 +1658,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             None
         };
 
-        let mut shown_mixins_and_functions: Option<HashSet<Identifier>> = None;
-        let mut shown_variables: Option<HashSet<Identifier>> = None;
-        let mut hidden_mixins_and_functions: Option<HashSet<Identifier>> = None;
-        let mut hidden_variables: Option<HashSet<Identifier>> = None;
+        let mut shown_mixins_and_functions: Option<FxHashSet<Identifier>> = None;
+        let mut shown_variables: Option<FxHashSet<Identifier>> = None;
+        let mut hidden_mixins_and_functions: Option<FxHashSet<Identifier>> = None;
+        let mut hidden_variables: Option<FxHashSet<Identifier>> = None;
 
         if self.scan_identifier("show", false)? {
             self.set_consume_newlines(true);
@@ -1718,9 +1719,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         ))
     }
 
-    fn parse_member_list(&mut self) -> SassResult<(HashSet<Identifier>, HashSet<Identifier>)> {
-        let mut identifiers = HashSet::new();
-        let mut variables = HashSet::new();
+    fn parse_member_list(&mut self) -> SassResult<(FxHashSet<Identifier>, FxHashSet<Identifier>)> {
+        let mut identifiers = FxHashSet::default();
+        let mut variables = FxHashSet::default();
 
         loop {
             self.set_consume_newlines(true);
@@ -1817,7 +1818,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             return Ok(None);
         }
 
-        let mut variable_names = HashSet::new();
+        let mut variable_names = FxHashSet::default();
         let mut configuration = Vec::new();
         self.set_consume_newlines(true);
         self.whitespace()?;

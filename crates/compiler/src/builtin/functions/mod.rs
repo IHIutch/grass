@@ -2,10 +2,12 @@
 #![allow(unused_variables)]
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
+
+use rustc_hash::FxHashMap;
 
 use std::sync::LazyLock;
 
@@ -20,7 +22,7 @@ pub mod selector;
 pub mod string;
 
 // todo: maybe Identifier instead of str?
-pub(crate) type GlobalFunctionMap = HashMap<&'static str, Builtin>;
+pub(crate) type GlobalFunctionMap = FxHashMap<&'static str, Builtin>;
 
 static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -81,7 +83,7 @@ impl PartialEq for Builtin {
 impl Eq for Builtin {}
 
 pub(crate) static GLOBAL_FUNCTIONS: LazyLock<GlobalFunctionMap> = LazyLock::new(|| {
-    let mut m = HashMap::new();
+    let mut m = FxHashMap::default();
     color::declare(&mut m);
     list::declare(&mut m);
     map::declare(&mut m);

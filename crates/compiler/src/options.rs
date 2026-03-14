@@ -1,7 +1,6 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+
+use rustc_hash::FxHashMap;
 
 use crate::{builtin::Builtin, Fs, Logger, StdFs, StdLogger};
 
@@ -19,7 +18,7 @@ pub struct Options<'a> {
     pub(crate) unicode_error_messages: bool,
     pub(crate) quiet: bool,
     pub(crate) input_syntax: Option<InputSyntax>,
-    pub(crate) custom_fns: HashMap<String, Builtin>,
+    pub(crate) custom_fns: FxHashMap<String, Builtin>,
 }
 
 impl Default for Options<'_> {
@@ -34,7 +33,7 @@ impl Default for Options<'_> {
             unicode_error_messages: true,
             quiet: false,
             input_syntax: None,
-            custom_fns: HashMap::new(),
+            custom_fns: FxHashMap::default(),
         }
     }
 }

@@ -1,12 +1,6 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    path::PathBuf,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use codemap::{Span, Spanned};
 
@@ -218,13 +212,13 @@ pub struct AstAtRootRule {
 #[derive(Debug, Clone)]
 pub struct AtRootQuery {
     pub include: bool,
-    pub names: HashSet<String>,
+    pub names: FxHashSet<String>,
     pub all: bool,
     pub rule: bool,
 }
 
 impl AtRootQuery {
-    pub fn new(include: bool, names: HashSet<String>) -> Self {
+    pub fn new(include: bool, names: FxHashSet<String>) -> Self {
         let all = names.contains("all");
         let rule = names.contains("rule");
 
@@ -263,7 +257,7 @@ impl Default for AtRootQuery {
     fn default() -> Self {
         Self {
             include: false,
-            names: HashSet::new(),
+            names: FxHashSet::default(),
             all: false,
             rule: true,
         }
@@ -430,10 +424,10 @@ impl ConfiguredValue {
 #[derive(Debug, Clone)]
 pub struct AstForwardRule {
     pub url: PathBuf,
-    pub shown_mixins_and_functions: Option<HashSet<Identifier>>,
-    pub shown_variables: Option<HashSet<Identifier>>,
-    pub hidden_mixins_and_functions: Option<HashSet<Identifier>>,
-    pub hidden_variables: Option<HashSet<Identifier>>,
+    pub shown_mixins_and_functions: Option<FxHashSet<Identifier>>,
+    pub shown_variables: Option<FxHashSet<Identifier>>,
+    pub hidden_mixins_and_functions: Option<FxHashSet<Identifier>>,
+    pub hidden_variables: Option<FxHashSet<Identifier>>,
     pub prefix: Option<String>,
     pub configuration: Vec<ConfiguredVariable>,
     pub span: Span,
@@ -460,8 +454,8 @@ impl AstForwardRule {
 
     pub fn show(
         url: PathBuf,
-        shown_mixins_and_functions: HashSet<Identifier>,
-        shown_variables: HashSet<Identifier>,
+        shown_mixins_and_functions: FxHashSet<Identifier>,
+        shown_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
         configuration: Option<Vec<ConfiguredVariable>>,
         span: Span,
@@ -480,8 +474,8 @@ impl AstForwardRule {
 
     pub fn hide(
         url: PathBuf,
-        hidden_mixins_and_functions: HashSet<Identifier>,
-        hidden_variables: HashSet<Identifier>,
+        hidden_mixins_and_functions: FxHashSet<Identifier>,
+        hidden_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
         configuration: Option<Vec<ConfiguredVariable>>,
         span: Span,
@@ -569,12 +563,12 @@ pub struct StyleSheet {
     /// Variables declared with `!global` anywhere in the stylesheet.
     /// These create variable slots in the module scope even if never executed,
     /// defaulting to `null`. This matches dart-sass's `_globalVariables` behavior.
-    pub pre_declared_global_variables: HashSet<Identifier>,
+    pub pre_declared_global_variables: FxHashSet<Identifier>,
 
     /// Top-level `!default` variable declarations. Used by execute() to detect
     /// configuration conflicts: a module "could be configured" if it has `!default`
     /// variables matching the configuration keys.
-    pub configurable_variables: HashSet<Identifier>,
+    pub configurable_variables: FxHashSet<Identifier>,
 }
 
 impl StyleSheet {
@@ -585,8 +579,8 @@ impl StyleSheet {
             is_plain_css,
             uses: Vec::new(),
             forwards: Vec::new(),
-            pre_declared_global_variables: HashSet::new(),
-            configurable_variables: HashSet::new(),
+            pre_declared_global_variables: FxHashSet::default(),
+            configurable_variables: FxHashSet::default(),
         }
     }
 
@@ -594,14 +588,14 @@ impl StyleSheet {
     /// and record their names. In dart-sass, these create variable slots
     /// in the module scope even if the declaration is never executed.
     pub fn collect_pre_declared_global_variables(&mut self) {
-        let mut globals = HashSet::new();
+        let mut globals = FxHashSet::default();
         collect_globals_from_stmts(&self.body, &mut globals);
         self.pre_declared_global_variables = globals;
     }
 
     /// Collect top-level `!default` variable names for configuration conflict detection.
     pub fn collect_configurable_variables(&mut self) {
-        let mut defaults = HashSet::new();
+        let mut defaults = FxHashSet::default();
         for stmt in &self.body {
             if let AstStmt::VariableDecl(decl) = stmt {
                 if decl.is_guarded && !decl.is_global {
@@ -613,13 +607,13 @@ impl StyleSheet {
     }
 }
 
-fn collect_globals_from_stmts(stmts: &[AstStmt], globals: &mut HashSet<Identifier>) {
+fn collect_globals_from_stmts(stmts: &[AstStmt], globals: &mut FxHashSet<Identifier>) {
     for stmt in stmts {
         collect_globals_from_stmt(stmt, globals);
     }
 }
 
-fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut HashSet<Identifier>) {
+fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>) {
     match stmt {
         AstStmt::VariableDecl(decl) => {
             if decl.is_global {

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::{ast::AtRootQuery, error::SassResult, lexer::Lexer};
 
@@ -36,7 +36,7 @@ impl AtRootQueryParser {
         self.expect_char(':')?;
         self.whitespace()?;
 
-        let mut names = HashSet::new();
+        let mut names = FxHashSet::default();
 
         loop {
             names.insert(self.parse_identifier(false, false)?.to_ascii_lowercase());

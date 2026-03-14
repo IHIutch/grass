@@ -1,11 +1,11 @@
 use std::{
-    collections::HashSet,
     fmt::{self, Display, Write},
     hash::{Hash, Hasher},
     sync::atomic::{AtomicU32, Ordering as AtomicOrdering},
 };
 
 use codemap::Span;
+use rustc_hash::FxHashSet;
 
 use crate::error::SassResult;
 
@@ -14,11 +14,11 @@ use super::{CompoundSelector, Pseudo, SelectorList, SimpleSelector, Specificity}
 pub(crate) static COMPLEX_SELECTOR_UNIQUE_ID: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Debug)]
-pub(crate) struct ComplexSelectorHashSet(HashSet<ComplexSelector>);
+pub(crate) struct ComplexSelectorHashSet(FxHashSet<ComplexSelector>);
 
 impl ComplexSelectorHashSet {
     pub fn new() -> Self {
-        Self(HashSet::new())
+        Self(FxHashSet::default())
     }
 
     pub fn insert(&mut self, complex: &ComplexSelector) -> bool {

@@ -1,11 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::VecDeque,
     hash::Hash,
 };
 
 use codemap::Span;
-
 use indexmap::IndexMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     ast::CssMediaQuery,
@@ -62,21 +62,21 @@ pub(crate) struct ExtensionStore {
     ///
     /// This is used to find which selectors an `@extend` applies to and adjust
     /// them.
-    selectors: HashMap<SimpleSelector, SelectorHashSet>,
+    selectors: FxHashMap<SimpleSelector, SelectorHashSet>,
 
     /// A map from all extended simple selectors to the sources of those
     /// extensions.
-    extensions: HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
+    extensions: FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
 
     /// A map from all simple selectors in extenders to the extensions that those
     /// extenders define.
-    extensions_by_extender: HashMap<SimpleSelector, Vec<Extension>>,
+    extensions_by_extender: FxHashMap<SimpleSelector, Vec<Extension>>,
 
     /// A map from CSS selectors to the media query contexts they're defined in.
     ///
     /// This tracks the contexts in which each selector's style rule is defined.
     /// If a rule is defined at the top level, it doesn't have an entry.
-    media_contexts: HashMap<ExtendedSelector, Vec<CssMediaQuery>>,
+    media_contexts: FxHashMap<ExtendedSelector, Vec<CssMediaQuery>>,
 
     /// A map from `SimpleSelector`s to the specificity of their source
     /// selectors.
@@ -87,7 +87,7 @@ pub(crate) struct ExtensionStore {
     /// of extend][].
     ///
     /// [second law of extend]: https://github.com/sass/sass/issues/324#issuecomment-4607184
-    source_specificity: HashMap<SimpleSelector, i32>,
+    source_specificity: FxHashMap<SimpleSelector, i32>,
 
     /// A set of `ComplexSelector`s that were originally part of
     /// their component `SelectorList`s, as opposed to being added by `@extend`.
@@ -121,11 +121,11 @@ impl ExtensionStore {
 
     pub fn new(span: Span) -> Self {
         Self {
-            selectors: HashMap::new(),
-            extensions: HashMap::new(),
-            extensions_by_extender: HashMap::new(),
-            media_contexts: HashMap::new(),
-            source_specificity: HashMap::new(),
+            selectors: FxHashMap::default(),
+            extensions: FxHashMap::default(),
+            extensions_by_extender: FxHashMap::default(),
+            media_contexts: FxHashMap::default(),
+            source_specificity: FxHashMap::default(),
             originals: ComplexSelectorHashSet::new(),
             mode: ExtendMode::Normal,
             span,
@@ -144,9 +144,9 @@ impl ExtensionStore {
     /// mutations don't bleed between the original and the import's copy.
     pub fn clone_for_import(
         &self,
-        selector_map: &std::collections::HashMap<usize, ExtendedSelector>,
+        selector_map: &FxHashMap<usize, ExtendedSelector>,
     ) -> Self {
-        let mut new_selectors = HashMap::new();
+        let mut new_selectors = FxHashMap::default();
         for (simple, hash_set) in &self.selectors {
             let mut new_set = SelectorHashSet::new();
             for sel in hash_set.iter() {
@@ -160,7 +160,7 @@ impl ExtensionStore {
             new_selectors.insert(simple.clone(), new_set);
         }
 
-        let mut new_media_contexts = HashMap::new();
+        let mut new_media_contexts = FxHashMap::default();
         for (sel, queries) in &self.media_contexts {
             let ptr = sel.rc_ptr();
             if let Some(new_sel) = selector_map.get(&ptr) {
@@ -192,8 +192,8 @@ impl ExtensionStore {
         let mut extensions_to_extend: Vec<Extension> = Vec::new();
         let mut selectors_to_extend = SelectorHashSet::new();
         let mut has_selectors_to_extend = false;
-        let mut new_extensions: HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>> =
-            HashMap::new();
+        let mut new_extensions: FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>> =
+            FxHashMap::default();
 
         for store in extension_stores {
             if store.extensions.is_empty() {
@@ -268,7 +268,7 @@ impl ExtensionStore {
 
     /// Returns the set of simple selectors that have registered selectors
     /// in this store.
-    pub fn simple_selectors(&self) -> HashSet<SimpleSelector> {
+    pub fn simple_selectors(&self) -> FxHashSet<SimpleSelector> {
         self.selectors.keys().cloned().collect()
     }
 
@@ -364,7 +364,7 @@ impl ExtensionStore {
 
         let mut current = selector;
         for compound in compound_targets {
-            let extensions: HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>> =
+            let extensions: FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>> =
                 compound
                     .components
                     .into_iter()
@@ -387,7 +387,7 @@ impl ExtensionStore {
     fn extend_list(
         &mut self,
         list: SelectorList,
-        extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
+        extensions: Option<&FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<SelectorList> {
         // This could be written more simply using Vec<Vec<T>>, but we want to avoid
@@ -429,7 +429,7 @@ impl ExtensionStore {
     fn extend_complex(
         &mut self,
         complex: ComplexSelector,
-        extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
+        extensions: Option<&FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // The complex selectors that each compound selector in `complex.components`
@@ -553,13 +553,13 @@ impl ExtensionStore {
     fn extend_compound(
         &mut self,
         compound: &CompoundSelector,
-        extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
+        extensions: Option<&FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
         in_original: bool,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // If there's more than one target and they all need to match, we track
         // which targets are actually extended.
-        let mut targets_used: HashSet<SimpleSelector> = HashSet::new();
+        let mut targets_used: FxHashSet<SimpleSelector> = FxHashSet::default();
 
         let mut options: Option<Vec<Vec<Extension>>> = None;
 
@@ -604,7 +604,7 @@ impl ExtensionStore {
         // `extensions`, extension fails for `compound`.
         // todo: test for `extensions.len() > 2`. may cause issues
         if !targets_used.is_empty()
-            && targets_used.len() != extensions.map_or(self.extensions.len(), HashMap::len)
+            && targets_used.len() != extensions.map_or(self.extensions.len(), FxHashMap::len)
             && self.mode != ExtendMode::Normal
         {
             return Ok(None);
@@ -731,9 +731,9 @@ impl ExtensionStore {
     fn extend_simple(
         &mut self,
         simple: SimpleSelector,
-        extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
+        extensions: Option<&FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
-        targets_used: &mut HashSet<SimpleSelector>,
+        targets_used: &mut FxHashSet<SimpleSelector>,
     ) -> SassResult<Option<Vec<Vec<Extension>>>> {
         if let SimpleSelector::Pseudo(Pseudo {
             selector: Some(..), ..
@@ -773,7 +773,7 @@ impl ExtensionStore {
     fn extend_pseudo(
         &mut self,
         pseudo: Pseudo,
-        extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
+        extensions: Option<&FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<Pseudo>>> {
         let extended = self.extend_list(
@@ -913,8 +913,8 @@ impl ExtensionStore {
     fn without_pseudo(
         &self,
         simple: SimpleSelector,
-        extensions: Option<&HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
-        targets_used: &mut HashSet<SimpleSelector>,
+        extensions: Option<&FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>,
+        targets_used: &mut FxHashSet<SimpleSelector>,
         mode: ExtendMode,
     ) -> Option<Vec<Extension>> {
         let extenders = extensions.unwrap_or(&self.extensions).get(&simple)?;
@@ -1227,7 +1227,7 @@ impl ExtensionStore {
             return Ok(());
         };
 
-        let mut new_extensions_by_target = HashMap::new();
+        let mut new_extensions_by_target = FxHashMap::default();
         new_extensions_by_target.insert(target.clone(), new_extensions);
 
         if let Some(existing_extensions) = if had_existing_extensions {
@@ -1267,10 +1267,10 @@ impl ExtensionStore {
     fn extend_existing_extensions(
         &mut self,
         extensions: Vec<Extension>,
-        new_extensions: &HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
-    ) -> SassResult<Option<HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>> {
+        new_extensions: &FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
+    ) -> SassResult<Option<FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>>> {
         let mut additional_extensions: Option<
-            HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
+            FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
         > = None;
         for extension in extensions {
             let mut sources = self
@@ -1332,7 +1332,7 @@ impl ExtensionStore {
 
                     if new_extensions.contains_key(&extension.target.clone().unwrap()) {
                         additional_extensions
-                            .get_or_insert_with(HashMap::new)
+                            .get_or_insert_with(FxHashMap::default)
                             .entry(extension.target.clone().unwrap())
                             .or_insert_with(IndexMap::new)
                             .insert(complex.clone(), with_extender);
@@ -1350,7 +1350,7 @@ impl ExtensionStore {
     fn extend_existing_selectors(
         &mut self,
         selectors: SelectorHashSet,
-        new_extensions: &HashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
+        new_extensions: &FxHashMap<SimpleSelector, IndexMap<ComplexSelector, Extension>>,
     ) -> SassResult<()> {
         for mut selector in selectors {
             let old_value = selector.clone().into_selector().0;
@@ -1421,12 +1421,12 @@ fn rotate_slice<T: Clone>(list: &mut VecDeque<T>, start: usize, end: usize) {
     }
 }
 
-/// Like `HashMap::extend`, but for two-layer maps.
+/// Like `FxHashMap::extend`, but for two-layer maps.
 ///
 /// This avoids copying inner maps from `source` if possible.
 fn map_add_all_2<K1: Hash + Eq, K2: Hash + Eq, V>(
-    destination: &mut HashMap<K1, IndexMap<K2, V>>,
-    source: HashMap<K1, IndexMap<K2, V>>,
+    destination: &mut FxHashMap<K1, IndexMap<K2, V>>,
+    source: FxHashMap<K1, IndexMap<K2, V>>,
 ) {
     for (key, mut inner) in source {
         if destination.contains_key(&key) {

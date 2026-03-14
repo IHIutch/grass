@@ -8,13 +8,9 @@ use crate::{
     selector::ExtensionStore,
     value::{SassFunction, Value},
 };
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    sync::Arc,
-};
+use std::{cell::RefCell, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 type Mutable<T> = Arc<RefCell<T>>;
 
@@ -137,17 +133,17 @@ impl Environment {
                 .borrow()
                 .iter()
                 .flat_map(|module| (*module).borrow().scope().variables.keys())
-                .collect::<HashSet<Identifier>>();
+                .collect::<FxHashSet<Identifier>>();
             let forwarded_fn_names = forwarded
                 .borrow()
                 .iter()
                 .flat_map(|module| (*module).borrow().scope().functions.keys())
-                .collect::<HashSet<Identifier>>();
+                .collect::<FxHashSet<Identifier>>();
             let forwarded_mixin_names = forwarded
                 .borrow()
                 .iter()
                 .flat_map(|module| (*module).borrow().scope().mixins.keys())
-                .collect::<HashSet<Identifier>>();
+                .collect::<FxHashSet<Identifier>>();
 
             if self.at_root() {
                 let mut to_remove = Vec::new();
@@ -747,11 +743,11 @@ fn collect_inner(
 
                 // Get visible keys (already prefixed by the scope's MapView chain)
                 let scope = borrowed.scope();
-                let visible_var_keys: HashSet<Identifier> =
+                let visible_var_keys: FxHashSet<Identifier> =
                     scope.variables.keys().into_iter().collect();
-                let visible_fn_keys: HashSet<Identifier> =
+                let visible_fn_keys: FxHashSet<Identifier> =
                     scope.functions.keys().into_iter().collect();
-                let visible_mixin_keys: HashSet<Identifier> =
+                let visible_mixin_keys: FxHashSet<Identifier> =
                     scope.mixins.keys().into_iter().collect();
 
                 drop(borrowed);
@@ -792,11 +788,11 @@ fn collect_inner(
         }
         Module::Shadowed(shd) => {
             let scope = borrowed.scope();
-            let visible_var_keys: HashSet<Identifier> =
+            let visible_var_keys: FxHashSet<Identifier> =
                 scope.variables.keys().into_iter().collect();
-            let visible_fn_keys: HashSet<Identifier> =
+            let visible_fn_keys: FxHashSet<Identifier> =
                 scope.functions.keys().into_iter().collect();
-            let visible_mixin_keys: HashSet<Identifier> =
+            let visible_mixin_keys: FxHashSet<Identifier> =
                 scope.mixins.keys().into_iter().collect();
 
             let inner = Arc::clone(&shd.inner);

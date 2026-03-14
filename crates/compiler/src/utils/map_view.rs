@@ -1,11 +1,6 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    fmt,
-    sync::Arc,
-};
+use std::{cell::RefCell, fmt, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::common::Identifier;
 
@@ -199,11 +194,11 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for PrefixedM
 #[derive(Debug, Clone)]
 pub(crate) struct LimitedMapView<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone>(
     pub T,
-    pub HashSet<Identifier>,
+    pub FxHashSet<Identifier>,
 );
 
 impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> LimitedMapView<V, T> {
-    pub fn safelist(map: T, keys: &HashSet<Identifier>) -> Self {
+    pub fn safelist(map: T, keys: &FxHashSet<Identifier>) -> Self {
         let keys = keys
             .iter()
             .copied()
@@ -213,7 +208,7 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> LimitedMapView<V, T> 
         Self(map, keys)
     }
 
-    pub fn blocklist(map: T, blocklist: &HashSet<Identifier>) -> Self {
+    pub fn blocklist(map: T, blocklist: &FxHashSet<Identifier>) -> Self {
         let keys = map
             .keys()
             .into_iter()
@@ -266,12 +261,12 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for LimitedMa
 #[derive(Debug)]
 pub(crate) struct MergedMapView<V: fmt::Debug + Clone>(
     pub Vec<Arc<dyn MapView<Value = V>>>,
-    HashSet<Identifier>,
+    FxHashSet<Identifier>,
 );
 
 impl<V: fmt::Debug + Clone> MergedMapView<V> {
     pub fn new(maps: Vec<Arc<dyn MapView<Value = V>>>) -> Self {
-        let unique_keys: HashSet<Identifier> = maps.iter().fold(HashSet::new(), |mut keys, map| {
+        let unique_keys: FxHashSet<Identifier> = maps.iter().fold(FxHashSet::default(), |mut keys, map| {
             keys.extend(&map.keys());
             keys
         });

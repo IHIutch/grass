@@ -1,14 +1,13 @@
 use std::{
     cell::RefCell,
-    collections::{
-        hash_set::{IntoIter, Iter},
-        HashSet,
-    },
+    collections::hash_set::{IntoIter, Iter},
     hash::{Hash, Hasher},
     ops::Deref,
     ptr,
     rc::Rc,
 };
+
+use rustc_hash::FxHashSet;
 
 use crate::selector::{Selector, SelectorList};
 
@@ -78,11 +77,11 @@ impl ExtendedSelector {
 /// In practice, I have yet to find a test case that can demonstrate
 /// an issue with storing a `RefCell`.
 #[derive(Clone, Debug)]
-pub(crate) struct SelectorHashSet(HashSet<ExtendedSelector>);
+pub(crate) struct SelectorHashSet(FxHashSet<ExtendedSelector>);
 
 impl SelectorHashSet {
     pub fn new() -> Self {
-        Self(HashSet::new())
+        Self(FxHashSet::default())
     }
 
     pub fn insert(&mut self, selector: ExtendedSelector) {
