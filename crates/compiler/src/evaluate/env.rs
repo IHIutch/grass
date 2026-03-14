@@ -189,8 +189,7 @@ impl Environment {
             // Remove existing member definitions that are now shadowed by the
             // forwarded modules.
             for variable in &forwarded_var_names {
-                (*self.scopes.variables)
-                    .borrow_mut()
+                self.scopes.variables_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
@@ -199,16 +198,14 @@ impl Environment {
             self.scopes.last_variable_index = None;
 
             for func in &forwarded_fn_names {
-                (*self.scopes.functions)
-                    .borrow_mut()
+                self.scopes.functions_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
                     .remove(func);
             }
             for mixin in &forwarded_mixin_names {
-                (*self.scopes.mixins)
-                    .borrow_mut()
+                self.scopes.mixins_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
@@ -225,7 +222,7 @@ impl Environment {
         // interleaving module variables and scope-local variables per level.
         // At each level, module variables are added first, then scope variables
         // (which can overwrite them). Inner scopes overwrite outer scopes.
-        let variables = (*self.scopes.variables).borrow();
+        let variables = self.scopes.variables();
         let nested_forwarded = self.nested_forwarded_modules.as_ref();
 
         for (i, scope_vars) in variables.iter().enumerate() {
