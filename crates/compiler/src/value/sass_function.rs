@@ -29,7 +29,7 @@ pub enum SassFunction {
 
 #[derive(Debug, Clone)]
 pub struct UserDefinedFunction {
-    pub(crate) function: Rc<AstFunctionDecl>,
+    pub(crate) function: Rc<AstFunctionDecl<'static>>,
     pub name: Identifier,
     pub(crate) env: Environment,
 }

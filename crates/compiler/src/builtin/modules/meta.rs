@@ -243,7 +243,7 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
                 span,
                 |mixin, visitor| {
                     visitor.with_content(content, |visitor| {
-                        for stmt in mixin.body.iter().cloned() {
+                        for stmt in mixin.body.iter() {
                             let result = visitor.visit_stmt_arc(stmt)?;
                             debug_assert!(result.is_none());
                         }

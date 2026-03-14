@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, rc::Rc};
+use std::{collections::BTreeMap, path::Path};
 
 use codemap::{Span, Spanned};
 
@@ -15,6 +15,7 @@ pub(crate) struct CssParser<'a> {
     pub empty_span: Span,
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
+    pub arena: &'a bumpalo::Bump,
 }
 
 impl<'a> BaseParser for CssParser<'a> {
@@ -83,13 +84,17 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
         self.empty_span
     }
 
-    const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr>>> =
+    fn arena(&self) -> &'a bumpalo::Bump {
+        self.arena
+    }
+
+    const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr<'a>>>> =
         Some(Self::parse_identifier_like);
 
     fn parse_at_rule(
         &mut self,
-        _child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<AstStmt> {
+        _child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<AstStmt<'a>> {
         let start = self.toks.cursor();
 
         self.expect_char('@')?;
@@ -135,6 +140,7 @@ impl<'a> CssParser<'a> {
         options: &'a Options<'a>,
         empty_span: Span,
         file_name: &'a Path,
+        arena: &'a bumpalo::Bump,
     ) -> Self {
         CssParser {
             toks,
@@ -142,10 +148,11 @@ impl<'a> CssParser<'a> {
             empty_span,
             flags: ContextFlags::empty(),
             options,
+            arena,
         }
     }
 
-    fn parse_css_import_rule(&mut self, _start: usize) -> SassResult<AstStmt> {
+    fn parse_css_import_rule(&mut self, _start: usize) -> SassResult<AstStmt<'a>> {
         let url_start = self.toks.cursor();
 
         let url = if self.toks.next_char_is('u') || self.toks.next_char_is('U') {
@@ -173,7 +180,7 @@ impl<'a> CssParser<'a> {
         }))
     }
 
-    fn parse_identifier_like(&mut self) -> SassResult<Spanned<AstExpr>> {
+    fn parse_identifier_like(&mut self) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = self.toks.cursor();
         let identifier = self.parse_interpolated_identifier()?;
         let plain = identifier.as_plain().unwrap();
@@ -231,7 +238,7 @@ impl<'a> CssParser<'a> {
         }
 
         Ok(
-            AstExpr::InterpolatedFunction(Rc::new(InterpolatedFunction {
+            AstExpr::InterpolatedFunction(self.arena.alloc(InterpolatedFunction {
                 name: identifier,
                 arguments: ArgumentInvocation {
                     positional: arguments,

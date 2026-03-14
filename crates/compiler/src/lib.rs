@@ -126,8 +126,9 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
     input: String,
     file_name: P,
     options: &Options,
-) -> Result<StyleSheet> {
+) -> Result<StyleSheet<'static>> {
     // todo: much of this logic is duplicated in `from_string_with_file_name`
+    let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
     let file = map.add_file(path.to_string_lossy().into_owned(), input);
@@ -138,22 +139,29 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
         .input_syntax
         .unwrap_or_else(|| InputSyntax::for_path(path));
 
+    let path_ref = file_name.as_ref();
     let stylesheet = match input_syntax {
         InputSyntax::Scss => {
-            ScssParser::new(lexer, options, empty_span, file_name.as_ref()).__parse()
+            ScssParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
         }
         InputSyntax::Sass => {
-            SassParser::new(lexer, options, empty_span, file_name.as_ref()).__parse()
+            SassParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
         }
         InputSyntax::Css => {
-            CssParser::new(lexer, options, empty_span, file_name.as_ref()).__parse()
+            CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
         }
     };
 
+    // Safety: We leak the arena so that the returned StyleSheet's references remain valid.
+    // This is necessary because parse_stylesheet returns a StyleSheet that outlives this function.
+    // The arena memory will not be freed, which is acceptable for this API.
     let stylesheet = match stylesheet {
-        Ok(v) => v,
+        Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     };
+
+    // Leak the arena so the StyleSheet's references remain valid
+    std::mem::forget(arena);
 
     Ok(stylesheet)
 }
@@ -163,6 +171,7 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     file_name: P,
     options: &Options,
 ) -> Result<String> {
+    let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
     let file = map.add_file(path.to_string_lossy().into_owned(), input);
@@ -175,23 +184,26 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
 
     let stylesheet = match input_syntax {
         InputSyntax::Scss => {
-            ScssParser::new(lexer, options, empty_span, file_name.as_ref()).__parse()
+            ScssParser::new(lexer, options, empty_span, path, &arena).__parse()
         }
         InputSyntax::Sass => {
-            SassParser::new(lexer, options, empty_span, file_name.as_ref()).__parse()
+            SassParser::new(lexer, options, empty_span, path, &arena).__parse()
         }
         InputSyntax::Css => {
-            CssParser::new(lexer, options, empty_span, file_name.as_ref()).__parse()
+            CssParser::new(lexer, options, empty_span, path, &arena).__parse()
         }
     };
 
+    // Safety: the arena lives on the stack for the entire compilation.
+    // The stylesheet references data in the arena, which won't be dropped
+    // until after the visitor finishes and this function returns.
     let stylesheet = match stylesheet {
-        Ok(v) => v,
+        Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     };
 
-    let mut visitor = Visitor::new(path, options, &mut map, empty_span);
-    match visitor.visit_stylesheet(stylesheet) {
+    let mut visitor = Visitor::new(path, options, &mut map, &arena, empty_span);
+    match visitor.visit_stylesheet(&stylesheet) {
         Ok(_) => {}
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     }

@@ -262,7 +262,7 @@ impl Environment {
     pub fn forward_module(
         &mut self,
         module: Rc<RefCell<Module>>,
-        rule: AstForwardRule,
+        rule: AstForwardRule<'static>,
     ) -> SassResult<()> {
         let new_span = rule.span;
         let view = ForwardedModule::if_necessary(module, rule);

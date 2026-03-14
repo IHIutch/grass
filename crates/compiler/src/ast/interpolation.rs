@@ -3,11 +3,11 @@ use codemap::Spanned;
 use super::AstExpr;
 
 #[derive(Debug, Clone)]
-pub struct Interpolation {
-    pub contents: Vec<InterpolationPart>,
+pub struct Interpolation<'a> {
+    pub contents: Vec<InterpolationPart<'a>>,
 }
 
-impl Interpolation {
+impl<'a> Interpolation<'a> {
     pub fn new() -> Self {
         Self {
             contents: Vec::new(),
@@ -18,7 +18,7 @@ impl Interpolation {
         self.contents.is_empty()
     }
 
-    pub fn new_with_expr(e: Spanned<AstExpr>) -> Self {
+    pub fn new_with_expr(e: Spanned<AstExpr<'a>>) -> Self {
         Self {
             contents: vec![InterpolationPart::Expr(e)],
         }
@@ -30,7 +30,7 @@ impl Interpolation {
         }
     }
 
-    pub fn add_expr(&mut self, expr: Spanned<AstExpr>) {
+    pub fn add_expr(&mut self, expr: Spanned<AstExpr<'a>>) {
         self.contents.push(InterpolationPart::Expr(expr));
     }
 
@@ -81,7 +81,7 @@ impl Interpolation {
 }
 
 #[derive(Debug, Clone)]
-pub enum InterpolationPart {
+pub enum InterpolationPart<'a> {
     String(String),
-    Expr(Spanned<AstExpr>),
+    Expr(Spanned<AstExpr<'a>>),
 }

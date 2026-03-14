@@ -106,11 +106,11 @@ impl ShadowedModule {
 pub(crate) struct ForwardedModule {
     scope: ModuleScope,
     pub(crate) inner: Rc<RefCell<Module>>,
-    pub(crate) forward_rule: AstForwardRule,
+    pub(crate) forward_rule: AstForwardRule<'static>,
 }
 
 impl ForwardedModule {
-    pub fn new(module: Rc<RefCell<Module>>, rule: AstForwardRule) -> Self {
+    pub fn new(module: Rc<RefCell<Module>>, rule: AstForwardRule<'static>) -> Self {
         let scope = (*module).borrow().scope();
 
         let variables = Self::forwarded_map(
@@ -175,7 +175,7 @@ impl ForwardedModule {
 
     pub fn if_necessary(
         module: Rc<RefCell<Module>>,
-        rule: AstForwardRule,
+        rule: AstForwardRule<'static>,
     ) -> Rc<RefCell<Module>> {
         if rule.prefix.is_none()
             && rule.shown_mixins_and_functions.is_none()

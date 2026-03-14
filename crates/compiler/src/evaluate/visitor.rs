@@ -56,11 +56,11 @@ use super::{
 enum ConditionResult {
     True,
     False,
-    Css(IfCondition),
+    Css(IfCondition<'static>),
 }
 
 /// Check if a condition tree contains any sass() atoms (crossing paren boundaries).
-fn condition_has_sass(cond: &IfCondition) -> bool {
+fn condition_has_sass(cond: &IfCondition<'static>) -> bool {
     match cond {
         IfCondition::Atom(IfConditionAtom::Sass(_, _)) => true,
         IfCondition::Atom(_) => false,
@@ -71,7 +71,7 @@ fn condition_has_sass(cond: &IfCondition) -> bool {
 }
 
 /// Check if a condition tree has raw substitutions (not crossing paren boundaries).
-fn condition_has_raw(cond: &IfCondition) -> bool {
+fn condition_has_raw(cond: &IfCondition<'static>) -> bool {
     match cond {
         IfCondition::Atom(IfConditionAtom::CssRaw(_, _)) => true,
         IfCondition::Atom(IfConditionAtom::Interp(_, _)) => true,
@@ -84,7 +84,7 @@ fn condition_has_raw(cond: &IfCondition) -> bool {
 }
 
 /// Unwrap a Paren wrapper — used when simplifying And/Or to a single operand.
-fn unwrap_paren(cond: IfCondition) -> IfCondition {
+fn unwrap_paren(cond: IfCondition<'static>) -> IfCondition<'static> {
     match cond {
         IfCondition::Paren(inner) => *inner,
         other => other,
@@ -93,35 +93,35 @@ fn unwrap_paren(cond: IfCondition) -> IfCondition {
 
 pub(crate) trait UserDefinedCallable {
     fn name(&self) -> Identifier;
-    fn arguments(&self) -> &ArgumentDeclaration;
+    fn arguments(&self) -> &ArgumentDeclaration<'static>;
 }
 
-impl UserDefinedCallable for AstFunctionDecl {
+impl UserDefinedCallable for AstFunctionDecl<'static> {
     fn name(&self) -> Identifier {
         self.name.node
     }
 
-    fn arguments(&self) -> &ArgumentDeclaration {
+    fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.arguments
     }
 }
 
-impl UserDefinedCallable for Rc<AstFunctionDecl> {
+impl UserDefinedCallable for Rc<AstFunctionDecl<'static>> {
     fn name(&self) -> Identifier {
         self.name.node
     }
 
-    fn arguments(&self) -> &ArgumentDeclaration {
+    fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.arguments
     }
 }
 
-impl UserDefinedCallable for AstMixin {
+impl UserDefinedCallable for AstMixin<'static> {
     fn name(&self) -> Identifier {
         self.name
     }
 
-    fn arguments(&self) -> &ArgumentDeclaration {
+    fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.args
     }
 }
@@ -131,14 +131,14 @@ impl UserDefinedCallable for Rc<CallableContentBlock> {
         Identifier::from("@content")
     }
 
-    fn arguments(&self) -> &ArgumentDeclaration {
+    fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.content.args
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct CallableContentBlock {
-    content: AstContentBlock,
+    content: AstContentBlock<'static>,
     env: Environment,
 }
 
@@ -208,9 +208,10 @@ pub struct Visitor<'a> {
     has_out_of_order_imports: bool,
     pub options: &'a Options<'a>,
     pub(crate) map: &'a mut CodeMap,
+    pub(crate) arena: &'a bumpalo::Bump,
     // todo: remove
     empty_span: Span,
-    import_cache: FxHashMap<PathBuf, StyleSheet>,
+    import_cache: FxHashMap<PathBuf, StyleSheet<'static>>,
     /// As a simple heuristic, we don't cache the results of an import unless it
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
@@ -227,6 +228,7 @@ impl<'a> Visitor<'a> {
         path: &Path,
         options: &'a Options<'a>,
         map: &'a mut CodeMap,
+        arena: &'a bumpalo::Bump,
         empty_span: Span,
     ) -> Self {
         let mut flags = ContextFlags::empty();
@@ -272,6 +274,7 @@ impl<'a> Visitor<'a> {
             options,
             empty_span,
             map,
+            arena,
             import_cache: FxHashMap::default(),
             files_seen: FxHashSet::default(),
             import_path_cache: FxHashMap::default(),
@@ -294,7 +297,7 @@ impl<'a> Visitor<'a> {
         result
     }
 
-    pub(crate) fn visit_stylesheet(&mut self, mut style_sheet: StyleSheet) -> SassResult<()> {
+    pub(crate) fn visit_stylesheet(&mut self, style_sheet: &StyleSheet<'static>) -> SassResult<()> {
         self.active_modules.insert(style_sheet.url.clone());
         let was_in_plain_css = self.is_plain_css;
         let old_plain_css_depth = self.plain_css_style_rule_depth;
@@ -302,14 +305,14 @@ impl<'a> Visitor<'a> {
         if style_sheet.is_plain_css {
             self.plain_css_style_rule_depth = 0;
         }
-        mem::swap(&mut self.current_import_path, &mut style_sheet.url);
+        let old_import_path = mem::replace(&mut self.current_import_path, style_sheet.url.clone());
 
         for stmt in style_sheet.body {
             let result = self.visit_stmt(stmt)?;
             debug_assert!(result.is_none());
         }
 
-        mem::swap(&mut self.current_import_path, &mut style_sheet.url);
+        self.current_import_path = old_import_path;
         self.is_plain_css = was_in_plain_css;
         self.plain_css_style_rule_depth = old_plain_css_depth;
 
@@ -694,20 +697,20 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_return_rule(&mut self, ret: AstReturn) -> SassResult<Option<Value>> {
+    fn visit_return_rule(&mut self, ret: AstReturn<'static>) -> SassResult<Option<Value>> {
         let val = self.visit_expr(ret.val)?;
 
         Ok(Some(self.without_slash(val)))
     }
 
-    pub(crate) fn visit_stmt_arc(&mut self, stmt: Rc<AstStmt>) -> SassResult<Option<Value>> {
-        self.visit_stmt(Rc::unwrap_or_clone(stmt))
+    pub(crate) fn visit_stmt_arc(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
+        self.visit_stmt_ref(stmt)
     }
 
     /// Visit a statement by reference, avoiding deep clones for common variants.
     /// Used by loop body and function body iteration to eliminate the Rc::unwrap_or_clone
     /// deep clone that happened on every iteration.
-    pub(crate) fn visit_stmt_ref(&mut self, stmt: &AstStmt) -> SassResult<Option<Value>> {
+    pub(crate) fn visit_stmt_ref(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
         match stmt {
             AstStmt::SilentComment(..) => Ok(None),
             AstStmt::VariableDecl(decl) => self.visit_variable_decl_ref(decl),
@@ -740,13 +743,44 @@ impl<'a> Visitor<'a> {
                     .inspect(err.span)?;
                 Err((value, err.span).into())
             }
-            // For everything else, clone and delegate to owned visitor
-            other => self.visit_stmt(other.clone()),
+            // For remaining variants, clone and delegate to owned visitor.
+            // Cloning is cheap: arena refs are just pointer copies.
+            AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset.clone()),
+            AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt.clone()),
+            AstStmt::Each(each_stmt) => self.visit_each_stmt(*each_stmt.clone()),
+            AstStmt::Media(media_rule) => self.visit_media_rule(media_rule.clone()),
+            AstStmt::Include(include_stmt) => self.visit_include_stmt(*include_stmt.clone()),
+            AstStmt::While(while_stmt) => self.visit_while_stmt(while_stmt),
+            AstStmt::FunctionDecl(func) => {
+                self.visit_function_decl(func.clone());
+                Ok(None)
+            }
+            AstStmt::Mixin(mixin) => {
+                self.visit_mixin_decl(mixin.clone());
+                Ok(None)
+            }
+            AstStmt::ContentRule(content_rule) => self.visit_content_rule(*content_rule.clone()),
+            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule(*unknown_at_rule.clone()),
+            AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule.clone()),
+            AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule.clone()),
+            AstStmt::ImportRule(import_rule) => self.visit_import_rule(import_rule.clone()),
+            AstStmt::Use(use_rule) => {
+                self.visit_use_rule(*use_rule.clone())?;
+                Ok(None)
+            }
+            AstStmt::Forward(forward_rule) => {
+                self.visit_forward_rule(*forward_rule.clone())?;
+                Ok(None)
+            }
+            AstStmt::Supports(supports_rule) => {
+                self.visit_supports_rule(*supports_rule.clone())?;
+                Ok(None)
+            }
         }
     }
 
     /// Reference-based variable declaration visitor.
-    fn visit_variable_decl_ref(&mut self, decl: &AstVariableDecl) -> SassResult<Option<Value>> {
+    fn visit_variable_decl_ref(&mut self, decl: &AstVariableDecl<'static>) -> SassResult<Option<Value>> {
         let name = Spanned {
             node: decl.name,
             span: decl.span,
@@ -797,7 +831,7 @@ impl<'a> Visitor<'a> {
     }
 
     /// Reference-based loud comment visitor.
-    fn visit_loud_comment_ref(&mut self, comment: &AstLoudComment) -> SassResult<Option<Value>> {
+    fn visit_loud_comment_ref(&mut self, comment: &AstLoudComment<'static>) -> SassResult<Option<Value>> {
         if self.flags.in_function() {
             return Ok(None);
         }
@@ -818,17 +852,17 @@ impl<'a> Visitor<'a> {
     }
 
     /// Reference-based if-statement visitor.
-    fn visit_if_stmt_ref(&mut self, if_stmt: &AstIf) -> SassResult<Option<Value>> {
-        let mut matched_body: Option<&Vec<AstStmt>> = None;
+    fn visit_if_stmt_ref(&mut self, if_stmt: &AstIf<'static>) -> SassResult<Option<Value>> {
+        let mut matched_body: Option<&[AstStmt<'static>]> = None;
         for clause in &if_stmt.if_clauses {
             if self.visit_expr_ref(&clause.condition)?.is_truthy() {
-                matched_body = Some(&clause.body);
+                matched_body = Some(clause.body);
                 break;
             }
         }
 
         if matched_body.is_none() {
-            matched_body = if_stmt.else_clause.as_ref();
+            matched_body = if_stmt.else_clause;
         }
 
         self.env.scope_enter();
@@ -851,7 +885,7 @@ impl<'a> Visitor<'a> {
     }
 
     /// Reference-based style rule visitor — the most common statement in loop bodies.
-    fn visit_style_ref(&mut self, style: &AstStyle) -> SassResult<Option<Value>> {
+    fn visit_style_ref(&mut self, style: &AstStyle<'static>) -> SassResult<Option<Value>> {
         if !self.style_rule_exists()
             && !self.flags.in_unknown_at_rule()
             && !self.flags.in_keyframes()
@@ -909,7 +943,7 @@ impl<'a> Visitor<'a> {
             let old_declaration_name = self.declaration_name.take();
             self.declaration_name = Some(name);
             self.with_scope::<SassResult<()>, _>(false, true, |visitor| {
-                for stmt in &style.body {
+                for stmt in style.body {
                     let result = visitor.visit_stmt_ref(stmt)?;
                     debug_assert!(result.is_none());
                 }
@@ -922,55 +956,11 @@ impl<'a> Visitor<'a> {
     }
 
     // todo: we really don't have to return Option<Value> from all of these children
-    pub(crate) fn visit_stmt(&mut self, stmt: AstStmt) -> SassResult<Option<Value>> {
-        match stmt {
-            AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset),
-            AstStmt::Style(style) => self.visit_style(*style),
-            AstStmt::SilentComment(..) => Ok(None),
-            AstStmt::If(if_stmt) => self.visit_if_stmt(if_stmt),
-            AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt),
-            AstStmt::Return(ret) => self.visit_return_rule(ret),
-            AstStmt::Each(each_stmt) => self.visit_each_stmt(*each_stmt),
-            AstStmt::Media(media_rule) => self.visit_media_rule(media_rule),
-            AstStmt::Include(include_stmt) => self.visit_include_stmt(*include_stmt),
-            AstStmt::While(while_stmt) => self.visit_while_stmt(&while_stmt),
-            AstStmt::VariableDecl(decl) => self.visit_variable_decl(*decl),
-            AstStmt::LoudComment(comment) => self.visit_loud_comment(comment),
-            AstStmt::ImportRule(import_rule) => self.visit_import_rule(import_rule),
-            AstStmt::FunctionDecl(func) => {
-                self.visit_function_decl(func);
-                Ok(None)
-            }
-            AstStmt::Mixin(mixin) => {
-                self.visit_mixin_decl(mixin);
-                Ok(None)
-            }
-            AstStmt::ContentRule(content_rule) => self.visit_content_rule(*content_rule),
-            AstStmt::Warn(warn_rule) => {
-                self.visit_warn_rule(warn_rule)?;
-                Ok(None)
-            }
-            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule(*unknown_at_rule),
-            AstStmt::ErrorRule(error_rule) => Err(self.visit_error_rule(error_rule)?),
-            AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule),
-            AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule),
-            AstStmt::Debug(debug_rule) => self.visit_debug_rule(debug_rule),
-            AstStmt::Use(use_rule) => {
-                self.visit_use_rule(*use_rule)?;
-                Ok(None)
-            }
-            AstStmt::Forward(forward_rule) => {
-                self.visit_forward_rule(*forward_rule)?;
-                Ok(None)
-            }
-            AstStmt::Supports(supports_rule) => {
-                self.visit_supports_rule(*supports_rule)?;
-                Ok(None)
-            }
-        }
+    pub(crate) fn visit_stmt(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
+        self.visit_stmt_ref(stmt)
     }
 
-    fn visit_forward_rule(&mut self, forward_rule: AstForwardRule) -> SassResult<()> {
+    fn visit_forward_rule(&mut self, forward_rule: AstForwardRule<'static>) -> SassResult<()> {
         let old_config = Rc::clone(&self.configuration);
         let adjusted_config = Configuration::through_forward(Rc::clone(&old_config), &forward_rule);
 
@@ -1050,7 +1040,7 @@ impl<'a> Visitor<'a> {
     fn add_forward_configuration(
         &mut self,
         config: Rc<RefCell<Configuration>>,
-        forward_rule: &AstForwardRule,
+        forward_rule: &AstForwardRule<'static>,
     ) -> SassResult<Rc<RefCell<Configuration>>> {
         let mut new_values = FxHashMap::from_iter((*config).borrow().values.iter());
 
@@ -1117,7 +1107,7 @@ impl<'a> Visitor<'a> {
 
     fn parenthesize_supports_condition(
         &mut self,
-        condition: AstSupportsCondition,
+        condition: AstSupportsCondition<'static>,
         operator: Option<&str>,
     ) -> SassResult<String> {
         match &condition {
@@ -1134,7 +1124,11 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_supports_condition(&mut self, condition: AstSupportsCondition) -> SassResult<String> {
+    fn visit_supports_condition(&mut self, condition: AstSupportsCondition<'static>) -> SassResult<String> {
+        self.visit_supports_condition_ref(&condition)
+    }
+
+    fn visit_supports_condition_ref(&mut self, condition: &AstSupportsCondition<'static>) -> SassResult<String> {
         match condition {
             AstSupportsCondition::Operation {
                 left,
@@ -1142,22 +1136,22 @@ impl<'a> Visitor<'a> {
                 right,
             } => Ok(format!(
                 "{} {} {}",
-                self.parenthesize_supports_condition(*left, operator.as_deref())?,
+                self.parenthesize_supports_condition((*left).clone(), operator.as_deref())?,
                 operator.as_ref().unwrap(),
-                self.parenthesize_supports_condition(*right, operator.as_deref())?
+                self.parenthesize_supports_condition((*right).clone(), operator.as_deref())?
             )),
-            AstSupportsCondition::Negation(condition) => Ok(format!(
+            AstSupportsCondition::Negation(inner) => Ok(format!(
                 "not {}",
-                self.parenthesize_supports_condition(*condition, None)?
+                self.parenthesize_supports_condition((*inner).clone(), None)?
             )),
             AstSupportsCondition::Interpolation(expr) => {
-                self.evaluate_to_css(expr, QuoteKind::None, self.empty_span)
+                self.evaluate_to_css(expr.clone(), QuoteKind::None, self.empty_span)
             }
             AstSupportsCondition::Declaration { name, value } => {
                 let old_in_supports_decl = self.flags.in_supports_declaration();
                 self.flags.set(ContextFlags::IN_SUPPORTS_DECLARATION, true);
 
-                let is_custom_property = match &name {
+                let is_custom_property = match name {
                     AstExpr::String(StringExpr(text, QuoteKind::None), ..) => {
                         text.initial_plain().starts_with("--")
                     }
@@ -1166,9 +1160,9 @@ impl<'a> Visitor<'a> {
 
                 let result = format!(
                     "({}:{}{})",
-                    self.evaluate_to_css(name, QuoteKind::Quoted, self.empty_span)?,
+                    self.evaluate_to_css(name.clone(), QuoteKind::Quoted, self.empty_span)?,
                     if is_custom_property { "" } else { " " },
-                    self.evaluate_to_css(value, QuoteKind::Quoted, self.empty_span)?,
+                    self.evaluate_to_css(value.clone(), QuoteKind::Quoted, self.empty_span)?,
                 );
 
                 self.flags
@@ -1178,17 +1172,17 @@ impl<'a> Visitor<'a> {
             }
             AstSupportsCondition::Function { name, args } => Ok(format!(
                 "{}({})",
-                self.perform_interpolation(name, false)?,
-                self.perform_interpolation(args, false)?
+                self.perform_interpolation(name.clone(), false)?,
+                self.perform_interpolation(args.clone(), false)?
             )),
             AstSupportsCondition::Anything { contents } => Ok(format!(
                 "({})",
-                self.perform_interpolation(contents, false)?,
+                self.perform_interpolation(contents.clone(), false)?,
             )),
         }
     }
 
-    fn visit_supports_rule(&mut self, supports_rule: AstSupportsRule) -> SassResult<()> {
+    fn visit_supports_rule(&mut self, supports_rule: AstSupportsRule<'static>) -> SassResult<()> {
         if self.declaration_name.is_some() {
             return Err((
                 "Supports rules may not be used within nested declarations.",
@@ -1263,7 +1257,7 @@ impl<'a> Visitor<'a> {
 
     fn execute(
         &mut self,
-        stylesheet: StyleSheet,
+        stylesheet: StyleSheet<'static>,
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
     ) -> SassResult<Rc<RefCell<Module>>> {
@@ -1380,7 +1374,7 @@ impl<'a> Visitor<'a> {
             // Snapshot ROOT children count to track which CSS this module adds.
             let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
 
-            visitor.visit_stylesheet(stylesheet)?;
+            visitor.visit_stylesheet(&stylesheet)?;
 
             // Flush any remaining pending imports from this module.
             visitor.flush_pending_imports(true);
@@ -1487,7 +1481,7 @@ impl<'a> Visitor<'a> {
     /// extends to the cloned selectors, and emits the result.
     pub(crate) fn load_css_inner(
         &mut self,
-        stylesheet: StyleSheet,
+        stylesheet: StyleSheet<'static>,
         configuration: Option<Rc<RefCell<Configuration>>>,
     ) -> SassResult<()> {
         let canonical_url = self.canonicalize(&stylesheet.url);
@@ -1807,7 +1801,7 @@ impl<'a> Visitor<'a> {
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
         span: Span,
-        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, StyleSheet) -> SassResult<()>,
+        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, StyleSheet<'static>) -> SassResult<()>,
     ) -> SassResult<()> {
         let builtin = match url.to_string_lossy().as_ref() {
             "sass:color" => Some(declare_module_color()),
@@ -1874,7 +1868,7 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_use_rule(&mut self, use_rule: AstUseRule) -> SassResult<()> {
+    fn visit_use_rule(&mut self, use_rule: AstUseRule<'static>) -> SassResult<()> {
         let configuration = if use_rule.configuration.is_empty() {
             Rc::new(RefCell::new(Configuration::empty()))
         } else {
@@ -1942,7 +1936,7 @@ impl<'a> Visitor<'a> {
         Err((msg, span).into())
     }
 
-    fn visit_import_rule(&mut self, import_rule: AstImportRule) -> SassResult<Option<Value>> {
+    fn visit_import_rule(&mut self, import_rule: AstImportRule<'static>) -> SassResult<Option<Value>> {
         for import in import_rule.imports {
             match import {
                 AstImport::Sass(dynamic_import) => {
@@ -2206,12 +2200,14 @@ impl<'a> Visitor<'a> {
         lexer: Lexer,
         path: &Path,
         empty_span: Span,
-    ) -> SassResult<StyleSheet> {
-        match InputSyntax::for_path(path) {
-            InputSyntax::Scss => ScssParser::new(lexer, self.options, empty_span, path).__parse(),
-            InputSyntax::Sass => SassParser::new(lexer, self.options, empty_span, path).__parse(),
-            InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path).__parse(),
-        }
+    ) -> SassResult<StyleSheet<'static>> {
+        let result = match InputSyntax::for_path(path) {
+            InputSyntax::Scss => ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
+            InputSyntax::Sass => SassParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
+            InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
+        }?;
+        // Safety: the arena lives for the entire compilation (stored in Visitor).
+        Ok(unsafe { crate::ast::erase_stylesheet_lifetime(result) })
     }
 
     fn import_like_node(
@@ -2219,7 +2215,7 @@ impl<'a> Visitor<'a> {
         url: &str,
         for_import: bool,
         span: Span,
-    ) -> SassResult<StyleSheet> {
+    ) -> SassResult<StyleSheet<'static>> {
         if let Some(name) = self.find_import(url.as_ref(), for_import, span)? {
             let name = self.canonicalize(&name);
             if let Some(style_sheet) = self.import_cache.get(&name) {
@@ -2258,7 +2254,7 @@ impl<'a> Visitor<'a> {
         // default=false
         for_import: bool,
         span: Span,
-    ) -> SassResult<StyleSheet> {
+    ) -> SassResult<StyleSheet<'static>> {
         // todo: import cache
         self.import_like_node(url, for_import, span)
     }
@@ -2287,7 +2283,7 @@ impl<'a> Visitor<'a> {
                     self.env.scopes.insert_var(0, *name, Value::Null);
                 }
             }
-            self.visit_stylesheet(stylesheet)?;
+            self.visit_stylesheet(&stylesheet)?;
             return Ok(());
         }
 
@@ -2314,7 +2310,7 @@ impl<'a> Visitor<'a> {
             let old_cloned_modules = mem::take(&mut visitor.import_cloned_modules);
             let old_cloned_css = mem::take(&mut visitor.import_cloned_css);
 
-            visitor.visit_stylesheet(stylesheet)?;
+            visitor.visit_stylesheet(&stylesheet)?;
 
             visitor.import_selector_map = old_selector_map;
             visitor.import_cloned_modules = old_cloned_modules;
@@ -2336,7 +2332,7 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_static_import_rule(&mut self, static_import: AstPlainCssImport) -> SassResult<()> {
+    fn visit_static_import_rule(&mut self, static_import: AstPlainCssImport<'static>) -> SassResult<()> {
         let import = self.interpolation_to_value(static_import.url, false, false)?;
 
         let modifiers = static_import
@@ -2359,7 +2355,7 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_debug_rule(&mut self, debug_rule: AstDebugRule) -> SassResult<Option<Value>> {
+    fn visit_debug_rule(&mut self, debug_rule: AstDebugRule<'static>) -> SassResult<Option<Value>> {
         if self.options.quiet {
             return Ok(None);
         }
@@ -2373,7 +2369,7 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn visit_content_rule(&mut self, content_rule: AstContentRule) -> SassResult<Option<Value>> {
+    fn visit_content_rule(&mut self, content_rule: AstContentRule<'static>) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
             #[allow(mutable_borrow_reservation_conflict)]
@@ -2440,7 +2436,7 @@ impl<'a> Visitor<'a> {
         nodes[innermost_contiguous.unwrap()]
     }
 
-    fn visit_at_root_rule(&mut self, mut at_root_rule: AstAtRootRule) -> SassResult<Option<Value>> {
+    fn visit_at_root_rule(&mut self, mut at_root_rule: AstAtRootRule<'static>) -> SassResult<Option<Value>> {
         let query = match at_root_rule.query.clone() {
             Some(query) => {
                 let resolved = self.perform_interpolation(query.node, true)?;
@@ -2625,7 +2621,7 @@ impl<'a> Visitor<'a> {
         res
     }
 
-    fn visit_function_decl(&mut self, fn_decl: AstFunctionDecl) {
+    fn visit_function_decl(&mut self, fn_decl: AstFunctionDecl<'static>) {
         let name = fn_decl.name.node;
         // todo: independency
 
@@ -2652,7 +2648,7 @@ impl<'a> Visitor<'a> {
         parser.parse()
     }
 
-    fn visit_extend_rule(&mut self, extend_rule: AstExtendRule) -> SassResult<Option<Value>> {
+    fn visit_extend_rule(&mut self, extend_rule: AstExtendRule<'static>) -> SassResult<Option<Value>> {
         if !self.style_rule_exists() || self.declaration_name.is_some() {
             return Err((
                 "@extend may only be used within style rules.",
@@ -2701,7 +2697,7 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn visit_error_rule(&mut self, error_rule: AstErrorRule) -> SassResult<Box<SassError>> {
+    fn visit_error_rule(&mut self, error_rule: AstErrorRule<'static>) -> SassResult<Box<SassError>> {
         let value = self
             .visit_expr(error_rule.value)?
             .inspect(error_rule.span)?;
@@ -2730,7 +2726,7 @@ impl<'a> Visitor<'a> {
 
     fn visit_media_queries(
         &mut self,
-        queries: Interpolation,
+        queries: Interpolation<'static>,
         span: Span,
     ) -> SassResult<Vec<CssMediaQuery>> {
         let resolved = self.perform_interpolation(queries, true)?;
@@ -2738,7 +2734,7 @@ impl<'a> Visitor<'a> {
         CssMediaQuery::parse_list(&resolved, span)
     }
 
-    fn visit_media_rule(&mut self, media_rule: AstMedia) -> SassResult<Option<Value>> {
+    fn visit_media_rule(&mut self, media_rule: AstMedia<'static>) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
                 "Media rules may not be used within nested declarations.",
@@ -2857,7 +2853,7 @@ impl<'a> Visitor<'a> {
 
     fn visit_unknown_at_rule(
         &mut self,
-        unknown_at_rule: AstUnknownAtRule,
+        unknown_at_rule: AstUnknownAtRule<'static>,
     ) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
@@ -2982,7 +2978,7 @@ impl<'a> Visitor<'a> {
         self.options.logger.warn(loc, message);
     }
 
-    fn visit_warn_rule(&mut self, warn_rule: AstWarn) -> SassResult<()> {
+    fn visit_warn_rule(&mut self, warn_rule: AstWarn<'static>) -> SassResult<()> {
         if self.warnings_emitted.insert(warn_rule.span) {
             let value = self.visit_expr(warn_rule.value)?;
             let message = value.to_css_string(warn_rule.span, self.options.is_compressed())?;
@@ -3171,7 +3167,7 @@ impl<'a> Visitor<'a> {
         v
     }
 
-    fn visit_include_stmt(&mut self, include_stmt: AstInclude) -> SassResult<Option<Value>> {
+    fn visit_include_stmt(&mut self, include_stmt: AstInclude<'static>) -> SassResult<Option<Value>> {
         let mixin = self
             .env
             .get_mixin(include_stmt.name, include_stmt.namespace)?;
@@ -3252,7 +3248,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_mixin_decl(&mut self, mixin: AstMixin) {
+    fn visit_mixin_decl(&mut self, mixin: AstMixin<'static>) {
         let defining_path = self.current_import_path.clone();
         self.env.insert_mixin(
             mixin.name,
@@ -3260,7 +3256,7 @@ impl<'a> Visitor<'a> {
         );
     }
 
-    fn visit_each_stmt(&mut self, each_stmt: AstEach) -> SassResult<Option<Value>> {
+    fn visit_each_stmt(&mut self, each_stmt: AstEach<'static>) -> SassResult<Option<Value>> {
         let list = self.visit_expr(each_stmt.list)?.as_list();
 
         // todo: not setting semi_global: true maybe means we can't assign to global scope when declared as global
@@ -3299,7 +3295,7 @@ impl<'a> Visitor<'a> {
         Ok(result)
     }
 
-    fn visit_for_stmt(&mut self, for_stmt: AstFor) -> SassResult<Option<Value>> {
+    fn visit_for_stmt(&mut self, for_stmt: AstFor<'static>) -> SassResult<Option<Value>> {
         let from_span = for_stmt.from.span;
         let to_span = for_stmt.to.span;
         let from_number = self
@@ -3372,7 +3368,7 @@ impl<'a> Visitor<'a> {
         Ok(result)
     }
 
-    fn visit_while_stmt(&mut self, while_stmt: &AstWhile) -> SassResult<Option<Value>> {
+    fn visit_while_stmt(&mut self, while_stmt: &AstWhile<'static>) -> SassResult<Option<Value>> {
         self.with_scope(true, true, |visitor| {
             let mut result = None;
 
@@ -3393,10 +3389,10 @@ impl<'a> Visitor<'a> {
         })
     }
 
-    fn visit_if_stmt(&mut self, if_stmt: AstIf) -> SassResult<Option<Value>> {
-        let mut clause: Option<Vec<AstStmt>> = if_stmt.else_clause;
-        for clause_to_check in if_stmt.if_clauses {
-            if self.visit_expr(clause_to_check.condition)?.is_truthy() {
+    fn visit_if_stmt(&mut self, if_stmt: AstIf<'static>) -> SassResult<Option<Value>> {
+        let mut clause: Option<&[AstStmt<'static>]> = if_stmt.else_clause;
+        for clause_to_check in &if_stmt.if_clauses {
+            if self.visit_expr(clause_to_check.condition.clone())?.is_truthy() {
                 clause = Some(clause_to_check.body);
                 break;
             }
@@ -3422,7 +3418,7 @@ impl<'a> Visitor<'a> {
         Ok(result)
     }
 
-    fn visit_loud_comment(&mut self, comment: AstLoudComment) -> SassResult<Option<Value>> {
+    fn visit_loud_comment(&mut self, comment: AstLoudComment<'static>) -> SassResult<Option<Value>> {
         if self.flags.in_function() {
             return Ok(None);
         }
@@ -3444,7 +3440,7 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn visit_variable_decl(&mut self, decl: AstVariableDecl) -> SassResult<Option<Value>> {
+    fn visit_variable_decl(&mut self, decl: AstVariableDecl<'static>) -> SassResult<Option<Value>> {
         let name = Spanned {
             node: decl.name,
             span: decl.span,
@@ -3496,7 +3492,7 @@ impl<'a> Visitor<'a> {
 
     fn interpolation_to_value(
         &mut self,
-        interpolation: Interpolation,
+        interpolation: Interpolation<'static>,
         // default=false
         trim: bool,
         // default=false
@@ -3515,7 +3511,7 @@ impl<'a> Visitor<'a> {
     /// evaluating expressions via visit_expr_ref.
     fn perform_interpolation_ref(
         &mut self,
-        interpolation: &Interpolation,
+        interpolation: &Interpolation<'static>,
         _warn_for_color: bool,
     ) -> SassResult<String> {
         let result = match interpolation.contents.len() {
@@ -3547,7 +3543,7 @@ impl<'a> Visitor<'a> {
 
     fn perform_interpolation(
         &mut self,
-        mut interpolation: Interpolation,
+        mut interpolation: Interpolation<'static>,
         // todo check to emit warning if this is true
         _warn_for_color: bool,
     ) -> SassResult<String> {
@@ -3583,7 +3579,7 @@ impl<'a> Visitor<'a> {
 
     fn evaluate_to_css(
         &mut self,
-        expr: AstExpr,
+        expr: AstExpr<'static>,
         quote: QuoteKind,
         span: Span,
     ) -> SassResult<String> {
@@ -3609,7 +3605,7 @@ impl<'a> Visitor<'a> {
 
     fn eval_maybe_args(
         &mut self,
-        args: MaybeEvaledArguments,
+        args: MaybeEvaledArguments<'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
         match args {
@@ -3620,7 +3616,7 @@ impl<'a> Visitor<'a> {
 
     fn eval_args(
         &mut self,
-        arguments: ArgumentInvocation,
+        arguments: ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
         let mut positional = Vec::with_capacity(arguments.positional.len());
@@ -3741,7 +3737,7 @@ impl<'a> Visitor<'a> {
         R: FnOnce(F, &mut Self) -> SassResult<V>,
     >(
         &mut self,
-        arguments: MaybeEvaledArguments,
+        arguments: MaybeEvaledArguments<'static>,
         func: F,
         env: &Environment,
         span: Span,
@@ -3865,7 +3861,7 @@ impl<'a> Visitor<'a> {
     pub(crate) fn run_function_callable(
         &mut self,
         func: SassFunction,
-        arguments: ArgumentInvocation,
+        arguments: ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<Value> {
         self.run_function_callable_with_maybe_evaled(
@@ -3878,7 +3874,7 @@ impl<'a> Visitor<'a> {
     pub(crate) fn run_function_callable_with_maybe_evaled(
         &mut self,
         func: SassFunction,
-        arguments: MaybeEvaledArguments,
+        arguments: MaybeEvaledArguments<'static>,
         span: Span,
     ) -> SassResult<Value> {
         match func {
@@ -3998,7 +3994,7 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_list_expr(&mut self, list: ListExpr) -> SassResult<Value> {
+    fn visit_list_expr(&mut self, list: ListExpr<'static>) -> SassResult<Value> {
         let elems = list
             .elems
             .into_iter()
@@ -4011,7 +4007,7 @@ impl<'a> Visitor<'a> {
         Ok(Value::List(Rc::new(elems), list.separator, list.brackets))
     }
 
-    fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr) -> SassResult<Value> {
+    fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr<'static>) -> SassResult<Value> {
         let name = func_call.name;
         let original_name = func_call.original_name;
 
@@ -4023,7 +4019,7 @@ impl<'a> Visitor<'a> {
                     name,
                     original_name,
                 },
-                Rc::unwrap_or_clone(func_call.arguments),
+                func_call.arguments.clone(),
                 func_call.span,
             );
         }
@@ -4053,13 +4049,13 @@ impl<'a> Visitor<'a> {
         let old_in_function = self.flags.in_function();
         self.flags.set(ContextFlags::IN_FUNCTION, true);
         let value =
-            self.run_function_callable(func, Rc::unwrap_or_clone(func_call.arguments), func_call.span)?;
+            self.run_function_callable(func, func_call.arguments.clone(), func_call.span)?;
         self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
 
         Ok(value)
     }
 
-    fn visit_interpolated_func_expr(&mut self, func: InterpolatedFunction) -> SassResult<Value> {
+    fn visit_interpolated_func_expr(&mut self, func: InterpolatedFunction<'static>) -> SassResult<Value> {
         let InterpolatedFunction {
             name,
             arguments: args,
@@ -4107,9 +4103,10 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// Evaluate an expression by reference, avoiding clones for common variants.
-    /// Falls back to cloning for complex/rare variants.
-    fn visit_expr_ref(&mut self, expr: &AstExpr) -> SassResult<Value> {
+    /// Evaluate an expression by reference.
+    /// With arena allocation, all sub-expressions are behind `&'static` references,
+    /// so we clone to get owned values where needed (clone is cheap for arena refs).
+    fn visit_expr_ref(&mut self, expr: &AstExpr<'static>) -> SassResult<Value> {
         Ok(match expr {
             AstExpr::True => Value::True,
             AstExpr::False => Value::False,
@@ -4122,92 +4119,34 @@ impl<'a> Visitor<'a> {
             }),
             AstExpr::Variable { name, namespace } => self.env.get_var(*name, *namespace)?,
             AstExpr::ParentSelector => self.visit_parent_selector(),
-            // Rc-wrapped variants: Rc::clone is cheap, inner unwrap may clone
-            AstExpr::BinaryOp(rc) => {
-                let binop = Rc::unwrap_or_clone(Rc::clone(rc));
-                self.visit_bin_op(binop.lhs, binop.op, binop.rhs, binop.allows_slash, binop.span)?
-            }
-            AstExpr::Paren(rc) => self.visit_expr_ref(rc)?,
-            AstExpr::UnaryOp(op, rc, span) => {
-                self.visit_unary_op(*op, Rc::unwrap_or_clone(Rc::clone(rc)), *span)?
-            }
-            // Everything else: clone and delegate to owned visitor
-            other => self.visit_expr(other.clone())?,
-        })
-    }
-
-    fn visit_expr(&mut self, expr: AstExpr) -> SassResult<Value> {
-        Ok(match expr {
-            AstExpr::Color(color) => Value::Color(color),
-            AstExpr::Number { n, unit } => Value::Dimension(SassNumber {
-                num: n,
-                unit,
-                as_slash: None,
-            }),
-            AstExpr::List(list) => self.visit_list_expr(list)?,
-            AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text, quote)?,
             AstExpr::BinaryOp(binop) => {
-                let binop = Rc::unwrap_or_clone(binop);
-                self.visit_bin_op(binop.lhs, binop.op, binop.rhs, binop.allows_slash, binop.span)?
+                self.visit_bin_op(binop.lhs.clone(), binop.op, binop.rhs.clone(), binop.allows_slash, binop.span)?
             }
-            AstExpr::True => Value::True,
-            AstExpr::False => Value::False,
+            AstExpr::Paren(inner) => self.visit_expr_ref(inner)?,
+            AstExpr::UnaryOp(op, inner, span) => {
+                self.visit_unary_op(*op, (*inner).clone(), *span)?
+            }
+            AstExpr::List(list) => self.visit_list_expr(list.clone())?,
+            AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text.clone(), *quote)?,
             AstExpr::Calculation { name, args } => {
-                // Check if a user-defined function overrides this calculation
-                if name.is_overridable() {
-                    let ident = Identifier::from(name.to_string());
-                    if self.env.scopes.get_fn(ident).is_some() {
-                        let positional = args
-                            .into_iter()
-                            .map(|arg| self.visit_expr(arg))
-                            .collect::<SassResult<Vec<_>>>()?;
-
-                        let func = self.env.scopes.get_fn(ident).unwrap();
-
-                        let evaled = ArgumentResult {
-                            positional,
-                            named: BTreeMap::new(),
-                            separator: ListSeparator::Undecided,
-                            span: self.empty_span,
-                            touched: BTreeSet::new(),
-                        };
-
-                        let old_in_function = self.flags.in_function();
-                        self.flags.set(ContextFlags::IN_FUNCTION, true);
-                        let value = self.run_function_callable_with_maybe_evaled(
-                            func,
-                            MaybeEvaledArguments::Evaled(evaled),
-                            self.empty_span,
-                        )?;
-                        self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
-
-                        value
-                    } else {
-                        self.visit_calculation_expr(name, args, self.empty_span)?
-                    }
-                } else {
-                    self.visit_calculation_expr(name, args, self.empty_span)?
-                }
+                self.visit_calculation_expr(*name, args.clone(), self.empty_span)?
             }
-            AstExpr::CssIf(css_if) => self.visit_css_if(Rc::unwrap_or_clone(css_if))?,
-            AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
-            AstExpr::If(if_expr) => self.visit_ternary(Rc::unwrap_or_clone(if_expr))?,
+            AstExpr::CssIf(css_if) => self.visit_css_if((*css_if).clone())?,
+            AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call.clone())?,
+            AstExpr::If(if_expr) => self.visit_ternary((*if_expr).clone())?,
             AstExpr::InterpolatedFunction(func) => {
-                self.visit_interpolated_func_expr(Rc::unwrap_or_clone(func))?
+                self.visit_interpolated_func_expr((*func).clone())?
             }
-            AstExpr::Map(map) => self.visit_map(map)?,
-            AstExpr::Null => Value::Null,
-            AstExpr::Paren(expr) => self.visit_expr(Rc::unwrap_or_clone(expr))?,
-            AstExpr::ParentSelector => self.visit_parent_selector(),
-            AstExpr::UnaryOp(op, expr, span) => {
-                self.visit_unary_op(op, Rc::unwrap_or_clone(expr), span)?
-            }
-            AstExpr::Variable { name, namespace } => self.env.get_var(name, namespace)?,
+            AstExpr::Map(map) => self.visit_map(map.clone())?,
             AstExpr::Supports(condition) => Value::String(
-                self.visit_supports_condition(Rc::unwrap_or_clone(condition))?.into(),
+                self.visit_supports_condition((*condition).clone())?.into(),
                 QuoteKind::None,
             ),
         })
+    }
+
+    fn visit_expr(&mut self, expr: AstExpr<'static>) -> SassResult<Value> {
+        self.visit_expr_ref(&expr)
     }
 
     /// Check that a calculation function received the required number of arguments
@@ -4234,14 +4173,14 @@ impl<'a> Visitor<'a> {
 
     fn visit_calculation_value(
         &mut self,
-        expr: AstExpr,
+        expr: AstExpr<'static>,
         in_min_or_max: bool,
         span: Span,
     ) -> SassResult<CalculationArg> {
         Ok(match expr {
             AstExpr::Paren(inner) => {
                 let result =
-                    self.visit_calculation_value(Rc::unwrap_or_clone(inner), in_min_or_max, span)?;
+                    self.visit_calculation_value(inner.clone(), in_min_or_max, span)?;
 
                 match result {
                     CalculationArg::String(text) => {
@@ -4268,11 +4207,10 @@ impl<'a> Visitor<'a> {
                 }
             }
             AstExpr::BinaryOp(binop) => {
-                let binop = Rc::unwrap_or_clone(binop);
                 SassCalculation::operate_internal(
                     binop.op,
-                    self.visit_calculation_value(binop.lhs, in_min_or_max, span)?,
-                    self.visit_calculation_value(binop.rhs, in_min_or_max, span)?,
+                    self.visit_calculation_value(binop.lhs.clone(), in_min_or_max, span)?,
+                    self.visit_calculation_value(binop.rhs.clone(), in_min_or_max, span)?,
                     in_min_or_max,
                     !self.flags.in_supports_declaration(),
                     self.options,
@@ -4318,7 +4256,7 @@ impl<'a> Visitor<'a> {
     fn visit_calculation_expr(
         &mut self,
         name: CalculationName,
-        mut ast_args: Vec<AstExpr>,
+        mut ast_args: Vec<AstExpr<'static>>,
         span: Span,
     ) -> SassResult<Value> {
         // For single-arg functions (abs, round), when calculation arg
@@ -4487,7 +4425,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_unary_op(&mut self, op: UnaryOp, expr: AstExpr, span: Span) -> SassResult<Value> {
+    fn visit_unary_op(&mut self, op: UnaryOp, expr: AstExpr<'static>, span: Span) -> SassResult<Value> {
         let operand = self.visit_expr(expr)?;
 
         match op {
@@ -4498,7 +4436,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_ternary(&mut self, if_expr: Ternary) -> SassResult<Value> {
+    fn visit_ternary(&mut self, if_expr: Ternary<'static>) -> SassResult<Value> {
         // When rest args are present, evaluate all args eagerly (can't do lazy
         // evaluation since rest values are already evaluated)
         if if_expr.0.rest.is_some() {
@@ -4545,7 +4483,7 @@ impl<'a> Visitor<'a> {
         Ok(self.without_slash(value))
     }
 
-    fn visit_css_if(&mut self, css_if: CssIfExpression) -> SassResult<Value> {
+    fn visit_css_if(&mut self, css_if: CssIfExpression<'static>) -> SassResult<Value> {
         // Validate: sass() and raw substitutions cannot coexist in same condition
         for clause in &css_if.clauses {
             self.check_no_sass_with_raw(&clause.condition, css_if.span)?;
@@ -4573,9 +4511,9 @@ impl<'a> Visitor<'a> {
 
     fn build_css_if_output(
         &mut self,
-        first_remaining: &IfCondition,
-        first_clause: &IfClause,
-        css_if: &CssIfExpression,
+        first_remaining: &IfCondition<'static>,
+        first_clause: &IfClause<'static>,
+        css_if: &CssIfExpression<'static>,
     ) -> SassResult<Value> {
         let mut parts = Vec::new();
 
@@ -4636,7 +4574,7 @@ impl<'a> Visitor<'a> {
         Ok(Value::String(output.into(), QuoteKind::None))
     }
 
-    fn eval_if_condition(&mut self, condition: &IfCondition) -> SassResult<ConditionResult> {
+    fn eval_if_condition(&mut self, condition: &IfCondition<'static>) -> SassResult<ConditionResult> {
         match condition {
             IfCondition::Else => Ok(ConditionResult::True),
             IfCondition::Atom(atom) => self.eval_if_atom(atom),
@@ -4719,7 +4657,7 @@ impl<'a> Visitor<'a> {
     /// inside parens). Raw inside parens does NOT conflict with sass at outer scope.
     fn check_no_sass_with_raw(
         &self,
-        condition: &IfCondition,
+        condition: &IfCondition<'static>,
         span: Span,
     ) -> SassResult<()> {
         let has_raw = condition_has_raw(condition);
@@ -4741,7 +4679,7 @@ impl<'a> Visitor<'a> {
 
     fn check_parens_for_sass_raw(
         &self,
-        condition: &IfCondition,
+        condition: &IfCondition<'static>,
         span: Span,
     ) -> SassResult<()> {
         match condition {
@@ -4761,7 +4699,7 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn eval_if_atom(&mut self, atom: &IfConditionAtom) -> SassResult<ConditionResult> {
+    fn eval_if_atom(&mut self, atom: &IfConditionAtom<'static>) -> SassResult<ConditionResult> {
         match atom {
             IfConditionAtom::Sass(expr, _span) => {
                 let value = self.visit_expr(expr.clone())?;
@@ -4795,7 +4733,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn serialize_if_condition(&mut self, condition: &IfCondition) -> SassResult<String> {
+    fn serialize_if_condition(&mut self, condition: &IfCondition<'static>) -> SassResult<String> {
         match condition {
             IfCondition::Else => Ok("else".to_string()),
             IfCondition::Atom(atom) => match atom {
@@ -4835,7 +4773,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_string(&mut self, mut text: Interpolation, quote: QuoteKind) -> SassResult<Value> {
+    fn visit_string(&mut self, mut text: Interpolation<'static>, quote: QuoteKind) -> SassResult<Value> {
         // Don't use [performInterpolation] here because we need to get the raw text
         // from strings, rather than the semantic value.
         let old_in_supports_declaration = self.flags.in_supports_declaration();
@@ -4876,7 +4814,7 @@ impl<'a> Visitor<'a> {
         Ok(Value::String(result.into(), quote))
     }
 
-    fn visit_map(&mut self, map: AstSassMap) -> SassResult<Value> {
+    fn visit_map(&mut self, map: AstSassMap<'static>) -> SassResult<Value> {
         let mut sass_map = SassMap::new();
 
         for pair in map.0 {
@@ -4902,9 +4840,9 @@ impl<'a> Visitor<'a> {
 
     fn visit_bin_op(
         &mut self,
-        lhs: AstExpr,
+        lhs: AstExpr<'static>,
         op: BinaryOp,
-        rhs: AstExpr,
+        rhs: AstExpr<'static>,
         allows_slash: bool,
         span: Span,
     ) -> SassResult<Value> {
@@ -4997,7 +4935,7 @@ impl<'a> Visitor<'a> {
         expr.to_css_string(span, self.options.is_compressed())
     }
 
-    pub(crate) fn visit_ruleset(&mut self, ruleset: AstRuleSet) -> SassResult<Option<Value>> {
+    pub(crate) fn visit_ruleset(&mut self, ruleset: AstRuleSet<'static>) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
                 "Style rules may not be used within nested declarations.",
@@ -5212,7 +5150,7 @@ impl<'a> Visitor<'a> {
         !self.flags.at_root_excluding_style_rule() && self.style_rule_ignoring_at_root.is_some()
     }
 
-    pub(crate) fn visit_style(&mut self, style: AstStyle) -> SassResult<Option<Value>> {
+    pub(crate) fn visit_style(&mut self, style: AstStyle<'static>) -> SassResult<Option<Value>> {
         if !self.style_rule_exists()
             && !self.flags.in_unknown_at_rule()
             && !self.flags.in_keyframes()

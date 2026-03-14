@@ -12,6 +12,7 @@ pub(crate) struct ScssParser<'a> {
     pub empty_span: Span,
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
+    pub arena: &'a bumpalo::Bump,
 }
 
 impl<'a> ScssParser<'a> {
@@ -20,6 +21,7 @@ impl<'a> ScssParser<'a> {
         options: &'a Options<'a>,
         empty_span: Span,
         file_name: &'a Path,
+        arena: &'a bumpalo::Bump,
     ) -> Self {
         let mut flags = ContextFlags::empty();
 
@@ -31,6 +33,7 @@ impl<'a> ScssParser<'a> {
             empty_span,
             flags,
             options,
+            arena,
         }
     }
 }
@@ -76,5 +79,9 @@ impl<'a> StylesheetParser<'a> for ScssParser<'a> {
 
     fn empty_span(&self) -> Span {
         self.empty_span
+    }
+
+    fn arena(&self) -> &'a bumpalo::Bump {
+        self.arena
     }
 }
