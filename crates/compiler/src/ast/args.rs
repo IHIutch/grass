@@ -16,18 +16,18 @@ use crate::{
 use super::AstExpr;
 
 #[derive(Debug, Clone)]
-pub struct Argument {
+pub struct Argument<'a> {
     pub name: Identifier,
-    pub default: Option<AstExpr>,
+    pub default: Option<AstExpr<'a>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ArgumentDeclaration {
-    pub args: Vec<Argument>,
+pub struct ArgumentDeclaration<'a> {
+    pub args: Vec<Argument<'a>>,
     pub rest: Option<Identifier>,
 }
 
-impl ArgumentDeclaration {
+impl<'a> ArgumentDeclaration<'a> {
     pub fn empty() -> Self {
         Self {
             args: Vec::new(),
@@ -130,15 +130,15 @@ impl ArgumentDeclaration {
 }
 
 #[derive(Debug, Clone)]
-pub struct ArgumentInvocation {
-    pub(crate) positional: Vec<AstExpr>,
-    pub(crate) named: BTreeMap<Identifier, AstExpr>,
-    pub(crate) rest: Option<AstExpr>,
-    pub(crate) keyword_rest: Option<AstExpr>,
+pub struct ArgumentInvocation<'a> {
+    pub(crate) positional: Vec<AstExpr<'a>>,
+    pub(crate) named: BTreeMap<Identifier, AstExpr<'a>>,
+    pub(crate) rest: Option<AstExpr<'a>>,
+    pub(crate) keyword_rest: Option<AstExpr<'a>>,
     pub(crate) span: Span,
 }
 
-impl ArgumentInvocation {
+impl<'a> ArgumentInvocation<'a> {
     pub fn empty(span: Span) -> Self {
         Self {
             positional: Vec::new(),
@@ -152,8 +152,8 @@ impl ArgumentInvocation {
 
 // todo: hack for builtin `call`
 #[derive(Debug, Clone)]
-pub(crate) enum MaybeEvaledArguments {
-    Invocation(ArgumentInvocation),
+pub(crate) enum MaybeEvaledArguments<'a> {
+    Invocation(ArgumentInvocation<'a>),
     Evaled(ArgumentResult),
 }
 

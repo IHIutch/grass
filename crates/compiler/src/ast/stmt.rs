@@ -20,9 +20,9 @@ pub struct AstSilentComment {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstPlainCssImport {
-    pub url: Interpolation,
-    pub modifiers: Option<Interpolation>,
+pub struct AstPlainCssImport<'a> {
+    pub url: Interpolation<'a>,
+    pub modifiers: Option<Interpolation<'a>>,
     #[allow(unused)]
     pub span: Span,
 }
@@ -34,132 +34,132 @@ pub struct AstSassImport {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstIf {
-    pub if_clauses: Vec<AstIfClause>,
-    pub else_clause: Option<Vec<AstStmt>>,
+pub struct AstIf<'a> {
+    pub if_clauses: Vec<AstIfClause<'a>>,
+    pub else_clause: Option<&'a [AstStmt<'a>]>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstIfClause {
-    pub condition: AstExpr,
-    pub body: Vec<AstStmt>,
+pub struct AstIfClause<'a> {
+    pub condition: AstExpr<'a>,
+    pub body: &'a [AstStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
-pub struct AstFor {
+pub struct AstFor<'a> {
     pub variable: Spanned<Identifier>,
-    pub from: Spanned<AstExpr>,
-    pub to: Spanned<AstExpr>,
+    pub from: Spanned<AstExpr<'a>>,
+    pub to: Spanned<AstExpr<'a>>,
     pub is_exclusive: bool,
-    pub body: Vec<Rc<AstStmt>>,
+    pub body: &'a [AstStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
-pub struct AstReturn {
-    pub val: AstExpr,
+pub struct AstReturn<'a> {
+    pub val: AstExpr<'a>,
     #[allow(unused)]
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstRuleSet {
-    pub selector: Interpolation,
-    pub body: Vec<AstStmt>,
+pub struct AstRuleSet<'a> {
+    pub selector: Interpolation<'a>,
+    pub body: &'a [AstStmt<'a>],
     pub selector_span: Span,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstStyle {
-    pub name: Interpolation,
-    pub value: Option<Spanned<AstExpr>>,
-    pub body: Vec<AstStmt>,
+pub struct AstStyle<'a> {
+    pub name: Interpolation<'a>,
+    pub value: Option<Spanned<AstExpr<'a>>>,
+    pub body: &'a [AstStmt<'a>],
     pub span: Span,
 }
 
-impl AstStyle {
+impl<'a> AstStyle<'a> {
     pub fn is_custom_property(&self) -> bool {
         self.name.initial_plain().starts_with("--")
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct AstEach {
+pub struct AstEach<'a> {
     pub variables: Vec<Identifier>,
-    pub list: AstExpr,
-    pub body: Vec<Rc<AstStmt>>,
+    pub list: AstExpr<'a>,
+    pub body: &'a [AstStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
-pub struct AstMedia {
-    pub query: Interpolation,
+pub struct AstMedia<'a> {
+    pub query: Interpolation<'a>,
     pub query_span: Span,
-    pub body: Vec<AstStmt>,
+    pub body: &'a [AstStmt<'a>],
     pub span: Span,
 }
 
 pub type CssMediaQuery = MediaQuery;
 
 #[derive(Debug, Clone)]
-pub struct AstWhile {
-    pub condition: AstExpr,
-    pub body: Vec<Rc<AstStmt>>,
+pub struct AstWhile<'a> {
+    pub condition: AstExpr<'a>,
+    pub body: &'a [AstStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
-pub struct AstVariableDecl {
+pub struct AstVariableDecl<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
-    pub value: AstExpr,
+    pub value: AstExpr<'a>,
     pub is_guarded: bool,
     pub is_global: bool,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstFunctionDecl {
+pub struct AstFunctionDecl<'a> {
     pub name: Spanned<Identifier>,
-    pub arguments: ArgumentDeclaration,
-    pub body: Vec<Rc<AstStmt>>,
+    pub arguments: ArgumentDeclaration<'a>,
+    pub body: &'a [AstStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
-pub struct AstDebugRule {
-    pub value: AstExpr,
+pub struct AstDebugRule<'a> {
+    pub value: AstExpr<'a>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstWarn {
-    pub value: AstExpr,
+pub struct AstWarn<'a> {
+    pub value: AstExpr<'a>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstErrorRule {
-    pub value: AstExpr,
+pub struct AstErrorRule<'a> {
+    pub value: AstExpr<'a>,
     pub span: Span,
 }
 
-impl PartialEq for AstFunctionDecl {
+impl<'a> PartialEq for AstFunctionDecl<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
     }
 }
 
-impl Eq for AstFunctionDecl {}
+impl<'a> Eq for AstFunctionDecl<'a> {}
 
 #[derive(Debug, Clone)]
-pub struct AstLoudComment {
-    pub text: Interpolation,
+pub struct AstLoudComment<'a> {
+    pub text: Interpolation<'a>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstMixin {
+pub struct AstMixin<'a> {
     pub name: Identifier,
-    pub args: ArgumentDeclaration,
-    pub body: Vec<Rc<AstStmt>>,
+    pub args: ArgumentDeclaration<'a>,
+    pub body: &'a [AstStmt<'a>],
     /// Whether the mixin contains a `@content` rule.
     pub has_content: bool,
     /// Unique identity for equality comparison (first-class mixins).
@@ -167,44 +167,44 @@ pub struct AstMixin {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstContentRule {
-    pub args: ArgumentInvocation,
+pub struct AstContentRule<'a> {
+    pub args: ArgumentInvocation<'a>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstContentBlock {
-    pub args: ArgumentDeclaration,
-    pub body: Vec<Rc<AstStmt>>,
+pub struct AstContentBlock<'a> {
+    pub args: ArgumentDeclaration<'a>,
+    pub body: &'a [AstStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
-pub struct AstInclude {
+pub struct AstInclude<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Spanned<Identifier>,
-    pub args: ArgumentInvocation,
-    pub content: Option<AstContentBlock>,
+    pub args: ArgumentInvocation<'a>,
+    pub content: Option<AstContentBlock<'a>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstUnknownAtRule {
-    pub name: Interpolation,
-    pub value: Option<Interpolation>,
-    pub body: Option<Vec<AstStmt>>,
+pub struct AstUnknownAtRule<'a> {
+    pub name: Interpolation<'a>,
+    pub value: Option<Interpolation<'a>>,
+    pub body: Option<&'a [AstStmt<'a>]>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstExtendRule {
-    pub value: Interpolation,
+pub struct AstExtendRule<'a> {
+    pub value: Interpolation<'a>,
     pub is_optional: bool,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstAtRootRule {
-    pub body: Vec<AstStmt>,
-    pub query: Option<Spanned<Interpolation>>,
+pub struct AstAtRootRule<'a> {
+    pub body: &'a [AstStmt<'a>],
+    pub query: Option<Spanned<Interpolation<'a>>>,
     #[allow(unused)]
     pub span: Span,
 }
@@ -265,34 +265,34 @@ impl Default for AtRootQuery {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstImportRule {
-    pub imports: Vec<AstImport>,
+pub struct AstImportRule<'a> {
+    pub imports: Vec<AstImport<'a>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum AstImport {
-    Plain(AstPlainCssImport),
+pub enum AstImport<'a> {
+    Plain(AstPlainCssImport<'a>),
     Sass(AstSassImport),
 }
 
-impl AstImport {
+impl<'a> AstImport<'a> {
     pub fn is_dynamic(&self) -> bool {
         matches!(self, AstImport::Sass(..))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct AstUseRule {
+pub struct AstUseRule<'a> {
     pub url: PathBuf,
     pub namespace: Option<String>,
-    pub configuration: Vec<ConfiguredVariable>,
+    pub configuration: Vec<ConfiguredVariable<'a>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct ConfiguredVariable {
+pub struct ConfiguredVariable<'a> {
     pub name: Spanned<Identifier>,
-    pub expr: Spanned<AstExpr>,
+    pub expr: Spanned<AstExpr<'a>>,
     pub is_guarded: bool,
 }
 
@@ -422,22 +422,22 @@ impl ConfiguredValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstForwardRule {
+pub struct AstForwardRule<'a> {
     pub url: PathBuf,
     pub shown_mixins_and_functions: Option<FxHashSet<Identifier>>,
     pub shown_variables: Option<FxHashSet<Identifier>>,
     pub hidden_mixins_and_functions: Option<FxHashSet<Identifier>>,
     pub hidden_variables: Option<FxHashSet<Identifier>>,
     pub prefix: Option<String>,
-    pub configuration: Vec<ConfiguredVariable>,
+    pub configuration: Vec<ConfiguredVariable<'a>>,
     pub span: Span,
 }
 
-impl AstForwardRule {
+impl<'a> AstForwardRule<'a> {
     pub fn new(
         url: PathBuf,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable>>,
+        configuration: Option<Vec<ConfiguredVariable<'a>>>,
         span: Span,
     ) -> Self {
         Self {
@@ -457,7 +457,7 @@ impl AstForwardRule {
         shown_mixins_and_functions: FxHashSet<Identifier>,
         shown_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable>>,
+        configuration: Option<Vec<ConfiguredVariable<'a>>>,
         span: Span,
     ) -> Self {
         Self {
@@ -477,7 +477,7 @@ impl AstForwardRule {
         hidden_mixins_and_functions: FxHashSet<Identifier>,
         hidden_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable>>,
+        configuration: Option<Vec<ConfiguredVariable<'a>>>,
         span: Span,
     ) -> Self {
         Self {
@@ -494,31 +494,31 @@ impl AstForwardRule {
 }
 
 #[derive(Debug, Clone)]
-pub enum AstSupportsCondition {
+pub enum AstSupportsCondition<'a> {
     Anything {
-        contents: Interpolation,
+        contents: Interpolation<'a>,
     },
     Declaration {
-        name: AstExpr,
-        value: AstExpr,
+        name: AstExpr<'a>,
+        value: AstExpr<'a>,
     },
     Function {
-        name: Interpolation,
-        args: Interpolation,
+        name: Interpolation<'a>,
+        args: Interpolation<'a>,
     },
-    Interpolation(AstExpr),
-    Negation(Box<Self>),
+    Interpolation(AstExpr<'a>),
+    Negation(&'a AstSupportsCondition<'a>),
     Operation {
-        left: Box<Self>,
+        left: &'a AstSupportsCondition<'a>,
         operator: Option<String>,
-        right: Box<Self>,
+        right: &'a AstSupportsCondition<'a>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct AstSupportsRule {
-    pub condition: AstSupportsCondition,
-    pub body: Vec<AstStmt>,
+pub struct AstSupportsRule<'a> {
+    pub condition: AstSupportsCondition<'a>,
+    pub body: &'a [AstStmt<'a>],
     pub span: Span,
 }
 
@@ -526,37 +526,37 @@ pub struct AstSupportsRule {
 /// (~96 bytes instead of ~272 bytes), improving cache utilization and
 /// reducing the cost of cloning statements in loop bodies.
 #[derive(Debug, Clone)]
-pub enum AstStmt {
-    If(AstIf),
-    For(Box<AstFor>),
-    Return(AstReturn),
-    RuleSet(AstRuleSet),
-    Style(Box<AstStyle>),
-    Each(Box<AstEach>),
-    Media(AstMedia),
-    Include(Box<AstInclude>),
-    While(Box<AstWhile>),
-    VariableDecl(Box<AstVariableDecl>),
-    LoudComment(AstLoudComment),
+pub enum AstStmt<'a> {
+    If(AstIf<'a>),
+    For(Box<AstFor<'a>>),
+    Return(AstReturn<'a>),
+    RuleSet(AstRuleSet<'a>),
+    Style(Box<AstStyle<'a>>),
+    Each(Box<AstEach<'a>>),
+    Media(AstMedia<'a>),
+    Include(Box<AstInclude<'a>>),
+    While(Box<AstWhile<'a>>),
+    VariableDecl(Box<AstVariableDecl<'a>>),
+    LoudComment(AstLoudComment<'a>),
     SilentComment(AstSilentComment),
-    FunctionDecl(AstFunctionDecl),
-    Mixin(AstMixin),
-    ContentRule(Box<AstContentRule>),
-    Warn(AstWarn),
-    UnknownAtRule(Box<AstUnknownAtRule>),
-    ErrorRule(AstErrorRule),
-    Extend(AstExtendRule),
-    AtRootRule(AstAtRootRule),
-    Debug(AstDebugRule),
-    ImportRule(AstImportRule),
-    Use(Box<AstUseRule>),
-    Forward(Box<AstForwardRule>),
-    Supports(Box<AstSupportsRule>),
+    FunctionDecl(AstFunctionDecl<'a>),
+    Mixin(AstMixin<'a>),
+    ContentRule(Box<AstContentRule<'a>>),
+    Warn(AstWarn<'a>),
+    UnknownAtRule(Box<AstUnknownAtRule<'a>>),
+    ErrorRule(AstErrorRule<'a>),
+    Extend(AstExtendRule<'a>),
+    AtRootRule(AstAtRootRule<'a>),
+    Debug(AstDebugRule<'a>),
+    ImportRule(AstImportRule<'a>),
+    Use(Box<AstUseRule<'a>>),
+    Forward(Box<AstForwardRule<'a>>),
+    Supports(Box<AstSupportsRule<'a>>),
 }
 
 #[derive(Debug, Clone)]
-pub struct StyleSheet {
-    pub body: Vec<AstStmt>,
+pub struct StyleSheet<'a> {
+    pub body: &'a [AstStmt<'a>],
     pub url: PathBuf,
     pub is_plain_css: bool,
     /// Array of indices into `body`
@@ -574,10 +574,10 @@ pub struct StyleSheet {
     pub configurable_variables: FxHashSet<Identifier>,
 }
 
-impl StyleSheet {
+impl<'a> StyleSheet<'a> {
     pub fn new(is_plain_css: bool, url: PathBuf) -> Self {
         Self {
-            body: Vec::new(),
+            body: &[],
             url,
             is_plain_css,
             uses: Vec::new(),
@@ -592,14 +592,14 @@ impl StyleSheet {
     /// in the module scope even if the declaration is never executed.
     pub fn collect_pre_declared_global_variables(&mut self) {
         let mut globals = FxHashSet::default();
-        collect_globals_from_stmts(&self.body, &mut globals);
+        collect_globals_from_stmts(self.body, &mut globals);
         self.pre_declared_global_variables = globals;
     }
 
     /// Collect top-level `!default` variable names for configuration conflict detection.
     pub fn collect_configurable_variables(&mut self) {
         let mut defaults = FxHashSet::default();
-        for stmt in &self.body {
+        for stmt in self.body {
             if let AstStmt::VariableDecl(decl) = stmt {
                 if decl.is_guarded && !decl.is_global {
                     defaults.insert(decl.name);
@@ -610,19 +610,13 @@ impl StyleSheet {
     }
 }
 
-fn collect_globals_from_stmts(stmts: &[AstStmt], globals: &mut FxHashSet<Identifier>) {
+fn collect_globals_from_stmts<'a>(stmts: &[AstStmt<'a>], globals: &mut FxHashSet<Identifier>) {
     for stmt in stmts {
         collect_globals_from_stmt(stmt, globals);
     }
 }
 
-fn collect_globals_from_stmts_arc(stmts: &[Rc<AstStmt>], globals: &mut FxHashSet<Identifier>) {
-    for stmt in stmts {
-        collect_globals_from_stmt(stmt, globals);
-    }
-}
-
-fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>) {
+fn collect_globals_from_stmt<'a>(stmt: &AstStmt<'a>, globals: &mut FxHashSet<Identifier>) {
     match stmt {
         AstStmt::VariableDecl(decl) => {
             if decl.is_global {
@@ -631,19 +625,19 @@ fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>
         }
         AstStmt::If(if_stmt) => {
             for clause in &if_stmt.if_clauses {
-                collect_globals_from_stmts(&clause.body, globals);
+                collect_globals_from_stmts(clause.body, globals);
             }
             if let Some(else_clause) = &if_stmt.else_clause {
                 collect_globals_from_stmts(else_clause, globals);
             }
         }
-        AstStmt::For(for_stmt) => collect_globals_from_stmts_arc(&for_stmt.body, globals),
-        AstStmt::Each(each_stmt) => collect_globals_from_stmts_arc(&each_stmt.body, globals),
-        AstStmt::While(while_stmt) => collect_globals_from_stmts_arc(&while_stmt.body, globals),
-        AstStmt::RuleSet(rule_set) => collect_globals_from_stmts(&rule_set.body, globals),
-        AstStmt::Media(media) => collect_globals_from_stmts(&media.body, globals),
-        AstStmt::Supports(supports) => collect_globals_from_stmts(&supports.body, globals),
-        AstStmt::AtRootRule(at_root) => collect_globals_from_stmts(&at_root.body, globals),
+        AstStmt::For(for_stmt) => collect_globals_from_stmts(for_stmt.body, globals),
+        AstStmt::Each(each_stmt) => collect_globals_from_stmts(each_stmt.body, globals),
+        AstStmt::While(while_stmt) => collect_globals_from_stmts(while_stmt.body, globals),
+        AstStmt::RuleSet(rule_set) => collect_globals_from_stmts(rule_set.body, globals),
+        AstStmt::Media(media) => collect_globals_from_stmts(media.body, globals),
+        AstStmt::Supports(supports) => collect_globals_from_stmts(supports.body, globals),
+        AstStmt::AtRootRule(at_root) => collect_globals_from_stmts(at_root.body, globals),
         AstStmt::UnknownAtRule(unknown) => {
             if let Some(body) = &unknown.body {
                 collect_globals_from_stmts(body, globals);
@@ -651,11 +645,11 @@ fn collect_globals_from_stmt(stmt: &AstStmt, globals: &mut FxHashSet<Identifier>
         }
         AstStmt::Include(include) => {
             if let Some(content) = &include.content {
-                collect_globals_from_stmts_arc(&content.body, globals);
+                collect_globals_from_stmts(content.body, globals);
             }
         }
-        AstStmt::Mixin(mixin) => collect_globals_from_stmts_arc(&mixin.body, globals),
-        AstStmt::FunctionDecl(func) => collect_globals_from_stmts_arc(&func.body, globals),
+        AstStmt::Mixin(mixin) => collect_globals_from_stmts(mixin.body, globals),
+        AstStmt::FunctionDecl(func) => collect_globals_from_stmts(func.body, globals),
         AstStmt::Style(_)
         | AstStmt::Return(_)
         | AstStmt::LoudComment(_)

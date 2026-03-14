@@ -18,7 +18,7 @@ use super::StylesheetParser;
 
 pub(crate) type Predicate<'c, P> = &'c dyn Fn(&mut P) -> SassResult<bool>;
 
-fn is_hex_color(interpolation: &Interpolation) -> bool {
+fn is_hex_color<'a>(interpolation: &Interpolation<'a>) -> bool {
     if let Some(plain) = interpolation.as_plain() {
         if ![3, 4, 6, 8].contains(&plain.len()) {
             return false;
@@ -31,12 +31,12 @@ fn is_hex_color(interpolation: &Interpolation) -> bool {
 }
 
 pub(crate) struct ValueParser<'a, 'c, P: StylesheetParser<'a>> {
-    comma_expressions: Option<Vec<Spanned<AstExpr>>>,
-    space_expressions: Option<Vec<Spanned<AstExpr>>>,
+    comma_expressions: Option<Vec<Spanned<AstExpr<'a>>>>,
+    space_expressions: Option<Vec<Spanned<AstExpr<'a>>>>,
     binary_operators: Option<Vec<BinaryOp>>,
-    operands: Option<Vec<Spanned<AstExpr>>>,
+    operands: Option<Vec<Spanned<AstExpr<'a>>>>,
     allow_slash: bool,
-    single_expression: Option<Spanned<AstExpr>>,
+    single_expression: Option<Spanned<AstExpr<'a>>>,
     start: usize,
     inside_bracketed_list: bool,
     single_equals: bool,
@@ -51,7 +51,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         parse_until: Option<Predicate<'c, P>>,
         inside_bracketed_list: bool,
         single_equals: bool,
-    ) -> SassResult<Spanned<AstExpr>> {
+    ) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         let mut value_parser = Self::new(parser, parse_until, inside_bracketed_list, single_equals);
 
@@ -115,7 +115,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     /// Parse a value from a stream of tokens
     ///
     /// This function will cease parsing if the predicate returns true.
-    pub(crate) fn parse_value(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    pub(crate) fn parse_value(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         parser.whitespace()?;
 
         let start = parser.toks().cursor();
@@ -502,7 +502,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         }
     }
 
-    fn parse_single_expression(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_single_expression(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         let first = parser.toks().peek();
 
@@ -577,10 +577,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             && left.node.is_slash_operand()
             && right.node.is_slash_operand()
         {
-            self.single_expression = Some(AstExpr::slash(left.node, right.node, span).span(span));
+            self.single_expression = Some(AstExpr::slash(left.node, right.node, span, parser.arena()).span(span));
         } else {
             self.single_expression = Some(
-                AstExpr::BinaryOp(Rc::new(BinaryOpExpr {
+                AstExpr::BinaryOp(parser.arena().alloc(BinaryOpExpr {
                     lhs: left.node,
                     op: operator,
                     rhs: right.node,
@@ -614,7 +614,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
     fn add_single_expression(
         &mut self,
-        expression: Spanned<AstExpr>,
+        expression: Spanned<AstExpr<'a>>,
         parser: &mut P,
     ) -> SassResult<()> {
         if self.single_expression.is_some() {
@@ -739,10 +739,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
     fn parse_map(
         parser: &mut P,
-        first: Spanned<AstExpr>,
+        first: Spanned<AstExpr<'a>>,
         start: usize,
         restore_consume_newlines: bool,
-    ) -> SassResult<Spanned<AstExpr>> {
+    ) -> SassResult<Spanned<AstExpr<'a>>> {
         let mut pairs = vec![(first, parser.parse_expression_until_comma(false)?.node)];
 
         while parser.scan_char(',') {
@@ -764,7 +764,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         Ok(AstExpr::Map(AstSassMap(pairs)).span(parser.toks_mut().span_from(start)))
     }
 
-    fn parse_paren_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_paren_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         if parser.is_plain_css() {
             return Err((
@@ -810,7 +810,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             parser
                 .flags_mut()
                 .set(ContextFlags::IN_PARENS, was_in_parentheses);
-            return Ok(AstExpr::Paren(Rc::new(first.node)).span(first.span));
+            return Ok(AstExpr::Paren(parser.arena().alloc(first.node)).span(first.span));
         }
 
         parser.whitespace()?;
@@ -843,7 +843,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         .span(parser.toks_mut().span_from(start)))
     }
 
-    fn parse_variable(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_variable(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         let name = parser.parse_variable_name()?;
 
@@ -865,7 +865,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         .span(parser.toks_mut().span_from(start)))
     }
 
-    fn parse_selector(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_selector(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         if parser.is_plain_css() {
             return Err((
                 "The parent selector isn't allowed in plain CSS.",
@@ -890,7 +890,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         Ok(AstExpr::ParentSelector.span(parser.toks_mut().span_from(start)))
     }
 
-    fn parse_hash(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_hash(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         debug_assert!(matches!(
             parser.toks().peek(),
@@ -1001,7 +1001,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         ))
     }
 
-    fn parse_unary_operation(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_unary_operation(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let op_span = parser.toks().current_span();
         let operator = Self::expect_unary_operator(parser)?;
 
@@ -1015,7 +1015,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         let span = op_span.merge(parser.toks().current_span());
 
-        Ok(AstExpr::UnaryOp(operator, Rc::new(operand.node), span).span(span))
+        Ok(AstExpr::UnaryOp(operator, parser.arena().alloc(operand.node), span).span(span))
     }
 
     fn expect_unary_operator(parser: &mut P) -> SassResult<UnaryOp> {
@@ -1052,7 +1052,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         Ok(())
     }
 
-    fn parse_number(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_number(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
 
         if !parser.scan_char('+') {
@@ -1166,7 +1166,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         Ok(Some(buffer))
     }
 
-    fn parse_plus_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_plus_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         debug_assert!(parser.toks().next_char_is('+'));
 
         match parser.toks().peek_n(1) {
@@ -1178,7 +1178,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         }
     }
 
-    fn parse_minus_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_minus_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         debug_assert!(parser.toks().next_char_is('-'));
 
         if matches!(
@@ -1198,7 +1198,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         self.parse_unary_operation(parser)
     }
 
-    fn parse_important_expr(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_important_expr(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         parser.expect_char('!')?;
         let was_cn = parser.is_consuming_newlines();
@@ -1219,7 +1219,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         .span(span))
     }
 
-    fn parse_identifier_like(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_identifier_like(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         if let Some(func) = P::IDENTIFIER_LIKE {
             return func(parser);
         }
@@ -1244,7 +1244,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 // Fall back to legacy if($condition, $if-true, $if-false)
                 let call_args = parser.parse_argument_invocation(false, false)?;
                 let span = call_args.span;
-                return Ok(AstExpr::If(Rc::new(Ternary(call_args))).span(span));
+                return Ok(AstExpr::If(parser.arena().alloc(Ternary(call_args))).span(span));
             } else if plain == "not" {
                 // In indented syntax, allow newlines after `not` so expressions
                 // can span multiple lines (e.g., `$a: not\nb`).
@@ -1272,7 +1272,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
                 let span = parser.toks_mut().span_from(start);
 
-                return Ok(AstExpr::UnaryOp(UnaryOp::Not, Rc::new(value.node), span).span(span));
+                return Ok(AstExpr::UnaryOp(UnaryOp::Not, parser.arena().alloc(value.node), span).span(span));
             }
 
             let lower_ref = lower.as_ref().unwrap();
@@ -1322,7 +1322,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         start,
                         parser,
                     ),
-                    None => Err(("Interpolation isn't allowed in namespaces.", ident_span).into()),
+                    None => Err(("Interpolation<'a> isn't allowed in namespaces.", ident_span).into()),
                 }
             }
             Some(Token { kind: '(', .. }) => {
@@ -1335,7 +1335,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         namespace: None,
                         name: Identifier::from(plain),
                         original_name: CompactString::from(plain),
-                        arguments: Rc::new(arguments),
+                        arguments: parser.arena().alloc(arguments),
                         span: parser.toks_mut().span_from(start),
                         is_css_custom_function: is_css_custom,
                     })
@@ -1343,7 +1343,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 } else {
                     let arguments = parser.parse_argument_invocation(false, false)?;
                     Ok(
-                        AstExpr::InterpolatedFunction(Rc::new(InterpolatedFunction {
+                        AstExpr::InterpolatedFunction(parser.arena().alloc(InterpolatedFunction {
                             name: identifier,
                             arguments,
                             span: parser.toks_mut().span_from(start),
@@ -1364,7 +1364,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         namespace: Spanned<Identifier>,
         start: usize,
         parser: &mut P,
-    ) -> SassResult<Spanned<AstExpr>> {
+    ) -> SassResult<Spanned<AstExpr<'a>>> {
         if parser.toks().next_char_is('$') {
             let name_start = parser.toks().cursor();
             let name = parser.parse_variable_name()?;
@@ -1397,14 +1397,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             namespace: Some(namespace),
             name: Identifier::from(&name),
             original_name: CompactString::from(name),
-            arguments: Rc::new(args),
+            arguments: parser.arena().alloc(args),
             span,
             is_css_custom_function: false,
         })
         .span(span))
     }
 
-    fn parse_unicode_range(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_unicode_range(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         parser.expect_ident_char('u', false)?;
         parser.expect_char('+')?;
@@ -1487,7 +1487,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         parser: &mut P,
         name: &str,
         start: usize,
-    ) -> SassResult<Option<Spanned<AstExpr>>> {
+    ) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
         let normalized = unvendor(name);
 
         if matches!(parser.toks().peek(), Some(Token { kind: '(', .. })) {
@@ -1720,7 +1720,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     fn try_parse_calculation_interpolation(
         parser: &mut P,
         start: usize,
-    ) -> SassResult<Option<AstExpr>> {
+    ) -> SassResult<Option<AstExpr<'a>>> {
         Ok(
             if ValueParser::contains_calculation_interpolation(parser)? {
                 Some(AstExpr::String(
@@ -1736,7 +1736,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         )
     }
 
-    fn parse_calculation_value(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_calculation_value(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         match parser.toks().peek() {
             Some(Token {
                 kind: sign @ ('+' | '-'),
@@ -1755,7 +1755,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 let value = ValueParser::parse_calculation_value(parser)?;
                 if sign == '-' {
                     let span = parser.toks_mut().span_from(start);
-                    Ok(AstExpr::UnaryOp(UnaryOp::Neg, Rc::new(value.node), span)
+                    Ok(AstExpr::UnaryOp(UnaryOp::Neg, parser.arena().alloc(value.node), span)
                         .span(span))
                 } else {
                     Ok(value)
@@ -1781,7 +1781,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 parser.whitespace()?;
                 parser.expect_char(')')?;
 
-                Ok(AstExpr::Paren(Rc::new(value)).span(parser.toks_mut().span_from(start)))
+                Ok(AstExpr::Paren(parser.arena().alloc(value)).span(parser.toks_mut().span_from(start)))
             }
             Some(Token { kind: '#', .. })
                 if matches!(parser.toks().peek_n(1), Some(Token { kind: '{', .. })) =>
@@ -1867,7 +1867,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 if let Some(calc) = calculation {
                     Ok(calc)
                 } else if lowercase == "if" {
-                    Ok(AstExpr::If(Rc::new(Ternary(
+                    Ok(AstExpr::If(parser.arena().alloc(Ternary(
                         parser.parse_argument_invocation(false, false)?,
                     )))
                     .span(parser.toks_mut().span_from(start)))
@@ -1877,7 +1877,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         namespace: None,
                         name: Identifier::from(&ident),
                         original_name: CompactString::from(ident),
-                        arguments: Rc::new(parser.parse_argument_invocation(false, false)?),
+                        arguments: parser.arena().alloc(parser.parse_argument_invocation(false, false)?),
                         span: parser.toks_mut().span_from(start),
                         is_css_custom_function: is_css_custom,
                     })
@@ -1886,7 +1886,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
         }
     }
-    fn parse_calculation_product(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_calculation_product(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let mut product = ValueParser::parse_calculation_value(parser)?;
 
         loop {
@@ -1903,7 +1903,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
                     let span = product.span.merge(rhs.span);
 
-                    product.node = AstExpr::BinaryOp(Rc::new(BinaryOpExpr {
+                    product.node = AstExpr::BinaryOp(parser.arena().alloc(BinaryOpExpr {
                         lhs: product.node,
                         op: if op == '*' {
                             BinaryOp::Mul
@@ -1921,7 +1921,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
         }
     }
-    fn parse_calculation_sum(parser: &mut P) -> SassResult<Spanned<AstExpr>> {
+    fn parse_calculation_sum(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let mut sum = ValueParser::parse_calculation_product(parser)?;
 
         loop {
@@ -1957,7 +1957,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
                     let span = sum.span.merge(rhs.span);
 
-                    sum = AstExpr::BinaryOp(Rc::new(BinaryOpExpr {
+                    sum = AstExpr::BinaryOp(parser.arena().alloc(BinaryOpExpr {
                         lhs: sum.node,
                         op: if next == '+' {
                             BinaryOp::Plus
@@ -1979,7 +1979,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         parser: &mut P,
         max_args: Option<usize>,
         start: usize,
-    ) -> SassResult<Vec<AstExpr>> {
+    ) -> SassResult<Vec<AstExpr<'a>>> {
         Self::parse_calculation_arguments_inner(parser, max_args, start, false)
     }
 
@@ -1988,7 +1988,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         max_args: Option<usize>,
         start: usize,
         skip_interpolation_check: bool,
-    ) -> SassResult<Vec<AstExpr>> {
+    ) -> SassResult<Vec<AstExpr<'a>>> {
         parser.expect_char('(')?;
         let was_consuming_newlines = parser.is_consuming_newlines();
         parser.set_consume_newlines(true);
@@ -2027,7 +2027,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         parser: &mut P,
         name: &str,
         start: usize,
-    ) -> SassResult<Option<Spanned<AstExpr>>> {
+    ) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
         Self::try_parse_calculation_inner(parser, name, start, false)
     }
 
@@ -2036,7 +2036,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         name: &str,
         start: usize,
         _in_calculation: bool,
-    ) -> SassResult<Option<Spanned<AstExpr>>> {
+    ) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
         debug_assert!(parser.toks().next_char_is('('));
 
         Ok(Some(match name {

@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use codemap::Spanned;
 
 use crate::{
@@ -13,7 +11,7 @@ use super::StylesheetParser;
 pub(crate) fn try_parse_css_if<'a>(
     parser: &mut impl StylesheetParser<'a>,
     start: usize,
-) -> SassResult<Option<Spanned<AstExpr>>> {
+) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
     let before_paren = parser.toks().cursor();
 
     if !parser.toks().next_char_is('(') {
@@ -75,7 +73,7 @@ pub(crate) fn try_parse_css_if<'a>(
     let span = parser.toks_mut().span_from(start);
 
     Ok(Some(
-        AstExpr::CssIf(Rc::new(CssIfExpression { clauses, span })).span(span),
+        AstExpr::CssIf(parser.arena().alloc(CssIfExpression { clauses, span })).span(span),
     ))
 }
 
@@ -190,7 +188,7 @@ fn detect_css_if_syntax<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResul
 /// Parse a top-level if() condition (with and/or combinators).
 fn parse_if_condition<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<IfCondition> {
+) -> SassResult<IfCondition<'a>> {
     // Check for `else` keyword
     let start = parser.toks().cursor();
     if parser.scan_identifier("else", false)? && !parser.looking_at_identifier_body() {
@@ -272,7 +270,7 @@ fn parse_if_condition<'a>(
 }
 
 /// Check if a condition contains any sass() atoms, crossing paren boundaries.
-fn condition_contains_sass(cond: &IfCondition) -> bool {
+fn condition_contains_sass<'a>(cond: &IfCondition<'a>) -> bool {
     match cond {
         IfCondition::Atom(IfConditionAtom::Sass(_, _)) => true,
         IfCondition::Atom(_) => false,
@@ -355,8 +353,8 @@ fn check_not_followed_by_raw<'a>(
 
 fn parse_and_chain<'a>(
     parser: &mut impl StylesheetParser<'a>,
-    first: IfCondition,
-) -> SassResult<IfCondition> {
+    first: IfCondition<'a>,
+) -> SassResult<IfCondition<'a>> {
     let mut operands = vec![first];
     operands.push(parse_and_or_operand(parser, "and")?);
     loop {
@@ -388,8 +386,8 @@ fn parse_and_chain<'a>(
 
 fn parse_or_chain<'a>(
     parser: &mut impl StylesheetParser<'a>,
-    first: IfCondition,
-) -> SassResult<IfCondition> {
+    first: IfCondition<'a>,
+) -> SassResult<IfCondition<'a>> {
     let mut operands = vec![first];
     operands.push(parse_and_or_operand(parser, "or")?);
     loop {
@@ -423,7 +421,7 @@ fn parse_or_chain<'a>(
 fn parse_and_or_operand<'a>(
     parser: &mut impl StylesheetParser<'a>,
     context: &str,
-) -> SassResult<IfCondition> {
+) -> SassResult<IfCondition<'a>> {
     let pos = parser.toks().cursor();
 
     // Disallow bare `not`
@@ -455,7 +453,7 @@ fn parse_and_or_operand<'a>(
 /// adjacent raw items (var(), attr(), if(), #{}, other css functions).
 fn parse_condition_operand<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<IfCondition> {
+) -> SassResult<IfCondition<'a>> {
     let primary = parse_condition_primary(parser)?;
 
     // After a CSS, CssRaw, or Interp atom, check for adjacent raw items
@@ -472,8 +470,8 @@ fn parse_condition_operand<'a>(
 /// After parsing a CSS atom, consume additional adjacent raw items.
 fn try_extend_with_raw<'a>(
     parser: &mut impl StylesheetParser<'a>,
-    first: IfCondition,
-) -> SassResult<IfCondition> {
+    first: IfCondition<'a>,
+) -> SassResult<IfCondition<'a>> {
     let (first_interp, first_span) = match first {
         IfCondition::Atom(IfConditionAtom::Css(interp, span))
         | IfCondition::Atom(IfConditionAtom::CssRaw(interp, span)) => (interp, span),
@@ -549,7 +547,7 @@ fn try_extend_with_raw<'a>(
             let expr = parser.parse_expression(None, None, None)?;
             parser.expect_char('}')?;
             if parser.is_plain_css() {
-                return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
+                return Err(("Interpolation<'a> isn't allowed in plain CSS.", expr.span).into());
             }
             let span = parser.toks_mut().span_from(pos);
             if had_whitespace {
@@ -657,7 +655,7 @@ fn try_extend_with_raw<'a>(
 /// Parse a primary condition atom.
 fn parse_condition_primary<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<IfCondition> {
+) -> SassResult<IfCondition<'a>> {
     // `(` → grouping
     if parser.toks().next_char_is('(') {
         parser.toks_mut().next();
@@ -694,7 +692,7 @@ fn parse_condition_primary<'a>(
         parser.expect_char('}')?;
 
         if parser.is_plain_css() {
-            return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
+            return Err(("Interpolation<'a> isn't allowed in plain CSS.", expr.span).into());
         }
 
         // Check if followed by `(` — forms an interpolated function name
@@ -791,12 +789,12 @@ fn parse_condition_primary<'a>(
     }
 }
 
-/// Parse the arguments of a CSS function as an Interpolation.
+/// Parse the arguments of a CSS function as an Interpolation<'a>.
 /// Preserves raw text exactly (including quote style), only processing #{...}.
 /// Stops at the unmatched closing `)` (not consumed).
 fn parse_css_function_args<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<Interpolation> {
+) -> SassResult<Interpolation<'a>> {
     let mut buffer = Interpolation::new();
     let mut depth = 0; // track nested parens
 
@@ -819,7 +817,7 @@ fn parse_css_function_args<'a>(
                 let expr = parser.parse_expression(None, None, None)?;
                 parser.expect_char('}')?;
                 if parser.is_plain_css() {
-                    return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
+                    return Err(("Interpolation<'a> isn't allowed in plain CSS.", expr.span).into());
                 }
                 buffer.add_expr(expr);
             }
@@ -878,7 +876,7 @@ fn parse_css_function_args<'a>(
 /// Parse the value portion of a clause (after `:`).
 fn parse_clause_value<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<AstExpr> {
+) -> SassResult<AstExpr<'a>> {
     let expr = parser.parse_expression(
         Some(&|p| {
             Ok(matches!(

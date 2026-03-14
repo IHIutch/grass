@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)",
+      "Bash(export:*)",
+      "Bash(curl:*)",
+      "Bash(source:*)",
+      "Bash(PATH=\"/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:$HOME/.cargo/bin:$PATH\" cargo clippy:*)",
+      "Bash($HOME/.cargo/bin/cargo clippy:*)",
+      "Read(//Users/jbhutch/.cargo/bin/**)",
+      "Bash(echo \"HOME=$HOME\")",
+      "Bash(/Users/jbhutch/.cargo/bin/cargo clippy:*)",
+      "Bash(git submodule:*)",
+      "Bash(grep:*)",
+      "Bash(git show-ref:*)",
+      "Bash(~/.cargo/bin/cargo:*)",
+      "Bash(~/.cargo/bin/rustc:*)",
+      "Bash(git add:*)",
+      "Bash(gh api:*)",
+      "Bash(ls:*)",
+      "Bash(xargs cat:*)",
+      "Bash(echo:*)",
+      "Bash(npx sass:*)"
+    ]
+  },
+  "spinnerTipsEnabled": false
+}

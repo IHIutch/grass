@@ -12,6 +12,7 @@ pub(crate) struct SassParser<'a> {
     pub empty_span: Span,
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
+    pub arena: &'a bumpalo::Bump,
     pub current_indentation: usize,
     pub next_indentation: Option<usize>,
     pub spaces: Option<bool>,
@@ -118,7 +119,11 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         self.empty_span
     }
 
-    fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation> {
+    fn arena(&self) -> &'a bumpalo::Bump {
+        self.arena
+    }
+
+    fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
         let mut buffer = Interpolation::new();
 
         loop {
@@ -187,8 +192,8 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
     fn parse_children(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<Vec<AstStmt>> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<Vec<AstStmt<'a>>> {
         let mut children = Vec::new();
         self.while_indented_lower(|parser| {
             if let Some(parsed_child) = parser.parse_child(|parser| Ok(Some(child(parser)?)))? {
@@ -203,8 +208,8 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
     fn parse_statements(
         &mut self,
-        statement: fn(&mut Self) -> SassResult<Option<AstStmt>>,
-    ) -> SassResult<Vec<AstStmt>> {
+        statement: fn(&mut Self) -> SassResult<Option<AstStmt<'a>>>,
+    ) -> SassResult<Vec<AstStmt<'a>>> {
         if self.toks.next_char_is(' ') || self.toks.next_char_is('\t') {
             return Err((
                 "Indenting at the beginning of the document is illegal.",
@@ -233,7 +238,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         Ok(statements)
     }
 
-    fn parse_silent_comment(&mut self) -> SassResult<AstStmt> {
+    fn parse_silent_comment(&mut self) -> SassResult<AstStmt<'a>> {
         let start = self.toks.cursor();
         self.expect_char('/')?;
         self.expect_char('/')?;
@@ -293,7 +298,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         }))
     }
 
-    fn parse_loud_comment(&mut self) -> SassResult<AstLoudComment> {
+    fn parse_loud_comment(&mut self) -> SassResult<AstLoudComment<'a>> {
         let start = self.toks.cursor();
         self.expect_char('/')?;
         self.expect_char('*')?;
@@ -423,6 +428,7 @@ impl<'a> SassParser<'a> {
         options: &'a Options<'a>,
         empty_span: Span,
         file_name: &'a Path,
+        arena: &'a bumpalo::Bump,
     ) -> Self {
         let mut flags = ContextFlags::empty();
 
@@ -434,6 +440,7 @@ impl<'a> SassParser<'a> {
             empty_span,
             flags,
             options,
+            arena,
             current_indentation: 0,
             next_indentation: None,
             next_indentation_end: None,
@@ -646,8 +653,8 @@ impl<'a> SassParser<'a> {
 
     fn parse_child(
         &mut self,
-        child: impl FnOnce(&mut Self) -> SassResult<Option<AstStmt>>,
-    ) -> SassResult<Option<AstStmt>> {
+        child: impl FnOnce(&mut Self) -> SassResult<Option<AstStmt<'a>>>,
+    ) -> SassResult<Option<AstStmt<'a>>> {
         Ok(Some(match self.toks.peek() {
             Some(Token {
                 kind: '\n' | '\r', ..

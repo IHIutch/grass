@@ -47,8 +47,8 @@ impl PartialEq for Color {
         match (self.alpha, other.alpha) {
             (None, Some(_)) | (Some(_), None) => return false,
             (Some(a), Some(b)) => {
-                let a_clamped = a.max(0.0).min(1.0);
-                let b_clamped = b.max(0.0).min(1.0);
+                let a_clamped = a.clamp(0.0, 1.0);
+                let b_clamped = b.clamp(0.0, 1.0);
                 if Number(a_clamped) != Number(b_clamped)
                     && !(a_clamped >= 1.0 && b_clamped >= 1.0)
                 {
@@ -1155,12 +1155,10 @@ impl Color {
             // when chroma/saturation was set to None by analogous propagation
             // (e.g., hsl(30deg none 40%) → lch: chroma=none makes hue powerless).
             for i in 0..3 {
-                if result.channels[i].is_some() {
-                    if result.is_channel_powerless(i) {
-                        result.channels[i] = None;
-                    } else if result.is_hue_with_missing_chroma(i) {
-                        result.channels[i] = None;
-                    }
+                if result.channels[i].is_some()
+                    && (result.is_channel_powerless(i) || result.is_hue_with_missing_chroma(i))
+                {
+                    result.channels[i] = None;
                 }
             }
 

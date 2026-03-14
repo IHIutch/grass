@@ -14,64 +14,64 @@ use super::{ArgumentInvocation, AstSupportsCondition, Interpolation, Interpolati
 
 /// Represented by the legacy `if($condition, $if-true, $if-false)` function
 #[derive(Debug, Clone)]
-pub struct Ternary(pub ArgumentInvocation);
+pub struct Ternary<'a>(pub ArgumentInvocation<'a>);
 
 /// An atom in a CSS-native `if()` condition
 #[derive(Debug, Clone)]
-pub enum IfConditionAtom {
+pub enum IfConditionAtom<'a> {
     /// `sass(expr)` — evaluable at compile time
-    Sass(AstExpr, Span),
+    Sass(AstExpr<'a>, Span),
     /// `css(...)`, `var(...)`, `attr(...)`, or any other CSS function — raw passthrough
     /// Contains an Interpolation for the full text (including function name and parens)
-    Css(Interpolation, Span),
+    Css(Interpolation<'a>, Span),
     /// Like Css but formed from adjacent raw substitutions (var, attr, if, interp).
     /// Cannot coexist with sass() in the same condition.
-    CssRaw(Interpolation, Span),
+    CssRaw(Interpolation<'a>, Span),
     /// `#{...}` interpolation — evaluated then treated as raw CSS
-    Interp(AstExpr, Span),
+    Interp(AstExpr<'a>, Span),
 }
 
 /// A boolean condition in a CSS-native `if()` expression
 #[derive(Debug, Clone)]
-pub enum IfCondition {
-    Atom(IfConditionAtom),
-    Not(Box<IfCondition>, Span),
-    And(Vec<IfCondition>),
-    Or(Vec<IfCondition>),
-    Paren(Box<IfCondition>),
+pub enum IfCondition<'a> {
+    Atom(IfConditionAtom<'a>),
+    Not(Box<IfCondition<'a>>, Span),
+    And(Vec<IfCondition<'a>>),
+    Or(Vec<IfCondition<'a>>),
+    Paren(Box<IfCondition<'a>>),
     /// The `else` keyword — always true
     Else,
 }
 
 /// A single clause in a CSS-native `if()`: `condition: value`
 #[derive(Debug, Clone)]
-pub struct IfClause {
-    pub condition: IfCondition,
-    pub value: AstExpr,
+pub struct IfClause<'a> {
+    pub condition: IfCondition<'a>,
+    pub value: AstExpr<'a>,
 }
 
 /// CSS-native `if()` expression with condition clauses
 #[derive(Debug, Clone)]
-pub struct CssIfExpression {
-    pub clauses: Vec<IfClause>,
+pub struct CssIfExpression<'a> {
+    pub clauses: Vec<IfClause<'a>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct ListExpr {
-    pub elems: Vec<Spanned<AstExpr>>,
+pub struct ListExpr<'a> {
+    pub elems: Vec<Spanned<AstExpr<'a>>>,
     pub separator: ListSeparator,
     pub brackets: Brackets,
 }
 
 #[derive(Debug, Clone)]
-pub struct FunctionCallExpr {
+pub struct FunctionCallExpr<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
     /// Original function name before underscore→dash normalization.
     /// Used for plain CSS function output to preserve the original casing/underscores.
     pub original_name: CompactString,
-    pub arguments: Rc<ArgumentInvocation>,
+    pub arguments: &'a ArgumentInvocation<'a>,
     pub span: Span,
     /// True if the function name was written with literal `--` prefix (CSS custom function).
     /// False if it was written with `__` (Sass function that normalizes to `--`).
@@ -79,27 +79,27 @@ pub struct FunctionCallExpr {
 }
 
 #[derive(Debug, Clone)]
-pub struct InterpolatedFunction {
-    pub name: Interpolation,
-    pub arguments: ArgumentInvocation,
+pub struct InterpolatedFunction<'a> {
+    pub name: Interpolation<'a>,
+    pub arguments: ArgumentInvocation<'a>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct AstSassMap(pub Vec<(Spanned<AstExpr>, AstExpr)>);
+pub struct AstSassMap<'a>(pub Vec<(Spanned<AstExpr<'a>>, AstExpr<'a>)>);
 
 #[derive(Debug, Clone)]
-pub struct BinaryOpExpr {
-    pub lhs: AstExpr,
+pub struct BinaryOpExpr<'a> {
+    pub lhs: AstExpr<'a>,
     pub op: BinaryOp,
-    pub rhs: AstExpr,
+    pub rhs: AstExpr<'a>,
     pub allows_slash: bool,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum AstExpr {
-    BinaryOp(Rc<BinaryOpExpr>),
+pub enum AstExpr<'a> {
+    BinaryOp(&'a BinaryOpExpr<'a>),
     True,
     False,
     Calculation {
@@ -107,22 +107,22 @@ pub enum AstExpr {
         args: Vec<Self>,
     },
     Color(Rc<Color>),
-    CssIf(Rc<CssIfExpression>),
-    FunctionCall(FunctionCallExpr),
-    If(Rc<Ternary>),
-    InterpolatedFunction(Rc<InterpolatedFunction>),
-    List(ListExpr),
-    Map(AstSassMap),
+    CssIf(&'a CssIfExpression<'a>),
+    FunctionCall(FunctionCallExpr<'a>),
+    If(&'a Ternary<'a>),
+    InterpolatedFunction(&'a InterpolatedFunction<'a>),
+    List(ListExpr<'a>),
+    Map(AstSassMap<'a>),
     Null,
     Number {
         n: Number,
         unit: Unit,
     },
-    Paren(Rc<Self>),
+    Paren(&'a AstExpr<'a>),
     ParentSelector,
-    String(StringExpr, Span),
-    Supports(Rc<AstSupportsCondition>),
-    UnaryOp(UnaryOp, Rc<Self>, Span),
+    String(StringExpr<'a>, Span),
+    Supports(&'a AstSupportsCondition<'a>),
+    UnaryOp(UnaryOp, &'a AstExpr<'a>, Span),
     Variable {
         name: Spanned<Identifier>,
         namespace: Option<Spanned<Identifier>>,
@@ -132,13 +132,13 @@ pub enum AstExpr {
 // todo: make quotes bool
 // todo: track span inside
 #[derive(Debug, Clone)]
-pub struct StringExpr(pub Interpolation, pub QuoteKind);
+pub struct StringExpr<'a>(pub Interpolation<'a>, pub QuoteKind);
 
-impl StringExpr {
+impl<'a> StringExpr<'a> {
     fn quote_inner_text(
         text: &str,
         quote: char,
-        buffer: &mut Interpolation,
+        buffer: &mut Interpolation<'a>,
         // default=false
         is_static: bool,
     ) {
@@ -164,8 +164,8 @@ impl StringExpr {
         }
     }
 
-    fn best_quote<'a>(
-        strings: impl Iterator<Item = &'a str>,
+    fn best_quote<'b>(
+        strings: impl Iterator<Item = &'b str>,
         preferred: Option<char>,
     ) -> char {
         let mut contains_double_quote = false;
@@ -186,7 +186,7 @@ impl StringExpr {
         }
     }
 
-    pub fn as_interpolation(self, is_static: bool, preferred_quote: Option<char>) -> Interpolation {
+    pub fn as_interpolation(self, is_static: bool, preferred_quote: Option<char>) -> Interpolation<'a> {
         if self.1 == QuoteKind::None {
             return self.0;
         }
@@ -217,7 +217,7 @@ impl StringExpr {
     }
 }
 
-impl AstExpr {
+impl<'a> AstExpr<'a> {
     pub fn is_variable(&self) -> bool {
         matches!(self, Self::Variable { .. })
     }
@@ -231,8 +231,8 @@ impl AstExpr {
         }
     }
 
-    pub fn slash(left: Self, right: Self, span: Span) -> Self {
-        Self::BinaryOp(Rc::new(BinaryOpExpr {
+    pub fn slash(left: Self, right: Self, span: Span, arena: &'a bumpalo::Bump) -> Self {
+        Self::BinaryOp(arena.alloc(BinaryOpExpr {
             lhs: left,
             op: BinaryOp::Div,
             rhs: right,

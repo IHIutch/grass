@@ -4,7 +4,7 @@ use crate::builtin::builtin_imports::*;
 
 // todo: this should be a constant of some sort. we shouldn't be allocating this
 // every time
-pub(crate) fn if_arguments() -> ArgumentDeclaration {
+pub(crate) fn if_arguments() -> ArgumentDeclaration<'static> {
     ArgumentDeclaration {
         args: vec![
             Argument {

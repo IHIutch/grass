@@ -4,7 +4,6 @@ use std::{
     ffi::OsString,
     mem,
     path::{Path, PathBuf},
-    rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -40,9 +39,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn current_indentation(&self) -> usize;
     fn flags(&self) -> &ContextFlags;
     fn flags_mut(&mut self) -> &mut ContextFlags;
+    fn arena(&self) -> &'a bumpalo::Bump;
 
     #[allow(clippy::type_complexity)]
-    const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr>>> = None;
+    const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr<'a>>>> = None;
 
     /// Sets whether the indented-syntax parser should consume newlines as
     /// whitespace. No-op for SCSS and CSS parsers.
@@ -54,7 +54,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         false
     }
 
-    fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation> {
+    /// Convert a Vec of statements to an arena-allocated slice.
+    fn alloc_stmts(&self, stmts: Vec<AstStmt<'a>>) -> &'a [AstStmt<'a>] {
+        self.arena().alloc_slice_fill_iter(stmts)
+    }
+
+    fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
         self.almost_any_value(false)
     }
 
@@ -111,8 +116,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_children(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<Vec<AstStmt>> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<Vec<AstStmt<'a>>> {
         self.expect_char('{')?;
         self.whitespace_without_comments();
         let mut children = Vec::new();
@@ -157,8 +162,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_statements(
         &mut self,
-        statement: fn(&mut Self) -> SassResult<Option<AstStmt>>,
-    ) -> SassResult<Vec<AstStmt>> {
+        statement: fn(&mut Self) -> SassResult<Option<AstStmt<'a>>>,
+    ) -> SassResult<Vec<AstStmt<'a>>> {
         let mut stmts = Vec::new();
         self.whitespace_without_comments();
         while let Some(tok) = self.toks().peek() {
@@ -197,7 +202,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     // todo: rename
-    fn __parse(&mut self) -> SassResult<StyleSheet> {
+    fn __parse(&mut self) -> SassResult<StyleSheet<'a>> {
         let mut style_sheet = StyleSheet::new(
             self.is_plain_css(),
             self.options()
@@ -209,7 +214,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         // Allow a byte-order mark at the beginning of the document.
         self.scan_char('\u{feff}');
 
-        style_sheet.body = self.parse_statements(|parser| {
+        let body_stmts = self.parse_statements(|parser| {
             if parser.next_matches("@charset") {
                 parser.expect_char('@')?;
                 parser.expect_identifier("charset", false)?;
@@ -220,6 +225,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
             Ok(Some(parser.parse_statement()?))
         })?;
+        style_sheet.body = self.alloc_stmts(body_stmts);
 
         for (idx, child) in style_sheet.body.iter().enumerate() {
             match child {
@@ -259,7 +265,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_argument_declaration(&mut self) -> SassResult<ArgumentDeclaration> {
+    fn parse_argument_declaration(&mut self) -> SassResult<ArgumentDeclaration<'a>> {
         self.expect_char('(')?;
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -276,7 +282,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let name_span = self.toks_mut().span_from(name_start);
             self.whitespace()?;
 
-            let mut default_value: Option<AstExpr> = None;
+            let mut default_value: Option<AstExpr<'a>> = None;
 
             if self.scan_char(':') {
                 self.whitespace()?;
@@ -324,8 +330,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn with_children(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<Spanned<Vec<AstStmt>>> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<Spanned<Vec<AstStmt<'a>>>> {
         let start = self.toks().cursor();
         let children = self.parse_children(child)?;
         let span = self.toks_mut().span_from(start);
@@ -336,7 +342,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         })
     }
 
-    fn parse_at_root_query(&mut self) -> SassResult<Interpolation> {
+    fn parse_at_root_query(&mut self) -> SassResult<Interpolation<'a>> {
         let mut buffer = Interpolation::new();
         self.expect_char('(')?;
         buffer.add_char('(');
@@ -363,7 +369,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(buffer)
     }
 
-    fn parse_at_root_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_at_root_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         Ok(AstStmt::AtRootRule(if self.toks_mut().next_char_is('(') {
             let query_start = self.toks().cursor();
             let query = self.parse_at_root_query()?;
@@ -376,34 +382,34 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     node: query,
                     span: query_span,
                 }),
-                body: children,
+                body: self.alloc_stmts(children),
                 span: self.toks_mut().span_from(start),
             }
         } else if self.looking_at_children()? {
             let children = self.with_children(Self::parse_statement)?.node;
             AstAtRootRule {
                 query: None,
-                body: children,
+                body: self.alloc_stmts(children),
                 span: self.toks_mut().span_from(start),
             }
         } else if self.is_indented() && self.at_end_of_statement() {
             // Empty @at-root with no children in indented syntax
             AstAtRootRule {
                 query: None,
-                body: Vec::new(),
+                body: &[],
                 span: self.toks_mut().span_from(start),
             }
         } else {
             let child = self.parse_style_rule(None, None)?;
             AstAtRootRule {
                 query: None,
-                body: vec![child],
+                body: self.alloc_stmts(vec![child]),
                 span: self.toks_mut().span_from(start),
             }
         }))
     }
 
-    fn parse_content_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_content_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         if !self.flags().in_mixin() {
             return Err((
                 "@content is only allowed within mixin declarations.",
@@ -427,7 +433,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::ContentRule(Box::new(AstContentRule { args })))
     }
 
-    fn parse_debug_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_debug_rule(&mut self) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newline between @debug and its expression
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -444,8 +450,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_each_rule(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<AstStmt> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<AstStmt<'a>> {
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
 
@@ -475,11 +481,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Each(Box::new(AstEach {
             variables,
             list,
-            body: body.into_iter().map(Rc::new).collect(),
+            body: self.alloc_stmts(body),
         })))
     }
 
-    fn parse_disallowed_at_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_disallowed_at_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         self.almost_any_value(false)?;
         Err((
             "This at-rule is not allowed here.",
@@ -488,7 +494,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             .into())
     }
 
-    fn parse_error_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_error_rule(&mut self) -> SassResult<AstStmt<'a>> {
         let value = self.parse_expression(None, None, None)?;
         self.expect_statement_separator(Some("@error rule"))?;
         Ok(AstStmt::ErrorRule(AstErrorRule {
@@ -497,7 +503,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }))
     }
 
-    fn parse_extend_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_extend_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         if !self.flags().in_style_rule()
             && !self.flags().in_mixin()
             && !self.flags().in_content_block()
@@ -534,8 +540,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_for_rule(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<AstStmt> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<AstStmt<'a>> {
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
 
@@ -600,11 +606,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             from,
             to,
             is_exclusive,
-            body: body.into_iter().map(Rc::new).collect(),
+            body: self.alloc_stmts(body),
         })))
     }
 
-    fn parse_function_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_function_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newlines around function name
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -669,11 +675,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 span: name_span,
             },
             arguments,
-            body: children.into_iter().map(Rc::new).collect(),
+            body: self.alloc_stmts(children),
         }))
     }
 
-    fn parse_variable_declaration_with_namespace(&mut self) -> SassResult<AstVariableDecl> {
+    fn parse_variable_declaration_with_namespace(&mut self) -> SassResult<AstVariableDecl<'a>> {
         let start = self.toks().cursor();
         let namespace = self.parse_identifier(false, false)?;
         let namespace_span = self.toks_mut().span_from(start);
@@ -687,7 +693,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         )
     }
 
-    fn function_child(&mut self) -> SassResult<AstStmt> {
+    fn function_child(&mut self) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
         if !self.toks_mut().next_char_is('@') {
             match self.parse_variable_declaration_with_namespace() {
@@ -737,8 +743,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_if_rule(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<AstStmt> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<AstStmt<'a>> {
         let if_indentation = self.current_indentation();
 
         let was_in_control_directive = self.flags().in_control_flow();
@@ -752,9 +758,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let body = self.parse_children(child)?;
         self.whitespace_without_comments();
 
-        let mut clauses = vec![AstIfClause { condition, body }];
+        let mut clauses = vec![AstIfClause { condition, body: self.alloc_stmts(body) }];
 
-        let mut last_clause: Option<Vec<AstStmt>> = None;
+        let mut last_clause: Option<&'a [AstStmt<'a>]> = None;
 
         while self.scan_else(if_indentation)? {
             self.whitespace()?;
@@ -765,9 +771,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 self.set_consume_newlines(was_consuming_newlines);
                 let condition = self.parse_expression(None, None, None)?.node;
                 let body = self.parse_children(child)?;
-                clauses.push(AstIfClause { condition, body });
+                clauses.push(AstIfClause { condition, body: self.alloc_stmts(body) });
             } else {
-                last_clause = Some(self.parse_children(child)?);
+                let else_body = self.parse_children(child)?;
+                last_clause = Some(self.alloc_stmts(else_body));
                 break;
             }
         }
@@ -782,7 +789,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }))
     }
 
-    fn try_parse_import_supports_function(&mut self) -> SassResult<Option<AstSupportsCondition>> {
+    fn try_parse_import_supports_function(&mut self) -> SassResult<Option<AstSupportsCondition<'a>>> {
         if !self.looking_at_interpolated_identifier() {
             return Ok(None);
         }
@@ -802,11 +809,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(Some(AstSupportsCondition::Function { name, args: value }))
     }
 
-    fn parse_import_supports_query(&mut self) -> SassResult<AstSupportsCondition> {
+    fn parse_import_supports_query(&mut self) -> SassResult<AstSupportsCondition<'a>> {
         self.whitespace()?;
         Ok(if self.scan_identifier("not", false)? {
             self.whitespace()?;
-            AstSupportsCondition::Negation(Box::new(self.supports_condition_in_parens()?))
+            AstSupportsCondition::Negation(self.arena().alloc(self.supports_condition_in_parens()?))
         } else if self.toks_mut().next_char_is('(') {
             self.parse_supports_condition()?
         } else {
@@ -822,7 +829,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         })
     }
 
-    fn try_import_modifiers(&mut self) -> SassResult<Option<Interpolation>> {
+    fn try_import_modifiers(&mut self) -> SassResult<Option<Interpolation<'a>>> {
         // Exit before allocating anything if we're not looking at any modifiers, as
         // is the most common case.
         if !self.looking_at_interpolated_identifier() && !self.toks_mut().next_char_is('(') {
@@ -854,7 +861,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                             buffer.add_char('(');
                         }
 
-                        buffer.add_expr(AstExpr::Supports(Rc::new(query)).span(self.empty_span()));
+                        buffer.add_expr(AstExpr::Supports(self.arena().alloc(query)).span(self.empty_span()));
 
                         if !is_declaration {
                             buffer.add_char(')');
@@ -892,7 +899,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn try_url_contents(&mut self, name: Option<&str>) -> SassResult<Option<Interpolation>> {
+    fn try_url_contents(&mut self, name: Option<&str>) -> SassResult<Option<Interpolation<'a>>> {
         let start = self.toks().cursor();
         if !self.scan_char('(') {
             return Ok(None);
@@ -941,7 +948,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(None)
     }
 
-    fn parse_dynamic_url(&mut self) -> SassResult<AstExpr> {
+    fn parse_dynamic_url(&mut self) -> SassResult<AstExpr<'a>> {
         let start = self.toks().cursor();
         self.expect_identifier("url", false)?;
 
@@ -950,7 +957,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 StringExpr(contents, QuoteKind::None),
                 self.toks_mut().span_from(start),
             ),
-            None => AstExpr::InterpolatedFunction(Rc::new(InterpolatedFunction {
+            None => AstExpr::InterpolatedFunction(self.arena().alloc(InterpolatedFunction {
                 name: Interpolation::new_plain("url".to_owned()),
                 arguments: self.parse_argument_invocation(false, false)?,
                 span: self.toks_mut().span_from(start),
@@ -958,14 +965,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         })
     }
 
-    fn parse_import_argument(&mut self, start: usize) -> SassResult<AstImport> {
+    fn parse_import_argument(&mut self, start: usize) -> SassResult<AstImport<'a>> {
         if self.toks_mut().next_char_is('u') || self.toks_mut().next_char_is('U') {
             // In indented syntax, only try url() if the identifier is actually
             // "url" (not another identifier starting with 'u' like "unquoted").
             let try_url = if self.is_indented() {
                 let saved = self.toks().cursor();
                 let is_url = self.scan_identifier("url", false)?
-                    && self.toks().peek().map_or(false, |t| t.kind == '(');
+                    && self.toks().peek().is_some_and(|t| t.kind == '(');
                 self.toks_mut().set_cursor(saved);
                 is_url
             } else {
@@ -1039,7 +1046,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_import_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_import_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         let mut imports = Vec::new();
 
         loop {
@@ -1073,7 +1080,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(ident)
     }
 
-    fn parse_include_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_include_rule(&mut self) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newline before mixin name
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -1129,7 +1136,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             None
         };
 
-        let mut content_block: Option<AstContentBlock> = None;
+        let mut content_block: Option<AstContentBlock<'a>> = None;
 
         if content_args.is_some() || self.looking_at_children()? {
             let content_args = content_args.unwrap_or_else(ArgumentDeclaration::empty);
@@ -1138,7 +1145,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let body = self.with_children(Self::parse_statement)?.node;
             content_block = Some(AstContentBlock {
                 args: content_args,
-                body: body.into_iter().map(Rc::new).collect(),
+                body: self.alloc_stmts(body),
             });
             self.flags_mut()
                 .set(ContextFlags::IN_CONTENT_BLOCK, was_in_content_block);
@@ -1158,7 +1165,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         })))
     }
 
-    fn parse_media_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_media_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         let query_start = self.toks().cursor();
         let query = self.parse_media_query_list()?;
         let query_span = self.toks_mut().span_from(query_start);
@@ -1168,12 +1175,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Media(AstMedia {
             query,
             query_span,
-            body,
+            body: self.alloc_stmts(body),
             span: self.toks_mut().span_from(start),
         }))
     }
 
-    fn parse_interpolated_string(&mut self) -> SassResult<Spanned<StringExpr>> {
+    fn parse_interpolated_string(&mut self) -> SassResult<Spanned<StringExpr<'a>>> {
         let start = self.toks().cursor();
         let quote = match self.toks_mut().next() {
             Some(Token {
@@ -1235,7 +1242,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         })
     }
 
-    fn parse_return_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_return_rule(&mut self) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newline before value
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -1249,14 +1256,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }))
     }
 
-    fn parse_mixin_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_mixin_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newline before mixin name
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
         self.whitespace()?;
         self.set_consume_newlines(was_consuming_newlines);
         // Parse raw name first to check for CSS custom mixin prefix
-        let raw_name_start = self.toks().cursor();
+        let _raw_name_start = self.toks().cursor();
         let raw_name = self.parse_identifier(false, false)?;
         if raw_name.starts_with("--") {
             return Err((
@@ -1304,25 +1311,25 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Mixin(AstMixin {
             name,
             args,
-            body: body.into_iter().map(Rc::new).collect(),
+            body: self.alloc_stmts(body),
             has_content,
             id: MIXIN_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }))
     }
 
-    fn _parse_moz_document_rule(&mut self, _name: Interpolation) -> SassResult<AstStmt> {
+    fn _parse_moz_document_rule(&mut self, _name: Interpolation<'a>) -> SassResult<AstStmt<'a>> {
         todo!("special cased @-moz-document not yet implemented")
     }
 
-    fn unknown_at_rule(&mut self, name: Interpolation, start: usize) -> SassResult<AstStmt> {
+    fn unknown_at_rule(&mut self, name: Interpolation<'a>, start: usize) -> SassResult<AstStmt<'a>> {
         let was_in_unknown_at_rule = self.flags().in_unknown_at_rule();
         self.flags_mut().set(ContextFlags::IN_UNKNOWN_AT_RULE, true);
 
         // Strip comments from @-moz-document values (dart-sass compatibility)
         let omit_comments = name.as_plain()
-            .map_or(false, |n| n.eq_ignore_ascii_case("-moz-document"));
+            .is_some_and(|n| n.eq_ignore_ascii_case("-moz-document"));
 
-        let value: Option<Interpolation> =
+        let value: Option<Interpolation<'a>> =
             if !self.toks_mut().next_char_is('!') && !self.at_end_of_statement() {
                 Some(self.almost_any_value(omit_comments)?)
             } else {
@@ -1331,8 +1338,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         // CSS custom function: @function --name() or @FUNCTION --name()
         let is_css_function = name.as_plain()
-            .map_or(false, |n| n.eq_ignore_ascii_case("function"))
-            && value.as_ref().map_or(false, |v| v.initial_plain().starts_with("--"));
+            .is_some_and(|n| n.eq_ignore_ascii_case("function"))
+            && value.as_ref().is_some_and(|v| v.initial_plain().starts_with("--"));
         let was_in_css_function = self.flags().in_css_function_body();
         if is_css_function {
             self.flags_mut().set(ContextFlags::IN_CSS_FUNCTION_BODY, true);
@@ -1355,16 +1362,16 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::UnknownAtRule(Box::new(AstUnknownAtRule {
             name,
             value,
-            body: children,
+            body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c)),
             span: self.toks_mut().span_from(start),
         })))
     }
 
     fn try_supports_operation(
         &mut self,
-        interpolation: &Interpolation,
+        interpolation: &Interpolation<'a>,
         _start: usize,
-    ) -> SassResult<Option<AstSupportsCondition>> {
+    ) -> SassResult<Option<AstSupportsCondition<'a>>> {
         if interpolation.contents.len() != 1 {
             return Ok(None);
         }
@@ -1378,7 +1385,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let before_whitespace = self.toks().cursor();
         self.whitespace()?;
 
-        let mut operation: Option<AstSupportsCondition> = None;
+        let mut operation: Option<AstSupportsCondition<'a>> = None;
         let mut operator: Option<String> = None;
 
         while self.looking_at_identifier() {
@@ -1397,11 +1404,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
             let right = self.supports_condition_in_parens()?;
             operation = Some(AstSupportsCondition::Operation {
-                left: Box::new(operation.unwrap_or_else(|| {
+                left: self.arena().alloc(operation.unwrap_or_else(|| {
                     AstSupportsCondition::Interpolation(expression.clone().node)
                 })),
                 operator: operator.clone(),
-                right: Box::new(right),
+                right: self.arena().alloc(right),
             });
             self.whitespace()?;
         }
@@ -1411,9 +1418,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn supports_declaration_value(
         &mut self,
-        name: AstExpr,
+        name: AstExpr<'a>,
         start: usize,
-    ) -> SassResult<AstSupportsCondition> {
+    ) -> SassResult<AstSupportsCondition<'a>> {
         let value = match &name {
             AstExpr::String(StringExpr(text, QuoteKind::None), ..)
                 if text.initial_plain().starts_with("--") =>
@@ -1433,7 +1440,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstSupportsCondition::Declaration { name, value })
     }
 
-    fn supports_condition_in_parens(&mut self) -> SassResult<AstSupportsCondition> {
+    fn supports_condition_in_parens(&mut self) -> SassResult<AstSupportsCondition<'a>> {
         let start = self.toks().cursor();
 
         if self.looking_at_interpolated_identifier() {
@@ -1481,7 +1488,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let condition = self.supports_condition_in_parens()?;
             self.expect_char(')')?;
             self.set_consume_newlines(was_consuming_newlines);
-            return Ok(AstSupportsCondition::Negation(Box::new(condition)));
+            return Ok(AstSupportsCondition::Negation(self.arena().alloc(condition)));
         } else if self.toks_mut().next_char_is('(') {
             let condition = self.parse_supports_condition()?;
             self.expect_char(')')?;
@@ -1509,7 +1516,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let expr = self.parse_expression(None, None, None);
         let found_colon = self.expect_char(':');
-        let name: AstExpr = match (expr, found_colon) {
+        let name: AstExpr<'a> = match (expr, found_colon) {
             (Ok(val), Ok(..)) => {
                 val.node
             }
@@ -1554,10 +1561,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(declaration)
     }
 
-    fn parse_supports_condition(&mut self) -> SassResult<AstSupportsCondition> {
+    fn parse_supports_condition(&mut self) -> SassResult<AstSupportsCondition<'a>> {
         if self.scan_identifier("not", false)? {
             self.whitespace()?;
-            return Ok(AstSupportsCondition::Negation(Box::new(
+            return Ok(AstSupportsCondition::Negation(self.arena().alloc(
                 self.supports_condition_in_parens()?,
             )));
         }
@@ -1580,9 +1587,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             self.whitespace()?;
             let right = self.supports_condition_in_parens()?;
             condition = AstSupportsCondition::Operation {
-                left: Box::new(condition),
+                left: self.arena().alloc(condition),
                 operator: operator.clone(),
-                right: Box::new(right),
+                right: self.arena().alloc(right),
             };
             self.whitespace()?;
         }
@@ -1590,19 +1597,19 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(condition)
     }
 
-    fn parse_supports_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_supports_rule(&mut self) -> SassResult<AstStmt<'a>> {
         let condition = self.parse_supports_condition()?;
         self.whitespace()?;
         let children = self.with_children(Self::parse_statement)?;
 
         Ok(AstStmt::Supports(Box::new(AstSupportsRule {
             condition,
-            body: children.node,
+            body: self.alloc_stmts(children.node),
             span: children.span,
         })))
     }
 
-    fn parse_warn_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_warn_rule(&mut self) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newline before value
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -1618,8 +1625,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_while_rule(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<AstStmt> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<AstStmt<'a>> {
         let was_in_control_directive = self.flags().in_control_flow();
         self.flags_mut().set(ContextFlags::IN_CONTROL_FLOW, true);
 
@@ -1635,9 +1642,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::While(Box::new(AstWhile { condition, body: body.into_iter().map(Rc::new).collect() })))
+        Ok(AstStmt::While(Box::new(AstWhile { condition, body: self.alloc_stmts(body) })))
     }
-    fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         self.set_consume_newlines(true);
         self.whitespace()?;
         let url = PathBuf::from(self.parse_url_string()?);
@@ -1811,7 +1818,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         &mut self,
         // default=false
         allow_guarded: bool,
-    ) -> SassResult<Option<Vec<ConfiguredVariable>>> {
+    ) -> SassResult<Option<Vec<ConfiguredVariable<'a>>>> {
         if !self.scan_identifier("with", false)? {
             return Ok(None);
         }
@@ -1878,7 +1885,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(Some(configuration))
     }
 
-    fn parse_use_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_use_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         self.set_consume_newlines(true);
         self.whitespace()?;
         let url_start = self.toks().cursor();
@@ -1920,8 +1927,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_at_rule(
         &mut self,
-        child: fn(&mut Self) -> SassResult<AstStmt>,
-    ) -> SassResult<AstStmt> {
+        child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
+    ) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
 
         self.expect_char('@')?;
@@ -1975,7 +1982,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_statement(&mut self) -> SassResult<AstStmt> {
+    fn parse_statement(&mut self) -> SassResult<AstStmt<'a>> {
         match self.toks().peek() {
             Some(Token { kind: '@', .. }) => self.parse_at_rule(Self::parse_statement),
             Some(Token { kind: '+', .. }) => {
@@ -2023,7 +2030,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_declaration_or_style_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_declaration_or_style_rule(&mut self) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
 
         // The indented syntax allows a single backslash to distinguish a style rule
@@ -2045,7 +2052,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         &mut self,
         // default=true
         parse_custom_properties: bool,
-    ) -> SassResult<AstStmt> {
+    ) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
 
         let name = if matches!(
@@ -2087,7 +2094,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             return Ok(AstStmt::Style(Box::new(AstStyle {
                 name,
                 value: Some(value),
-                body: Vec::new(),
+                body: &[],
                 span: value_span,
             })));
         }
@@ -2116,7 +2123,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             return Ok(AstStmt::Style(Box::new(AstStyle {
                 name,
                 value: None,
-                body: children,
+                body: self.alloc_stmts(children),
                 span: self.toks_mut().span_from(start),
 
             })));
@@ -2146,7 +2153,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             Ok(AstStmt::Style(Box::new(AstStyle {
                 name,
                 value: Some(value),
-                body: children,
+                body: self.alloc_stmts(children),
                 span: self.toks_mut().span_from(start),
 
             })))
@@ -2155,14 +2162,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             Ok(AstStmt::Style(Box::new(AstStyle {
                 name,
                 value: Some(value),
-                body: Vec::new(),
+                body: &[],
                 span: self.toks_mut().span_from(start),
 
             })))
         }
     }
 
-    fn parse_single_interpolation(&mut self) -> SassResult<Interpolation> {
+    fn parse_single_interpolation(&mut self) -> SassResult<Interpolation<'a>> {
         self.expect_char('#')?;
         self.expect_char('{')?;
         let was_consuming_newlines = self.is_consuming_newlines();
@@ -2173,7 +2180,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.expect_char('}')?;
 
         if self.is_plain_css() {
-            return Err(("Interpolation isn't allowed in plain CSS.", contents.span).into());
+            return Err(("Interpolation<'a> isn't allowed in plain CSS.", contents.span).into());
         }
 
         let mut interpolation = Interpolation::new();
@@ -2184,7 +2191,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(interpolation)
     }
 
-    fn parse_interpolated_identifier_body(&mut self, buffer: &mut Interpolation) -> SassResult<()> {
+    fn parse_interpolated_identifier_body(&mut self, buffer: &mut Interpolation<'a>) -> SassResult<()> {
         while let Some(next) = self.toks().peek() {
             match next.kind {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '\u{80}'..=std::char::MAX => {
@@ -2204,7 +2211,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(())
     }
 
-    fn parse_interpolated_identifier(&mut self) -> SassResult<Interpolation> {
+    fn parse_interpolated_identifier(&mut self) -> SassResult<Interpolation<'a>> {
         let mut buffer = Interpolation::new();
 
         if self.scan_char('-') {
@@ -2267,7 +2274,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_loud_comment(&mut self) -> SassResult<AstLoudComment> {
+    fn parse_loud_comment(&mut self) -> SassResult<AstLoudComment<'a>> {
         let start = self.toks().cursor();
         self.expect_char('/')?;
         self.expect_char('*')?;
@@ -2322,7 +2329,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         allow_empty: bool,
         // default=true
         allow_colon: bool,
-    ) -> SassResult<Interpolation> {
+    ) -> SassResult<Interpolation<'a>> {
         self.parse_interpolated_declaration_value_inner(allow_semicolon, allow_empty, allow_colon, true)
     }
 
@@ -2333,7 +2340,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         allow_semicolon: bool,
         allow_empty: bool,
         allow_colon: bool,
-    ) -> SassResult<Interpolation> {
+    ) -> SassResult<Interpolation<'a>> {
         self.parse_interpolated_declaration_value_inner(allow_semicolon, allow_empty, allow_colon, false)
     }
 
@@ -2345,7 +2352,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         // When true, `//` is treated as a silent comment and stripped.
         // When false (custom properties), `//` is preserved as literal text.
         silent_comments: bool,
-    ) -> SassResult<Interpolation> {
+    ) -> SassResult<Interpolation<'a>> {
         let mut buffer = Interpolation::new();
 
         let mut brackets = Vec::new();
@@ -2500,7 +2507,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         &mut self,
         // default=false
         single_equals: bool,
-    ) -> SassResult<Spanned<AstExpr>> {
+    ) -> SassResult<Spanned<AstExpr<'a>>> {
         ValueParser::parse_expression(
             self,
             Some(&|parser| {
@@ -2518,7 +2525,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         &mut self,
         for_mixin: bool,
         allow_empty_second_arg: bool,
-    ) -> SassResult<ArgumentInvocation> {
+    ) -> SassResult<ArgumentInvocation<'a>> {
         let start = self.toks().cursor();
 
         self.expect_char('(')?;
@@ -2529,8 +2536,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let mut positional = Vec::new();
         let mut named = BTreeMap::new();
 
-        let mut rest: Option<AstExpr> = None;
-        let mut keyword_rest: Option<AstExpr> = None;
+        let mut rest: Option<AstExpr<'a>> = None;
+        let mut keyword_rest: Option<AstExpr<'a>> = None;
 
         while self.looking_at_expression() {
             let expression = self.parse_expression_until_comma(!for_mixin)?;
@@ -2611,7 +2618,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         parse_until: Option<Predicate<'_, Self>>,
         inside_bracketed_list: Option<bool>,
         single_equals: Option<bool>,
-    ) -> SassResult<Spanned<AstExpr>> {
+    ) -> SassResult<Spanned<AstExpr<'a>>> {
         ValueParser::parse_expression(
             self,
             parse_until,
@@ -2620,7 +2627,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         )
     }
 
-    fn parse_declaration_or_buffer(&mut self) -> SassResult<DeclarationOrBuffer> {
+    fn parse_declaration_or_buffer(&mut self) -> SassResult<DeclarationOrBuffer<'a>> {
         let start = self.toks().cursor();
         let mut name_buffer = Interpolation::new();
 
@@ -2702,7 +2709,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                         .span(value_span),
                 ),
                 span: self.toks_mut().span_from(start),
-                body: Vec::new(),
+                body: &[],
             }))));
         }
 
@@ -2731,7 +2738,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 name: name_buffer,
                 value: None,
                 span: self.toks_mut().span_from(start),
-                body,
+                body: self.alloc_stmts(body),
 
             }))));
         }
@@ -2788,7 +2795,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 name: name_buffer,
                 value: Some(value),
                 span: self.toks_mut().span_from(start),
-                body,
+                body: self.alloc_stmts(body),
 
             }))))
         } else {
@@ -2797,13 +2804,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 name: name_buffer,
                 value: Some(value),
                 span: self.toks_mut().span_from(start),
-                body: Vec::new(),
+                body: &[],
 
             }))))
         }
     }
 
-    fn parse_declaration_child(&mut self) -> SassResult<AstStmt> {
+    fn parse_declaration_child(&mut self) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
 
         if self.toks_mut().next_char_is('@') {
@@ -2820,7 +2827,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(name)
     }
 
-    fn parse_declaration_at_rule(&mut self, start: usize) -> SassResult<AstStmt> {
+    fn parse_declaration_at_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         let name = self.parse_plain_at_rule_name()?;
 
         match name.as_str() {
@@ -2838,7 +2845,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_variable_declaration_or_style_rule(&mut self) -> SassResult<AstStmt> {
+    fn parse_variable_declaration_or_style_rule(&mut self) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
 
         if self.is_plain_css() {
@@ -2866,9 +2873,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_style_rule(
         &mut self,
-        existing_buffer: Option<Interpolation>,
+        existing_buffer: Option<Interpolation<'a>>,
         start: Option<usize>,
-    ) -> SassResult<AstStmt> {
+    ) -> SassResult<AstStmt<'a>> {
         let start = start.unwrap_or_else(|| self.toks().cursor());
 
         self.flags_mut().set(ContextFlags::IS_USE_ALLOWED, false);
@@ -2897,13 +2904,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         Ok(AstStmt::RuleSet(AstRuleSet {
             selector: interpolation,
-            body: children.node,
+            body: self.alloc_stmts(children.node),
             selector_span,
             span,
         }))
     }
 
-    fn parse_silent_comment(&mut self) -> SassResult<AstStmt> {
+    fn parse_silent_comment(&mut self) -> SassResult<AstStmt<'a>> {
         let start = self.toks().cursor();
         debug_assert!(self.next_matches("//"));
         self.toks_mut().next();
@@ -2969,7 +2976,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         &mut self,
         namespace: Option<Spanned<Identifier>>,
         start: Option<usize>,
-    ) -> SassResult<AstVariableDecl> {
+    ) -> SassResult<AstVariableDecl<'a>> {
         let start = start.unwrap_or_else(|| self.toks().cursor());
 
         let name = self.parse_variable_name()?;
@@ -3047,7 +3054,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         &mut self,
         // default=false
         omit_comments: bool,
-    ) -> SassResult<Interpolation> {
+    ) -> SassResult<Interpolation<'a>> {
         let mut buffer = Interpolation::new();
         let mut brackets: Vec<char> = Vec::new();
 
@@ -3157,7 +3164,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_variable_declaration_or_interpolation(
         &mut self,
-    ) -> SassResult<VariableDeclOrInterpolation> {
+    ) -> SassResult<VariableDeclOrInterpolation<'a>> {
         if !self.looking_at_identifier() {
             return Ok(VariableDeclOrInterpolation::Interpolation(
                 self.parse_interpolated_identifier()?,
@@ -3203,7 +3210,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn expression_until_comparison(&mut self) -> SassResult<Spanned<AstExpr>> {
+    fn expression_until_comparison(&mut self) -> SassResult<Spanned<AstExpr<'a>>> {
         let value = self.parse_expression(
             Some(&|parser| {
                 Ok(match parser.toks().peek() {
@@ -3220,7 +3227,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(value)
     }
 
-    fn parse_media_query_list(&mut self) -> SassResult<Interpolation> {
+    fn parse_media_query_list(&mut self) -> SassResult<Interpolation<'a>> {
         let mut buf = Interpolation::new();
         loop {
             self.whitespace()?;
@@ -3235,7 +3242,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(buf)
     }
 
-    fn parse_media_in_parens(&mut self, buf: &mut Interpolation) -> SassResult<()> {
+    fn parse_media_in_parens(&mut self, buf: &mut Interpolation<'a>) -> SassResult<()> {
         self.expect_char_with_message('(', "media condition in parentheses")?;
         buf.add_char('(');
         // In indented syntax, allow newlines inside media query parens
@@ -3318,7 +3325,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
     fn parse_media_logic_sequence(
         &mut self,
-        buf: &mut Interpolation,
+        buf: &mut Interpolation<'a>,
         operator: &'static str,
     ) -> SassResult<()> {
         loop {
@@ -3337,7 +3344,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_media_or_interpolation(&mut self, buf: &mut Interpolation) -> SassResult<()> {
+    fn parse_media_or_interpolation(&mut self, buf: &mut Interpolation<'a>) -> SassResult<()> {
         if self.toks_mut().next_char_is('#') {
             buf.add_interpolation(self.parse_single_interpolation()?);
         } else {
@@ -3347,7 +3354,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(())
     }
 
-    fn parse_media_query(&mut self, buf: &mut Interpolation) -> SassResult<()> {
+    fn parse_media_query(&mut self, buf: &mut Interpolation<'a>) -> SassResult<()> {
         if matches!(self.toks().peek(), Some(Token { kind: '(', .. })) {
             self.parse_media_in_parens(buf)?;
             self.whitespace()?;
