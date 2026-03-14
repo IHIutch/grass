@@ -12,6 +12,9 @@ pub(super) struct CssTree {
     stmts: Vec<RefCell<Option<CssStmt>>>,
     pub parent_to_child: HashMap<CssTreeIdx, Vec<CssTreeIdx>>,
     pub child_to_parent: HashMap<CssTreeIdx, CssTreeIdx>,
+    /// Maps each child to its index within its parent's children list.
+    /// Enables O(1) lookup in has_following_sibling instead of O(n) scan.
+    child_position: HashMap<CssTreeIdx, usize>,
     /// Nodes hidden from output but preserved for cloning (load-css templates).
     hidden: HashSet<CssTreeIdx>,
 }
@@ -28,6 +31,7 @@ impl CssTree {
             stmts: Vec::new(),
             parent_to_child: HashMap::new(),
             child_to_parent: HashMap::new(),
+            child_position: HashMap::new(),
             hidden: HashSet::new(),
         };
 
@@ -127,20 +131,20 @@ impl CssTree {
 
     pub fn add_child(&mut self, child: CssStmt, parent_idx: CssTreeIdx) -> CssTreeIdx {
         let child_idx = self.add_stmt_inner(child);
-        self.parent_to_child
-            .entry(parent_idx)
-            .or_default()
-            .push(child_idx);
+        let children = self.parent_to_child.entry(parent_idx).or_default();
+        let pos = children.len();
+        children.push(child_idx);
         self.child_to_parent.insert(child_idx, parent_idx);
+        self.child_position.insert(child_idx, pos);
         child_idx
     }
 
     pub fn link_child_to_parent(&mut self, child_idx: CssTreeIdx, parent_idx: CssTreeIdx) {
-        self.parent_to_child
-            .entry(parent_idx)
-            .or_default()
-            .push(child_idx);
+        let children = self.parent_to_child.entry(parent_idx).or_default();
+        let pos = children.len();
+        children.push(child_idx);
         self.child_to_parent.insert(child_idx, parent_idx);
+        self.child_position.insert(child_idx, pos);
     }
 
     pub fn has_following_sibling(&self, child: CssTreeIdx) -> bool {
@@ -149,25 +153,13 @@ impl CssTree {
         }
 
         let parent_idx = self.child_to_parent.get(&child).unwrap();
-
         let parent_children = self.parent_to_child.get(parent_idx).unwrap();
 
+        // Use stored position index for O(1) lookup instead of O(n) scan.
+        let child_pos = self.child_position[&child];
+
         // Check if any sibling after `child` would produce visible output.
-        // We skip siblings that are empty container statements (media, supports,
-        // rulesets) with no children in the tree, since those won't produce
-        // any output. Note: during tree building, CssStmt bodies are always
-        // empty — actual children are tracked in parent_to_child, so we check
-        // that map instead of is_invisible().
-        let mut found_child = false;
-        for &sibling in parent_children {
-            if sibling == child {
-                found_child = true;
-                continue;
-            }
-            if !found_child {
-                continue;
-            }
-            // This is a sibling after `child`. Check if it would be visible.
+        for &sibling in &parent_children[child_pos + 1..] {
             let stmt = self.stmts[sibling.0].borrow();
             match &*stmt {
                 None => {
@@ -286,13 +278,13 @@ impl CssTree {
             children.truncate(start);
         }
 
-        // Add to new parent and update child_to_parent
+        // Add to new parent and update child_to_parent + child_position
         for child_idx in children_to_move {
-            self.parent_to_child
-                .entry(to_parent)
-                .or_default()
-                .push(child_idx);
+            let children = self.parent_to_child.entry(to_parent).or_default();
+            let pos = children.len();
+            children.push(child_idx);
             self.child_to_parent.insert(child_idx, to_parent);
+            self.child_position.insert(child_idx, pos);
         }
     }
 
@@ -409,11 +401,11 @@ impl CssTree {
 
         for child_idx in children {
             let cloned_child = self.clone_subtree_hidden(child_idx, selector_map);
-            self.parent_to_child
-                .entry(new_idx)
-                .or_default()
-                .push(cloned_child);
+            let children_list = self.parent_to_child.entry(new_idx).or_default();
+            let pos = children_list.len();
+            children_list.push(cloned_child);
             self.child_to_parent.insert(cloned_child, new_idx);
+            self.child_position.insert(cloned_child, pos);
         }
 
         new_idx
