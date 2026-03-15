@@ -1,7 +1,7 @@
 {
   "name": "ihiutch-grass",
-  "description": "A Sass compiler written purely in Rust (WASM)",
-  "version": "0.13.16",
+  "description": "A Sass compiler written purely in Rust. Native speed with WASM fallback.",
+  "version": "0.14.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,7 +15,9 @@
     "workers.js",
     "workers.d.ts",
     "grass.js",
-    "grass_bg.wasm"
+    "grass.d.ts",
+    "grass_bg.wasm",
+    "grass_bg.wasm.d.ts"
   ],
   "type": "module",
   "exports": {
@@ -43,6 +45,16 @@
     "css",
     "web",
     "wasm",
-    "cloudflare-workers"
-  ]
+    "cloudflare-workers",
+    "native"
+  ],
+  "optionalDependencies": {
+    "ihiutch-grass-napi-darwin-arm64": "0.13.14",
+    "ihiutch-grass-napi-darwin-x64": "0.13.14",
+    "ihiutch-grass-napi-linux-x64-gnu": "0.13.14",
+    "ihiutch-grass-napi-linux-x64-musl": "0.13.14",
+    "ihiutch-grass-napi-linux-arm64-gnu": "0.13.14",
+    "ihiutch-grass-napi-linux-arm64-musl": "0.13.14",
+    "ihiutch-grass-napi-win32-x64-msvc": "0.13.14"
+  }
 }
