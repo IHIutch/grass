@@ -1,10 +1,10 @@
 use std::{
     fmt::{self, Display, Write},
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
 };
 
 use codemap::Span;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxBuildHasher, FxHashSet};
 
 use crate::error::SassResult;
 
@@ -52,6 +52,9 @@ pub(crate) struct ComplexSelector {
     /// Whether a line break should be emitted *before* this selector.
     pub line_break: bool,
 
+    /// Pre-computed hash of components (computed at construction time).
+    /// Since components are never mutated after construction, this is always valid.
+    cached_hash: u64,
 }
 
 impl PartialEq for ComplexSelector {
@@ -64,7 +67,7 @@ impl Eq for ComplexSelector {}
 
 impl Hash for ComplexSelector {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.components.hash(state);
+        state.write_u64(self.cached_hash);
     }
 }
 
@@ -138,9 +141,11 @@ fn omit_spaces_around(component: &ComplexSelectorComponent) -> bool {
 
 impl ComplexSelector {
     pub fn new(components: Vec<ComplexSelectorComponent>, line_break: bool) -> Self {
+        let cached_hash = FxBuildHasher.hash_one(&components);
         Self {
             components,
             line_break,
+            cached_hash,
         }
     }
 
