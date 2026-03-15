@@ -148,4 +148,6 @@ jobs:
 
       - name: Publish
         working-directory: crates/lib/pkg-publish
-        run: pnpm publish --provenance --access public --no-git-checks
+        env:
+          NPM_CONFIG_PROVENANCE: true
+        run: npm publish --access public
