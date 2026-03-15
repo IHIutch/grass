@@ -107,26 +107,24 @@ jobs:
         with:
           path: crates/napi/artifacts
 
-      - name: Create npm dirs and move artifacts
+      - name: Move artifacts and create platform packages
         working-directory: crates/napi
         run: |
-          npx napi create-npm-dir
           npx napi artifacts --dir artifacts
+          ls -R npm/ || echo "No npm dir created"
+          ls *.node 2>/dev/null || echo "No .node files in cwd"
 
-      - name: List packages
-        working-directory: crates/napi
-        run: ls -R npm/
-
-      - name: Publish
+      - name: Publish platform packages
         working-directory: crates/napi
         run: |
-          npx napi prepublish -t npm --no-gh-release
-          # Publish platform packages first
+          npx napi prepublish -t npm --skip-gh-release
           for pkg in npm/*/; do
             if [ -f "$pkg/package.json" ]; then
               echo "Publishing $pkg..."
               npm publish "$pkg" --access public --provenance || true
             fi
           done
-          # Publish main package
-          npm publish --access public --provenance
+
+      - name: Publish main package
+        working-directory: crates/napi
+        run: npm publish --access public --provenance
