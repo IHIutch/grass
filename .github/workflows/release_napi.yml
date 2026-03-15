@@ -149,5 +149,6 @@ jobs:
       - name: Publish
         working-directory: crates/lib/pkg-publish
         env:
+          NPM_TOKEN: "" # https://github.com/changesets/changesets/issues/1152#issuecomment-3190884868
           NPM_CONFIG_PROVENANCE: true
         run: npm publish --access public
