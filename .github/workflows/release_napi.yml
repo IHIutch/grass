@@ -39,7 +39,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -131,5 +130,3 @@ jobs:
           done
           # Publish main package
           npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
