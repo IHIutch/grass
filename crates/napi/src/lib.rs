@@ -1,6 +1,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use napi::bindgen_prelude::*;
+use napi::Task;
 use napi_derive::napi;
 
 use grass_compiler::{from_path, from_string_with_file_name, Options, OutputStyle};
@@ -67,4 +69,57 @@ pub fn compile_string(
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     Ok(CompileResult { css })
+}
+
+pub struct CompileTask {
+    path: String,
+    options: Option<CompileOptions>,
+}
+
+impl Task for CompileTask {
+    type Output = String;
+    type JsValue = CompileResult;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let opts = build_options(self.options.take());
+        from_path(&self.path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(CompileResult { css: output })
+    }
+}
+
+pub struct CompileStringTask {
+    source: String,
+    options: Option<CompileOptions>,
+}
+
+impl Task for CompileStringTask {
+    type Output = String;
+    type JsValue = CompileResult;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let opts = build_options(self.options.take());
+        let cwd = std::env::current_dir().unwrap_or_default();
+        from_string_with_file_name(self.source.clone(), cwd.join("stdin"), &opts)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(CompileResult { css: output })
+    }
+}
+
+#[napi(ts_return_type = "Promise<CompileResult>")]
+pub fn compile_async(path: String, options: Option<CompileOptions>) -> AsyncTask<CompileTask> {
+    AsyncTask::new(CompileTask { path, options })
+}
+
+#[napi(ts_return_type = "Promise<CompileResult>")]
+pub fn compile_string_async(
+    source: String,
+    options: Option<CompileOptions>,
+) -> AsyncTask<CompileStringTask> {
+    AsyncTask::new(CompileStringTask { source, options })
 }

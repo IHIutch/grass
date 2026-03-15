@@ -14,3 +14,5 @@ export interface CompileResult {
 }
 export declare function compile(path: string, options?: CompileOptions | undefined | null): CompileResult
 export declare function compileString(source: string, options?: CompileOptions | undefined | null): CompileResult
+export declare function compileAsync(path: string, options?: CompileOptions | undefined | null): Promise<CompileResult>
+export declare function compileStringAsync(source: string, options?: CompileOptions | undefined | null): Promise<CompileResult>
