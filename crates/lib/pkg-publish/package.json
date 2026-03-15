@@ -1,7 +1,7 @@
 {
   "name": "ihiutch-grass",
   "description": "A Sass compiler written purely in Rust (WASM)",
-  "version": "0.13.15",
+  "version": "0.13.16",
   "license": "MIT",
   "repository": {
     "type": "git",
