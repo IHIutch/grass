@@ -84,7 +84,10 @@ jobs:
         shell: bash
         run: |
           for f in *.node; do
-            mv "$f" "grass.${{ matrix.node-suffix }}.node"
+            target="grass.${{ matrix.node-suffix }}.node"
+            if [ "$f" != "$target" ]; then
+              mv "$f" "$target"
+            fi
           done
 
       - name: Upload artifact
