@@ -2,7 +2,7 @@ name: Release napi
 
 on:
   push:
-    tags: ['napi-v*']
+    tags: ["napi-v*"]
   workflow_dispatch:
 
 env:
@@ -143,4 +143,4 @@ jobs:
 
       - name: Publish
         working-directory: crates/lib/pkg-publish
-        run: npm publish --access public
+        run: pnpm publish --provenance --access public --no-git-checks
