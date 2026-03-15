@@ -111,7 +111,7 @@ jobs:
       - name: Create npm dirs and move artifacts
         working-directory: crates/napi
         run: |
-          npx napi create-npm-dirs
+          npx napi create-npm-dir
           npx napi artifacts --dir artifacts
 
       - name: List packages
