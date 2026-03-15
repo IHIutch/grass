@@ -107,38 +107,64 @@ jobs:
         with:
           path: crates/napi/artifacts
 
-      - name: Create npm platform dirs
+      - name: Prepare and publish platform packages
         working-directory: crates/napi
         run: |
-          targets=(
-            "x86_64-apple-darwin"
-            "aarch64-apple-darwin"
-            "x86_64-unknown-linux-gnu"
-            "x86_64-unknown-linux-musl"
-            "aarch64-unknown-linux-gnu"
-            "aarch64-unknown-linux-musl"
-            "x86_64-pc-windows-msvc"
-          )
-          for target in "${targets[@]}"; do
-            npx napi create-npm-dir -t "$target"
-          done
+          echo "=== Downloaded artifacts ==="
+          ls -R artifacts/
 
-      - name: Move artifacts into npm dirs
-        working-directory: crates/napi
-        run: |
-          npx napi artifacts --dir artifacts
-          echo "=== npm dir contents ==="
-          ls -R npm/
+          node << 'SCRIPT'
+          const { execSync } = require("child_process");
+          const { mkdirSync, copyFileSync, writeFileSync, readdirSync } = require("fs");
+          const { join, basename } = require("path");
 
-      - name: Publish platform packages
-        working-directory: crates/napi
-        run: |
-          for pkg in npm/*/; do
-            if [ -f "$pkg/package.json" ]; then
-              echo "Publishing $pkg..."
-              npm publish "$pkg" --access public --provenance || true
-            fi
-          done
+          const version = require("./package.json").version;
+          const pkgName = "ihiutch-grass-napi";
+
+          const platforms = [
+            { target: "x86_64-apple-darwin",        suffix: "darwin-x64",       os: "darwin",  cpu: "x64"   },
+            { target: "aarch64-apple-darwin",        suffix: "darwin-arm64",     os: "darwin",  cpu: "arm64" },
+            { target: "x86_64-unknown-linux-gnu",    suffix: "linux-x64-gnu",    os: "linux",   cpu: "x64"   },
+            { target: "x86_64-unknown-linux-musl",   suffix: "linux-x64-musl",   os: "linux",   cpu: "x64"   },
+            { target: "aarch64-unknown-linux-gnu",   suffix: "linux-arm64-gnu",  os: "linux",   cpu: "arm64" },
+            { target: "aarch64-unknown-linux-musl",  suffix: "linux-arm64-musl", os: "linux",   cpu: "arm64" },
+            { target: "x86_64-pc-windows-msvc",      suffix: "win32-x64-msvc",   os: "win32",   cpu: "x64"   },
+          ];
+
+          for (const { target, suffix, os, cpu } of platforms) {
+            const artifactDir = join("artifacts", `bindings-${target}`);
+            let nodeFile;
+            try {
+              nodeFile = readdirSync(artifactDir).find(f => f.endsWith(".node"));
+            } catch {
+              console.log(`⚠ No artifacts for ${target}, skipping`);
+              continue;
+            }
+            if (!nodeFile) { console.log(`⚠ No .node in ${artifactDir}`); continue; }
+
+            const pkgDir = join("npm", suffix);
+            mkdirSync(pkgDir, { recursive: true });
+
+            writeFileSync(join(pkgDir, "package.json"), JSON.stringify({
+              name: `${pkgName}-${suffix}`,
+              version,
+              os: [os],
+              cpu: [cpu],
+              main: nodeFile,
+              files: [nodeFile],
+              license: "MIT",
+              repository: { type: "git", url: "https://github.com/IHIutch/grass" }
+            }, null, 2));
+
+            copyFileSync(join(artifactDir, nodeFile), join(pkgDir, nodeFile));
+            console.log(`Publishing ${pkgName}-${suffix}@${version}...`);
+            try {
+              execSync(`npm publish ${pkgDir} --access public --provenance`, { stdio: "inherit" });
+            } catch (e) {
+              console.log(`⚠ Failed to publish ${suffix}: ${e.message}`);
+            }
+          }
+          SCRIPT
 
       - name: Publish main package
         working-directory: crates/napi
