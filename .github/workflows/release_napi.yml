@@ -159,7 +159,7 @@ jobs:
             copyFileSync(join(artifactDir, nodeFile), join(pkgDir, nodeFile));
             console.log(`Publishing ${pkgName}-${suffix}@${version}...`);
             try {
-              execSync(`npm publish ${pkgDir} --access public --provenance`, { stdio: "inherit" });
+              execSync(`npm publish ./${pkgDir} --access public`, { stdio: "inherit" });
             } catch (e) {
               console.log(`⚠ Failed to publish ${suffix}: ${e.message}`);
             }
@@ -168,4 +168,4 @@ jobs:
 
       - name: Publish main package
         working-directory: crates/napi
-        run: npm publish --access public --provenance
+        run: npm publish --access public
