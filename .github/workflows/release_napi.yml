@@ -15,17 +15,21 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
           - target: aarch64-apple-darwin
             os: macos-14
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            use-cross: true
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+            use-cross: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            use-cross: true
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+            use-cross: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
 
@@ -39,6 +43,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          registry-url: https://registry.npmjs.org
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -49,20 +54,15 @@ jobs:
         working-directory: crates/napi
         run: npm install
 
-      - name: Install cross-compilation tools (linux-musl)
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Install cross-compilation tools (aarch64-linux)
-        if: contains(matrix.target, 'aarch64-unknown-linux')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
-      - name: Build native module
+      - name: Build native module (cross)
+        if: matrix.use-cross
         working-directory: crates/napi
-        run: |
-          npx napi build --platform --release --target ${{ matrix.target }}
+        run: npx napi build --platform --release --target ${{ matrix.target }} --use-napi-cross
+
+      - name: Build native module (native)
+        if: ${{ !matrix.use-cross }}
+        working-directory: crates/napi
+        run: npx napi build --platform --release --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -97,31 +97,28 @@ jobs:
         with:
           path: crates/napi/artifacts
 
-      - name: Move artifacts
+      - name: Create npm dirs and move artifacts
         working-directory: crates/napi
-        run: npx napi artifacts --dir artifacts
+        run: |
+          npx napi create-npm-dirs
+          npx napi artifacts --dir artifacts
 
       - name: List packages
         working-directory: crates/napi
         run: ls -R npm/
 
-      - name: Publish platform packages
+      - name: Publish
         working-directory: crates/napi
         run: |
-          npx napi prepublish -t npm
+          npx napi prepublish -t npm --no-gh-release
+          # Publish platform packages first
           for pkg in npm/*/; do
             if [ -f "$pkg/package.json" ]; then
               echo "Publishing $pkg..."
-              cd "$pkg"
-              npm publish --access public || true
-              cd -
+              npm publish "$pkg" --access public --provenance || true
             fi
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish main package
-        working-directory: crates/napi
-        run: npm publish --access public
+          # Publish main package
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
