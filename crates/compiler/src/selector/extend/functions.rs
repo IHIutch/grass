@@ -759,15 +759,15 @@ fn complex_is_parent_superselector(
 /// ```
 pub(crate) fn paths<T: Clone>(choices: Vec<Vec<T>>) -> Vec<Vec<T>> {
     choices.into_iter().fold(vec![vec![]], |paths, choice| {
-        choice
-            .into_iter()
-            .flat_map(move |option| {
-                paths.clone().into_iter().map(move |mut path| {
-                    path.push(option.clone());
-                    path
-                })
-            })
-            .collect()
+        let mut result = Vec::with_capacity(paths.len() * choice.len());
+        for option in &choice {
+            for path in &paths {
+                let mut new_path = path.clone();
+                new_path.push(option.clone());
+                result.push(new_path);
+            }
+        }
+        result
     })
 }
 

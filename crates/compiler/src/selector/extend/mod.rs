@@ -566,10 +566,10 @@ impl ExtensionStore {
         let mut options: Option<Vec<Vec<Extension>>> = None;
 
         for i in 0..compound.components.len() {
-            let simple = compound.components[i].clone();
+            let simple = &compound.components[i];
 
             match self.extend_simple(
-                simple.clone(),
+                simple,
                 extensions,
                 media_query_context,
                 &mut targets_used,
@@ -591,7 +591,7 @@ impl ExtensionStore {
                     }
                 }
                 None => match options.as_mut() {
-                    Some(v) => v.push(vec![self.extension_for_simple(simple)]),
+                    Some(v) => v.push(vec![self.extension_for_simple(simple.clone())]),
                     None => {}
                 },
             }
@@ -660,12 +660,11 @@ impl ExtensionStore {
 
                 vec![vec![ComplexSelectorComponent::Compound(CompoundSelector {
                     components: path
-                        .clone()
-                        .into_iter()
+                        .iter()
                         .flat_map(|state| {
                             debug_assert!(state.extender.components.len() == 1);
-                            match state.extender.components.last().cloned() {
-                                Some(ComplexSelectorComponent::Compound(c)) => c.components,
+                            match state.extender.components.last() {
+                                Some(ComplexSelectorComponent::Compound(c)) => c.components.clone(),
                                 Some(..) | None => unreachable!(),
                             }
                         })
@@ -675,12 +674,14 @@ impl ExtensionStore {
                 let mut to_unify: VecDeque<Vec<ComplexSelectorComponent>> = VecDeque::new();
                 let mut originals: Vec<SimpleSelector> = Vec::new();
 
-                for state in path.clone() {
+                for state in &path {
                     if state.is_original {
-                        originals.extend(match state.extender.components.last().cloned() {
-                            Some(ComplexSelectorComponent::Compound(c)) => c.components,
+                        match state.extender.components.last() {
+                            Some(ComplexSelectorComponent::Compound(c)) => {
+                                originals.extend_from_slice(&c.components);
+                            }
                             Some(..) | None => unreachable!(),
-                        });
+                        }
                     } else {
                         to_unify.push_back(state.extender.components.clone());
                     }
@@ -732,37 +733,32 @@ impl ExtensionStore {
 
     fn extend_simple(
         &mut self,
-        simple: SimpleSelector,
+        simple: &SimpleSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
         media_query_context: &Option<Vec<CssMediaQuery>>,
         targets_used: &mut FxHashSet<SimpleSelector>,
     ) -> SassResult<Option<Vec<Vec<Extension>>>> {
-        if let SimpleSelector::Pseudo(Pseudo {
-            selector: Some(..), ..
-        }) = &simple
-        {
-            let simple = if let SimpleSelector::Pseudo(pseudo) = simple.clone() {
-                pseudo
-            } else {
-                unreachable!()
-            };
-            if let Some(extended) = self.extend_pseudo(simple, extensions, media_query_context)? {
-                return Ok(Some(
-                    extended
-                        .into_iter()
-                        .map(move |pseudo| {
-                            self.without_pseudo(
-                                SimpleSelector::Pseudo(pseudo.clone()),
-                                extensions,
-                                targets_used,
-                                self.mode,
-                            )
-                            .unwrap_or_else(|| {
-                                vec![self.extension_for_simple(SimpleSelector::Pseudo(pseudo))]
+        if let SimpleSelector::Pseudo(pseudo) = simple {
+            if pseudo.selector.is_some() {
+                if let Some(extended) = self.extend_pseudo(pseudo.clone(), extensions, media_query_context)? {
+                    return Ok(Some(
+                        extended
+                            .into_iter()
+                            .map(move |pseudo| {
+                                let ps = SimpleSelector::Pseudo(pseudo.clone());
+                                self.without_pseudo(
+                                    &ps,
+                                    extensions,
+                                    targets_used,
+                                    self.mode,
+                                )
+                                .unwrap_or_else(|| {
+                                    vec![self.extension_for_simple(SimpleSelector::Pseudo(pseudo))]
+                                })
                             })
-                        })
-                        .collect(),
-                ));
+                            .collect(),
+                    ));
+                }
             }
         }
 
@@ -914,12 +910,12 @@ impl ExtensionStore {
     /// it contains.
     fn without_pseudo(
         &self,
-        simple: SimpleSelector,
+        simple: &SimpleSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
         targets_used: &mut FxHashSet<SimpleSelector>,
         mode: ExtendMode,
     ) -> Option<Vec<Extension>> {
-        let extenders = extensions.unwrap_or(&self.extensions).get(&simple)?;
+        let extenders = extensions.unwrap_or(&self.extensions).get(simple)?;
 
         targets_used.insert(simple.clone());
 
@@ -927,7 +923,7 @@ impl ExtensionStore {
             return Some(extenders.values().cloned().collect());
         }
 
-        let mut tmp = vec![self.extension_for_simple(simple)];
+        let mut tmp = vec![self.extension_for_simple(simple.clone())];
         tmp.reserve(extenders.len());
         tmp.extend(extenders.values().cloned());
 
