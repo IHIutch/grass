@@ -16,18 +16,25 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-14
+            node-suffix: darwin-x64
           - target: aarch64-apple-darwin
             os: macos-14
+            node-suffix: darwin-arm64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            node-suffix: linux-x64-gnu
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+            node-suffix: linux-x64-musl
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            node-suffix: linux-arm64-gnu
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+            node-suffix: linux-arm64-musl
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            node-suffix: win32-x64-msvc
 
     runs-on: ${{ matrix.os }}
     name: Build - ${{ matrix.target }}
@@ -49,7 +56,6 @@ jobs:
         working-directory: crates/napi
         run: npm install
 
-      # Cross-compilation setup for Linux targets
       - name: Install musl-tools
         if: contains(matrix.target, 'musl') && !contains(matrix.target, 'aarch64')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -59,7 +65,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          # musl cross-compiler for aarch64
           if [[ "${{ matrix.target }}" == *"musl"* ]]; then
             sudo apt-get install -y musl-tools
           fi
@@ -67,22 +72,30 @@ jobs:
       - name: Build native module
         working-directory: crates/napi
         env:
-          # Set linker for aarch64 cross-compilation
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ contains(matrix.target, 'aarch64-unknown-linux-gnu') && 'aarch64-linux-gnu-gcc' || '' }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ contains(matrix.target, 'aarch64-unknown-linux-musl') && 'aarch64-linux-gnu-gcc' || '' }}
           CC_aarch64_unknown_linux_gnu: ${{ contains(matrix.target, 'aarch64-unknown-linux-gnu') && 'aarch64-linux-gnu-gcc' || '' }}
           CC_aarch64_unknown_linux_musl: ${{ contains(matrix.target, 'aarch64-unknown-linux-musl') && 'aarch64-linux-gnu-gcc' || '' }}
         run: npx napi build --platform --release --target ${{ matrix.target }}
 
+      # Rename .node file to include platform suffix
+      - name: Rename artifact
+        working-directory: crates/napi
+        shell: bash
+        run: |
+          for f in *.node; do
+            mv "$f" "grass.${{ matrix.node-suffix }}.node"
+          done
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bindings-${{ matrix.target }}
-          path: crates/napi/*.node
+          name: bindings-${{ matrix.node-suffix }}
+          path: crates/napi/grass.${{ matrix.node-suffix }}.node
           if-no-files-found: error
 
   publish:
-    name: Publish to npm
+    name: Publish ihiutch-grass
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -98,74 +111,33 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
-        working-directory: crates/napi
-        run: npm install
+      - name: Build WASM
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
+          cd crates/lib
+          wasm-pack build --release --target web --out-name grass --no-default-features --features wasm-exports,random
 
-      - name: Download all artifacts
+      - name: Copy WASM artifacts to pkg-publish
+        run: |
+          cp crates/lib/pkg/grass_bg.wasm crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass_bg.wasm.d.ts crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass.d.ts crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass.js crates/lib/pkg-publish/
+
+      - name: Download all native bindings
         uses: actions/download-artifact@v4
         with:
-          path: crates/napi/artifacts
+          path: native-artifacts
 
-      - name: Prepare and publish platform packages
-        working-directory: crates/napi
+      - name: Copy native bindings to pkg-publish
         run: |
-          echo "=== Downloaded artifacts ==="
-          ls -R artifacts/
+          for dir in native-artifacts/bindings-*/; do
+            cp "$dir"/*.node crates/lib/pkg-publish/
+          done
+          echo "=== Package contents ==="
+          ls -la crates/lib/pkg-publish/*.node crates/lib/pkg-publish/*.wasm
 
-          node << 'SCRIPT'
-          const { execSync } = require("child_process");
-          const { mkdirSync, copyFileSync, writeFileSync, readdirSync } = require("fs");
-          const { join, basename } = require("path");
-
-          const version = require("./package.json").version;
-          const pkgName = "ihiutch-grass-napi";
-
-          const platforms = [
-            { target: "x86_64-apple-darwin",        suffix: "darwin-x64",       os: "darwin",  cpu: "x64"   },
-            { target: "aarch64-apple-darwin",        suffix: "darwin-arm64",     os: "darwin",  cpu: "arm64" },
-            { target: "x86_64-unknown-linux-gnu",    suffix: "linux-x64-gnu",    os: "linux",   cpu: "x64"   },
-            { target: "x86_64-unknown-linux-musl",   suffix: "linux-x64-musl",   os: "linux",   cpu: "x64"   },
-            { target: "aarch64-unknown-linux-gnu",   suffix: "linux-arm64-gnu",  os: "linux",   cpu: "arm64" },
-            { target: "aarch64-unknown-linux-musl",  suffix: "linux-arm64-musl", os: "linux",   cpu: "arm64" },
-            { target: "x86_64-pc-windows-msvc",      suffix: "win32-x64-msvc",   os: "win32",   cpu: "x64"   },
-          ];
-
-          for (const { target, suffix, os, cpu } of platforms) {
-            const artifactDir = join("artifacts", `bindings-${target}`);
-            let nodeFile;
-            try {
-              nodeFile = readdirSync(artifactDir).find(f => f.endsWith(".node"));
-            } catch {
-              console.log(`⚠ No artifacts for ${target}, skipping`);
-              continue;
-            }
-            if (!nodeFile) { console.log(`⚠ No .node in ${artifactDir}`); continue; }
-
-            const pkgDir = join("npm", suffix);
-            mkdirSync(pkgDir, { recursive: true });
-
-            writeFileSync(join(pkgDir, "package.json"), JSON.stringify({
-              name: `${pkgName}-${suffix}`,
-              version,
-              os: [os],
-              cpu: [cpu],
-              main: nodeFile,
-              files: [nodeFile],
-              license: "MIT",
-              repository: { type: "git", url: "https://github.com/IHIutch/grass" }
-            }, null, 2));
-
-            copyFileSync(join(artifactDir, nodeFile), join(pkgDir, nodeFile));
-            console.log(`Publishing ${pkgName}-${suffix}@${version}...`);
-            try {
-              execSync(`npm publish ./${pkgDir} --access public`, { stdio: "inherit" });
-            } catch (e) {
-              console.log(`⚠ Failed to publish ${suffix}: ${e.message}`);
-            }
-          }
-          SCRIPT
-
-      - name: Publish main package
-        working-directory: crates/napi
+      - name: Publish
+        working-directory: crates/lib/pkg-publish
         run: npm publish --access public

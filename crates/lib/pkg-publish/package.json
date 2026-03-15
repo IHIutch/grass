@@ -17,7 +17,8 @@
     "grass.js",
     "grass.d.ts",
     "grass_bg.wasm",
-    "grass_bg.wasm.d.ts"
+    "grass_bg.wasm.d.ts",
+    "grass.*.node"
   ],
   "type": "module",
   "exports": {
@@ -47,14 +48,5 @@
     "wasm",
     "cloudflare-workers",
     "native"
-  ],
-  "optionalDependencies": {
-    "ihiutch-grass-napi-darwin-arm64": "0.13.14",
-    "ihiutch-grass-napi-darwin-x64": "0.13.14",
-    "ihiutch-grass-napi-linux-x64-gnu": "0.13.14",
-    "ihiutch-grass-napi-linux-x64-musl": "0.13.14",
-    "ihiutch-grass-napi-linux-arm64-gnu": "0.13.14",
-    "ihiutch-grass-napi-linux-arm64-musl": "0.13.14",
-    "ihiutch-grass-napi-win32-x64-msvc": "0.13.14"
-  }
+  ]
 }

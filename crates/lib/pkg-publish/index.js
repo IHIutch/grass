@@ -1,4 +1,4 @@
-import { readFileSync, statSync, realpathSync } from "fs";
+import { readFileSync, statSync, realpathSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { pathToFileURL, fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -6,7 +6,7 @@ import { createRequire } from "module";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
-// --- Native binding loader (try napi first) ---
+// --- Native binding loader ---
 
 let nativeBinding = null;
 
@@ -27,13 +27,12 @@ function tryLoadNative() {
     }
   }
 
-  // Build the platform-specific package name
   let suffix;
   switch (platform) {
     case "darwin":
       suffix = arch === "arm64" ? "darwin-arm64" : "darwin-x64";
       break;
-    case "linux":
+    case "linux": {
       const musl = isMusl();
       if (arch === "arm64" || arch === "aarch64") {
         suffix = musl ? "linux-arm64-musl" : "linux-arm64-gnu";
@@ -41,6 +40,7 @@ function tryLoadNative() {
         suffix = musl ? "linux-x64-musl" : "linux-x64-gnu";
       }
       break;
+    }
     case "win32":
       suffix = "win32-x64-msvc";
       break;
@@ -48,11 +48,15 @@ function tryLoadNative() {
       return null;
   }
 
+  // Load bundled .node file from this package
+  const nodePath = resolve(__dirname, `grass.${suffix}.node`);
   try {
-    return require(`ihiutch-grass-napi-${suffix}`);
-  } catch {
-    return null;
-  }
+    if (existsSync(nodePath)) {
+      return require(nodePath);
+    }
+  } catch {}
+
+  return null;
 }
 
 nativeBinding = tryLoadNative();
@@ -131,7 +135,6 @@ export function compile(path, options = {}) {
     }
   }
 
-  // WASM fallback
   const wasm = loadWasm();
   try {
     const css = wasm.compile_file(path, opts.loadPaths, opts.style, opts.quiet, fsCallbacks);
@@ -158,7 +161,6 @@ export function compileString(source, options = {}) {
     }
   }
 
-  // WASM fallback
   const wasm = loadWasm();
   try {
     const css = wasm.compile(source, opts.loadPaths, opts.style, opts.quiet, fsCallbacks);
