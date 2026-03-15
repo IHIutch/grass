@@ -107,17 +107,32 @@ jobs:
         with:
           path: crates/napi/artifacts
 
-      - name: Move artifacts and create platform packages
+      - name: Create npm platform dirs
+        working-directory: crates/napi
+        run: |
+          targets=(
+            "x86_64-apple-darwin"
+            "aarch64-apple-darwin"
+            "x86_64-unknown-linux-gnu"
+            "x86_64-unknown-linux-musl"
+            "aarch64-unknown-linux-gnu"
+            "aarch64-unknown-linux-musl"
+            "x86_64-pc-windows-msvc"
+          )
+          for target in "${targets[@]}"; do
+            npx napi create-npm-dir -t "$target"
+          done
+
+      - name: Move artifacts into npm dirs
         working-directory: crates/napi
         run: |
           npx napi artifacts --dir artifacts
-          ls -R npm/ || echo "No npm dir created"
-          ls *.node 2>/dev/null || echo "No .node files in cwd"
+          echo "=== npm dir contents ==="
+          ls -R npm/
 
       - name: Publish platform packages
         working-directory: crates/napi
         run: |
-          npx napi prepublish -t npm --skip-gh-release
           for pkg in npm/*/; do
             if [ -f "$pkg/package.json" ]; then
               echo "Publishing $pkg..."
