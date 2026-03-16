@@ -16,10 +16,23 @@ fn module_functions_builtin() {
     .unwrap();
 
     let expected_fns = [
-        "module-functions", "inspect", "feature-exists", "type-of", "keywords",
-        "global-variable-exists", "variable-exists", "function-exists",
-        "mixin-exists", "content-exists", "module-variables", "get-function",
-        "call", "calc-args", "calc-name", "get-mixin", "module-mixins",
+        "module-functions",
+        "inspect",
+        "feature-exists",
+        "type-of",
+        "keywords",
+        "global-variable-exists",
+        "variable-exists",
+        "function-exists",
+        "mixin-exists",
+        "content-exists",
+        "module-variables",
+        "get-function",
+        "call",
+        "calc-args",
+        "calc-name",
+        "get-mixin",
+        "module-mixins",
         "accepts-content",
     ];
 

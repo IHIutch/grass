@@ -2200,11 +2200,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.expect_char('}')?;
 
         if self.is_plain_css() {
-            return Err((
-                "Interpolation isn't allowed in plain CSS.",
-                contents.span,
-            )
-                .into());
+            return Err(("Interpolation isn't allowed in plain CSS.", contents.span).into());
         }
 
         let mut interpolation = Interpolation::new();
