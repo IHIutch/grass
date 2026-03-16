@@ -737,8 +737,8 @@ fn detect_shared_prefix_count(forward_urls: &[String], path: &Path, options: &Op
     }
 
     // Collect the base module names from each forward URL.
-    // e.g., "uswds-core/src/styles" → "uswds-core"
-    // e.g., "usa-accordion/src/styles" → "usa-accordion"
+    // e.g., "my-core/src/styles" → "my-core"
+    // e.g., "button/src/styles" → "button"
     let base_names: Vec<&str> = forward_urls
         .iter()
         .map(|url| {
