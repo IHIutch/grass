@@ -45,11 +45,13 @@ pub(crate) fn simple_selectors(
     };
 
     Ok(Value::List(
-        Rc::new(compound
-            .components
-            .into_iter()
-            .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))
-            .collect()),
+        Rc::new(
+            compound
+                .components
+                .into_iter()
+                .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))
+                .collect(),
+        ),
         ListSeparator::Comma,
         Brackets::None,
     ))
@@ -77,11 +79,7 @@ pub(crate) fn selector_nest(args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
     if let Some(first) = parsed_selectors.first() {
         if first.contains_parent_selector() {
-            return Err((
-                "Parent selectors aren't allowed here.",
-                span,
-            )
-                .into());
+            return Err(("Parent selectors aren't allowed here.", span).into());
         }
     }
 

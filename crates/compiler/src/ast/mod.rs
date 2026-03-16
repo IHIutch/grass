@@ -37,9 +37,7 @@ pub(crate) unsafe fn erase_fn_decl_lifetime<'a>(
 
 /// See `erase_fn_decl_lifetime` for safety justification.
 #[allow(dead_code)]
-pub(crate) unsafe fn erase_mixin_lifetime<'a>(
-    mixin: AstMixin<'a>,
-) -> AstMixin<'static> {
+pub(crate) unsafe fn erase_mixin_lifetime<'a>(mixin: AstMixin<'a>) -> AstMixin<'static> {
     std::mem::transmute(mixin)
 }
 
@@ -60,17 +58,13 @@ pub(crate) unsafe fn erase_forward_rule_lifetime<'a>(
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
-pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(
-    sheet: StyleSheet<'a>,
-) -> StyleSheet<'static> {
+pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(sheet: StyleSheet<'a>) -> StyleSheet<'static> {
     std::mem::transmute(sheet)
 }
 
 /// See `erase_fn_decl_lifetime` for safety justification.
 #[allow(dead_code)]
-pub(crate) unsafe fn erase_stmt_lifetime<'a>(
-    stmt: AstStmt<'a>,
-) -> AstStmt<'static> {
+pub(crate) unsafe fn erase_stmt_lifetime<'a>(stmt: AstStmt<'a>) -> AstStmt<'static> {
     std::mem::transmute(stmt)
 }
 

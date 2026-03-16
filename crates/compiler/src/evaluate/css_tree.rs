@@ -294,9 +294,7 @@ impl CssTree {
     pub fn root_children_from(&self, start: usize) -> Vec<CssTreeIdx> {
         self.parent_to_child
             .get(&Self::ROOT)
-            .map_or_else(Vec::new, |children| {
-                children[start..].to_vec()
-            })
+            .map_or_else(Vec::new, |children| children[start..].to_vec())
     }
 
     /// Deep-clone a subtree rooted at `idx` into a new parent.
@@ -316,7 +314,11 @@ impl CssTree {
                     // Tombstone — skip it
                     return idx;
                 }
-                Some(CssStmt::RuleSet { selector, is_group_end, .. }) => {
+                Some(CssStmt::RuleSet {
+                    selector,
+                    is_group_end,
+                    ..
+                }) => {
                     let old_ptr = selector.rc_ptr();
                     let new_selector = ExtendedSelector::new(selector.as_selector_list().clone());
                     selector_map.insert(old_ptr, new_selector.clone());
@@ -334,11 +336,7 @@ impl CssTree {
         let new_idx = self.add_child(cloned_stmt, new_parent);
 
         // Recursively clone children
-        let children: Vec<CssTreeIdx> = self
-            .parent_to_child
-            .get(&idx)
-            .cloned()
-            .unwrap_or_default();
+        let children: Vec<CssTreeIdx> = self.parent_to_child.get(&idx).cloned().unwrap_or_default();
 
         for child_idx in children {
             self.clone_subtree(child_idx, new_idx, selector_map);
@@ -375,8 +373,7 @@ impl CssTree {
                     ..
                 }) => {
                     let old_ptr = selector.rc_ptr();
-                    let new_selector =
-                        ExtendedSelector::new(selector.as_selector_list().clone());
+                    let new_selector = ExtendedSelector::new(selector.as_selector_list().clone());
                     selector_map.insert(old_ptr, new_selector.clone());
                     CssStmt::RuleSet {
                         selector: new_selector,
@@ -393,11 +390,7 @@ impl CssTree {
         self.hidden.insert(new_idx);
 
         // Recursively clone children
-        let children: Vec<CssTreeIdx> = self
-            .parent_to_child
-            .get(&idx)
-            .cloned()
-            .unwrap_or_default();
+        let children: Vec<CssTreeIdx> = self.parent_to_child.get(&idx).cloned().unwrap_or_default();
 
         for child_idx in children {
             let cloned_child = self.clone_subtree_hidden(child_idx, selector_map);
@@ -456,10 +449,8 @@ impl CssTree {
         };
 
         // Save ROOT children info before consuming
-        let other_root_children: Vec<CssTreeIdx> = other_p2c
-            .get(&Self::ROOT)
-            .cloned()
-            .unwrap_or_default();
+        let other_root_children: Vec<CssTreeIdx> =
+            other_p2c.get(&Self::ROOT).cloned().unwrap_or_default();
 
         // Append all non-ROOT statements
         for (i, stmt) in other_stmts.into_iter().enumerate() {
@@ -483,8 +474,7 @@ impl CssTree {
                 }
             } else {
                 let new_parent = remap(parent);
-                let new_children: Vec<CssTreeIdx> =
-                    children.iter().map(|c| remap(*c)).collect();
+                let new_children: Vec<CssTreeIdx> = children.iter().map(|c| remap(*c)).collect();
                 for &new_child in &new_children {
                     self.child_to_parent.insert(new_child, new_parent);
                 }

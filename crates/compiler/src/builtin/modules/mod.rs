@@ -445,11 +445,7 @@ impl Module {
         scope.mixins.insert(name.into(), Mixin::Builtin(mixin));
     }
 
-    pub fn insert_builtin_mixin_with_content(
-        &mut self,
-        name: &'static str,
-        mixin: BuiltinMixin,
-    ) {
+    pub fn insert_builtin_mixin_with_content(&mut self, name: &'static str, mixin: BuiltinMixin) {
         let scope = self.scope();
 
         scope

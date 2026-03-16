@@ -189,7 +189,8 @@ fn weave_parents(
     let lcs = longest_common_subsequence(
         groups_two.as_slices().0,
         groups_one.as_slices().0,
-        Some(&|group_one: &Vec<ComplexSelectorComponent>, group_two: &Vec<ComplexSelectorComponent>| {
+        Some(&|group_one: &Vec<ComplexSelectorComponent>,
+               group_two: &Vec<ComplexSelectorComponent>| {
             if group_one == group_two {
                 return Some(group_one.clone());
             }
@@ -228,12 +229,14 @@ fn weave_parents(
 
     for group in lcs {
         choices.push(
-            chunks(&mut groups_one, &mut groups_two, |sequence| {
-                match sequence.front() {
+            chunks(
+                &mut groups_one,
+                &mut groups_two,
+                |sequence| match sequence.front() {
                     Some(v) => complex_is_parent_superselector(v.as_slice(), group.as_slice()),
                     None => true,
-                }
-            })
+                },
+            )
             .into_iter()
             .map(|chunk| chunk.into_iter().flatten().collect())
             .collect(),
@@ -743,8 +746,7 @@ fn complex_is_parent_superselector(
     one.push(ComplexSelectorComponent::Compound(base.clone()));
     two.push(ComplexSelectorComponent::Compound(base));
 
-    ComplexSelector::new(one, false)
-        .is_super_selector(&ComplexSelector::new(two, false))
+    ComplexSelector::new(one, false).is_super_selector(&ComplexSelector::new(two, false))
 }
 
 /// Returns a list of all possible paths through the given lists.

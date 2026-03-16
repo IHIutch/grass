@@ -18,7 +18,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}{}",
                     left.to_css_string(span, options.is_compressed())?,
                     s
-                ).into(),
+                )
+                .into(),
                 quotes,
             ),
             _ => {
@@ -46,7 +47,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}{}",
                     left.to_css_string(span, options.is_compressed())?,
                     s
-                ).into(),
+                )
+                .into(),
                 QuoteKind::Quoted,
             ),
             _ => Value::String(
@@ -54,7 +56,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}{}",
                     left.to_css_string(span, options.is_compressed())?,
                     right.to_css_string(span, options.is_compressed())?
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
         },
@@ -120,7 +123,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     num.to_string(options.is_compressed()),
                     unit,
                     right.to_css_string(span, options.is_compressed())?
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
             Value::Map(..) | Value::FunctionRef(..) | Value::MixinRef(..) => {
@@ -150,7 +154,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}{}",
                     c.to_css_string(span, options.is_compressed())?,
                     right.to_css_string(span, options.is_compressed())?,
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
             _ => {
@@ -178,7 +183,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}{}",
                     left.to_css_string(span, options.is_compressed())?,
                     s
-                ).into(),
+                )
+                .into(),
                 q,
             ),
             _ => Value::String(
@@ -186,7 +192,8 @@ pub(crate) fn add(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}{}",
                     left.to_css_string(span, options.is_compressed())?,
                     right.to_css_string(span, options.is_compressed())?
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
         },
@@ -261,7 +268,8 @@ pub(crate) fn sub(left: Value, right: Value, options: &Options, span: Span) -> S
                     num.to_string(options.is_compressed()),
                     unit,
                     right.to_css_string(span, options.is_compressed())?
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
             Value::Map(..) | Value::FunctionRef(..) | Value::MixinRef(..) => {
@@ -305,7 +313,8 @@ pub(crate) fn sub(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}-{}",
                     c.to_css_string(span, options.is_compressed())?,
                     right.to_css_string(span, options.is_compressed())?
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
         },
@@ -314,7 +323,8 @@ pub(crate) fn sub(left: Value, right: Value, options: &Options, span: Span) -> S
                 "{}-{}",
                 left.to_css_string(span, options.is_compressed())?,
                 right.to_css_string(span, options.is_compressed())?
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ),
         // todo: can be greatly simplified
@@ -326,7 +336,8 @@ pub(crate) fn sub(left: Value, right: Value, options: &Options, span: Span) -> S
                     q,
                     s,
                     q
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
             Value::Null => Value::String(
@@ -338,7 +349,8 @@ pub(crate) fn sub(left: Value, right: Value, options: &Options, span: Span) -> S
                     "{}-{}",
                     left.to_css_string(span, options.is_compressed())?,
                     right.to_css_string(span, options.is_compressed())?
-                ).into(),
+                )
+                .into(),
                 QuoteKind::None,
             ),
         },
@@ -448,7 +460,8 @@ pub(crate) fn single_eq(
             "{}={}",
             left.to_css_string(span, options.is_compressed())?,
             right.to_css_string(span, options.is_compressed())?
-        ).into(),
+        )
+        .into(),
         QuoteKind::None,
     ))
 }
@@ -495,7 +508,8 @@ pub(crate) fn div(left: Value, right: Value, options: &Options, span: Span) -> S
                 "{}/{}",
                 left.to_css_string(span, options.is_compressed())?,
                 right.to_css_string(span, options.is_compressed())?
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ),
     })

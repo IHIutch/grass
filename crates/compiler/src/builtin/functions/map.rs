@@ -157,17 +157,21 @@ pub(crate) fn map_merge(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
 pub(crate) fn map_remove(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     let span = args.span();
-    let mut map = args
-        .get_err(0, "map")?
-        .assert_map_with_name("map", span)?;
+    let mut map = args.get_err(0, "map")?.assert_map_with_name("map", span)?;
 
     // Accept $key as a named argument (dart-sass compatibility)
     let mut extra_keys: Vec<Spanned<Value>> = Vec::new();
     if let Some(key_val) = args.named.remove(&Identifier::from("key")) {
-        extra_keys.push(Spanned { node: key_val, span });
+        extra_keys.push(Spanned {
+            node: key_val,
+            span,
+        });
     }
     if let Some(keys_val) = args.named.remove(&Identifier::from("keys")) {
-        extra_keys.push(Spanned { node: keys_val, span });
+        extra_keys.push(Spanned {
+            node: keys_val,
+            span,
+        });
     }
 
     let mut keys = args.get_variadic()?;

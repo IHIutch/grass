@@ -3,7 +3,11 @@ use crate::color::space::ColorSpace;
 use crate::value::number::fuzzy_equals;
 
 fn bool_to_value(b: bool) -> Value {
-    if b { Value::True } else { Value::False }
+    if b {
+        Value::True
+    } else {
+        Value::False
+    }
 }
 
 /// `color.space($color)` - returns the color space name as a string
@@ -27,8 +31,7 @@ pub(crate) fn to_space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         .get_err(0, "color")?
         .assert_color_with_name("color", span)?;
 
-    let space_name = args
-        .get_err(1, "space")?;
+    let space_name = args.get_err(1, "space")?;
 
     let space_str = match &space_name {
         Value::String(s, QuoteKind::Quoted) => {
@@ -41,10 +44,7 @@ pub(crate) fn to_space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         Value::String(s, QuoteKind::None) => s.clone(),
         v => {
             return Err((
-                format!(
-                    "$space: {} is not a string.",
-                    v.inspect(span)?
-                ),
+                format!("$space: {} is not a string.", v.inspect(span)?),
                 span,
             )
                 .into())
@@ -79,8 +79,7 @@ pub(crate) fn is_missing(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         .get_err(0, "color")?
         .assert_color_with_name("color", span)?;
 
-    let channel_name = args
-        .get_err(1, "channel")?;
+    let channel_name = args.get_err(1, "channel")?;
 
     let channel_str = match &channel_name {
         Value::String(s, QuoteKind::None) => {
@@ -93,10 +92,7 @@ pub(crate) fn is_missing(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         Value::String(s, QuoteKind::Quoted) => s.clone(),
         v => {
             return Err((
-                format!(
-                    "$channel: {} is not a string.",
-                    v.inspect(span)?
-                ),
+                format!("$channel: {} is not a string.", v.inspect(span)?),
                 span,
             )
                 .into())
@@ -134,8 +130,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         .get_err(0, "color")?
         .assert_color_with_name("color", span)?;
 
-    let channel_name = args
-        .get_err(1, "channel")?;
+    let channel_name = args.get_err(1, "channel")?;
 
     let channel_str = match &channel_name {
         Value::String(s, QuoteKind::None) => {
@@ -148,10 +143,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         Value::String(s, QuoteKind::Quoted) => s.clone(),
         v => {
             return Err((
-                format!(
-                    "$channel: {} is not a string.",
-                    v.inspect(span)?
-                ),
+                format!("$channel: {} is not a string.", v.inspect(span)?),
                 span,
             )
                 .into())
@@ -175,10 +167,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
                 }
                 v => {
                     return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
+                        format!("$space: {} is not a string.", v.inspect(span)?),
                         span,
                     )
                         .into())
@@ -203,7 +192,9 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     };
 
     if channel_str == "alpha" {
-        return Ok(Value::Dimension(SassNumber::new_unitless(color_in_space.alpha())));
+        return Ok(Value::Dimension(SassNumber::new_unitless(
+            color_in_space.alpha(),
+        )));
     }
 
     let channels = target_space.channels();
@@ -217,8 +208,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
                     channel_str.as_str(),
                     "saturation" | "lightness" | "whiteness" | "blackness"
                 );
-            let is_modern_lightness = !target_space.is_legacy()
-                && channels[i].name == "lightness";
+            let is_modern_lightness = !target_space.is_legacy() && channels[i].name == "lightness";
             let unit = if channels[i].is_polar {
                 Unit::Deg
             } else if is_legacy_pct {
@@ -277,10 +267,7 @@ pub(crate) fn is_in_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> Sa
                 Value::Null => color.color_space().name().into(),
                 v => {
                     return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
+                        format!("$space: {} is not a string.", v.inspect(span)?),
                         span,
                     )
                         .into())
@@ -327,10 +314,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
                 Value::Null => color.color_space().name().into(),
                 v => {
                     return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
+                        format!("$space: {} is not a string.", v.inspect(span)?),
                         span,
                     )
                         .into())
@@ -358,10 +342,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         Value::String(s, QuoteKind::None) => s.clone(),
         v => {
             return Err((
-                format!(
-                    "$method: {} is not a string.",
-                    v.inspect(span)?
-                ),
+                format!("$method: {} is not a string.", v.inspect(span)?),
                 span,
             )
                 .into())
@@ -410,8 +391,7 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         .get_err(0, "color")?
         .assert_color_with_name("color", span)?;
 
-    let channel_name = args
-        .get_err(1, "channel")?;
+    let channel_name = args.get_err(1, "channel")?;
 
     let channel_str = match &channel_name {
         Value::String(s, QuoteKind::None) => {
@@ -424,10 +404,7 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         Value::String(s, QuoteKind::Quoted) => s.clone(),
         v => {
             return Err((
-                format!(
-                    "$channel: {} is not a string.",
-                    v.inspect(span)?
-                ),
+                format!("$channel: {} is not a string.", v.inspect(span)?),
                 span,
             )
                 .into())
@@ -448,10 +425,7 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
                 Value::Null => color.color_space().name().into(),
                 v => {
                     return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
+                        format!("$space: {} is not a string.", v.inspect(span)?),
                         span,
                     )
                         .into())

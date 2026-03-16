@@ -154,9 +154,7 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
         InputSyntax::Sass => {
             SassParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
         }
-        InputSyntax::Css => {
-            CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
-        }
+        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse(),
     };
 
     // Safety: We leak the arena so that the returned StyleSheet's references remain valid.
@@ -193,15 +191,9 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
         .unwrap_or_else(|| InputSyntax::for_path(path));
 
     let stylesheet = match input_syntax {
-        InputSyntax::Scss => {
-            ScssParser::new(lexer, options, empty_span, path, &arena).__parse()
-        }
-        InputSyntax::Sass => {
-            SassParser::new(lexer, options, empty_span, path, &arena).__parse()
-        }
-        InputSyntax::Css => {
-            CssParser::new(lexer, options, empty_span, path, &arena).__parse()
-        }
+        InputSyntax::Scss => ScssParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Sass => SassParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(),
     };
 
     let t_parse = std::time::Instant::now();
@@ -362,17 +354,16 @@ fn compile_parallel_inner(
 
     // Build shared SCSS from original file text by splitting at the first component
     let first_component_url = &component_forwards[0];
-    let shared_scss = if let Some(split_pos) =
-        input.find(&format!("@forward \"{}\"", first_component_url))
-    {
-        input[..split_pos].to_string()
-    } else {
-        let mut s = String::new();
-        for url in shared_forwards {
-            s.push_str(&format!("@forward \"{}\";\n", url));
-        }
-        s
-    };
+    let shared_scss =
+        if let Some(split_pos) = input.find(&format!("@forward \"{}\"", first_component_url)) {
+            input[..split_pos].to_string()
+        } else {
+            let mut s = String::new();
+            for url in shared_forwards {
+                s.push_str(&format!("@forward \"{}\";\n", url));
+            }
+            s
+        };
 
     // Compile shared deps alone to get the shared CSS prefix
     let shared_css = if shared_forwards.is_empty() {
@@ -408,11 +399,10 @@ fn compile_parallel_inner(
             .into_iter()
             .map(|h| {
                 h.join().unwrap_or_else(|_| {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Worker thread panicked",
+                    Err(
+                        std::io::Error::new(std::io::ErrorKind::Other, "Worker thread panicked")
+                            .into(),
                     )
-                    .into())
                 })
             })
             .collect()
@@ -481,10 +471,7 @@ fn compile_parallel_inner(
 /// }
 /// ```
 #[cfg(feature = "parallel")]
-pub fn from_paths<P: AsRef<Path> + Sync>(
-    paths: &[P],
-    options: &Options,
-) -> Vec<Result<String>> {
+pub fn from_paths<P: AsRef<Path> + Sync>(paths: &[P], options: &Options) -> Vec<Result<String>> {
     use rayon::prelude::*;
     paths.par_iter().map(|p| from_path(p, options)).collect()
 }
@@ -606,16 +593,17 @@ pub fn from_path_parallel<P: AsRef<Path>>(
     // Find the line in the input that corresponds to the first component @forward
     // and split there.
     let first_component_url = &component_forwards[0];
-    let shared_scss = if let Some(split_pos) = input.find(&format!("@forward \"{}\"", first_component_url)) {
-        input[..split_pos].to_string()
-    } else {
-        // Can't find the split point — fall back to generated SCSS
-        let mut s = String::new();
-        for url in shared_forwards {
-            s.push_str(&format!("@forward \"{}\";\n", url));
-        }
-        s
-    };
+    let shared_scss =
+        if let Some(split_pos) = input.find(&format!("@forward \"{}\"", first_component_url)) {
+            input[..split_pos].to_string()
+        } else {
+            // Can't find the split point — fall back to generated SCSS
+            let mut s = String::new();
+            for url in shared_forwards {
+                s.push_str(&format!("@forward \"{}\";\n", url));
+            }
+            s
+        };
 
     // Compile shared deps alone to get the shared CSS prefix
     let shared_css = if shared_forwards.is_empty() {
@@ -651,12 +639,14 @@ pub fn from_path_parallel<P: AsRef<Path>>(
 
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or_else(|_| {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Worker thread panicked",
-                ).into())
-            }))
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    Err(
+                        std::io::Error::new(std::io::ErrorKind::Other, "Worker thread panicked")
+                            .into(),
+                    )
+                })
+            })
             .collect()
     });
 
@@ -791,10 +781,9 @@ fn resolve_and_read_forward(url: &str, entry_dir: &Path, options: &Options) -> O
     let candidates = [
         base_path.with_extension("scss"),
         base_path.join("_index.scss"),
-        base_path.with_file_name(format!(
-            "_{}",
-            base_path.file_name()?.to_str()?
-        )).with_extension("scss"),
+        base_path
+            .with_file_name(format!("_{}", base_path.file_name()?.to_str()?))
+            .with_extension("scss"),
     ];
 
     for candidate in &candidates {
@@ -806,10 +795,7 @@ fn resolve_and_read_forward(url: &str, entry_dir: &Path, options: &Options) -> O
     // Try load paths
     for load_path in &options.load_paths {
         let lp_base = load_path.join(url);
-        let lp_candidates = [
-            lp_base.with_extension("scss"),
-            lp_base.join("_index.scss"),
-        ];
+        let lp_candidates = [lp_base.with_extension("scss"), lp_base.join("_index.scss")];
         for candidate in &lp_candidates {
             if let Ok(content) = options.fs.read(candidate) {
                 return String::from_utf8(content).ok();
@@ -882,7 +868,10 @@ mod wasm_fs {
         fn canonicalize(this: &JsFsCallbacks, path: &str) -> Result<String, JsValue>;
 
         #[wasm_bindgen(method, catch)]
-        fn resolve_first_existing(this: &JsFsCallbacks, candidates: Vec<String>) -> Result<JsValue, JsValue>;
+        fn resolve_first_existing(
+            this: &JsFsCallbacks,
+            candidates: Vec<String>,
+        ) -> Result<JsValue, JsValue>;
     }
 
     pub struct JsFs {
@@ -920,14 +909,12 @@ mod wasm_fs {
         }
 
         fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-            self.callbacks
-                .read(&path.to_string_lossy())
-                .map_err(|e| {
-                    Error::new(
-                        ErrorKind::NotFound,
-                        e.as_string().unwrap_or_else(|| "read error".to_string()),
-                    )
-                })
+            self.callbacks.read(&path.to_string_lossy()).map_err(|e| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    e.as_string().unwrap_or_else(|| "read error".to_string()),
+                )
+            })
         }
 
         fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {

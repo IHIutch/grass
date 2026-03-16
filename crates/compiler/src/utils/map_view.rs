@@ -266,10 +266,11 @@ pub(crate) struct MergedMapView<V: fmt::Debug + Clone>(
 
 impl<V: fmt::Debug + Clone> MergedMapView<V> {
     pub fn new(maps: Vec<Rc<dyn MapView<Value = V>>>) -> Self {
-        let unique_keys: FxHashSet<Identifier> = maps.iter().fold(FxHashSet::default(), |mut keys, map| {
-            keys.extend(&map.keys());
-            keys
-        });
+        let unique_keys: FxHashSet<Identifier> =
+            maps.iter().fold(FxHashSet::default(), |mut keys, map| {
+                keys.extend(&map.keys());
+                keys
+            });
 
         Self(maps, unique_keys)
     }

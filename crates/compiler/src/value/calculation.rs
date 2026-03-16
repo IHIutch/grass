@@ -316,13 +316,11 @@ impl SassCalculation {
     pub fn abs(arg: CalculationArg, options: &Options, span: Span) -> SassResult<Value> {
         let arg = Self::simplify(arg);
         match arg {
-            CalculationArg::Number(ref n) => {
-                Ok(Value::Dimension(SassNumber {
-                    num: n.num.abs(),
-                    unit: n.unit.clone(),
-                    as_slash: None,
-                }))
-            }
+            CalculationArg::Number(ref n) => Ok(Value::Dimension(SassNumber {
+                num: n.num.abs(),
+                unit: n.unit.clone(),
+                as_slash: None,
+            })),
             _ => {
                 Self::verify_compatible_numbers(std::slice::from_ref(&arg), options, span)?;
                 Ok(Self::unsimplified_calc(CalculationName::Abs, vec![arg]))
@@ -333,18 +331,17 @@ impl SassCalculation {
     pub fn exp(arg: CalculationArg, _options: &Options, span: Span) -> SassResult<Value> {
         let arg = Self::simplify(arg);
         match arg {
-            CalculationArg::Number(ref n) if n.unit == Unit::None => {
-                Ok(Value::Dimension(SassNumber::new_unitless(Number(n.num.0.exp()))))
-            }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have no units.",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) if n.unit == Unit::None => Ok(Value::Dimension(
+                SassNumber::new_unitless(Number(n.num.0.exp())),
+            )),
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have no units.",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Exp, vec![arg])),
         }
     }
@@ -383,17 +380,18 @@ impl SassCalculation {
                 if n.unit == Unit::None || Self::is_angle_unit(&n.unit) =>
             {
                 let rad = Self::coerce_to_rad(n.num.0, &n.unit);
-                Ok(Value::Dimension(SassNumber::new_unitless(Number(rad.sin()))))
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(
+                    rad.sin(),
+                ))))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have an angle unit (deg, grad, rad, turn).",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have an angle unit (deg, grad, rad, turn).",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Sin, vec![arg])),
         }
     }
@@ -405,17 +403,18 @@ impl SassCalculation {
                 if n.unit == Unit::None || Self::is_angle_unit(&n.unit) =>
             {
                 let rad = Self::coerce_to_rad(n.num.0, &n.unit);
-                Ok(Value::Dimension(SassNumber::new_unitless(Number(rad.cos()))))
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(
+                    rad.cos(),
+                ))))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have an angle unit (deg, grad, rad, turn).",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have an angle unit (deg, grad, rad, turn).",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Cos, vec![arg])),
         }
     }
@@ -427,17 +426,18 @@ impl SassCalculation {
                 if n.unit == Unit::None || Self::is_angle_unit(&n.unit) =>
             {
                 let rad = Self::coerce_to_rad(n.num.0, &n.unit);
-                Ok(Value::Dimension(SassNumber::new_unitless(Number(rad.tan()))))
+                Ok(Value::Dimension(SassNumber::new_unitless(Number(
+                    rad.tan(),
+                ))))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have an angle unit (deg, grad, rad, turn).",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have an angle unit (deg, grad, rad, turn).",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Tan, vec![arg])),
         }
     }
@@ -459,15 +459,14 @@ impl SassCalculation {
                     as_slash: None,
                 }))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have no units.",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have no units.",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Asin, vec![arg])),
         }
     }
@@ -489,15 +488,14 @@ impl SassCalculation {
                     as_slash: None,
                 }))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have no units.",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have no units.",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Acos, vec![arg])),
         }
     }
@@ -517,15 +515,14 @@ impl SassCalculation {
                     as_slash: None,
                 }))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have no units.",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have no units.",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Atan, vec![arg])),
         }
     }
@@ -536,15 +533,14 @@ impl SassCalculation {
             CalculationArg::Number(ref n) if n.unit == Unit::None => {
                 Ok(Value::Dimension(SassNumber::new_unitless(n.num.sqrt())))
             }
-            CalculationArg::Number(ref n) => {
-                Err((
-                    format!(
-                        "Expected {} to have no units.",
-                        Value::Dimension(n.clone()).inspect(span)?
-                    ),
-                    span,
-                ).into())
-            }
+            CalculationArg::Number(ref n) => Err((
+                format!(
+                    "Expected {} to have no units.",
+                    Value::Dimension(n.clone()).inspect(span)?
+                ),
+                span,
+            )
+                .into()),
             _ => Ok(Self::unsimplified_calc(CalculationName::Sqrt, vec![arg])),
         }
     }
@@ -599,7 +595,8 @@ impl SassCalculation {
                             Value::Dimension(base.clone()).inspect(span)?
                         ),
                         span,
-                    ).into())
+                    )
+                        .into())
                 } else {
                     Err((
                         format!(
@@ -607,7 +604,8 @@ impl SassCalculation {
                             Value::Dimension(exp.clone()).inspect(span)?
                         ),
                         span,
-                    ).into())
+                    )
+                        .into())
                 }
             }
             _ => Ok(Self::unsimplified_calc(CalculationName::Pow, args)),
@@ -630,15 +628,14 @@ impl SassCalculation {
                     };
                     Ok(Value::Dimension(SassNumber::new_unitless(Number(val))))
                 }
-                CalculationArg::Number(n) => {
-                    Err((
-                        format!(
-                            "Expected {} to have no units.",
-                            Value::Dimension(n.clone()).inspect(span)?
-                        ),
-                        span,
-                    ).into())
-                }
+                CalculationArg::Number(n) => Err((
+                    format!(
+                        "Expected {} to have no units.",
+                        Value::Dimension(n.clone()).inspect(span)?
+                    ),
+                    span,
+                )
+                    .into()),
                 _ => Ok(Self::unsimplified_calc(CalculationName::Log, args)),
             }
         } else {
@@ -661,7 +658,8 @@ impl SassCalculation {
                                 Value::Dimension(val.clone()).inspect(span)?
                             ),
                             span,
-                        ).into())
+                        )
+                            .into())
                     } else {
                         Err((
                             format!(
@@ -669,7 +667,8 @@ impl SassCalculation {
                                 Value::Dimension(base.clone()).inspect(span)?
                             ),
                             span,
-                        ).into())
+                        )
+                            .into())
                     }
                 }
                 _ => Ok(Self::unsimplified_calc(CalculationName::Log, args)),
@@ -695,9 +694,7 @@ impl SassCalculation {
 
         for arg in &args[1..] {
             match arg {
-                CalculationArg::Number(n)
-                    if Self::can_simplify_units(&n.unit, &first_unit) =>
-                {
+                CalculationArg::Number(n) if Self::can_simplify_units(&n.unit, &first_unit) => {
                     let converted = n.num.convert(&n.unit, &first_unit).0;
                     sum += converted * converted;
                 }
@@ -719,11 +716,7 @@ impl SassCalculation {
         }
     }
 
-    pub fn calc_mod(
-        args: Vec<CalculationArg>,
-        options: &Options,
-        span: Span,
-    ) -> SassResult<Value> {
+    pub fn calc_mod(args: Vec<CalculationArg>, options: &Options, span: Span) -> SassResult<Value> {
         let args = Self::simplify_arguments(args);
         debug_assert!(args.len() == 2);
 
@@ -752,11 +745,7 @@ impl SassCalculation {
         }
     }
 
-    pub fn calc_rem(
-        args: Vec<CalculationArg>,
-        options: &Options,
-        span: Span,
-    ) -> SassResult<Value> {
+    pub fn calc_rem(args: Vec<CalculationArg>, options: &Options, span: Span) -> SassResult<Value> {
         let args = Self::simplify_arguments(args);
         debug_assert!(args.len() == 2);
 
@@ -810,10 +799,7 @@ impl SassCalculation {
                     }));
                 }
                 _ => {
-                    return Ok(Self::unsimplified_calc(
-                        CalculationName::Round,
-                        vec![arg],
-                    ));
+                    return Ok(Self::unsimplified_calc(CalculationName::Round, vec![arg]));
                 }
             }
         }
@@ -823,11 +809,7 @@ impl SassCalculation {
         if args.len() == 1 && strategy.is_some() {
             // round(strategy, number) with no step — error when arg is a Number
             if matches!(&args[0], CalculationArg::Number(..)) {
-                return Err((
-                    "If strategy is not null, step is required.",
-                    span,
-                )
-                    .into());
+                return Err(("If strategy is not null, step is required.", span).into());
             }
         }
 
@@ -849,11 +831,11 @@ impl SassCalculation {
         if args.len() == 2 {
             match (&args[0], &args[1]) {
                 (CalculationArg::Number(number), CalculationArg::Number(step))
-                    if number.has_possibly_compatible_units(step) && number.unit.comparable(&step.unit) =>
+                    if number.has_possibly_compatible_units(step)
+                        && number.unit.comparable(&step.unit) =>
                 {
                     let step_converted = step.num.convert(&step.unit, &number.unit).0;
-                    let result =
-                        Self::round_with_step(number.num.0, step_converted, strategy_str);
+                    let result = Self::round_with_step(number.num.0, step_converted, strategy_str);
                     return Ok(Value::Dimension(SassNumber {
                         num: Number(result),
                         unit: number.unit.clone(),
@@ -881,11 +863,7 @@ impl SassCalculation {
         if number.is_infinite() {
             // round(strategy, ±infinity, finite) = ±infinity
             // round(strategy, ±infinity, ±infinity) = NaN
-            return if step.is_infinite() {
-                f64::NAN
-            } else {
-                number
-            };
+            return if step.is_infinite() { f64::NAN } else { number };
         }
         if step.is_infinite() {
             // Rounding a finite number to a multiple of infinity.
@@ -1138,8 +1116,7 @@ impl SassCalculation {
     /// Returns true if the given string needs parens when unwrapped from calc().
     /// Strings containing spaces or operator characters need parens.
     fn needs_calc_parens(s: &str) -> bool {
-        s.contains(' ') || s.contains('*') || s.contains('/')
-            || s.contains('+') || s.contains('-')
+        s.contains(' ') || s.contains('*') || s.contains('/') || s.contains('+') || s.contains('-')
     }
 
     /// Like `simplify`, but wraps String/Interpolation results in parens when
@@ -1151,9 +1128,7 @@ impl SassCalculation {
                 let inner = calc.args.remove(0);
                 match inner {
                     CalculationArg::String(s) => CalculationArg::String(format!("({})", s)),
-                    CalculationArg::Interpolation(s) => {
-                        CalculationArg::String(format!("({})", s))
-                    }
+                    CalculationArg::Interpolation(s) => CalculationArg::String(format!("({})", s)),
                     other => other,
                 }
             }

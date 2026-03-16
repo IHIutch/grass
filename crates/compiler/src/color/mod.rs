@@ -49,8 +49,7 @@ impl PartialEq for Color {
             (Some(a), Some(b)) => {
                 let a_clamped = a.clamp(0.0, 1.0);
                 let b_clamped = b.clamp(0.0, 1.0);
-                if Number(a_clamped) != Number(b_clamped)
-                    && !(a_clamped >= 1.0 && b_clamped >= 1.0)
+                if Number(a_clamped) != Number(b_clamped) && !(a_clamped >= 1.0 && b_clamped >= 1.0)
                 {
                     return false;
                 }
@@ -208,12 +207,7 @@ impl Color {
 
     /// Create a new `Color` with just RGBA values.
     /// Color representation is created automatically.
-    pub fn from_rgba(
-        red: Number,
-        green: Number,
-        blue: Number,
-        alpha: Number,
-    ) -> Self {
+    pub fn from_rgba(red: Number, green: Number, blue: Number, alpha: Number) -> Self {
         Color {
             space: ColorSpace::Rgb,
             channels: [
@@ -226,15 +220,14 @@ impl Color {
         }
     }
 
-    pub fn from_rgba_fn(
-        red: Number,
-        green: Number,
-        blue: Number,
-        alpha: Number,
-    ) -> Self {
+    pub fn from_rgba_fn(red: Number, green: Number, blue: Number, alpha: Number) -> Self {
         // NaN clamps to min (0) for RGB channels and alpha, per CSS spec
         fn nan_clamp(v: f64, min: f64, max: f64) -> f64 {
-            if v.is_nan() { min } else { v.clamp(min, max) }
+            if v.is_nan() {
+                min
+            } else {
+                v.clamp(min, max)
+            }
         }
         Color {
             space: ColorSpace::Rgb,
@@ -253,16 +246,20 @@ impl Color {
     pub fn from_hsla(hue: Number, saturation: Number, lightness: Number, alpha: Number) -> Self {
         let hue = hue % Number(360.0);
         // NaN saturation → 0 (dart-sass behavior), clamp finite to non-negative
-        let sat = if saturation.0.is_nan() { 0.0 } else { saturation.0.max(0.0) };
+        let sat = if saturation.0.is_nan() {
+            0.0
+        } else {
+            saturation.0.max(0.0)
+        };
         // NaN alpha clamps to 0, per CSS spec
-        let alpha_val = if alpha.0.is_nan() { 0.0 } else { alpha.clamp(0.0, 1.0).0 };
+        let alpha_val = if alpha.0.is_nan() {
+            0.0
+        } else {
+            alpha.clamp(0.0, 1.0).0
+        };
         Color {
             space: ColorSpace::Hsl,
-            channels: [
-                Some(hue.0),
-                Some(sat),
-                Some(lightness.0),
-            ],
+            channels: [Some(hue.0), Some(sat), Some(lightness.0)],
             alpha: Some(alpha_val),
             format: ColorFormat::Infer,
         }
@@ -303,7 +300,11 @@ impl Color {
         }
 
         // NaN alpha clamps to 0, per CSS spec
-        let alpha_val = if alpha.0.is_nan() { 0.0 } else { alpha.0.clamp(0.0, 1.0) };
+        let alpha_val = if alpha.0.is_nan() {
+            0.0
+        } else {
+            alpha.0.clamp(0.0, 1.0)
+        };
 
         Color {
             space: ColorSpace::Hwb,
@@ -347,9 +348,21 @@ impl Color {
         Color {
             space: ColorSpace::Rgb,
             channels: [
-                Some((self.red() * weight1 + other.red() * weight2).0.clamp(0.0, 255.0)),
-                Some((self.green() * weight1 + other.green() * weight2).0.clamp(0.0, 255.0)),
-                Some((self.blue() * weight1 + other.blue() * weight2).0.clamp(0.0, 255.0)),
+                Some(
+                    (self.red() * weight1 + other.red() * weight2)
+                        .0
+                        .clamp(0.0, 255.0),
+                ),
+                Some(
+                    (self.green() * weight1 + other.green() * weight2)
+                        .0
+                        .clamp(0.0, 255.0),
+                ),
+                Some(
+                    (self.blue() * weight1 + other.blue() * weight2)
+                        .0
+                        .clamp(0.0, 255.0),
+                ),
             ],
             alpha: Some(
                 (self.alpha() * weight + other.alpha() * (Number::one() - weight))
@@ -996,8 +1009,7 @@ impl Color {
             // does not force a,b to None when lightness is 0.
             let apply_lab_powerless = matches!(
                 (self.space, target),
-                (ColorSpace::Lch, ColorSpace::Lab)
-                | (ColorSpace::Lab, ColorSpace::Lab)
+                (ColorSpace::Lch, ColorSpace::Lab) | (ColorSpace::Lab, ColorSpace::Lab)
             );
             if apply_lab_powerless {
                 let lightness_zero_or_missing = match result.channels[0] {
@@ -1231,10 +1243,11 @@ impl Color {
             }
             // HWB: hue (index 0) is powerless when whiteness + blackness >= 1
             ColorSpace::Hwb => {
-                index == 0 && match (self.channels[1], self.channels[2]) {
-                    (Some(w), Some(b)) => w + b >= 1.0,
-                    _ => false,
-                }
+                index == 0
+                    && match (self.channels[1], self.channels[2]) {
+                        (Some(w), Some(b)) => w + b >= 1.0,
+                        _ => false,
+                    }
             }
             // LCH: hue (index 2) powerless when chroma (index 1) is 0
             ColorSpace::Lch => {
@@ -1257,7 +1270,9 @@ impl Color {
         }
         match self.space {
             ColorSpace::Hsl => index == 0 && self.channels[1].is_none(),
-            ColorSpace::Hwb => index == 0 && (self.channels[1].is_none() || self.channels[2].is_none()),
+            ColorSpace::Hwb => {
+                index == 0 && (self.channels[1].is_none() || self.channels[2].is_none())
+            }
             ColorSpace::Lch | ColorSpace::Oklch => index == 2 && self.channels[1].is_none(),
             _ => false,
         }
@@ -1398,9 +1413,9 @@ fn delta_e_ok(a: &Color, b: &Color) -> f64 {
 /// source channel to the analogous target channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChannelAnalogy {
-    RedX,         // RGB red ↔ XYZ x (index 0 in both families)
-    GreenY,       // RGB green ↔ XYZ y (index 1 in both families)
-    BlueZ,        // RGB blue ↔ XYZ z (index 2 in both families)
+    RedX,   // RGB red ↔ XYZ x (index 0 in both families)
+    GreenY, // RGB green ↔ XYZ y (index 1 in both families)
+    BlueZ,  // RGB blue ↔ XYZ z (index 2 in both families)
     Hue,
     Lightness,
     Colorfulness, // chroma and saturation

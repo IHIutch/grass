@@ -94,28 +94,29 @@ pub(crate) static GLOBAL_FUNCTIONS: LazyLock<GlobalFunctionMap> = LazyLock::new(
     m
 });
 
-pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<BTreeSet<&str>> = LazyLock::new(|| {
-    GLOBAL_FUNCTIONS
-        .keys()
-        .copied()
-        .filter(|&name| {
-            !matches!(
-                name,
-                "rgb"
-                    | "rgba"
-                    | "hsl"
-                    | "hsla"
-                    | "grayscale"
-                    | "invert"
-                    | "alpha"
-                    | "opacity"
-                    | "saturate"
-                    | "lab"
-                    | "lch"
-                    | "oklab"
-                    | "oklch"
-                    | "color"
-            )
-        })
-        .collect()
-});
+pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<BTreeSet<&str>> =
+    LazyLock::new(|| {
+        GLOBAL_FUNCTIONS
+            .keys()
+            .copied()
+            .filter(|&name| {
+                !matches!(
+                    name,
+                    "rgb"
+                        | "rgba"
+                        | "hsl"
+                        | "hsla"
+                        | "grayscale"
+                        | "invert"
+                        | "alpha"
+                        | "opacity"
+                        | "saturate"
+                        | "lab"
+                        | "lch"
+                        | "oklab"
+                        | "oklch"
+                        | "color"
+                )
+            })
+            .collect()
+    });

@@ -139,11 +139,7 @@ fn update_modern(
         if let Some(v) = args.get(usize::MAX, channel_defs[i].name) {
             // Scale doesn't work on hue channels
             if update == UpdateComponents::Scale && channel_defs[i].is_polar {
-                return Err((
-                    "$hue: Cannot scale a polar channel (hue).".to_owned(),
-                    span,
-                )
-                    .into());
+                return Err(("$hue: Cannot scale a polar channel (hue).".to_owned(), span).into());
             }
 
             let result = parse_modern_channel(
@@ -178,11 +174,7 @@ fn update_modern(
 
     // Check for unknown named arguments
     if !args.named.is_empty() {
-        let argument_names: Vec<String> = args
-            .named
-            .keys()
-            .map(|key| format!("${key}"))
-            .collect();
+        let argument_names: Vec<String> = args.named.keys().map(|key| format!("${key}")).collect();
 
         let first_name = &argument_names[0];
         return Err((
@@ -243,9 +235,7 @@ fn update_modern(
                         UpdateComponents::Adjust => {
                             let val = current + adj_val;
                             // dart-sass clamps lightness in perceptual spaces for adjust()
-                            if working_space.is_perceptual()
-                                && !channel_defs[i].is_polar
-                                && i == 0
+                            if working_space.is_perceptual() && !channel_defs[i].is_polar && i == 0
                             {
                                 val.clamp(channel_defs[i].min, channel_defs[i].max)
                             } else {
@@ -366,10 +356,7 @@ fn update_components(
             Value::String(s, QuoteKind::None) => s.clone(),
             v => {
                 return Err((
-                    format!(
-                        "$space: {} is not a string.",
-                        v.inspect(span)?
-                    ),
+                    format!("$space: {} is not a string.", v.inspect(span)?),
                     span,
                 )
                     .into())
@@ -441,7 +428,13 @@ fn update_components(
                         }
                     }
                 }
-                Some(Some(check_num(v, name, max, assert_percent, check_percent)?))
+                Some(Some(check_num(
+                    v,
+                    name,
+                    max,
+                    assert_percent,
+                    check_percent,
+                )?))
             }
             None => None,
         })
@@ -583,8 +576,8 @@ fn update_components(
         update: UpdateComponents,
     ) -> Option<f64> {
         match param {
-            None => current,                // Not provided, preserve current (including None/missing)
-            Some(None) => None,             // `none` keyword, set to missing
+            None => current,    // Not provided, preserve current (including None/missing)
+            Some(None) => None, // `none` keyword, set to missing
             Some(Some(p)) => {
                 let cur = current.unwrap_or(0.0);
                 let val = match update {
@@ -592,10 +585,10 @@ fn update_components(
                     UpdateComponents::Adjust => p.0 + cur,
                     UpdateComponents::Scale => {
                         cur + if p.0 > 0.0 {
-                                (max - cur) * p.0
-                            } else {
-                                cur * p.0
-                            }
+                            (max - cur) * p.0
+                        } else {
+                            cur * p.0
+                        }
                     }
                 };
                 Some(val)
@@ -605,7 +598,11 @@ fn update_components(
 
     // Check for explicitly missing channels in legacy paths (powerless check only in $space/modern path)
     {
-        let check_missing_channel = |color_in_space: &Color, channel_idx: usize, channel_name: &str, span: Span| -> SassResult<()> {
+        let check_missing_channel = |color_in_space: &Color,
+                                     channel_idx: usize,
+                                     channel_name: &str,
+                                     span: Span|
+         -> SassResult<()> {
             if color_in_space.has_missing_channel(channel_idx) {
                 return Err((
                     format!(
@@ -674,14 +671,28 @@ fn update_components(
         let clamp_rgb = update == UpdateComponents::Adjust;
         let in_rgb = color.to_space(ColorSpace::Rgb);
         let rgb_ch = in_rgb.raw_channels();
-        let new_r = apply_update(rgb_ch[0], &red, 255.0, update)
-            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_g = apply_update(rgb_ch[1], &green, 255.0, update)
-            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_b = apply_update(rgb_ch[2], &blue, 255.0, update)
-            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_a = apply_update(color.raw_alpha(), &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_r = apply_update(rgb_ch[0], &red, 255.0, update).map(|v| {
+            if clamp_rgb {
+                v.clamp(0.0, 255.0)
+            } else {
+                v
+            }
+        });
+        let new_g = apply_update(rgb_ch[1], &green, 255.0, update).map(|v| {
+            if clamp_rgb {
+                v.clamp(0.0, 255.0)
+            } else {
+                v
+            }
+        });
+        let new_b = apply_update(rgb_ch[2], &blue, 255.0, update).map(|v| {
+            if clamp_rgb {
+                v.clamp(0.0, 255.0)
+            } else {
+                v
+            }
+        });
+        let new_a = apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         Rc::new(Color::for_space(
             ColorSpace::Rgb,
             [new_r, new_g, new_b],
@@ -695,7 +706,11 @@ fn update_components(
             let ch = color.raw_channels();
             (ch[0], ch[1], ch[2])
         } else {
-            (Some(color.hue().0), Some(color.whiteness().0), Some(color.blackness().0))
+            (
+                Some(color.hue().0),
+                Some(color.whiteness().0),
+                Some(color.blackness().0),
+            )
         };
         let new_hue = match &hue {
             None => raw_hue,
@@ -710,8 +725,8 @@ fn update_components(
         };
         let new_w = apply_update(raw_w, &whiteness, 1.0, update);
         let new_b = apply_update(raw_b, &blackness, 1.0, update);
-        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_alpha =
+            apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
         let mut result = Color::for_space(
             ColorSpace::Hwb,
@@ -754,8 +769,8 @@ fn update_components(
             }
         }
         let new_light = apply_update(hsl_ch[2], &lightness, 1.0, update);
-        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_alpha =
+            apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hsla's clamping of out-of-range values
         let mut result = Color::for_space(
             ColorSpace::Hsl,
@@ -770,8 +785,8 @@ fn update_components(
         }
         Rc::new(result)
     } else if alpha.is_some() {
-        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_alpha =
+            apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         match new_alpha {
             Some(a) => Rc::new(color.with_alpha(Number(a))),
             None => {

@@ -24,11 +24,7 @@ test!(
 );
 
 // else clause
-test!(
-    css_if_else_alone,
-    "a {b: if(else: c)}",
-    "a {\n  b: c;\n}\n"
-);
+test!(css_if_else_alone, "a {b: if(else: c)}", "a {\n  b: c;\n}\n");
 test!(
     css_if_else_two,
     "a {b: if(else: c; else: d)}",
@@ -214,11 +210,7 @@ test!(
 );
 
 // Legacy if() still works
-test!(
-    legacy_if_true,
-    "a {b: if(true, c, d)}",
-    "a {\n  b: c;\n}\n"
-);
+test!(legacy_if_true, "a {b: if(true, c, d)}", "a {\n  b: c;\n}\n");
 test!(
     legacy_if_false,
     "a {b: if(false, c, d)}",

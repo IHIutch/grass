@@ -149,9 +149,9 @@ impl SimpleSelector {
                     // Inside :has(), leading combinators are valid;
                     // inside :is()/:where()/:matches(), they're bogus
                     let in_pseudo = name != "has";
-                    sel.components.iter().all(|c| {
-                        c.is_invisible() || c.is_bogus(in_pseudo)
-                    })
+                    sel.components
+                        .iter()
+                        .all(|c| c.is_invisible() || c.is_bogus(in_pseudo))
                 } else {
                     false
                 }
@@ -402,9 +402,10 @@ impl SimpleSelector {
         }
 
         // If compound contains a :host/:host-context, self must be compatible
-        if compound.iter().any(|s| {
-            matches!(s, Self::Pseudo(p) if p.is_host_selector())
-        }) {
+        if compound
+            .iter()
+            .any(|s| matches!(s, Self::Pseudo(p) if p.is_host_selector()))
+        {
             if let Self::Pseudo(ref p) = self {
                 if !p.is_host_selector() && p.selector.is_none() {
                     return None;
@@ -458,14 +459,17 @@ impl SimpleSelector {
                 Namespace::Asterisk | Namespace::None => true,
                 // c|* or |* only match elements in their specific namespace
                 Namespace::Other(_) | Namespace::Empty => {
-                    compound.components.iter().any(|their_simple| match their_simple {
-                        SimpleSelector::Type(QualifiedName {
-                            namespace: other_ns,
-                            ..
+                    compound
+                        .components
+                        .iter()
+                        .any(|their_simple| match their_simple {
+                            SimpleSelector::Type(QualifiedName {
+                                namespace: other_ns,
+                                ..
+                            })
+                            | SimpleSelector::Universal(other_ns) => ns == other_ns,
+                            _ => false,
                         })
-                        | SimpleSelector::Universal(other_ns) => ns == other_ns,
-                        _ => false,
-                    })
                 }
             };
         }

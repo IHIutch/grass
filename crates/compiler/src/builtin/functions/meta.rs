@@ -68,7 +68,10 @@ pub(crate) fn unit(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         .get_err(0, "number")?
         .assert_number_with_name("number", args.span())?;
 
-    Ok(Value::String(number.unit.to_string().into(), QuoteKind::Quoted))
+    Ok(Value::String(
+        number.unit.to_string().into(),
+        QuoteKind::Quoted,
+    ))
 }
 
 pub(crate) fn type_of(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -108,7 +111,11 @@ pub(crate) fn variable_exists(
             .as_str(),
     );
 
-    Ok(Value::bool(visitor.env.var_exists(name, None, args.span())?))
+    Ok(Value::bool(visitor.env.var_exists(
+        name,
+        None,
+        args.span(),
+    )?))
 }
 
 pub(crate) fn global_variable_exists(

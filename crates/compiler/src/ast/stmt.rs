@@ -674,6 +674,10 @@ mod size_tests {
     /// If this fails, a new large variant was added without boxing.
     #[test]
     fn ast_stmt_size() {
-        assert!(size_of::<AstStmt>() <= 96, "AstStmt grew to {} bytes", size_of::<AstStmt>());
+        assert!(
+            size_of::<AstStmt>() <= 96,
+            "AstStmt grew to {} bytes",
+            size_of::<AstStmt>()
+        );
     }
 }

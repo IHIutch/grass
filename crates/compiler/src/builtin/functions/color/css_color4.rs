@@ -35,7 +35,8 @@ fn parse_channel_value(
                     return Err((
                         format!(
                             "${}: Expected {} to have unit \"deg\" or no units.",
-                            name, num.num.inspect()
+                            name,
+                            num.num.inspect()
                         ),
                         span,
                     )
@@ -51,7 +52,8 @@ fn parse_channel_value(
                 return Err((
                     format!(
                         "${}: Expected {} to have no units or \"%\".",
-                        name, num.num.inspect()
+                        name,
+                        num.num.inspect()
                     ),
                     span,
                 )
@@ -64,11 +66,7 @@ fn parse_channel_value(
 }
 
 /// Parse alpha that might be `none`, a number, or a percentage.
-fn parse_alpha_value(
-    val: &Value,
-    span: Span,
-    visitor: &mut Visitor,
-) -> SassResult<Option<f64>> {
+fn parse_alpha_value(val: &Value, span: Span, visitor: &mut Visitor) -> SassResult<Option<f64>> {
     match val {
         Value::String(s, QuoteKind::None) if s == "none" => Ok(None),
         _ => {
@@ -216,14 +214,14 @@ fn construct_color_inner(
     }
 
     // Clamp alpha to [0, 1]
-    let alpha = alpha.map(|a| {
-        if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) }
-    });
+    let alpha = alpha.map(|a| if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) });
 
     use crate::color::{Color, ColorFormat};
 
     Ok(Value::Color(Rc::new(Color::for_space(
-        space, channels_arr, alpha,
+        space,
+        channels_arr,
+        alpha,
         ColorFormat::Infer,
     ))))
 }
@@ -307,7 +305,14 @@ pub(crate) fn oklab(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
                 return Err(("Missing element $a.", span).into());
             }
             if is_slash_list {
-                construct_color_slash_list("oklab", ColorSpace::Oklab, list, has_alpha, span, visitor)
+                construct_color_slash_list(
+                    "oklab",
+                    ColorSpace::Oklab,
+                    list,
+                    has_alpha,
+                    span,
+                    visitor,
+                )
             } else {
                 construct_color("oklab", ColorSpace::Oklab, list, has_alpha, span, visitor)
             }
@@ -336,7 +341,14 @@ pub(crate) fn oklch(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
                 return Err(("Missing element $chroma.", span).into());
             }
             if is_slash_list {
-                construct_color_slash_list("oklch", ColorSpace::Oklch, list, has_alpha, span, visitor)
+                construct_color_slash_list(
+                    "oklch",
+                    ColorSpace::Oklch,
+                    list,
+                    has_alpha,
+                    span,
+                    visitor,
+                )
             } else {
                 construct_color("oklch", ColorSpace::Oklch, list, has_alpha, span, visitor)
             }
@@ -436,13 +448,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 
     let space = match ColorSpace::from_name(&space_name) {
         Some(s) => s,
-        None => {
-            return Err((
-                format!("Unknown color space \"{}\".", space_name),
-                span,
-            )
-                .into())
-        }
+        None => return Err((format!("Unknown color space \"{}\".", space_name), span).into()),
     };
 
     // Remaining items are channels
@@ -451,7 +457,11 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     // Check if the last channel has as_slash (i.e. `0.3 / 0.4` parsed as division).
     // If so, split it back into channel value and alpha.
     if alpha_val.is_none() {
-        if let Some(Value::Dimension(SassNumber { as_slash: Some(slash), .. })) = channel_items.last() {
+        if let Some(Value::Dimension(SassNumber {
+            as_slash: Some(slash),
+            ..
+        })) = channel_items.last()
+        {
             let alpha = Value::Dimension(slash.1.clone());
             let chan = Value::Dimension(slash.0.clone());
             let last_idx = channel_items.len() - 1;
@@ -477,7 +487,10 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     // If there are fewer than 3 channels but any is a special function (var(), calc(), etc.),
     // the var() could expand to multiple values at runtime — pass through as CSS string.
     if channel_items.len() < 3 {
-        if channel_items.iter().any(|v| v.is_special_function() || v.is_var()) {
+        if channel_items
+            .iter()
+            .any(|v| v.is_special_function() || v.is_var())
+        {
             let is_compressed = visitor.options.is_compressed();
             let mut result = format!("color({}", space_name);
             for ch in &channel_items {
@@ -492,12 +505,10 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             return Ok(Value::String(result.into(), QuoteKind::None));
         }
         let channel_defs = space.channels();
-        let missing = channel_defs.get(channel_items.len()).map_or("channel", |c| c.name);
-        return Err((
-            format!("Missing element ${}.", missing),
-            span,
-        )
-            .into());
+        let missing = channel_defs
+            .get(channel_items.len())
+            .map_or("channel", |c| c.name);
+        return Err((format!("Missing element ${}.", missing), span).into());
     }
     if channel_items.len() > 3 {
         return Err((
@@ -534,5 +545,12 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         channels_with_alpha.push(alpha);
     }
 
-    construct_color("color", space, &channels_with_alpha, channels_with_alpha.len() > 3, span, visitor)
+    construct_color(
+        "color",
+        space,
+        &channels_with_alpha,
+        channels_with_alpha.len() > 3,
+        span,
+        visitor,
+    )
 }

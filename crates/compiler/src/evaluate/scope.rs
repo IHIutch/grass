@@ -102,9 +102,18 @@ impl Scopes {
 
     pub fn enter_new_scope(&mut self) {
         debug_assert_eq!(self.len(), self.variables.len());
-        let var = self.var_pool.pop().unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
-        let mixin = self.mixin_pool.pop().unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
-        let func = self.fn_pool.pop().unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
+        let var = self
+            .var_pool
+            .pop()
+            .unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
+        let mixin = self
+            .mixin_pool
+            .pop()
+            .unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
+        let func = self
+            .fn_pool
+            .pop()
+            .unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
         self.variables.push(var);
         self.mixins.push(mixin);
         self.functions.push(func);
@@ -222,7 +231,11 @@ impl Scopes {
 impl Scopes {
     pub fn insert_mixin(&mut self, name: Identifier, mixin: Mixin) {
         debug_assert_eq!(self.len(), self.variables.len());
-        self.mixins.last_mut().unwrap().borrow_mut().insert(name, mixin);
+        self.mixins
+            .last_mut()
+            .unwrap()
+            .borrow_mut()
+            .insert(name, mixin);
     }
 
     pub fn get_mixin(&self, name: Spanned<Identifier>) -> SassResult<Mixin> {
@@ -253,7 +266,11 @@ impl Scopes {
 impl Scopes {
     pub fn insert_fn(&mut self, func: SassFunction) {
         debug_assert_eq!(self.len(), self.variables.len());
-        self.functions.last_mut().unwrap().borrow_mut().insert(func.name(), func);
+        self.functions
+            .last_mut()
+            .unwrap()
+            .borrow_mut()
+            .insert(func.name(), func);
     }
 
     pub fn get_fn(&self, name: Identifier) -> Option<SassFunction> {

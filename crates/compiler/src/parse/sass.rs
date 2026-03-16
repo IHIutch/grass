@@ -227,11 +227,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
             let indentation = self.read_indentation()?;
             if indentation != 0 {
-                return Err((
-                    "Nothing may be indented here.",
-                    self.toks.current_span(),
-                )
-                    .into());
+                return Err(("Nothing may be indented here.", self.toks.current_span()).into());
             }
         }
 
@@ -467,7 +463,9 @@ impl<'a> SassParser<'a> {
             // Skip trailing whitespace and comments after semicolons
             loop {
                 match self.toks.peek() {
-                    Some(Token { kind: ' ' | '\t', .. }) => {
+                    Some(Token {
+                        kind: ' ' | '\t', ..
+                    }) => {
                         self.toks.next();
                     }
                     Some(Token { kind: '/', .. })

@@ -633,4 +633,7 @@ test!(
     "a {\n  color: join(a, b, space, null);\n}\n",
     "a {\n  color: a b;\n}\n"
 );
-error!(zip_no_args, "a {\n  color: zip();\n}\n", "Error: () isn't a valid CSS value.");
+error!(
+    zip_no_args,
+    "a {\n  color: zip();\n}\n", "Error: () isn't a valid CSS value."
+);

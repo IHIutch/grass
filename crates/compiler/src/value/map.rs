@@ -1,4 +1,4 @@
-use std::{slice::Iter, rc::Rc, vec::IntoIter};
+use std::{rc::Rc, slice::Iter, vec::IntoIter};
 
 use codemap::Spanned;
 
@@ -71,17 +71,11 @@ impl SassMap {
     }
 
     pub fn keys(self) -> Vec<Value> {
-        self.into_vec()
-            .into_iter()
-            .map(|(k, ..)| k.node)
-            .collect()
+        self.into_vec().into_iter().map(|(k, ..)| k.node).collect()
     }
 
     pub fn values(self) -> Vec<Value> {
-        self.into_vec()
-            .into_iter()
-            .map(|(.., v)| v)
-            .collect()
+        self.into_vec().into_iter().map(|(.., v)| v).collect()
     }
 
     pub fn contains(&self, key: &Value) -> bool {
@@ -91,7 +85,13 @@ impl SassMap {
     pub fn as_list(self) -> Vec<Value> {
         self.into_vec()
             .into_iter()
-            .map(|(k, v)| Value::List(Rc::new(vec![k.node, v]), ListSeparator::Space, Brackets::None))
+            .map(|(k, v)| {
+                Value::List(
+                    Rc::new(vec![k.node, v]),
+                    ListSeparator::Space,
+                    Brackets::None,
+                )
+            })
             .collect()
     }
 

@@ -100,22 +100,29 @@ impl SelectorList {
     /// This has the same format as a list returned by `selector-parse()`.
     pub fn to_sass_list(self) -> Value {
         Value::List(
-            Rc::new(self.components
-                .into_iter()
-                .map(|complex| {
-                    Value::List(
-                        Rc::new(complex
-                            .components
-                            .into_iter()
-                            .map(|complex_component| {
-                                Value::String(complex_component.to_string().into(), QuoteKind::None)
-                            })
-                            .collect()),
-                        ListSeparator::Space,
-                        Brackets::None,
-                    )
-                })
-                .collect()),
+            Rc::new(
+                self.components
+                    .into_iter()
+                    .map(|complex| {
+                        Value::List(
+                            Rc::new(
+                                complex
+                                    .components
+                                    .into_iter()
+                                    .map(|complex_component| {
+                                        Value::String(
+                                            complex_component.to_string().into(),
+                                            QuoteKind::None,
+                                        )
+                                    })
+                                    .collect(),
+                            ),
+                            ListSeparator::Space,
+                            Brackets::None,
+                        )
+                    })
+                    .collect(),
+            ),
             ListSeparator::Comma,
             Brackets::None,
         )

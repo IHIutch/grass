@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{builtin::builtin_imports::*, serializer::serialize_number, value::SassNumber};
 use crate::color::space::ColorSpace;
+use crate::{builtin::builtin_imports::*, serializer::serialize_number, value::SassNumber};
 
 use super::{
     angle_value,
@@ -11,20 +11,21 @@ use super::{
 };
 
 /// Parse an optional $space argument from the argument list.
-fn parse_space_arg(args: &mut ArgumentResult, pos: usize, span: Span) -> SassResult<Option<ColorSpace>> {
+fn parse_space_arg(
+    args: &mut ArgumentResult,
+    pos: usize,
+    span: Span,
+) -> SassResult<Option<ColorSpace>> {
     match args.get(pos, "space") {
         Some(space_val) => match &space_val.node {
-            Value::String(s, QuoteKind::Quoted) => {
-                Err((
-                    format!("$space: Expected {} to be an unquoted string.", s),
-                    span,
-                )
-                    .into())
-            }
+            Value::String(s, QuoteKind::Quoted) => Err((
+                format!("$space: Expected {} to be an unquoted string.", s),
+                span,
+            )
+                .into()),
             Value::String(s, QuoteKind::None) => {
-                let space = ColorSpace::from_name(s).ok_or_else(|| {
-                    (format!("$space: Unknown color space \"{}\".", s), span)
-                })?;
+                let space = ColorSpace::from_name(s)
+                    .ok_or_else(|| (format!("$space: Unknown color space \"{}\".", s), span))?;
                 Ok(Some(space))
             }
             Value::Null => Ok(None),
@@ -69,7 +70,8 @@ fn hsl_3_args(
                     Brackets::None
                 )
                 .to_css_string(args.span(), false)?
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ));
     }
@@ -114,7 +116,9 @@ fn inner_hsl(
             ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
             ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel or alpha is `none` — if so, use modern Color 4 path
-                let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                let has_none = list
+                    .iter()
+                    .any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 if has_none {
                     let has_alpha = list.len() > 3;
                     return construct_color(name, ColorSpace::Hsl, &list, has_alpha, span, visitor);
@@ -165,7 +169,8 @@ pub(crate) fn hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         return Err((
             "color.hue() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     Ok(Value::Dimension(SassNumber {
@@ -300,7 +305,8 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
             format!(
                 "saturate({})",
                 serialize_number(&amount, &Options::default(), args.span())?,
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ));
     }
@@ -506,9 +512,10 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                             .into());
                     }
                 }
-                Ok(Value::Color(Rc::new(
-                    c.invert_in_space(space, weight.unwrap_or_else(Number::one)),
-                )))
+                Ok(Value::Color(Rc::new(c.invert_in_space(
+                    space,
+                    weight.unwrap_or_else(Number::one),
+                ))))
             } else if !c.color_space().is_legacy() {
                 // Modern colors require $space
                 Err((

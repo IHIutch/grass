@@ -110,16 +110,10 @@ impl Environment {
             // forwarded in this module.
             let forwarded_modules = Rc::clone(&self.forwarded_modules);
             if !(*forwarded_modules).borrow().is_empty() {
-                let fwd_ptrs: FxHashSet<*const RefCell<Module>> = forwarded_modules
-                    .borrow()
-                    .iter()
-                    .map(Rc::as_ptr)
-                    .collect();
-                let global_ptrs: FxHashSet<*const RefCell<Module>> = self
-                    .global_modules
-                    .iter()
-                    .map(Rc::as_ptr)
-                    .collect();
+                let fwd_ptrs: FxHashSet<*const RefCell<Module>> =
+                    forwarded_modules.borrow().iter().map(Rc::as_ptr).collect();
+                let global_ptrs: FxHashSet<*const RefCell<Module>> =
+                    self.global_modules.iter().map(Rc::as_ptr).collect();
                 let mut x = Vec::new();
                 for entry in (*forwarded).borrow().iter() {
                     let ptr = Rc::as_ptr(entry);
@@ -189,7 +183,8 @@ impl Environment {
             // Remove existing member definitions that are now shadowed by the
             // forwarded modules.
             for variable in &forwarded_var_names {
-                self.scopes.variables_mut()
+                self.scopes
+                    .variables_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
@@ -198,20 +193,21 @@ impl Environment {
             self.scopes.last_variable_index = None;
 
             for func in &forwarded_fn_names {
-                self.scopes.functions_mut()
+                self.scopes
+                    .functions_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
                     .remove(func);
             }
             for mixin in &forwarded_mixin_names {
-                self.scopes.mixins_mut()
+                self.scopes
+                    .mixins_mut()
                     .last_mut()
                     .unwrap()
                     .borrow_mut()
                     .remove(mixin);
             }
-
         }
     }
 
@@ -285,9 +281,7 @@ impl Environment {
         if self.scopes.mixin_exists(name) {
             return Ok(true);
         }
-        Ok(self
-            .get_mixin_from_global_modules(name, span)?
-            .is_some())
+        Ok(self.get_mixin_from_global_modules(name, span)?.is_some())
     }
 
     pub fn get_mixin(
@@ -321,9 +315,7 @@ impl Environment {
         if self.scopes.fn_exists(name) {
             return Ok(true);
         }
-        Ok(self
-            .get_function_from_global_modules(name, span)?
-            .is_some())
+        Ok(self.get_function_from_global_modules(name, span)?.is_some())
     }
 
     pub fn get_fn(
@@ -359,18 +351,14 @@ impl Environment {
         if self.scopes.var_exists(name) {
             return Ok(true);
         }
-        Ok(self
-            .get_variable_from_global_modules(name, span)?
-            .is_some())
+        Ok(self.get_variable_from_global_modules(name, span)?.is_some())
     }
 
     pub fn global_var_exists(&self, name: Identifier, span: Span) -> SassResult<bool> {
         if (*self.global_vars()).borrow().contains_key(&name) {
             return Ok(true);
         }
-        Ok(self
-            .get_variable_from_global_modules(name, span)?
-            .is_some())
+        Ok(self.get_variable_from_global_modules(name, span)?.is_some())
     }
 
     pub fn get_var(
@@ -415,13 +403,14 @@ impl Environment {
             // If this module doesn't already contain a variable named [name], try
             // setting it in a global module.
             if !self.scopes.global_var_exists(name.node) {
-                let module_with_name = self.from_one_module(name.node, "variable", name.span, |module| {
-                    if module.borrow().var_exists(*name) {
-                        Some(Rc::clone(module))
-                    } else {
-                        None
-                    }
-                })?;
+                let module_with_name =
+                    self.from_one_module(name.node, "variable", name.span, |module| {
+                        if module.borrow().var_exists(*name) {
+                            Some(Rc::clone(module))
+                        } else {
+                            None
+                        }
+                    })?;
 
                 if let Some(module_with_name) = module_with_name {
                     module_with_name.borrow_mut().update_var(name, value)?;
@@ -476,8 +465,7 @@ impl Environment {
     pub fn scope_enter(&mut self) {
         self.scopes.enter_new_scope();
         if let Some(ref nfm) = self.nested_forwarded_modules {
-            nfm.borrow_mut()
-                .push(Rc::new(RefCell::new(Vec::new())));
+            nfm.borrow_mut().push(Rc::new(RefCell::new(Vec::new())));
         }
     }
 
@@ -509,9 +497,8 @@ impl Environment {
         new_span: Span,
     ) -> SassResult<()> {
         let cache = &self.forwarded_member_sources;
-        let cache_empty = cache.variables.is_empty()
-            && cache.functions.is_empty()
-            && cache.mixins.is_empty();
+        let cache_empty =
+            cache.variables.is_empty() && cache.functions.is_empty() && cache.mixins.is_empty();
 
         if cache_empty {
             // First forwarded module: no conflicts possible, but still need to
@@ -566,29 +553,52 @@ impl Environment {
 
         // Merge new sources into the cache.
         for (name, source) in new_sources.variables {
-            self.forwarded_member_sources.variables.entry(name).or_insert(source);
+            self.forwarded_member_sources
+                .variables
+                .entry(name)
+                .or_insert(source);
         }
         for (name, source) in new_sources.functions {
-            self.forwarded_member_sources.functions.entry(name).or_insert(source);
+            self.forwarded_member_sources
+                .functions
+                .entry(name)
+                .or_insert(source);
         }
         for (name, source) in new_sources.mixins {
-            self.forwarded_member_sources.mixins.entry(name).or_insert(source);
+            self.forwarded_member_sources
+                .mixins
+                .entry(name)
+                .or_insert(source);
         }
 
         Ok(())
     }
 
-    fn get_variable_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<Value>> {
+    fn get_variable_from_global_modules(
+        &self,
+        name: Identifier,
+        span: Span,
+    ) -> SassResult<Option<Value>> {
         self.from_one_module(name, "variable", span, |module| {
             (**module).borrow().get_var_no_err(name)
         })
     }
 
-    fn get_function_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<SassFunction>> {
-        self.from_one_module(name, "function", span, |module| (**module).borrow().get_fn(name))
+    fn get_function_from_global_modules(
+        &self,
+        name: Identifier,
+        span: Span,
+    ) -> SassResult<Option<SassFunction>> {
+        self.from_one_module(name, "function", span, |module| {
+            (**module).borrow().get_fn(name)
+        })
     }
 
-    fn get_mixin_from_global_modules(&self, name: Identifier, span: Span) -> SassResult<Option<Mixin>> {
+    fn get_mixin_from_global_modules(
+        &self,
+        name: Identifier,
+        span: Span,
+    ) -> SassResult<Option<Mixin>> {
         self.from_one_module(name, "mixin", span, |module| {
             (**module).borrow().get_mixin_no_err(name)
         })
@@ -693,10 +703,7 @@ fn collect_source_identities(module: &Rc<RefCell<Module>>) -> ForwardedMemberSou
     result
 }
 
-fn collect_inner(
-    module: &Rc<RefCell<Module>>,
-    result: &mut ForwardedMemberSources,
-) {
+fn collect_inner(module: &Rc<RefCell<Module>>, result: &mut ForwardedMemberSources) {
     let borrowed = module.borrow();
 
     match &*borrowed {
@@ -704,8 +711,16 @@ fn collect_inner(
             let has_prefix = fwd.forward_rule.prefix.is_some();
             let has_filter = fwd.forward_rule.shown_variables.is_some()
                 || fwd.forward_rule.shown_mixins_and_functions.is_some()
-                || fwd.forward_rule.hidden_variables.as_ref().is_some_and(|s| !s.is_empty())
-                || fwd.forward_rule.hidden_mixins_and_functions.as_ref().is_some_and(|s| !s.is_empty());
+                || fwd
+                    .forward_rule
+                    .hidden_variables
+                    .as_ref()
+                    .is_some_and(|s| !s.is_empty())
+                || fwd
+                    .forward_rule
+                    .hidden_mixins_and_functions
+                    .as_ref()
+                    .is_some_and(|s| !s.is_empty());
 
             let inner = Rc::clone(&fwd.inner);
 

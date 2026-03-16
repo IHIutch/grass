@@ -6,7 +6,10 @@ use crate::builtin::{
         opacity::{alpha, module_opacity},
         other::{adjust_color, change_color, ie_hex_str, scale_color},
         rgb::{blue, green, mix, red},
-        space_fns::{channel, is_in_gamut, is_legacy, is_missing, is_powerless, same, space, to_gamut, to_space},
+        space_fns::{
+            channel, is_in_gamut, is_legacy, is_missing, is_powerless, same, space, to_gamut,
+            to_space,
+        },
     },
     modules::Module,
 };

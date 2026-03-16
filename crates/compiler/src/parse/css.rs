@@ -103,8 +103,8 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
 
         match name.as_plain() {
             Some("at-root") | Some("content") | Some("debug") | Some("each") | Some("error")
-            | Some("extend") | Some("for") | Some("if") | Some("include")
-            | Some("mixin") | Some("return") | Some("warn") | Some("while") => {
+            | Some("extend") | Some("for") | Some("if") | Some("include") | Some("mixin")
+            | Some("return") | Some("warn") | Some("while") => {
                 self.almost_any_value(false)?;
                 Err((
                     "This at-rule isn't allowed in plain CSS.",

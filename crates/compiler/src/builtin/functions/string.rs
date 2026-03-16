@@ -172,7 +172,11 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             .map(|s| Value::String(s.to_string().into(), quote))
             .collect()
     };
-    Ok(Value::List(Rc::new(vec), ListSeparator::Comma, Brackets::Bracketed))
+    Ok(Value::List(
+        Rc::new(vec),
+        ListSeparator::Comma,
+        Brackets::Bracketed,
+    ))
 }
 
 pub(crate) fn str_index(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -258,7 +262,10 @@ pub(crate) fn unique_id(args: ArgumentResult, _: &mut Visitor) -> SassResult<Val
         .map(char::from)
         .take(12)
         .collect();
-    Ok(Value::String(format!("id-{}", string).into(), QuoteKind::None))
+    Ok(Value::String(
+        format!("id-{}", string).into(),
+        QuoteKind::None,
+    ))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

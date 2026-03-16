@@ -75,7 +75,13 @@ impl ColorSpace {
     pub fn is_predefined_rgb(self) -> bool {
         matches!(
             self,
-            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020
+            Self::SRgb
+                | Self::SRgbLinear
+                | Self::DisplayP3
+                | Self::DisplayP3Linear
+                | Self::A98Rgb
+                | Self::ProphotoRgb
+                | Self::Rec2020
         )
     }
 
@@ -117,7 +123,13 @@ impl ColorSpace {
                 ChannelDef::new("whiteness", 0.0, 1.0, false, Some(1.0)),
                 ChannelDef::new("blackness", 0.0, 1.0, false, Some(1.0)),
             ],
-            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => [
+            Self::SRgb
+            | Self::SRgbLinear
+            | Self::DisplayP3
+            | Self::DisplayP3Linear
+            | Self::A98Rgb
+            | Self::ProphotoRgb
+            | Self::Rec2020 => [
                 ChannelDef::new("red", 0.0, 1.0, false, Some(1.0)),
                 ChannelDef::new("green", 0.0, 1.0, false, Some(1.0)),
                 ChannelDef::new("blue", 0.0, 1.0, false, Some(1.0)),
@@ -202,9 +214,12 @@ impl ColorSpace {
             Self::Rgb => [Some(255.0), Some(255.0), Some(255.0)],
             Self::Hsl => [None, Some(0.0), Some(1.0)], // hue=none (powerless), sat=0, lightness=1.0 (100%)
             Self::Hwb => [None, Some(1.0), Some(0.0)], // hue=none (powerless), whiteness=1.0, blackness=0
-            Self::SRgb | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb | Self::ProphotoRgb | Self::Rec2020 => {
-                [Some(1.0), Some(1.0), Some(1.0)]
-            }
+            Self::SRgb
+            | Self::DisplayP3
+            | Self::DisplayP3Linear
+            | Self::A98Rgb
+            | Self::ProphotoRgb
+            | Self::Rec2020 => [Some(1.0), Some(1.0), Some(1.0)],
             Self::SRgbLinear => [Some(1.0), Some(1.0), Some(1.0)],
             Self::Lab => [Some(100.0), Some(0.0), Some(0.0)],
             Self::Lch => [Some(100.0), Some(0.0), Some(0.0)],
@@ -221,8 +236,13 @@ impl ColorSpace {
             Self::Rgb => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Hsl => [None, Some(0.0), Some(0.0)], // hue=none (powerless)
             Self::Hwb => [None, Some(0.0), Some(1.0)], // hue=none (powerless)
-            Self::SRgb | Self::SRgbLinear | Self::DisplayP3 | Self::DisplayP3Linear | Self::A98Rgb
-            | Self::ProphotoRgb | Self::Rec2020 => [Some(0.0), Some(0.0), Some(0.0)],
+            Self::SRgb
+            | Self::SRgbLinear
+            | Self::DisplayP3
+            | Self::DisplayP3Linear
+            | Self::A98Rgb
+            | Self::ProphotoRgb
+            | Self::Rec2020 => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Lab => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Lch => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Oklab => [Some(0.0), Some(0.0), Some(0.0)],
@@ -264,7 +284,13 @@ pub struct ChannelDef {
 }
 
 impl ChannelDef {
-    const fn new(name: &'static str, min: f64, max: f64, is_polar: bool, percentage_ref: Option<f64>) -> Self {
+    const fn new(
+        name: &'static str,
+        min: f64,
+        max: f64,
+        is_polar: bool,
+        percentage_ref: Option<f64>,
+    ) -> Self {
         Self {
             name,
             min,

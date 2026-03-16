@@ -36,7 +36,10 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
 
         if let Value::String(s, QuoteKind::None) = &color {
             if is_ms_filter(s) {
-                return Ok(Value::String(format!("alpha({})", s).into(), QuoteKind::None));
+                return Ok(Value::String(
+                    format!("alpha({})", s).into(),
+                    QuoteKind::None,
+                ));
             }
         }
 
@@ -65,7 +68,14 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             .collect::<SassResult<Vec<_>>>()?;
 
         Ok(Value::String(
-            format!("alpha({})", args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")).into(),
+            format!(
+                "alpha({})",
+                args.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into(),
             QuoteKind::None,
         ))
     }
@@ -85,7 +95,11 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
             QuoteKind::None,
         )),
         v if v.is_special_function() => Ok(Value::String(
-            format!("opacity({})", v.to_css_string(span, visitor.options.is_compressed())?).into(),
+            format!(
+                "opacity({})",
+                v.to_css_string(span, visitor.options.is_compressed())?
+            )
+            .into(),
             QuoteKind::None,
         )),
         v => Err((
@@ -143,7 +157,10 @@ fn transparentize(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
 /// Module-level `color.opacity()` — allows color and number passthrough,
 /// but NOT special function passthrough (var(), calc(), etc.).
 /// `color.opacity(var(--c))` errors, while `color.opacity(0.5)` passes through.
-pub(crate) fn module_opacity(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
+pub(crate) fn module_opacity(
+    mut args: ArgumentResult,
+    _visitor: &mut Visitor,
+) -> SassResult<Value> {
     args.max_args(1)?;
     let span = args.span();
     match args.get_err(0, "color")? {

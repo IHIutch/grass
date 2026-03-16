@@ -915,8 +915,7 @@ fn use_path_with_dotdot_normalization() {
 
     assert_eq!(
         "a {\n  b: value;\n}\n",
-        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs))
-            .expect(input)
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
     );
 }
 

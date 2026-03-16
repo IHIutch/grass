@@ -285,7 +285,11 @@ pub(crate) fn zip(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
         })
         .collect();
 
-    Ok(Value::List(Rc::new(result), ListSeparator::Comma, Brackets::None))
+    Ok(Value::List(
+        Rc::new(result),
+        ListSeparator::Comma,
+        Brackets::None,
+    ))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

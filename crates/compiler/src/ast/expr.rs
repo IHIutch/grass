@@ -164,10 +164,7 @@ impl<'a> StringExpr<'a> {
         }
     }
 
-    fn best_quote<'b>(
-        strings: impl Iterator<Item = &'b str>,
-        preferred: Option<char>,
-    ) -> char {
+    fn best_quote<'b>(strings: impl Iterator<Item = &'b str>, preferred: Option<char>) -> char {
         let mut contains_double_quote = false;
         for s in strings {
             for c in s.chars() {
@@ -186,7 +183,11 @@ impl<'a> StringExpr<'a> {
         }
     }
 
-    pub fn as_interpolation(self, is_static: bool, preferred_quote: Option<char>) -> Interpolation<'a> {
+    pub fn as_interpolation(
+        self,
+        is_static: bool,
+        preferred_quote: Option<char>,
+    ) -> Interpolation<'a> {
         if self.1 == QuoteKind::None {
             return self.0;
         }
@@ -255,6 +256,10 @@ mod size_tests {
     /// was added without boxing — check which variant grew and box it.
     #[test]
     fn ast_expr_size() {
-        assert!(size_of::<AstExpr>() <= 64, "AstExpr grew to {} bytes", size_of::<AstExpr>());
+        assert!(
+            size_of::<AstExpr>() <= 64,
+            "AstExpr grew to {} bytes",
+            size_of::<AstExpr>()
+        );
     }
 }

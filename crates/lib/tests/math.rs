@@ -149,7 +149,8 @@ error!(
 );
 test!(
     round_non_number_arg,
-    "a {\n  color: round(a);\n}\n", "a {\n  color: round(a);\n}\n"
+    "a {\n  color: round(a);\n}\n",
+    "a {\n  color: round(a);\n}\n"
 );
 error!(
     ceil_non_number_arg,
@@ -161,7 +162,8 @@ error!(
 );
 test!(
     abs_non_number_arg,
-    "a {\n  color: abs(a);\n}\n", "a {\n  color: abs(a);\n}\n"
+    "a {\n  color: abs(a);\n}\n",
+    "a {\n  color: abs(a);\n}\n"
 );
 error!(
     comparable_non_number_arg_both,

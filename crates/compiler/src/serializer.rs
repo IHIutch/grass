@@ -4,10 +4,10 @@ use codemap::{CodeMap, Span};
 
 use crate::{
     ast::{CssStmt, MediaQuery, SassMixin, Style, SupportsRule},
-    evaluate::css_tree::{CssTree, CssTreeIdx},
     color::{Color, ColorFormat, ColorSpace, NAMED_COLORS},
     common::{BinaryOp, Brackets, ListSeparator, QuoteKind},
     error::SassResult,
+    evaluate::css_tree::{CssTree, CssTreeIdx},
     selector::{
         Combinator, ComplexSelector, ComplexSelectorComponent, CompoundSelector, Namespace, Pseudo,
         SelectorList, SimpleSelector,
@@ -185,7 +185,13 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    pub fn with_capacity(options: &'a Options<'a>, map: &'a CodeMap, inspect: bool, span: Span, capacity: usize) -> Self {
+    pub fn with_capacity(
+        options: &'a Options<'a>,
+        map: &'a CodeMap,
+        inspect: bool,
+        span: Span,
+        capacity: usize,
+    ) -> Self {
         Self {
             buffer: Vec::with_capacity(capacity),
             ..Self::new(options, map, inspect, span)
@@ -338,9 +344,7 @@ impl<'a> Serializer<'a> {
         let complexes: Vec<_> = list
             .components
             .iter()
-            .filter(|c| {
-                !c.is_invisible() && (!filter_bogus || !c.is_bogus(false))
-            })
+            .filter(|c| !c.is_invisible() && (!filter_bogus || !c.is_bogus(false)))
             .collect();
 
         let mut first = true;
@@ -705,8 +709,10 @@ impl<'a> Serializer<'a> {
         }
 
         // Legacy colors with missing channels use modern space-separated syntax
-        let has_missing = color.has_missing_channel(0) || color.has_missing_channel(1)
-            || color.has_missing_channel(2) || color.has_missing_alpha();
+        let has_missing = color.has_missing_channel(0)
+            || color.has_missing_channel(1)
+            || color.has_missing_channel(2)
+            || color.has_missing_alpha();
         if has_missing {
             self.write_legacy_with_none(color);
             return;
@@ -716,9 +722,7 @@ impl<'a> Serializer<'a> {
         // These must be serialized via write_hsl to get calc() wrappers.
         if matches!(color.color_space(), ColorSpace::Hsl | ColorSpace::Hwb) {
             let raw = color.raw_channels();
-            let has_degenerate = raw.iter().any(|ch| {
-                ch.is_some_and(|v| !v.is_finite())
-            });
+            let has_degenerate = raw.iter().any(|ch| ch.is_some_and(|v| !v.is_finite()));
             if has_degenerate {
                 self.write_hsl(color);
                 return;
@@ -792,7 +796,8 @@ impl<'a> Serializer<'a> {
                     // For HWB-stored colors from to-space(), serialize as hex
                     // (like any other legacy color) rather than hsl().
                     // HSL-stored colors always use hsl() format (matching dart-sass).
-                    if color.color_space() == ColorSpace::Hwb && fuzzy_equals(color.alpha().0, 1.0) {
+                    if color.color_space() == ColorSpace::Hwb && fuzzy_equals(color.alpha().0, 1.0)
+                    {
                         if let Some(name) = name {
                             self.buffer.extend_from_slice(name.as_bytes());
                         } else {
@@ -940,11 +945,9 @@ impl<'a> Serializer<'a> {
             // Handle NaN and infinity with calc() wrapper
             if val.is_nan() {
                 if channel_defs[index].is_polar {
-                    self.buffer
-                        .extend_from_slice(b"calc(NaN * 1deg)");
+                    self.buffer.extend_from_slice(b"calc(NaN * 1deg)");
                 } else if channel_defs[index].name == "lightness" {
-                    self.buffer
-                        .extend_from_slice(b"calc(NaN * 1%)");
+                    self.buffer.extend_from_slice(b"calc(NaN * 1%)");
                 } else {
                     self.buffer.extend_from_slice(b"calc(NaN)");
                 }
@@ -953,11 +956,9 @@ impl<'a> Serializer<'a> {
             if val.is_infinite() {
                 let sign = if val.is_sign_negative() { "-" } else { "" };
                 if channel_defs[index].is_polar {
-                    write!(&mut self.buffer, "calc({}infinity * 1deg)", sign)
-                        .unwrap();
+                    write!(&mut self.buffer, "calc({}infinity * 1deg)", sign).unwrap();
                 } else if channel_defs[index].name == "lightness" {
-                    write!(&mut self.buffer, "calc({}infinity * 1%)", sign)
-                        .unwrap();
+                    write!(&mut self.buffer, "calc({}infinity * 1%)", sign).unwrap();
                 } else {
                     write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
                 }
@@ -1126,10 +1127,7 @@ impl<'a> Serializer<'a> {
             if let Some(e_pos) = s.find('e') {
                 let mantissa = &s[..e_pos];
                 let exp: usize = s[e_pos + 1..].parse().unwrap_or(0);
-                let digits: String = mantissa
-                    .replace('.', "")
-                    .trim_end_matches('0')
-                    .to_string();
+                let digits: String = mantissa.replace('.', "").trim_end_matches('0').to_string();
                 let num_digits = digits.len();
                 if exp + 1 > num_digits {
                     self.buffer.extend_from_slice(digits.as_bytes());
@@ -1141,9 +1139,7 @@ impl<'a> Serializer<'a> {
                 }
             } else {
                 let formatted = format!("{:.10}", num);
-                let trimmed = formatted
-                    .trim_end_matches('0')
-                    .trim_end_matches('.');
+                let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
                 self.buffer.extend_from_slice(trimmed.as_bytes());
             }
         } else {
@@ -1572,7 +1568,9 @@ impl<'a> Serializer<'a> {
             Value::Dimension(num) => self.visit_number(num)?,
             Value::Color(color) => self.visit_color(color),
             Value::Calculation(calc) => self.visit_calculation(calc)?,
-            Value::List(elems, sep, brackets) => self.visit_list(elems.as_slice(), *sep, *brackets, span)?,
+            Value::List(elems, sep, brackets) => {
+                self.visit_list(elems.as_slice(), *sep, *brackets, span)?
+            }
             Value::True => self.buffer.extend_from_slice(b"true"),
             Value::False => self.buffer.extend_from_slice(b"false"),
             Value::Null => {
@@ -1609,9 +1607,9 @@ impl<'a> Serializer<'a> {
             self.in_custom_property = true;
             self.visit_value(&style.value.node, style.value.span)?;
             self.in_custom_property = false;
-            let name_col = self
-                .map
-                .map_or(0, |m| m.look_up_pos(style.property_span.low()).position.column);
+            let name_col = self.map.map_or(0, |m| {
+                m.look_up_pos(style.property_span.low()).position.column
+            });
             self.reindent_buffer_from(start, name_col);
         } else {
             self.visit_value(&style.value.node, style.value.span)?;
@@ -1634,9 +1632,8 @@ impl<'a> Serializer<'a> {
 
         // Check if everything after the first newline is just whitespace
         let after_first = &value_str[first_newline + 1..];
-        let has_non_whitespace_continuation = after_first
-            .lines()
-            .any(|line| !line.trim().is_empty());
+        let has_non_whitespace_continuation =
+            after_first.lines().any(|line| !line.trim().is_empty());
 
         if !has_non_whitespace_continuation {
             // dart-sass: -1 case — trimAsciiRight + space
@@ -1750,7 +1747,9 @@ impl<'a> Serializer<'a> {
         }
 
         self.write_indentation();
-        let col = self.map.map_or(0, |m| m.look_up_pos(span.low()).position.column);
+        let col = self
+            .map
+            .map_or(0, |m| m.look_up_pos(span.low()).position.column);
         let mut lines = comment.lines();
 
         if let Some(line) = lines.next() {
@@ -1814,7 +1813,9 @@ impl<'a> Serializer<'a> {
 
         self.buffer.push(b' ');
         // For inline comments, write on the same line without indentation
-        let col = self.map.map_or(0, |m| m.look_up_pos(span.low()).position.column);
+        let col = self
+            .map
+            .map_or(0, |m| m.look_up_pos(span.low()).position.column);
         let mut lines = comment.lines();
 
         if let Some(line) = lines.next() {
@@ -1861,9 +1862,10 @@ impl<'a> Serializer<'a> {
     /// Get the source line of the closing `}` for block-level statements
     pub(crate) fn stmt_closing_brace_line(&self, stmt: &CssStmt) -> Option<usize> {
         match stmt {
-            CssStmt::RuleSet { source_span: Some(span), .. } => {
-                Some(self.source_line(span.high()))
-            }
+            CssStmt::RuleSet {
+                source_span: Some(span),
+                ..
+            } => Some(self.source_line(span.high())),
             _ => None,
         }
     }
@@ -2042,9 +2044,8 @@ impl<'a> Serializer<'a> {
                     && body.iter().all(|s| matches!(s, CssStmt::Comment(..)))
                 {
                     if let Some(bl) = brace_line {
-                        let all_on_brace_line = body.iter().all(|s| {
-                            self.comment_start_line(s) == Some(bl)
-                        });
+                        let all_on_brace_line =
+                            body.iter().all(|s| self.comment_start_line(s) == Some(bl));
                         if all_on_brace_line {
                             self.buffer.extend_from_slice(b" { ");
                             for stmt in body {
@@ -2092,8 +2093,9 @@ impl<'a> Serializer<'a> {
                         self.buffer
                             .extend_from_slice(unknown_at_rule.params.as_bytes());
                     } else {
-                        self.buffer
-                            .extend_from_slice(normalize_whitespace(&unknown_at_rule.params).as_bytes());
+                        self.buffer.extend_from_slice(
+                            normalize_whitespace(&unknown_at_rule.params).as_bytes(),
+                        );
                     }
                 }
 
@@ -2612,9 +2614,9 @@ impl<'a> Serializer<'a> {
                 end_line = self.stmt_end_line(stmt);
                 closing_brace_line = self.stmt_closing_brace_line(stmt);
                 // Check if there are any more visible children after this one
-                is_last = !children[child_iter_pos..].iter().any(|&c| {
-                    !skip.contains(&c) && !tree.is_invisible_in_tree(c)
-                });
+                is_last = !children[child_iter_pos..]
+                    .iter()
+                    .any(|&c| !skip.contains(&c) && !tree.is_invisible_in_tree(c));
             }
 
             let did_write = self.visit_stmt_from_tree(tree, child_idx)?;
@@ -2635,12 +2637,9 @@ impl<'a> Serializer<'a> {
                 // Sub-problem A: inline comment after style on same source line
                 if let Some(style_end_line) = end_line {
                     if needs_semicolon {
-                        if let Some(next_pos) = self.next_visible_child(
-                            tree,
-                            children,
-                            child_iter_pos,
-                            &skip,
-                        ) {
+                        if let Some(next_pos) =
+                            self.next_visible_child(tree, children, child_iter_pos, &skip)
+                        {
                             let next_child = children[next_pos];
                             let s = tree.get(next_child);
                             if let Some(CssStmt::Comment(ref comment, span)) = &*s {
@@ -2660,12 +2659,9 @@ impl<'a> Serializer<'a> {
 
                 // Sub-problem C: inline comment after closing `}` on same source line
                 if let Some(brace_line) = closing_brace_line {
-                    if let Some(next_pos) = self.next_visible_child(
-                        tree,
-                        children,
-                        child_iter_pos,
-                        &skip,
-                    ) {
+                    if let Some(next_pos) =
+                        self.next_visible_child(tree, children, child_iter_pos, &skip)
+                    {
                         let next_child = children[next_pos];
                         let s = tree.get(next_child);
                         if let Some(CssStmt::Comment(ref comment, span)) = &*s {
