@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Display},
     io,
     string::FromUtf8Error,
-    rc::Rc,
+    sync::Arc,
 };
 
 use codemap::{Span, SpanLoc};
@@ -93,7 +93,7 @@ pub enum PublicSassErrorKind {
     ///
     /// Files that cannot be found using `@import`, `@use`, and `@forward` will
     /// emit [`Self::ParseError`]s
-    IoError(Rc<io::Error>),
+    IoError(Arc<io::Error>),
 
     /// The entry-point file or an imported file was not valid UTF-8.
     FromUtf8Error(String),
@@ -111,7 +111,7 @@ enum SassErrorKind {
         unicode: bool,
     },
     // we put `IoError`s in an `Arc` to allow them to be cloneable
-    IoError(Rc<io::Error>),
+    IoError(Arc<io::Error>),
     FromUtf8Error(String),
 }
 
@@ -176,7 +176,7 @@ impl From<io::Error> for Box<SassError> {
     #[inline]
     fn from(error: io::Error) -> Box<SassError> {
         Box::new(SassError {
-            kind: SassErrorKind::IoError(Rc::new(error)),
+            kind: SassErrorKind::IoError(Arc::new(error)),
         })
     }
 }

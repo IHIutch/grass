@@ -58,6 +58,7 @@ random = ["grass_compiler/random"]
 wasm-exports = ["grass_compiler/wasm-exports", "wasm-bindgen"]
 # Option: include the proc macro `include_sass!`
 macro = ["include_sass"]
+parallel = ["grass_compiler/parallel"]
 nightly = ["include_sass/nightly"]
 
 [dev-dependencies]

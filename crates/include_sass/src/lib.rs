@@ -1,6 +1,6 @@
 #![cfg_attr(feature = "nightly", feature(track_path))]
 
-use std::{cell::RefCell, collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, sync::Mutex};
 
 use grass_compiler::StdFs;
 use proc_macro::TokenStream;
@@ -12,7 +12,7 @@ use quote::__private::TokenStream as TokenStream2;
 
 #[derive(Debug)]
 struct FileTracker<'a> {
-    files: RefCell<HashSet<PathBuf>>,
+    files: Mutex<HashSet<PathBuf>>,
     fs: &'a dyn grass_compiler::Fs,
 }
 
@@ -20,7 +20,7 @@ impl<'a> grass_compiler::Fs for FileTracker<'a> {
     fn is_dir(&self, path: &std::path::Path) -> bool {
         #[cfg(feature = "nightly")]
         if let Ok(p) = std::fs::canonicalize(path) {
-            self.files.borrow_mut().insert(p);
+            self.files.lock().unwrap().insert(p);
         }
 
         self.fs.is_dir(path)
@@ -29,7 +29,7 @@ impl<'a> grass_compiler::Fs for FileTracker<'a> {
     fn is_file(&self, path: &std::path::Path) -> bool {
         #[cfg(feature = "nightly")]
         if let Ok(p) = std::fs::canonicalize(path) {
-            self.files.borrow_mut().insert(p);
+            self.files.lock().unwrap().insert(p);
         }
 
         self.fs.is_file(path)
@@ -37,7 +37,7 @@ impl<'a> grass_compiler::Fs for FileTracker<'a> {
 
     fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
         if let Ok(p) = std::fs::canonicalize(path) {
-            self.files.borrow_mut().insert(p);
+            self.files.lock().unwrap().insert(p);
         }
 
         self.fs.read(path)
@@ -92,7 +92,7 @@ pub fn include_sass(item: TokenStream) -> TokenStream {
     let options = grass_compiler::Options::default();
 
     let fs = FileTracker {
-        files: RefCell::new(HashSet::new()),
+        files: Mutex::new(HashSet::new()),
         fs: &StdFs,
     };
 
@@ -111,7 +111,7 @@ pub fn include_sass(item: TokenStream) -> TokenStream {
         }
     };
 
-    let files = &*fs.files.borrow();
+    let files = fs.files.lock().unwrap();
 
-    finish(css, files)
+    finish(css, &files)
 }

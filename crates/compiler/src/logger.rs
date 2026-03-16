@@ -2,7 +2,7 @@ use codemap::SpanLoc;
 use std::fmt::Debug;
 
 /// A trait to allow replacing logging mechanisms
-pub trait Logger: Debug {
+pub trait Logger: Debug + Send + Sync {
     /// Logs message from a [`@debug`](https://sass-lang.com/documentation/at-rules/debug/)
     /// statement
     fn debug(&self, location: SpanLoc, message: &str);

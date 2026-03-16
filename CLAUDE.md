@@ -174,9 +174,9 @@ An issue update is NOT just adding notes. It means the issue's **title, descript
 # grass - Sass compiler in Rust
 
 ## Build & Test
-- `cargo build --release` - release build
-- `cargo clippy --features=macro -- -D warnings` - lint check
-- `cargo test --features=macro` - run all tests
+- `~/.cargo/bin/cargo build --release` - release build
+- `~/.cargo/bin/cargo clippy --features=macro -- -D warnings` - lint check
+- `~/.cargo/bin/cargo test --features=macro` - run all tests
 - Rust MSRV: see rust-version in crates/*/Cargo.toml
 
 ## Testing Strategy
@@ -247,6 +247,9 @@ echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
 
 # Run a single test file
 ~/.cargo/bin/cargo test --features=macro --test css_if
+
+# Run a single named test
+~/.cargo/bin/cargo test --features=macro -- test_name_here
 ```
 
 ### Verifying Test Expectations
@@ -312,10 +315,144 @@ For a full cross-engine benchmark (native vs WASM vs sass-embedded):
 cd prototype && node bench.js 2>/dev/null
 ```
 
+## Performance Optimization Guide
+
+This section governs how to approach performance work. The code is not sacred — architectural refactors are welcome when they yield measurable improvements. We have tests (`cargo test --features=macro`) to ensure correctness and benchmarks (`prototype/perf-check.sh`) to validate gains.
+
+### Philosophy
+
+1. **Measure first, optimize second.** Never optimize based on intuition alone. Profile, identify the hotspot, quantify the cost, then fix it.
+2. **One change at a time.** Each optimization gets its own commit with its own benchmark measurement. Bundling changes makes it impossible to attribute gains or diagnose regressions.
+3. **Architectural changes are welcome.** If profiling reveals that a data structure or algorithm is fundamentally wrong, refactor it. Don't paper over structural problems with micro-optimizations.
+4. **The benchmark is USWDS.** All performance claims are measured against USWDS compilation (`prototype/perf-check.sh`). This is a real-world, complex stylesheet — not a micro-benchmark.
+
+### Context Window Advantage (1M tokens)
+
+With a 1M context window, you can and should load large portions of the compiler into context simultaneously. Use this for:
+
+- **Cross-module analysis:** Read entire hot paths end-to-end (parser → evaluator → serializer) to spot unnecessary allocations, redundant cloning, or architectural bottlenecks that only appear when you see the full picture.
+- **Structural pattern detection:** Load all files in a subsystem (e.g., all of `crates/compiler/src/evaluate/`) to find repeated patterns like unnecessary `.clone()` calls, consistent lock contention, or data structure misuse.
+- **Refactor planning:** When considering an architectural change, read all callers and callees to understand the full blast radius before writing any code.
+- **dart-sass comparison:** Load both the grass implementation and the equivalent dart-sass source to compare algorithms and data structures.
+
+Don't be conservative with reads — load what you need to form a complete mental model before proposing changes.
+
+### Profiling Workflow
+
+#### Step 1: Profile with samply (preferred) or Instruments
+
+```bash
+# Build release binary with debug symbols (already configured in Cargo.toml: debug = 1)
+~/.cargo/bin/cargo build --release
+
+# Profile with samply (install: cargo install samply)
+samply record ./target/release/grass --style=expanded -I prototype/packages prototype/packages/uswds/_index-direct.scss
+
+# Alternative: macOS Instruments
+xcrun xctrace record --template 'Time Profiler' --launch ./target/release/grass -- \
+  --style=expanded -I prototype/packages prototype/packages/uswds/_index-direct.scss
+```
+
+samply opens a Firefox Profiler UI. Look for:
+- Functions with high "self time" (not just total time)
+- Unexpected allocator calls (`alloc::`, `__rust_alloc`, `malloc`)
+- Lock contention (`Mutex::lock`, `RwLock::read`)
+- Hash map operations (`HashMap::get`, `HashMap::insert`) — check if FxHashMap is used everywhere it should be
+
+#### Step 2: Quantify the hotspot
+
+Before writing any code, record the current baseline:
+```bash
+cd prototype && ./perf-check.sh
+```
+
+Note the median time. This is your "before" number.
+
+#### Step 3: Implement the fix
+
+Make a single, focused change. Common high-value patterns:
+- Replace `.clone()` with borrowing or `Rc`/`Arc` sharing
+- Switch `HashMap`/`BTreeMap` to `FxHashMap`/`FxIndexMap` where hash quality doesn't matter
+- Reduce allocations in hot loops (pre-allocate vectors, use `SmallVec`, avoid `format!`)
+- Replace `String` with `CompactString` or interned identifiers
+- Eliminate redundant work (cache computed values, avoid re-parsing)
+- Flatten nested data structures to improve cache locality
+
+#### Step 4: Measure the improvement
+
+```bash
+~/.cargo/bin/cargo build --release
+cd prototype && ./perf-check.sh
+```
+
+**Only commit if the improvement is measurable (>1% on USWDS).** Noise threshold is ~2-3%, so marginal gains should be validated with more runs:
+```bash
+# For marginal improvements, use hyperfine for statistical rigor
+hyperfine --warmup 3 --runs 30 \
+  './target/release/grass --style=expanded -I prototype/packages prototype/packages/uswds/_index-direct.scss'
+```
+
+#### Step 5: Update baseline if improved
+
+```bash
+echo "<new_median_ms>" > prototype/.perf-baseline
+```
+
+### What to Optimize (Priority Order)
+
+1. **Algorithmic improvements** — O(n²) → O(n), redundant traversals, unnecessary re-computation. These yield the largest gains.
+2. **Allocation reduction** — Clone elimination, arena allocation, interning, pre-sized collections. Profile for `alloc` in flame graphs.
+3. **Data structure selection** — FxHash vs SipHash, IndexMap vs HashMap, Vec vs SmallVec, CompactString vs String. Match the structure to the access pattern.
+4. **Cache locality** — Flatten indirection (Box/Arc chains), use contiguous storage, reduce pointer chasing.
+5. **Parallelism** — Only after single-threaded optimization is exhausted. Sass has inherent sequentiality (`@use` ordering), so opportunities are limited.
+
+### What NOT to Optimize
+
+- **Startup time** — Binary startup is negligible compared to compilation.
+- **Error paths** — Errors are rare; optimize the happy path.
+- **Parse phase** (unless profiling shows it) — Parsing is typically <10% of total time; evaluation and serialization dominate.
+- **Micro-benchmarks in isolation** — Always validate against the full USWDS benchmark. A function that's 50% faster but only accounts for 0.1% of runtime is not worth the complexity.
+
+### Existing Optimizations (Context for Future Work)
+
+These have already been applied — don't re-investigate:
+- `Arc` → `Rc` migration (single-threaded runtime)
+- `FxHashMap`/`FxIndexMap` for identifier maps and extensions
+- `CompactString` for `Value::String`
+- `ryu` for float-to-string formatting
+- `Arc<[AstStmt]>` for shared loop bodies
+- Scope pooling and `SassMap::get_ref` for borrow-based lookup
+- Selector clone reduction and `BinaryOp::as_bytes`
+- O(1) child position lookup in `has_following_sibling`
+- PGO build script (`prototype/build-pgo.sh`) — ~11% additional gain
+
+### PGO Builds
+
+Profile-Guided Optimization provides an additional ~11% speedup beyond standard release builds:
+
+```bash
+cd prototype && ./build-pgo.sh
+# Outputs optimized binary at target/release/grass
+```
+
+Use PGO for final benchmarking and release builds. Don't use PGO during iterative development — the feedback loop is too slow.
+
+### Benchmark Reference
+
+| Tool | Purpose | When to use |
+|------|---------|-------------|
+| `prototype/perf-check.sh` | Quick 3-run median vs baseline | Every commit touching compiler code |
+| `hyperfine --runs 30` | Statistically rigorous measurement | Validating marginal (<5%) improvements |
+| `prototype/bench.sh` | Cross-engine comparison (native/WASM/napi/dart) | Before/after architectural changes |
+| `prototype/build-pgo.sh` | PGO-optimized build | Release builds, final benchmarks |
+| `samply record` | CPU profiling with flame graphs | Identifying hotspots before optimizing |
+
 ## Session Discipline
 
 ### Time-box investigations: 15 minutes max
-If a fix isn't converging after 15 minutes, **stop**. Commit what works, file the rest as a beads issue, and move on. A 100-minute commit should have been 3-4 separate commits.
+If a bug fix or feature isn't converging after 15 minutes, **stop**. Commit what works, file the rest as a beads issue, and move on. A 100-minute commit should have been 3-4 separate commits.
+
+**Exception for performance work:** Profiling analysis may take longer than 15 minutes. The constraint still applies to each individual optimization attempt — if a specific change isn't panning out after 15 minutes, abandon it and document findings in a beads issue. But the overall profile → analyze → hypothesize cycle is expected to be longer.
 
 ### Smaller commits, more often
 Commit each independent fix immediately. Don't bundle unrelated fixes into one commit. If you're fixing NaN handling AND adjust/change semantics AND none keyword support, those are 3 commits.
@@ -324,7 +461,9 @@ Commit each independent fix immediately. Don't bundle unrelated fixes into one c
 When an approach doesn't work (e.g., you try a fix, discover it cascades, and revert), **file a beads issue** with what you learned so the next session doesn't repeat the exploration. Use `bd create --title="..." --description="Attempted X, failed because Y. Approach Z might work." -t task -p 3`.
 
 ### Batch edits before building
-Make all obvious/mechanical edits before the first `cargo build`. If you're adding the same validation to 16 functions, edit all 16 files first, then build once. Don't build-edit-build-edit sequentially.
+For feature/bug work: make all obvious/mechanical edits before the first `cargo build`. If you're adding the same validation to 16 functions, edit all 16 files first, then build once. Don't build-edit-build-edit sequentially.
+
+**Exception for performance work:** Build and measure after each individual optimization. Batching perf changes defeats the ability to attribute gains to specific changes.
 
 ### sass-spec test runner
 The sass-spec color test runner lives at `prototype/run-color-specs.py` (NOT `/tmp/`). It survives context compaction.

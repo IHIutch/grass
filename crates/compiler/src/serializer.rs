@@ -4,6 +4,7 @@ use codemap::{CodeMap, Span};
 
 use crate::{
     ast::{CssStmt, MediaQuery, SassMixin, Style, SupportsRule},
+    evaluate::css_tree::{CssTree, CssTreeIdx},
     color::{Color, ColorFormat, ColorSpace, NAMED_COLORS},
     common::{BinaryOp, Brackets, ListSeparator, QuoteKind},
     error::SassResult,
@@ -136,6 +137,11 @@ pub(crate) struct Serializer<'a> {
     _span: Span,
     in_calculation: bool,
     in_custom_property: bool,
+    // Tree-walking state (used by serialize_tree)
+    prev_was_group_end_tree: bool,
+    prev_requires_semicolon_tree: bool,
+    had_previous_visible_tree: bool,
+    tree_skip_indices: Vec<CssTreeIdx>,
 }
 
 impl<'a> Serializer<'a> {
@@ -151,6 +157,10 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
+            prev_was_group_end_tree: false,
+            prev_requires_semicolon_tree: false,
+            had_previous_visible_tree: false,
+            tree_skip_indices: Vec::new(),
         }
     }
 
@@ -168,6 +178,10 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
+            prev_was_group_end_tree: false,
+            prev_requires_semicolon_tree: false,
+            had_previous_visible_tree: false,
+            tree_skip_indices: Vec::new(),
         }
     }
 
@@ -1172,6 +1186,7 @@ impl<'a> Serializer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn visit_group(
         &mut self,
         stmt: CssStmt,
@@ -1196,6 +1211,7 @@ impl<'a> Serializer<'a> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
     }
@@ -2124,6 +2140,585 @@ impl<'a> Serializer<'a> {
         }
 
         Ok(true)
+    }
+
+    // ── Tree-walking serialization ──────────────────────────────────────
+
+    /// Serialize directly from a CssTree without materializing Vec<CssStmt> bodies.
+    /// Returns `prev_requires_semicolon` for the caller to pass to `finish()`.
+    pub fn serialize_tree(
+        &mut self,
+        tree: &CssTree,
+        combined_imports: &[CssStmt],
+        import_tree_count: usize,
+        has_out_of_order_imports: bool,
+    ) -> SassResult<bool> {
+        let root_children = tree.children(CssTree::ROOT);
+
+        // Determine iteration order based on import section reordering
+        // (mirrors logic from visitor.finish() lines 330-349 and lib.rs lines 222-270)
+        if has_out_of_order_imports
+            && import_tree_count > 0
+            && import_tree_count <= root_children.len()
+        {
+            // First: import-section tree items (comments before out-of-order imports)
+            self.serialize_tree_children(tree, &root_children[..import_tree_count])?;
+            // Then: combined imports (standalone CssStmts)
+            self.serialize_combined_imports(combined_imports)?;
+            // Then: remaining tree items
+            self.serialize_tree_children(tree, &root_children[import_tree_count..])?;
+        } else if !combined_imports.is_empty() {
+            // Combined imports first, then all tree items
+            self.serialize_combined_imports(combined_imports)?;
+            self.serialize_tree_children(tree, root_children)?;
+        } else {
+            // No import reordering needed
+            self.serialize_tree_children(tree, root_children)?;
+        }
+
+        Ok(self.prev_requires_semicolon_tree)
+    }
+
+    /// Serialize a sequence of combined import CssStmts (standalone, not in tree).
+    fn serialize_combined_imports(&mut self, imports: &[CssStmt]) -> SassResult<()> {
+        for stmt in imports {
+            if stmt.is_invisible() {
+                continue;
+            }
+
+            let is_group_end = stmt.is_group_end();
+            let requires_semicolon = Self::requires_semicolon(stmt);
+
+            if self.prev_requires_semicolon_tree {
+                self.buffer.push(b';');
+            }
+
+            if !self.buffer.is_empty() || self.had_previous_visible_tree {
+                self.write_optional_newline();
+            }
+
+            if self.prev_was_group_end_tree && !self.buffer.is_empty() {
+                self.write_optional_newline();
+            }
+
+            let buf_len_before = self.buffer.len();
+            self.visit_stmt(stmt.clone())?;
+
+            self.had_previous_visible_tree = true;
+
+            if self.buffer.len() == buf_len_before {
+                continue;
+            }
+
+            self.prev_was_group_end_tree = is_group_end;
+            self.prev_requires_semicolon_tree = requires_semicolon;
+        }
+        Ok(())
+    }
+
+    /// Serialize a slice of tree children indices as top-level statements.
+    fn serialize_tree_children(
+        &mut self,
+        tree: &CssTree,
+        children: &[CssTreeIdx],
+    ) -> SassResult<()> {
+        let mut i = 0;
+        while i < children.len() {
+            let idx = children[i];
+
+            if tree.is_invisible_in_tree(idx) {
+                i += 1;
+                continue;
+            }
+
+            let is_group_end = {
+                let stmt = tree.get(idx);
+                match &*stmt {
+                    Some(s) => s.is_group_end(),
+                    None => {
+                        i += 1;
+                        continue;
+                    }
+                }
+            };
+            let requires_semicolon = {
+                let stmt = tree.get(idx);
+                Self::requires_semicolon(stmt.as_ref().unwrap())
+            };
+            let closing_brace_line = {
+                let stmt = tree.get(idx);
+                self.stmt_closing_brace_line(stmt.as_ref().unwrap())
+            };
+
+            if self.prev_requires_semicolon_tree {
+                self.buffer.push(b';');
+            }
+
+            if !self.buffer.is_empty() || self.had_previous_visible_tree {
+                self.write_optional_newline();
+            }
+
+            if self.prev_was_group_end_tree && !self.buffer.is_empty() {
+                self.write_optional_newline();
+            }
+
+            let buf_len_before = self.buffer.len();
+            self.visit_stmt_from_tree(tree, idx)?;
+
+            self.had_previous_visible_tree = true;
+
+            if self.buffer.len() == buf_len_before {
+                i += 1;
+                continue;
+            }
+
+            // Sub-problem C at top level: comment after closing `}` on same source line
+            if let Some(brace_line) = closing_brace_line {
+                if let Some(next_idx) = self.next_visible_sibling(tree, children, i) {
+                    let next_child = children[next_idx];
+                    let inline_comment = {
+                        let stmt = tree.get(next_child);
+                        match &*stmt {
+                            Some(CssStmt::Comment(comment, span)) => {
+                                if self.comment_start_line(stmt.as_ref().unwrap())
+                                    == Some(brace_line)
+                                {
+                                    Some((comment.clone(), *span))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some((comment, span)) = inline_comment {
+                        self.write_inline_comment(&comment, span)?;
+                        self.tree_skip_indices.push(next_child);
+                    }
+                }
+            }
+
+            self.prev_was_group_end_tree = is_group_end;
+            self.prev_requires_semicolon_tree = requires_semicolon;
+
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// Find the next visible sibling index in a children slice, starting after `current_pos`.
+    /// Skips over invisible nodes and nodes in the skip list.
+    fn next_visible_sibling(
+        &self,
+        tree: &CssTree,
+        children: &[CssTreeIdx],
+        current_pos: usize,
+    ) -> Option<usize> {
+        children
+            .iter()
+            .enumerate()
+            .skip(current_pos + 1)
+            .find(|(_, &child_idx)| {
+                !self.tree_skip_indices.contains(&child_idx)
+                    && !tree.is_invisible_in_tree(child_idx)
+            })
+            .map(|(j, _)| j)
+    }
+
+    /// Visit a single statement from the tree, dispatching by variant.
+    fn visit_stmt_from_tree(&mut self, tree: &CssTree, idx: CssTreeIdx) -> SassResult<bool> {
+        if self.tree_skip_indices.contains(&idx) {
+            return Ok(false);
+        }
+
+        // Borrow the cell, determine the variant, extract what we need, drop the borrow.
+        let stmt_ref = tree.get(idx);
+        let stmt = match &*stmt_ref {
+            None => return Ok(false),
+            Some(s) => s,
+        };
+
+        match stmt {
+            CssStmt::Style(style) => {
+                if style.value.node.is_blank()
+                    && !style.value.node.is_empty_list()
+                    && !style.declared_as_custom_property
+                {
+                    return Ok(false);
+                }
+                // Clone the style to serialize (styles are leaf nodes)
+                let style = style.clone();
+                drop(stmt_ref);
+                self.write_style(style)?;
+                Ok(true)
+            }
+            CssStmt::Comment(comment, span) => {
+                let comment = comment.clone();
+                let span = *span;
+                drop(stmt_ref);
+                self.write_comment(&comment, span)?;
+                // write_comment returns () but may have been a no-op for compressed
+                Ok(true)
+            }
+            CssStmt::Import(import, modifier) => {
+                let import = import.clone();
+                let modifier = modifier.clone();
+                drop(stmt_ref);
+                self.write_import(&import, modifier)?;
+                Ok(true)
+            }
+            CssStmt::RuleSet {
+                selector,
+                is_group_end: _,
+                source_span,
+                ..
+            } => {
+                if selector.is_invisible_or_bogus() {
+                    return Ok(false);
+                }
+                // Check if tree children are all invisible
+                if !tree.has_visible_child(idx) {
+                    return Ok(false);
+                }
+
+                // Clone the selector Rc so we can drop the cell borrow
+                let selector = selector.clone();
+                let source_span = *source_span;
+                drop(stmt_ref);
+
+                self.write_indentation();
+                let sel_list = selector.as_selector_list();
+                let brace_line = Some(self.source_line(sel_list.span.high()));
+                self.write_top_level_selector_list(&sel_list);
+                drop(sel_list);
+
+                // Comment-only body on same line as `{`: render single-line (issue_894)
+                if !self.options.is_compressed() {
+                    let children = tree.children(idx);
+                    let all_comments = !children.is_empty()
+                        && children.iter().all(|&c| {
+                            let s = tree.get(c);
+                            matches!(&*s, Some(CssStmt::Comment(..)))
+                        });
+                    if all_comments {
+                        if let Some(bl) = brace_line {
+                            let all_on_brace_line = children.iter().all(|&c| {
+                                let s = tree.get(c);
+                                match &*s {
+                                    Some(stmt) => self.comment_start_line(stmt) == Some(bl),
+                                    None => true,
+                                }
+                            });
+                            if all_on_brace_line {
+                                self.buffer.extend_from_slice(b" { ");
+                                for &child in children {
+                                    let s = tree.get(child);
+                                    if let Some(CssStmt::Comment(ref comment, span)) = &*s {
+                                        let comment = comment.clone();
+                                        let span = *span;
+                                        drop(s);
+                                        self.write_comment(&comment, span)?;
+                                    }
+                                }
+                                self.buffer.extend_from_slice(b" }");
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+
+                self.write_children_from_tree(tree, idx, brace_line, source_span)?;
+                Ok(true)
+            }
+            CssStmt::Media(media_rule, ..) => {
+                if !tree.has_visible_child(idx) {
+                    return Ok(false);
+                }
+
+                self.write_indentation();
+                self.buffer.extend_from_slice(b"@media ");
+
+                if let Some((last, rest)) = media_rule.query.split_last() {
+                    for query in rest {
+                        self.write_media_query(query);
+                        self.buffer.push(b',');
+                        self.write_optional_space();
+                    }
+                    self.write_media_query(last);
+                }
+
+                let brace_line = media_rule
+                    .query_span
+                    .map(|span| self.source_line(span.high()));
+                drop(stmt_ref);
+                self.write_children_from_tree(tree, idx, brace_line, None)?;
+                Ok(true)
+            }
+            CssStmt::Supports(supports_rule, _) => {
+                if !tree.has_visible_child(idx) {
+                    return Ok(false);
+                }
+
+                self.write_indentation();
+                self.buffer.extend_from_slice(b"@supports");
+
+                if !supports_rule.params.is_empty() {
+                    self.buffer.push(b' ');
+                    self.buffer
+                        .extend_from_slice(supports_rule.params.as_bytes());
+                }
+
+                drop(stmt_ref);
+                self.write_children_from_tree(tree, idx, None, None)?;
+                Ok(true)
+            }
+            CssStmt::UnknownAtRule(unknown_at_rule, ..) => {
+                self.write_indentation();
+                self.buffer.push(b'@');
+                self.buffer
+                    .extend_from_slice(unknown_at_rule.name.as_bytes());
+
+                if !unknown_at_rule.params.is_empty() {
+                    self.buffer.push(b' ');
+                    if unknown_at_rule.params.contains('\n') {
+                        self.buffer
+                            .extend_from_slice(unknown_at_rule.params.as_bytes());
+                    } else {
+                        self.buffer.extend_from_slice(
+                            normalize_whitespace(&unknown_at_rule.params).as_bytes(),
+                        );
+                    }
+                }
+
+                if !unknown_at_rule.has_body {
+                    return Ok(true);
+                }
+
+                let children = tree.children(idx);
+                if children.iter().all(|&c| tree.is_invisible_in_tree(c)) {
+                    self.buffer.extend_from_slice(b" {}");
+                    return Ok(true);
+                }
+
+                // Comment-only body renders on a single line
+                let all_comments = !children.is_empty()
+                    && children.iter().all(|&c| {
+                        let s = tree.get(c);
+                        matches!(&*s, Some(CssStmt::Comment(..)))
+                    });
+                if all_comments {
+                    self.buffer.extend_from_slice(b" { ");
+                    for &child in children {
+                        let s = tree.get(child);
+                        if let Some(CssStmt::Comment(ref comment, span)) = &*s {
+                            let comment = comment.clone();
+                            let span = *span;
+                            drop(s);
+                            self.write_comment(&comment, span)?;
+                        }
+                    }
+                    self.buffer.extend_from_slice(b" }");
+                    return Ok(true);
+                }
+
+                drop(stmt_ref);
+                self.write_children_from_tree(tree, idx, None, None)?;
+                Ok(true)
+            }
+            CssStmt::KeyframesRuleSet(keyframes_rule_set) => {
+                self.write_indentation();
+                let selector = keyframes_rule_set
+                    .selector
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                self.buffer.extend_from_slice(selector.as_bytes());
+                drop(stmt_ref);
+                self.write_children_from_tree(tree, idx, None, None)?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Write children of a container node from the tree (mirrors write_children).
+    /// `parent_source_span` is used for RuleSet closing-brace line detection.
+    fn write_children_from_tree(
+        &mut self,
+        tree: &CssTree,
+        parent_idx: CssTreeIdx,
+        opening_brace_line: Option<usize>,
+        _parent_source_span: Option<Span>,
+    ) -> SassResult<()> {
+        if self.options.is_compressed() {
+            self.buffer.push(b'{');
+        } else {
+            self.buffer.extend_from_slice(b" {");
+        }
+
+        self.indentation += self.indent_width;
+
+        let children = tree.children(parent_idx);
+        // Build a local skip set for consumed inline comments
+        let mut skip: Vec<CssTreeIdx> = Vec::new();
+
+        // Sub-problem B: Check if first visible child is an inline comment
+        // on the same source line as the opening `{`
+        if !self.options.is_compressed() {
+            if let Some(brace_line) = opening_brace_line {
+                if let Some(&first_visible_idx) = children
+                    .iter()
+                    .find(|&&c| !tree.is_invisible_in_tree(c) && !skip.contains(&c))
+                {
+                    let s = tree.get(first_visible_idx);
+                    if let Some(CssStmt::Comment(ref comment, span)) = &*s {
+                        if self.comment_start_line(s.as_ref().unwrap()) == Some(brace_line) {
+                            let comment = comment.clone();
+                            let span = *span;
+                            drop(s);
+                            self.write_inline_comment(&comment, span)?;
+                            skip.push(first_visible_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !self.options.is_compressed() {
+            self.buffer.push(b'\n');
+        }
+
+        let mut child_iter_pos = 0;
+        while child_iter_pos < children.len() {
+            let child_idx = children[child_iter_pos];
+            child_iter_pos += 1;
+
+            if skip.contains(&child_idx) || tree.is_invisible_in_tree(child_idx) {
+                continue;
+            }
+
+            let needs_semicolon;
+            let end_line;
+            let closing_brace_line;
+            let is_last;
+            {
+                let s = tree.get(child_idx);
+                let stmt = match &*s {
+                    None => continue,
+                    Some(st) => st,
+                };
+                needs_semicolon = Self::requires_semicolon(stmt);
+                end_line = self.stmt_end_line(stmt);
+                closing_brace_line = self.stmt_closing_brace_line(stmt);
+                // Check if there are any more visible children after this one
+                is_last = !children[child_iter_pos..].iter().any(|&c| {
+                    !skip.contains(&c) && !tree.is_invisible_in_tree(c)
+                });
+            }
+
+            let did_write = self.visit_stmt_from_tree(tree, child_idx)?;
+
+            if !did_write {
+                continue;
+            }
+
+            if needs_semicolon {
+                if is_last && self.options.is_compressed() {
+                    // skip trailing semicolon in compressed mode
+                } else {
+                    self.buffer.push(b';');
+                }
+            }
+
+            if !self.options.is_compressed() {
+                // Sub-problem A: inline comment after style on same source line
+                if let Some(style_end_line) = end_line {
+                    if needs_semicolon {
+                        if let Some(next_pos) = self.next_visible_child(
+                            tree,
+                            children,
+                            child_iter_pos,
+                            &skip,
+                        ) {
+                            let next_child = children[next_pos];
+                            let s = tree.get(next_child);
+                            if let Some(CssStmt::Comment(ref comment, span)) = &*s {
+                                if self.comment_start_line(s.as_ref().unwrap())
+                                    == Some(style_end_line)
+                                {
+                                    let comment = comment.clone();
+                                    let span = *span;
+                                    drop(s);
+                                    self.write_inline_comment(&comment, span)?;
+                                    skip.push(next_child);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sub-problem C: inline comment after closing `}` on same source line
+                if let Some(brace_line) = closing_brace_line {
+                    if let Some(next_pos) = self.next_visible_child(
+                        tree,
+                        children,
+                        child_iter_pos,
+                        &skip,
+                    ) {
+                        let next_child = children[next_pos];
+                        let s = tree.get(next_child);
+                        if let Some(CssStmt::Comment(ref comment, span)) = &*s {
+                            if self.comment_start_line(s.as_ref().unwrap()) == Some(brace_line) {
+                                let comment = comment.clone();
+                                let span = *span;
+                                drop(s);
+                                self.write_inline_comment(&comment, span)?;
+                                skip.push(next_child);
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.write_optional_newline();
+        }
+
+        // In compressed mode, remove trailing semicolons before closing brace
+        if self.options.is_compressed() {
+            while self.buffer.last() == Some(&b';') {
+                self.buffer.pop();
+            }
+        }
+
+        self.indentation -= self.indent_width;
+
+        if self.options.is_compressed() {
+            self.buffer.push(b'}');
+        } else {
+            self.write_indentation();
+            self.buffer.extend_from_slice(b"}");
+        }
+
+        Ok(())
+    }
+
+    /// Find the next visible child in a children slice, skipping invisible and skipped nodes.
+    fn next_visible_child(
+        &self,
+        tree: &CssTree,
+        children: &[CssTreeIdx],
+        start: usize,
+        skip: &[CssTreeIdx],
+    ) -> Option<usize> {
+        children
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find(|(_, &child_idx)| {
+                !skip.contains(&child_idx) && !tree.is_invisible_in_tree(child_idx)
+            })
+            .map(|(j, _)| j)
     }
 }
 

@@ -310,9 +310,13 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { compile, compileString, compileAsync, compileStringAsync } = nativeBinding
+const { compile, compileString, compileAsync, compileStringAsync, compileParallel, compileParallelAsync, compileMany, compileManyAsync } = nativeBinding
 
 module.exports.compile = compile
 module.exports.compileString = compileString
 module.exports.compileAsync = compileAsync
 module.exports.compileStringAsync = compileStringAsync
+module.exports.compileParallel = compileParallel
+module.exports.compileParallelAsync = compileParallelAsync
+module.exports.compileMany = compileMany
+module.exports.compileManyAsync = compileManyAsync

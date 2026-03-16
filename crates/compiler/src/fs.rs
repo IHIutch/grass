@@ -11,7 +11,7 @@ use std::{
 /// trait (`is_absolute`, `parent`, `join`, *&c.*); but that would infect too many other APIs to be
 /// desirable, so we live with it as it is—which is also acceptable, because the motivating example
 /// use case is mostly using this as an optimisation over the real platform underneath.
-pub trait Fs: std::fmt::Debug {
+pub trait Fs: std::fmt::Debug + Send + Sync {
     /// Returns `true` if the path exists on disk and is pointing at a directory.
     fn is_dir(&self, path: &Path) -> bool;
     /// Returns `true` if the path exists on disk and is pointing at a regular file.

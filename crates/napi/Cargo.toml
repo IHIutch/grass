@@ -10,7 +10,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-grass_compiler = { path = "../compiler", features = ["random"] }
+grass_compiler = { path = "../compiler", features = ["random", "parallel"] }
 napi = { version = "2", features = ["napi4"] }
 napi-derive = "2"
 mimalloc = { version = "0.1", default-features = false }

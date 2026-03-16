@@ -1,8 +1,8 @@
 use std::{
     borrow::Cow,
-    cell::RefCell,
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use grass::{Fs, Logger};
@@ -172,25 +172,25 @@ struct TestLoggerState {
 }
 
 #[derive(Debug, Default)]
-pub struct TestLogger(RefCell<TestLoggerState>);
+pub struct TestLogger(Mutex<TestLoggerState>);
 
 #[allow(unused)]
 impl TestLogger {
     pub fn debug_messages(&self) -> Vec<String> {
-        self.0.borrow().debug_messages.clone()
+        self.0.lock().unwrap().debug_messages.clone()
     }
 
     pub fn warning_messages(&self) -> Vec<String> {
-        self.0.borrow().warning_messages.clone()
+        self.0.lock().unwrap().warning_messages.clone()
     }
 }
 
 impl Logger for TestLogger {
     fn debug(&self, _location: SpanLoc, message: &str) {
-        self.0.borrow_mut().debug_messages.push(message.into());
+        self.0.lock().unwrap().debug_messages.push(message.into());
     }
 
     fn warn(&self, _location: SpanLoc, message: &str) {
-        self.0.borrow_mut().warning_messages.push(message.into());
+        self.0.lock().unwrap().warning_messages.push(message.into());
     }
 }
