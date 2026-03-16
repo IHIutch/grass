@@ -16,7 +16,3 @@ export declare function compile(path: string, options?: CompileOptions | undefin
 export declare function compileString(source: string, options?: CompileOptions | undefined | null): CompileResult
 export declare function compileAsync(path: string, options?: CompileOptions | undefined | null): Promise<CompileResult>
 export declare function compileStringAsync(source: string, options?: CompileOptions | undefined | null): Promise<CompileResult>
-export declare function compileParallel(path: string, options?: CompileOptions | undefined | null, numThreads?: number | undefined | null, minFrontier?: number | undefined | null): CompileResult
-export declare function compileParallelAsync(path: string, options?: CompileOptions | undefined | null, numThreads?: number | undefined | null, minFrontier?: number | undefined | null): Promise<CompileResult>
-export declare function compileMany(paths: Array<string>, options?: CompileOptions | undefined | null): Array<CompileResult>
-export declare function compileManyAsync(paths: Array<string>, options?: CompileOptions | undefined | null): Promise<CompileResult[]>
