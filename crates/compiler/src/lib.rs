@@ -331,7 +331,7 @@ fn try_parallel_compile(
     }
 
     // Split into shared deps (foundation) and independent components
-    let shared_count = detect_shared_prefix_count(&forward_urls);
+    let shared_count = detect_shared_prefix_count(&forward_urls, path, options);
     let component_forwards = &forward_urls[shared_count..];
 
     if component_forwards.len() < PARALLEL_MIN_FRONTIER {
@@ -585,14 +585,8 @@ pub fn from_path_parallel<P: AsRef<Path>>(
     // For now, detect this by trying shared_count = 0 first (no shared deps to re-eval).
     // If that doesn't work (CSS mismatch), increase shared_count.
     //
-    // For USWDS-like structures: the first few forwards are the foundation that all
-    // components depend on. We detect this by checking if removing them would cause
-    // compilation errors for later forwards. For simplicity, we try the "all are
-    // independent" assumption first.
-    //
-    // Use a simple heuristic: if forwards[0] contains "core" or "global" or "elements"
-    // in the path, include the initial chain of such forwards as shared.
-    let shared_count = detect_shared_prefix_count(&forward_urls);
+    // Detect shared dependency prefix by scanning component files for @use deps.
+    let shared_count = detect_shared_prefix_count(&forward_urls, path, options);
     let shared_forwards = &forward_urls[..shared_count];
     let component_forwards = &forward_urls[shared_count..];
 
@@ -728,28 +722,115 @@ pub fn from_path_parallel<P: AsRef<Path>>(
     Ok(final_css)
 }
 
-/// Detect how many of the initial @forward statements form the "shared dependency base"
-/// that all later components depend on. Uses path-based heuristics.
-fn detect_shared_prefix_count(forward_urls: &[String]) -> usize {
-    // Heuristic: shared deps have paths containing keywords like "core", "global",
-    // "normalize", "elements", "fonts", "helpers", "utilities" in early positions.
-    // Once we see a path that looks like a component (e.g., "usa-*"), stop.
-    let shared_keywords = [
-        "core", "global", "normalize", "elements", "fonts", "helpers", "reset",
-        "variables", "settings", "mixins", "functions",
-    ];
+/// Detect how many of the initial @forward statements form the "shared dependency
+/// base" that later components depend on.
+///
+/// Resolves each forward URL to a file, scans it for `@use` statements, and
+/// checks if any later forward `@use`s a module rooted at an earlier forward's
+/// path. The shared prefix is the longest initial run of forwards where at least
+/// one later forward depends on them.
+///
+/// Falls back to 0 (no shared prefix) if resolution fails.
+fn detect_shared_prefix_count(forward_urls: &[String], path: &Path, options: &Options) -> usize {
+    if forward_urls.len() < 2 {
+        return 0;
+    }
 
-    let mut shared_count = 0;
-    for url in forward_urls {
-        let lower = url.to_lowercase();
-        let is_shared = shared_keywords.iter().any(|kw| lower.contains(kw));
-        if is_shared {
-            shared_count += 1;
-        } else {
-            break; // First non-shared forward marks the boundary
+    // Collect the base module names from each forward URL.
+    // e.g., "uswds-core/src/styles" → "uswds-core"
+    // e.g., "usa-accordion/src/styles" → "usa-accordion"
+    let base_names: Vec<&str> = forward_urls
+        .iter()
+        .map(|url| {
+            // Take the first path component as the module base name
+            url.split('/').next().unwrap_or(url.as_str())
+        })
+        .collect();
+
+    // For each forward (starting from the end), resolve the file and scan for @use.
+    // If it @uses a module whose base name matches an earlier forward, that earlier
+    // forward is "shared".
+    let entry_dir = path.parent().unwrap_or(Path::new(""));
+    let mut max_shared = 0;
+
+    // Check a sample of later forwards to find their dependencies
+    let sample_count = forward_urls.len().min(10);
+    let sample_start = forward_urls.len().saturating_sub(sample_count);
+
+    for url in &forward_urls[sample_start..] {
+        // Try to resolve and read the file
+        let file_content = resolve_and_read_forward(url, entry_dir, options);
+        let content = match file_content {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Scan for @use statements and check if they reference earlier forwards
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some(use_url) = extract_use_url(trimmed) {
+                let use_base = use_url.split('/').next().unwrap_or(&use_url);
+                // Check if this @use matches any earlier forward's base name
+                for (i, base) in base_names.iter().enumerate() {
+                    if *base == use_base && i < forward_urls.len() - 1 {
+                        max_shared = max_shared.max(i + 1);
+                    }
+                }
+            }
         }
     }
-    shared_count
+
+    max_shared
+}
+
+/// Try to resolve a forward URL to a file path and read its content.
+fn resolve_and_read_forward(url: &str, entry_dir: &Path, options: &Options) -> Option<String> {
+    let base_path = entry_dir.join(url);
+
+    // Try common Sass file resolution patterns
+    let candidates = [
+        base_path.with_extension("scss"),
+        base_path.join("_index.scss"),
+        base_path.with_file_name(format!(
+            "_{}",
+            base_path.file_name()?.to_str()?
+        )).with_extension("scss"),
+    ];
+
+    for candidate in &candidates {
+        if let Ok(content) = options.fs.read(candidate) {
+            return String::from_utf8(content).ok();
+        }
+    }
+
+    // Try load paths
+    for load_path in &options.load_paths {
+        let lp_base = load_path.join(url);
+        let lp_candidates = [
+            lp_base.with_extension("scss"),
+            lp_base.join("_index.scss"),
+        ];
+        for candidate in &lp_candidates {
+            if let Ok(content) = options.fs.read(candidate) {
+                return String::from_utf8(content).ok();
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract the URL from a `@use "url"` statement, if the line is one.
+fn extract_use_url(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("@use")?;
+    let rest = rest.trim_start();
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &rest[1..];
+    let end = rest.find(quote)?;
+    Some(&rest[..end])
 }
 
 /// Compile CSS from a string
