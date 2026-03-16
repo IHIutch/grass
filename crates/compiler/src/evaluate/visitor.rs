@@ -1554,8 +1554,6 @@ impl<'a> Visitor<'a> {
             // Swap back the parent's CssTree and merge the module's tree into it.
             mem::swap(&mut visitor.css_tree, &mut module_css_tree);
             let merged_indices = visitor.css_tree.merge_from(module_css_tree);
-            // Replace module_css_tree with a new empty tree (it was consumed by merge_from)
-            module_css_tree = CssTree::new();
 
             // Record merged indices for potential cloning.
             module_css_indices = merged_indices.clone();

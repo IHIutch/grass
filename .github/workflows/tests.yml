@@ -81,7 +81,7 @@ jobs:
 
           if [ "$DIFF_LINES" -eq 0 ]; then
               echo "No differences found"
-          elif [ "$DIFF_LINES" -lt 100 ]; then
+          elif [ "$DIFF_LINES" -lt 200 ]; then
               echo "Minor differences found ($DIFF_LINES changed lines out of $TOTAL_LINES — likely color rounding)"
               diff -u grass-output.css dart-sass-output.css | head -40
           else

@@ -282,8 +282,8 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
 /// automatic parallel compilation.
 const PARALLEL_MIN_FRONTIER: usize = 8;
 
-/// Guard against recursive parallelism. When a worker thread is already
-/// running a parallel compilation, inner calls must not spawn more threads.
+// Guard against recursive parallelism. When a worker thread is already
+// running a parallel compilation, inner calls must not spawn more threads.
 thread_local! {
     static IN_PARALLEL_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -373,7 +373,7 @@ fn compile_parallel_inner(
     };
 
     // Partition components across threads
-    let chunk_size = (component_forwards.len() + num_threads - 1) / num_threads;
+    let chunk_size = component_forwards.len().div_ceil(num_threads);
     let chunks: Vec<&[String]> = component_forwards.chunks(chunk_size).collect();
 
     // Parallel compilation: each thread compiles shared_deps + its component batch
@@ -398,12 +398,8 @@ fn compile_parallel_inner(
         handles
             .into_iter()
             .map(|h| {
-                h.join().unwrap_or_else(|_| {
-                    Err(
-                        std::io::Error::new(std::io::ErrorKind::Other, "Worker thread panicked")
-                            .into(),
-                    )
-                })
+                h.join()
+                    .unwrap_or_else(|_| Err(std::io::Error::other("Worker thread panicked").into()))
             })
             .collect()
     });
@@ -534,7 +530,6 @@ pub fn from_path_parallel<P: AsRef<Path>>(
     };
 
     // Extract @forward URLs and loud comments from the entry stylesheet.
-    let mut preamble_lines: Vec<String> = Vec::new(); // Loud comments before first forward
     let mut forward_urls: Vec<String> = Vec::new();
     let mut has_non_forward = false;
     let mut can_parallelize = true;
@@ -613,7 +608,7 @@ pub fn from_path_parallel<P: AsRef<Path>>(
     };
 
     // Partition components across threads
-    let chunk_size = (component_forwards.len() + num_threads - 1) / num_threads;
+    let chunk_size = component_forwards.len().div_ceil(num_threads);
     let chunks: Vec<&[String]> = component_forwards.chunks(chunk_size).collect();
 
     let t_start = std::time::Instant::now();
@@ -640,12 +635,8 @@ pub fn from_path_parallel<P: AsRef<Path>>(
         handles
             .into_iter()
             .map(|h| {
-                h.join().unwrap_or_else(|_| {
-                    Err(
-                        std::io::Error::new(std::io::ErrorKind::Other, "Worker thread panicked")
-                            .into(),
-                    )
-                })
+                h.join()
+                    .unwrap_or_else(|_| Err(std::io::Error::other("Worker thread panicked").into()))
             })
             .collect()
     });
