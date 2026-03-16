@@ -1440,6 +1440,10 @@ impl<'a> Visitor<'a> {
         // Create a fresh ExtensionStore for this module (per-module scoping).
         let mut module_extension_store = ExtensionStore::new(self.empty_span);
         let mut module_upstream: Vec<Rc<RefCell<Module>>> = Vec::new();
+        // Fresh CssTree for this module — enables independent CSS building
+        // per module, a prerequisite for parallel evaluation.
+        let mut module_css_tree = CssTree::new();
+        let mut module_css_indices: Vec<CssTreeIdx> = Vec::new();
 
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
@@ -1473,32 +1477,28 @@ impl<'a> Visitor<'a> {
             mem::swap(&mut visitor.extender, &mut module_extension_store);
             let old_upstream = mem::take(&mut visitor.upstream_modules);
 
-            // Snapshot ROOT children count to track which CSS this module adds.
-            let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
+            // Swap in a fresh CssTree for this module.
+            mem::swap(&mut visitor.css_tree, &mut module_css_tree);
 
             visitor.visit_stylesheet(&stylesheet)?;
 
             // Flush any remaining pending imports from this module.
             visitor.flush_pending_imports(true);
 
-            // Record this module's root-level CSS indices for potential cloning.
-            let new_css_indices: Vec<CssTreeIdx> = visitor
+            // All ROOT children in the module's tree are this module's CSS.
+            let root_children: Vec<CssTreeIdx> = visitor
                 .css_tree
-                .root_children_from(root_children_before)
+                .root_children_from(0)
                 .into_iter()
                 .filter(|idx| !visitor.css_tree.is_hidden(*idx))
                 .collect();
-            visitor.module_css_indices.insert(url.clone(), new_css_indices.clone());
 
-            // When this module is being evaluated inside a nested @import
-            // (i.e., `a { @import "file-that-uses-modules" }`), the module's
-            // CSS was emitted at ROOT with parent=None. We need to resolve
-            // module CSS selectors with the enclosing parent selector so that
-            // they appear nested under the parent in the output.
+            // When this module is being evaluated inside a nested @import,
+            // resolve parent selectors on the module's tree (before merging).
             if visitor.in_import_context {
                 if let Some(ref parent_selector) = old_style_rule {
                     let parent_list = parent_selector.as_selector_list().clone();
-                    for idx in &new_css_indices {
+                    for idx in &root_children {
                         let needs_resolution = {
                             let stmt = visitor.css_tree.get(*idx);
                             matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
@@ -1517,17 +1517,22 @@ impl<'a> Visitor<'a> {
                                     true,
                                 )?;
                                 selector.set_inner(resolved);
-                                // Clear group_end since these are conceptually
-                                // children of the enclosing style rule, flattened
-                                // to top level. Blank-line insertion should be
-                                // controlled by the enclosing context, not the
-                                // module's internal evaluation.
                                 *is_group_end = false;
                             }
                         }
                     }
                 }
             }
+
+            // Swap back the parent's CssTree and merge the module's tree into it.
+            mem::swap(&mut visitor.css_tree, &mut module_css_tree);
+            let merged_indices = visitor.css_tree.merge_from(module_css_tree);
+            // Replace module_css_tree with a new empty tree (it was consumed by merge_from)
+            module_css_tree = CssTree::new();
+
+            // Record merged indices for potential cloning.
+            module_css_indices = merged_indices.clone();
+            visitor.module_css_indices.insert(url.clone(), merged_indices);
 
             // Swap back the parent's ExtensionStore and capture the module's.
             mem::swap(&mut visitor.extender, &mut module_extension_store);
