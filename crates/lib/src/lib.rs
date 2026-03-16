@@ -66,9 +66,12 @@ grass input.scss
 )]
 
 pub use grass_compiler::{
-    from_path, from_string, Error, ErrorKind, Fs, InputSyntax, Logger, NullFs, NullLogger, Options,
-    OutputStyle, Result, StdFs, StdLogger,
+    from_path, from_path_parallel, from_string, Error, ErrorKind, Fs, InputSyntax, Logger, NullFs,
+    NullLogger, Options, OutputStyle, Result, StdFs, StdLogger,
 };
+
+#[cfg(feature = "parallel")]
+pub use grass_compiler::from_paths;
 
 /// Include CSS in your binary at compile time from a Sass source file
 ///

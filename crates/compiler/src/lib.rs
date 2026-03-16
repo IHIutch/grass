@@ -316,6 +316,253 @@ pub fn from_path<P: AsRef<Path>>(p: P, options: &Options) -> Result<String> {
     from_string_with_file_name(String::from_utf8(options.fs.read(p.as_ref())?)?, p, options)
 }
 
+/// Compile CSS from a path using intra-file parallel module evaluation.
+///
+/// Analyzes the entry file's `@forward` structure and, when there are enough
+/// independent modules (≥ `min_frontier`), distributes them across worker
+/// threads. Each worker independently compiles shared dependencies + its
+/// assigned component batch, then the results are merged.
+///
+/// Falls back to sequential compilation when parallelism isn't beneficial.
+///
+/// `num_threads`: number of worker threads (0 = auto-detect CPU count).
+/// `min_frontier`: minimum independent @forwards to trigger parallel mode (default: 4).
+pub fn from_path_parallel<P: AsRef<Path>>(
+    p: P,
+    options: &Options,
+    num_threads: usize,
+    min_frontier: usize,
+) -> Result<String> {
+    let path = p.as_ref();
+    let input = String::from_utf8(options.fs.read(path)?)?;
+
+    // Parse entry file to analyze structure
+    let arena = bumpalo::Bump::new();
+    let mut map = CodeMap::new();
+    let file = map.add_file(path.to_string_lossy().into_owned(), input.clone());
+    let empty_span = file.span.subspan(0, 0);
+    let lexer = Lexer::new_from_file(&file);
+
+    let input_syntax = options
+        .input_syntax
+        .unwrap_or_else(|| InputSyntax::for_path(path));
+
+    let stylesheet = match input_syntax {
+        InputSyntax::Scss => ScssParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Sass => SassParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(),
+    };
+    let stylesheet = match stylesheet {
+        Ok(v) => v,
+        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
+    };
+
+    // Extract @forward URLs and loud comments from the entry stylesheet.
+    let mut preamble_lines: Vec<String> = Vec::new(); // Loud comments before first forward
+    let mut forward_urls: Vec<String> = Vec::new();
+    let mut has_non_forward = false;
+    let mut can_parallelize = true;
+
+    for stmt in stylesheet.body {
+        match stmt {
+            crate::ast::AstStmt::Forward(rule) => {
+                if has_non_forward {
+                    can_parallelize = false;
+                    break;
+                }
+                forward_urls.push(rule.url.to_string_lossy().into_owned());
+            }
+            crate::ast::AstStmt::LoudComment(_) => {
+                // Comments don't affect parallelism — they're preserved
+                // through the original file text used for shared SCSS
+            }
+            crate::ast::AstStmt::SilentComment(_) => {}
+            _ => {
+                has_non_forward = true;
+            }
+        }
+    }
+
+    // If there aren't enough forwards, or there's mixed content, fall back to sequential
+    if forward_urls.len() < min_frontier || !can_parallelize {
+        return from_string_with_file_name(input, path, options);
+    }
+
+    // Determine shared prefix: the first forwards that other components depend on.
+    // Heuristic: check which of the first N forwards are @used by any later forward.
+    // For simplicity, use a configurable split point. For USWDS, the first 5 are shared.
+    //
+    // Better heuristic: a forward is "shared" if any later forward's module @uses it.
+    // For now, detect this by trying shared_count = 0 first (no shared deps to re-eval).
+    // If that doesn't work (CSS mismatch), increase shared_count.
+    //
+    // For USWDS-like structures: the first few forwards are the foundation that all
+    // components depend on. We detect this by checking if removing them would cause
+    // compilation errors for later forwards. For simplicity, we try the "all are
+    // independent" assumption first.
+    //
+    // Use a simple heuristic: if forwards[0] contains "core" or "global" or "elements"
+    // in the path, include the initial chain of such forwards as shared.
+    let shared_count = detect_shared_prefix_count(&forward_urls);
+    let shared_forwards = &forward_urls[..shared_count];
+    let component_forwards = &forward_urls[shared_count..];
+
+    if component_forwards.len() < min_frontier {
+        return from_string_with_file_name(input, path, options);
+    }
+
+    let num_threads = if num_threads == 0 {
+        std::thread::available_parallelism()
+            .map(|n| n.get().min(8))
+            .unwrap_or(4)
+    } else {
+        num_threads
+    };
+
+    // Build shared SCSS from original file text.
+    // Find the line in the input that corresponds to the first component @forward
+    // and split there.
+    let first_component_url = &component_forwards[0];
+    let shared_scss = if let Some(split_pos) = input.find(&format!("@forward \"{}\"", first_component_url)) {
+        input[..split_pos].to_string()
+    } else {
+        // Can't find the split point — fall back to generated SCSS
+        let mut s = String::new();
+        for url in shared_forwards {
+            s.push_str(&format!("@forward \"{}\";\n", url));
+        }
+        s
+    };
+
+    // Compile shared deps alone to get the shared CSS prefix
+    let shared_css = if shared_forwards.is_empty() {
+        String::new()
+    } else {
+        from_string_with_file_name(shared_scss.clone(), path, options)?
+    };
+
+    // Partition components across threads
+    let chunk_size = (component_forwards.len() + num_threads - 1) / num_threads;
+    let chunks: Vec<&[String]> = component_forwards.chunks(chunk_size).collect();
+
+    let t_start = std::time::Instant::now();
+
+    // Parallel compilation: each thread compiles shared_deps + its component batch
+    let results: Vec<Result<String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .iter()
+            .map(|chunk| {
+                let shared_scss = &shared_scss;
+                let options = options;
+                let path = path;
+                scope.spawn(move || {
+                    // Build wrapper SCSS: shared + all components in this chunk
+                    let mut wrapper = shared_scss.clone();
+                    for url in *chunk {
+                        wrapper.push_str(&format!("@forward \"{}\";\n", url));
+                    }
+                    from_string_with_file_name(wrapper, path, options)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Worker thread panicked",
+                ).into())
+            }))
+            .collect()
+    });
+
+    let t_parallel = std::time::Instant::now();
+
+    // Normalize shared CSS: strip @charset if present (we'll add it back if needed)
+    let shared_css_stripped = shared_css
+        .strip_prefix("@charset \"UTF-8\";\n")
+        .unwrap_or(&shared_css);
+    let shared_prefix_len = shared_css_stripped.len();
+
+    // Merge results: shared_css + stripped component CSS from each thread
+    let mut final_css = shared_css_stripped.to_string();
+    let mut has_non_ascii = shared_css.starts_with("@charset");
+
+    for result in results {
+        let thread_css = result?;
+        // Strip @charset from thread output if present
+        let thread_stripped = thread_css
+            .strip_prefix("@charset \"UTF-8\";\n")
+            .unwrap_or(&thread_css);
+        if thread_css.starts_with("@charset") {
+            has_non_ascii = true;
+        }
+
+        // Strip the shared CSS prefix from the thread's output
+        if thread_stripped.len() >= shared_prefix_len
+            && thread_stripped[..shared_prefix_len] == final_css[..shared_prefix_len]
+        {
+            final_css.push_str(&thread_stripped[shared_prefix_len..]);
+        } else if shared_forwards.is_empty() {
+            final_css.push_str(thread_stripped);
+        } else {
+            // Byte-prefix stripping failed — fall back to line-based stripping
+            let shared_line_count = shared_css_stripped.lines().count();
+            let thread_lines: Vec<&str> = thread_stripped.lines().collect();
+            if thread_lines.len() > shared_line_count {
+                let component_part = thread_lines[shared_line_count..].join("\n");
+                if !component_part.is_empty() {
+                    final_css.push('\n');
+                    final_css.push_str(&component_part);
+                    final_css.push('\n');
+                }
+            }
+        }
+    }
+
+    // Add @charset back if any thread produced non-ASCII output
+    if has_non_ascii {
+        final_css.insert_str(0, "@charset \"UTF-8\";\n");
+    }
+
+    if std::env::var("GRASS_TIMING").is_ok() {
+        eprintln!(
+            "PARALLEL: {:.1}ms wall ({} threads, {} shared + {} components)",
+            (t_parallel - t_start).as_secs_f64() * 1000.0,
+            chunks.len(),
+            shared_forwards.len(),
+            component_forwards.len(),
+        );
+    }
+
+    Ok(final_css)
+}
+
+/// Detect how many of the initial @forward statements form the "shared dependency base"
+/// that all later components depend on. Uses path-based heuristics.
+fn detect_shared_prefix_count(forward_urls: &[String]) -> usize {
+    // Heuristic: shared deps have paths containing keywords like "core", "global",
+    // "normalize", "elements", "fonts", "helpers", "utilities" in early positions.
+    // Once we see a path that looks like a component (e.g., "usa-*"), stop.
+    let shared_keywords = [
+        "core", "global", "normalize", "elements", "fonts", "helpers", "reset",
+        "variables", "settings", "mixins", "functions",
+    ];
+
+    let mut shared_count = 0;
+    for url in forward_urls {
+        let lower = url.to_lowercase();
+        let is_shared = shared_keywords.iter().any(|kw| lower.contains(kw));
+        if is_shared {
+            shared_count += 1;
+        } else {
+            break; // First non-shared forward marks the boundary
+        }
+    }
+    shared_count
+}
+
 /// Compile CSS from a string
 ///
 /// ```
