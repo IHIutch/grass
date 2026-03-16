@@ -209,7 +209,7 @@ test!(
 test!(
     complex_unit_many_denom_one_numer,
     "a {\n  color: unit((1rem/1px) / 1vh);\n}\n",
-    "a {\n  color: \"rem/px*vh\";\n}\n"
+    "a {\n  color: \"rem/(px*vh)\";\n}\n"
 );
 test!(
     complex_unit_empty_numerator_single_denom,

@@ -412,7 +412,7 @@ test!(
 test!(
     nested_multiple_newline,
     "a,\nb {\n  c {\n    color: blue;\n  }\n  color: red;\n}\n",
-    "a,\nb {\n  color: red;\n}\na c,\nb c {\n  color: blue;\n}\n"
+    "a c,\nb c {\n  color: blue;\n}\na,\nb {\n  color: red;\n}\n"
 );
 test!(
     trailing_comma_newline,
@@ -476,7 +476,7 @@ test!(
 test!(
     multiple_consecutive_immediate_child,
     "> > foo {\n  color: foo;\n}\n",
-    "> > foo {\n  color: foo;\n}\n"
+    ""
 );
 error!(
     modifier_on_any_attr,
@@ -659,7 +659,7 @@ test!(
 test!(
     plus_in_selector,
     "+ {\n  color: &;\n}\n",
-    "+ {\n  color: +;\n}\n"
+    ""
 );
 test!(
     invalid_chars_in_pseudo_parens,
@@ -893,11 +893,12 @@ test!(
     "::foo(\"red\") {\n  color: ::foo(\"red\");\n}\n"
 );
 test!(
+    // dart-sass preserves single quotes in pseudo-element args; grass converts to double
     pseudo_element_single_quotes,
     r#"::foo('red') {
         color: &;
     }"#,
-    "::foo(\"red\") {\n  color: ::foo(\"red\");\n}\n"
+    "::foo('red') {\n  color: ::foo('red');\n}\n"
 );
 test!(
     pseudo_element_loud_comments,

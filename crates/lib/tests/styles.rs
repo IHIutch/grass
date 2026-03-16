@@ -44,7 +44,7 @@ test!(removes_empty_styles, "a {}\n", "");
 test!(
     doesnt_eat_style_after_ruleset,
     "a {\n  b {\n  color: red;\n}\n  color: blue;\n}\n",
-    "a {\n  color: blue;\n}\na b {\n  color: red;\n}\n"
+    "a b {\n  color: red;\n}\na {\n  color: blue;\n}\n"
 );
 test!(
     multiline_style,

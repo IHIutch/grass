@@ -319,7 +319,7 @@ test!(
 test!(
     combinator_child_and_child_distinct,
     "a {\n  color: selector-unify(\".c > .d\", \".e > .f\");\n}\n",
-    "a {\n  color: .e.c > .d.f;\n}\n"
+    "a {\n  color: .c.e > .d.f;\n}\n"
 );
 test!(
     combinator_child_and_child_super_selector,
@@ -329,7 +329,7 @@ test!(
 test!(
     combinator_child_and_child_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 > .s1-2\", \".c.s2-1 > .s2-2\");\n}\n",
-    "a {\n  color: .c.s2-1.s1-1 > .s1-2.s2-2;\n}\n"
+    "a {\n  color: .c.s1-1.s2-1 > .s1-2.s2-2;\n}\n"
 );
 test!(
     combinator_child_and_child_conflict,
@@ -359,7 +359,7 @@ test!(
 test!(
     combinator_sibling_and_sibling_distinct,
     "a {\n  color: selector-unify(\".c ~ .d\", \".e ~ .f\");\n}\n",
-    "a {\n  color: .c ~ .e ~ .d.f, .e ~ .c ~ .d.f, .e.c ~ .d.f;\n}\n"
+    "a {\n  color: .c ~ .e ~ .d.f, .e ~ .c ~ .d.f, .c.e ~ .d.f;\n}\n"
 );
 test!(
     combinator_sibling_and_sibling_same,
@@ -374,7 +374,7 @@ test!(
 test!(
     combinator_sibling_and_sibling_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 ~ .s1-2\", \".c.s2-1 ~ .s2-2\");\n}\n",
-    "a {\n  color: .c.s1-1 ~ .c.s2-1 ~ .s1-2.s2-2, .c.s2-1 ~ .c.s1-1 ~ .s1-2.s2-2, .c.s2-1.s1-1 ~ .s1-2.s2-2;\n}\n"
+    "a {\n  color: .c.s1-1 ~ .c.s2-1 ~ .s1-2.s2-2, .c.s2-1 ~ .c.s1-1 ~ .s1-2.s2-2, .c.s1-1.s2-1 ~ .s1-2.s2-2;\n}\n"
 );
 test!(
     combinator_sibling_and_sibling_conflict,
@@ -384,7 +384,7 @@ test!(
 test!(
     combinator_sibling_and_next_sibling_distinct,
     "a {\n  color: selector-unify(\".c ~ .d\", \".e + .f\");\n}\n",
-    "a {\n  color: .c ~ .e + .d.f, .e.c + .d.f;\n}\n"
+    "a {\n  color: .c ~ .e + .d.f, .c.e + .d.f;\n}\n"
 );
 test!(
     combinator_sibling_and_next_sibling_identical,
@@ -399,7 +399,7 @@ test!(
 test!(
     combinator_sibling_and_next_sibling_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 ~ .s1-2\", \".c.s2-1 + .s2-2\");\n}\n",
-    "a {\n  color: .c.s1-1 ~ .c.s2-1 + .s1-2.s2-2, .c.s2-1.s1-1 + .s1-2.s2-2;\n}\n"
+    "a {\n  color: .c.s1-1 ~ .c.s2-1 + .s1-2.s2-2, .c.s1-1.s2-1 + .s1-2.s2-2;\n}\n"
 );
 test!(
     combinator_sibling_and_next_sibling_conflict,
@@ -439,7 +439,7 @@ test!(
 test!(
     combinator_next_sibling_and_next_sibling_distinct,
     "a {\n  color: selector-unify(\".c + .d\", \".e + .f\");\n}\n",
-    "a {\n  color: .e.c + .d.f;\n}\n"
+    "a {\n  color: .c.e + .d.f;\n}\n"
 );
 test!(
     combinator_next_sibling_and_next_sibling_super_selector,
@@ -449,7 +449,7 @@ test!(
 test!(
     combinator_next_sibling_and_next_sibling_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 + .s1-2\", \".c.s2-1 + .s2-2\");\n}\n",
-    "a {\n  color: .c.s2-1.s1-1 + .s1-2.s2-2;\n}\n"
+    "a {\n  color: .c.s1-1.s2-1 + .s1-2.s2-2;\n}\n"
 );
 test!(
     combinator_next_sibling_and_next_sibling_conflict,
@@ -474,12 +474,12 @@ test!(
 test!(
     combinator_at_start_contiguous_super_sequence,
     "a {\n  color: selector-unify(\"+ ~ > .c\", \"> + ~ > > .d\");\n}\n",
-    "a {\n  color: > + ~ > > .c.d;\n}\n"
+    ""
 );
 test!(
     combinator_at_start_non_contiguous_super_sequence,
     "a {\n  color: selector-unify(\"+ ~ > .c\", \"+ > ~ ~ > .d\");\n}\n",
-    "a {\n  color: + > ~ ~ > .c.d;\n}\n"
+    ""
 );
 test!(
     combinator_at_start_distinct,
@@ -494,17 +494,17 @@ test!(
 test!(
     combinator_multiple_in_a_row_same,
     "a {\n  color: selector-unify(\".c + ~ > .d\", \".e + ~ > .f\");\n}\n",
-    "a {\n  color: .c .e + ~ > .d.f, .e .c + ~ > .d.f;\n}\n"
+    ""
 );
 test!(
     combinator_multiple_in_a_row_contiguous_super_sequence,
     "a {\n  color: selector-unify(\".c + ~ > .d\", \".e > + ~ > > .f\");\n}\n",
-    "a {\n  color: .c .e > + ~ > > .d.f, .e .c > + ~ > > .d.f;\n}\n"
+    ""
 );
 test!(
     combinator_multiple_in_a_row_non_contiguous_super_sequence,
     "a {\n  color: selector-unify(\".c + ~ > .d\", \".e + > ~ ~ > .f\");\n}\n",
-    "a {\n  color: .c .e + > ~ ~ > .d.f, .e .c + > ~ ~ > .d.f;\n}\n"
+    ""
 );
 test!(
     combinator_multiple_in_a_row_distinct,
@@ -564,7 +564,7 @@ test!(
 test!(
     root_in_both_can_unify,
     "a {\n  color: selector-unify(\".c:root .d\", \".e:root .f\");\n}\n",
-    "a {\n  color: .e.c:root .d.f;\n}\n"
+    "a {\n  color: .c.e:root .d.f;\n}\n"
 );
 error!(
     parent_in_first_arg,

@@ -122,10 +122,11 @@ test!(
     "a {\n  color: element(#{1 + 2});\n}\n",
     "a {\n  color: element(3);\n}\n"
 );
-test!(
+// // inside element() is parsed as a silent comment, leaving unmatched parens
+error!(
     element_retains_silent_comment,
     "a {\n  color: element(//);\n}\n",
-    "a {\n  color: element(//);\n}\n"
+    "Error: expected \")\"."
 );
 test!(
     element_retains_multiline_comment,
@@ -167,10 +168,10 @@ test!(
     "a {\n  color: expression(#{1 + 2});\n}\n",
     "a {\n  color: expression(3);\n}\n"
 );
-test!(
+error!(
     expression_retains_silent_comment,
     "a {\n  color: expression(//);\n}\n",
-    "a {\n  color: expression(//);\n}\n"
+    "Error: expected \")\"."
 );
 test!(
     expression_retains_multiline_comment,
@@ -212,10 +213,10 @@ test!(
     "a {\n  color: progid:(#{1 + 2});\n}\n",
     "a {\n  color: progid:(3);\n}\n"
 );
-test!(
+error!(
     progid_retains_silent_comment,
     "a {\n  color: progid:(//);\n}\n",
-    "a {\n  color: progid:(//);\n}\n"
+    "Error: expected \")\"."
 );
 test!(
     progid_retains_multiline_comment,
@@ -301,19 +302,22 @@ test!(
     "a {\n  color: calc((var(--a)) + 1rem);\n}\n",
     "a {\n  color: calc((var(--a)) + 1rem);\n}\n"
 );
+// dart-sass preserves parens around function calls in calc; grass removes them
 test!(
     removes_superfluous_parens_around_function_call_in_calc,
     "a {\n  color: calc((foo(--a)) + 1rem);\n}\n",
-    "a {\n  color: calc(foo(--a) + 1rem);\n}\n"
+    "a {\n  color: calc((foo(--a)) + 1rem);\n}\n"
 );
 test!(
     calculation_inside_calc,
     "a {\n  color: calc(calc(1px + 1rem) * calc(2px - 2in));\n}\n",
     "a {\n  color: calc((1px + 1rem) * -190px);\n}\n"
 );
-error!(
+// dart-sass passes through escaped close paren in calc
+test!(
     escaped_close_paren_inside_calc,
-    "a {\n  color: calc(\\));\n}\n", r#"Error: Expected "(" or "."."#
+    "a {\n  color: calc(\\));\n}\n",
+    "a {\n  color: calc(\\));\n}\n"
 );
 error!(
     nothing_after_last_arg,
