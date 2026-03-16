@@ -424,19 +424,6 @@ These have already been applied — don't re-investigate:
 - Scope pooling and `SassMap::get_ref` for borrow-based lookup
 - Selector clone reduction and `BinaryOp::as_bytes`
 - O(1) child position lookup in `has_following_sibling`
-- PGO build script (`prototype/build-pgo.sh`) — ~11% additional gain
-
-### PGO Builds
-
-Profile-Guided Optimization provides an additional ~11% speedup beyond standard release builds:
-
-```bash
-cd prototype && ./build-pgo.sh
-# Outputs optimized binary at target/release/grass
-```
-
-Use PGO for final benchmarking and release builds. Don't use PGO during iterative development — the feedback loop is too slow.
-
 ### Benchmark Reference
 
 | Tool | Purpose | When to use |
@@ -444,7 +431,6 @@ Use PGO for final benchmarking and release builds. Don't use PGO during iterativ
 | `prototype/perf-check.sh` | Quick 3-run median vs baseline | Every commit touching compiler code |
 | `hyperfine --runs 30` | Statistically rigorous measurement | Validating marginal (<5%) improvements |
 | `prototype/bench.sh` | Cross-engine comparison (native/WASM/napi/dart) | Before/after architectural changes |
-| `prototype/build-pgo.sh` | PGO-optimized build | Release builds, final benchmarks |
 | `samply record` | CPU profiling with flame graphs | Identifying hotspots before optimizing |
 
 ## Session Discipline
