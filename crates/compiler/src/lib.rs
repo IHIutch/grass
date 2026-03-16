@@ -619,10 +619,7 @@ pub fn from_path_parallel<P: AsRef<Path>>(
             .iter()
             .map(|chunk| {
                 let shared_scss = &shared_scss;
-                let options = options;
-                let path = path;
                 scope.spawn(move || {
-                    // Build wrapper SCSS: shared + all components in this chunk
                     let mut wrapper = shared_scss.clone();
                     for url in *chunk {
                         wrapper.push_str(&format!("@forward \"{}\";\n", url));
@@ -750,7 +747,7 @@ fn detect_shared_prefix_count(forward_urls: &[String], path: &Path, options: &Op
         for line in content.lines() {
             let trimmed = line.trim();
             if let Some(use_url) = extract_use_url(trimmed) {
-                let use_base = use_url.split('/').next().unwrap_or(&use_url);
+                let use_base = use_url.split('/').next().unwrap_or(use_url);
                 // Check if this @use matches any earlier forward's base name
                 for (i, base) in base_names.iter().enumerate() {
                     if *base == use_base && i < forward_urls.len() - 1 {
