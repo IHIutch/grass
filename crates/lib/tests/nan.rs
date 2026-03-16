@@ -23,6 +23,8 @@ test!(
     "a {\n  color: abs((0/0));\n}\n",
     "a {\n  color: calc(NaN);\n}\n"
 );
+// dart-sass 1.97.3 crashes on round(NaN) with an unhandled exception:
+// "Unsupported operation: NaN.round()". grass handles it gracefully.
 test!(
     unitless_nan_round_number,
     "a {\n  color: round((0/0));\n}\n",
@@ -99,6 +101,8 @@ error!(
     "@use \"sass:math\";\na {\n  color: percentage(math.acos(2));\n}\n",
     "Error: $number: Expected calc(NaN * 1deg) to have no units."
 );
+// dart-sass 1.97.3 crashes on round() with unitful NaN with an unhandled
+// exception: "Unsupported operation: NaN.round()". grass handles it gracefully.
 test!(
     unitful_nan_round,
     "@use \"sass:math\";\na {\n  color: round(math.acos(2));\n}\n",
