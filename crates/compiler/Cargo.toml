@@ -34,14 +34,16 @@ wasm-bindgen = { version = "0.2.68", optional = true }
 phf = { version = "0.11", features = ["macros"] }
 indexmap = "2"
 # todo: do we really need interning for things?
-lasso = "0.7"
+lasso = { version = "0.7", features = ["multi-threaded"] }
 rustc-hash = "2"
 compact_str = "0.8"
 ryu = "1"
 bumpalo = { version = "3", features = ["collections"] }
+rayon = { version = "1", optional = true }
 
 [features]
 default = ["random", "custom-builtin-fns"]
+parallel = ["rayon"]
 # Option (enabled by default): enable the builtin functions `random([$limit])` and `unique-id()`
 random = ["rand"]
 # Option: expose JavaScript-friendly WebAssembly exports
