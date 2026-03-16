@@ -125,8 +125,7 @@ test!(
 // // inside element() is parsed as a silent comment, leaving unmatched parens
 error!(
     element_retains_silent_comment,
-    "a {\n  color: element(//);\n}\n",
-    "Error: expected \")\"."
+    "a {\n  color: element(//);\n}\n", "Error: expected \")\"."
 );
 test!(
     element_retains_multiline_comment,
@@ -170,8 +169,7 @@ test!(
 );
 error!(
     expression_retains_silent_comment,
-    "a {\n  color: expression(//);\n}\n",
-    "Error: expected \")\"."
+    "a {\n  color: expression(//);\n}\n", "Error: expected \")\"."
 );
 test!(
     expression_retains_multiline_comment,
@@ -215,8 +213,7 @@ test!(
 );
 error!(
     progid_retains_silent_comment,
-    "a {\n  color: progid:(//);\n}\n",
-    "Error: expected \")\"."
+    "a {\n  color: progid:(//);\n}\n", "Error: expected \")\"."
 );
 test!(
     progid_retains_multiline_comment,

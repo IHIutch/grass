@@ -656,11 +656,7 @@ test!(
     "ℓ {\n  color: red;\n}\n",
     "@charset \"UTF-8\";\nℓ {\n  color: red;\n}\n"
 );
-test!(
-    plus_in_selector,
-    "+ {\n  color: &;\n}\n",
-    ""
-);
+test!(plus_in_selector, "+ {\n  color: &;\n}\n", "");
 test!(
     invalid_chars_in_pseudo_parens,
     ":c(@#$) {\n  color: &;\n}\n",
