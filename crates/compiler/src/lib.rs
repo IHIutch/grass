@@ -184,7 +184,7 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
-    let file = map.add_file(path.to_string_lossy().into_owned(), input);
+    let file = map.add_file(path.to_string_lossy().into_owned(), input.clone());
     let empty_span = file.span.subspan(0, 0);
     let lexer = Lexer::new_from_file(&file);
 
@@ -213,6 +213,16 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
         Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     };
+
+    // Auto-detect parallelism opportunity: if the entry file is mostly @forward
+    // statements with enough independent modules, compile in parallel.
+    // Skip if we're already inside a parallel worker (prevent recursive spawning).
+    let in_worker = IN_PARALLEL_WORKER.with(|c| c.get());
+    if !in_worker {
+        if let Some(result) = try_parallel_compile(&stylesheet, &input, path, options) {
+            return result;
+        }
+    }
 
     let mut visitor = Visitor::new(path, options, &mut map, &arena, empty_span);
 
@@ -274,6 +284,185 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     }
 
     Ok(result)
+}
+
+/// Minimum number of independent @forward statements required to trigger
+/// automatic parallel compilation.
+const PARALLEL_MIN_FRONTIER: usize = 8;
+
+/// Guard against recursive parallelism. When a worker thread is already
+/// running a parallel compilation, inner calls must not spawn more threads.
+thread_local! {
+    static IN_PARALLEL_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Analyze a parsed stylesheet and, if it consists primarily of @forward
+/// statements with enough independent modules, compile in parallel.
+///
+/// Returns `None` if the stylesheet isn't suitable for parallelism,
+/// allowing the caller to fall back to sequential compilation.
+fn try_parallel_compile(
+    stylesheet: &sass_ast::StyleSheet<'static>,
+    input: &str,
+    path: &Path,
+    options: &Options,
+) -> Option<Result<String>> {
+    // Collect @forward URLs — bail if the file has non-trivial content
+    let mut forward_urls: Vec<String> = Vec::new();
+    let mut has_non_forward = false;
+
+    for stmt in stylesheet.body {
+        match stmt {
+            crate::ast::AstStmt::Forward(rule) => {
+                if has_non_forward {
+                    return None; // @forward after other content — can't parallelize
+                }
+                forward_urls.push(rule.url.to_string_lossy().into_owned());
+            }
+            crate::ast::AstStmt::LoudComment(_) | crate::ast::AstStmt::SilentComment(_) => {}
+            _ => {
+                has_non_forward = true;
+            }
+        }
+    }
+
+    if forward_urls.len() < PARALLEL_MIN_FRONTIER {
+        return None;
+    }
+
+    // Split into shared deps (foundation) and independent components
+    let shared_count = detect_shared_prefix_count(&forward_urls);
+    let component_forwards = &forward_urls[shared_count..];
+
+    if component_forwards.len() < PARALLEL_MIN_FRONTIER {
+        return None;
+    }
+
+    Some(compile_parallel_inner(
+        input,
+        path,
+        options,
+        &forward_urls[..shared_count],
+        component_forwards,
+    ))
+}
+
+/// Execute parallel compilation: compile shared deps once, then distribute
+/// component batches across worker threads.
+fn compile_parallel_inner(
+    input: &str,
+    path: &Path,
+    options: &Options,
+    shared_forwards: &[String],
+    component_forwards: &[String],
+) -> Result<String> {
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4);
+
+    // Build shared SCSS from original file text by splitting at the first component
+    let first_component_url = &component_forwards[0];
+    let shared_scss = if let Some(split_pos) =
+        input.find(&format!("@forward \"{}\"", first_component_url))
+    {
+        input[..split_pos].to_string()
+    } else {
+        let mut s = String::new();
+        for url in shared_forwards {
+            s.push_str(&format!("@forward \"{}\";\n", url));
+        }
+        s
+    };
+
+    // Compile shared deps alone to get the shared CSS prefix
+    let shared_css = if shared_forwards.is_empty() {
+        String::new()
+    } else {
+        from_string_with_file_name(shared_scss.clone(), path, options)?
+    };
+
+    // Partition components across threads
+    let chunk_size = (component_forwards.len() + num_threads - 1) / num_threads;
+    let chunks: Vec<&[String]> = component_forwards.chunks(chunk_size).collect();
+
+    // Parallel compilation: each thread compiles shared_deps + its component batch
+    let results: Vec<Result<String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .iter()
+            .map(|chunk| {
+                let shared_scss = &shared_scss;
+                scope.spawn(move || {
+                    // Mark this thread as a parallel worker to prevent
+                    // recursive parallelism in inner compilations.
+                    IN_PARALLEL_WORKER.with(|c| c.set(true));
+                    let mut wrapper = shared_scss.clone();
+                    for url in *chunk {
+                        wrapper.push_str(&format!("@forward \"{}\";\n", url));
+                    }
+                    from_string_with_file_name(wrapper, path, options)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Worker thread panicked",
+                    )
+                    .into())
+                })
+            })
+            .collect()
+    });
+
+    // Normalize shared CSS: strip @charset if present (we'll add it back if needed)
+    let shared_css_stripped = shared_css
+        .strip_prefix("@charset \"UTF-8\";\n")
+        .unwrap_or(&shared_css);
+    let shared_prefix_len = shared_css_stripped.len();
+
+    // Merge: shared_css + stripped component CSS from each thread
+    let mut final_css = shared_css_stripped.to_string();
+    let mut has_non_ascii = shared_css.starts_with("@charset");
+
+    for result in results {
+        let thread_css = result?;
+        let thread_stripped = thread_css
+            .strip_prefix("@charset \"UTF-8\";\n")
+            .unwrap_or(&thread_css);
+        if thread_css.starts_with("@charset") {
+            has_non_ascii = true;
+        }
+
+        if thread_stripped.len() >= shared_prefix_len
+            && thread_stripped[..shared_prefix_len] == final_css[..shared_prefix_len]
+        {
+            final_css.push_str(&thread_stripped[shared_prefix_len..]);
+        } else if shared_forwards.is_empty() {
+            final_css.push_str(thread_stripped);
+        } else {
+            // Byte-prefix stripping failed — fall back to line-based stripping
+            let shared_line_count = shared_css_stripped.lines().count();
+            let thread_lines: Vec<&str> = thread_stripped.lines().collect();
+            if thread_lines.len() > shared_line_count {
+                let component_part = thread_lines[shared_line_count..].join("\n");
+                if !component_part.is_empty() {
+                    final_css.push('\n');
+                    final_css.push_str(&component_part);
+                    final_css.push('\n');
+                }
+            }
+        }
+    }
+
+    if has_non_ascii {
+        final_css.insert_str(0, "@charset \"UTF-8\";\n");
+    }
+
+    Ok(final_css)
 }
 
 /// Compile multiple Sass files in parallel.
