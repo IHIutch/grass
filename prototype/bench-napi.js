@@ -9,8 +9,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const napi = require("../crates/napi/grass.darwin-arm64.node");
 
 const loadPaths = [resolve(__dirname, "packages")];
+const entry = resolve(__dirname, "packages/uswds/_index-direct.scss");
 
-napi.compile("packages/uswds/_index-direct.scss", {
+napi.compile(entry, {
   loadPaths,
   quiet: true,
   charset: false,
