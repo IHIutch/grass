@@ -299,6 +299,94 @@ impl<'a> Visitor<'a> {
         result
     }
 
+    /// Pre-parse all `@use`/`@forward` dependencies recursively before evaluation.
+    /// This front-loads all parsing and CodeMap mutations, enabling the evaluation
+    /// phase to run without modifying the CodeMap. Pre-parsed stylesheets are
+    /// stored in `import_cache` so `import_like_node` returns them instantly.
+    pub fn pre_parse_dependencies(&mut self, entry: &StyleSheet<'static>) -> SassResult<()> {
+        let mut to_visit: std::collections::VecDeque<(PathBuf, PathBuf)> = std::collections::VecDeque::new();
+
+        // Collect @use/@forward URLs from the entry stylesheet
+        Self::collect_dep_urls(entry, &mut to_visit);
+
+        while let Some((url, parent_path)) = to_visit.pop_front() {
+            // Skip builtin modules
+            if url.to_string_lossy().starts_with("sass:") {
+                continue;
+            }
+
+            // Resolve the URL relative to the parent path
+            let old_import_path = mem::replace(&mut self.current_import_path, parent_path);
+
+            let resolved = match self.find_import(&url, false, self.empty_span)? {
+                Some(p) => p,
+                None => {
+                    self.current_import_path = old_import_path;
+                    continue; // Will be caught as error during evaluation
+                }
+            };
+            let canonical = self.canonicalize(&resolved);
+
+            self.current_import_path = old_import_path;
+
+            // Skip if already parsed
+            if self.import_cache.contains_key(&canonical) {
+                continue;
+            }
+
+            // Read the file
+            let content = match self.options.fs.read(&canonical) {
+                Ok(c) => c,
+                Err(_) => continue, // Will be caught during evaluation
+            };
+            let content = match String::from_utf8(content) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            // Add to CodeMap and parse
+            let file = self.map.add_file(canonical.to_string_lossy().into(), content);
+            let empty_span = file.span.subspan(0, 0);
+            let lexer = Lexer::new_from_file(&file);
+
+            let stylesheet = match self.parse_file(lexer, &canonical, empty_span) {
+                Ok(s) => s,
+                Err(_) => continue, // Will be caught during evaluation
+            };
+
+            // Collect deps from this stylesheet before caching it
+            Self::collect_dep_urls(&stylesheet, &mut to_visit);
+
+            // Cache in import_cache so import_like_node returns it directly
+            self.import_cache.insert(canonical.clone(), stylesheet);
+            self.files_seen.insert(canonical);
+        }
+
+        Ok(())
+    }
+
+    /// Extract @use/@forward URLs from a stylesheet's body and add them
+    /// to the work queue with the stylesheet's URL as parent path.
+    fn collect_dep_urls(
+        stylesheet: &StyleSheet<'static>,
+        queue: &mut std::collections::VecDeque<(PathBuf, PathBuf)>,
+    ) {
+        let parent = stylesheet.url.clone();
+        for &idx in stylesheet.uses.iter().chain(stylesheet.forwards.iter()) {
+            if idx < stylesheet.body.len() {
+                match &stylesheet.body[idx] {
+                    AstStmt::Use(rule) => {
+                        queue.push_back((rule.url.clone(), parent.clone()));
+                    }
+                    AstStmt::Forward(rule) => {
+                        queue.push_back((rule.url.clone(), parent.clone()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     pub(crate) fn visit_stylesheet(&mut self, style_sheet: &StyleSheet<'static>) -> SassResult<()> {
         self.active_modules.insert(style_sheet.url.clone());
         let was_in_plain_css = self.is_plain_css;
@@ -348,6 +436,21 @@ impl<'a> Visitor<'a> {
                 Ok(self.combined_import_section)
             }
         }
+    }
+
+    /// Like `finish()`, but returns the CssTree directly without materializing
+    /// children into Vec<CssStmt> bodies. Used for direct tree-walking serialization.
+    pub(crate) fn finish_for_tree_walk(
+        mut self,
+    ) -> SassResult<(CssTree, Vec<CssStmt>, usize, bool)> {
+        self.flush_pending_imports(true);
+        self.extend_modules()?;
+        Ok((
+            self.css_tree,
+            self.combined_import_section,
+            self.import_section_tree_count,
+            self.has_out_of_order_imports,
+        ))
     }
 
     /// Returns the index after the last @import in a sequence of imports and
@@ -2229,8 +2332,15 @@ impl<'a> Visitor<'a> {
             let old_is_use_allowed = self.flags.is_use_allowed();
             self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
+            let _parse_start = std::time::Instant::now();
+
             let style_sheet =
                 self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
+
+            if std::env::var("GRASS_TIMING").is_ok() {
+                let elapsed = _parse_start.elapsed();
+                crate::IMPORT_PARSE_TIME.with(|t| t.set(t.get() + elapsed));
+            }
 
             self.flags
                 .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);

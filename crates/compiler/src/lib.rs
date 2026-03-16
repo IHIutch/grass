@@ -62,6 +62,13 @@ grass input.scss
 use std::path::Path;
 
 use parse::{CssParser, SassParser, StylesheetParser};
+
+std::thread_local! {
+    /// Cumulative time spent parsing imported modules during evaluation.
+    /// Only used when GRASS_TIMING is set.
+    pub(crate) static IMPORT_PARSE_TIME: std::cell::Cell<std::time::Duration> =
+        const { std::cell::Cell::new(std::time::Duration::ZERO) };
+}
 use sass_ast::StyleSheet;
 use serializer::Serializer;
 #[cfg(feature = "wasm-exports")]
@@ -77,7 +84,7 @@ pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
 pub use crate::{builtin::Builtin, evaluate::Visitor};
 pub(crate) use crate::{context_flags::ContextFlags, lexer::Token};
-use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
+use crate::{lexer::Lexer, parse::ScssParser};
 
 pub mod sass_value {
     pub use crate::{
@@ -171,6 +178,9 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     file_name: P,
     options: &Options,
 ) -> Result<String> {
+    let timing = std::env::var("GRASS_TIMING").is_ok();
+    let t_start = std::time::Instant::now();
+
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
@@ -194,6 +204,8 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
         }
     };
 
+    let t_parse = std::time::Instant::now();
+
     // Safety: the arena lives on the stack for the entire compilation.
     // The stylesheet references data in the arena, which won't be dropped
     // until after the visitor finishes and this function returns.
@@ -203,73 +215,89 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     };
 
     let mut visitor = Visitor::new(path, options, &mut map, &arena, empty_span);
+
+    // Pre-parse all @use/@forward dependencies before evaluation.
+    // This front-loads CodeMap mutations so the eval phase doesn't need to parse.
+    match visitor.pre_parse_dependencies(&stylesheet) {
+        Ok(_) => {}
+        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
+    }
+
     match visitor.visit_stylesheet(&stylesheet) {
         Ok(_) => {}
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     }
-    let stmts = match visitor.finish() {
-        Ok(s) => s,
-        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
-    };
+    let (css_tree, combined_imports, import_tree_count, has_ooo) =
+        match visitor.finish_for_tree_walk() {
+            Ok(v) => v,
+            Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
+        };
+
+    let t_eval = std::time::Instant::now();
 
     let mut serializer = Serializer::with_capacity(options, &map, false, empty_span, 256 * 1024);
 
-    let mut prev_was_group_end = false;
-    let mut prev_requires_semicolon = false;
-    let mut had_previous_visible = false;
-    let mut stmts: std::collections::VecDeque<CssStmt> = stmts.into();
+    let prev_requires_semicolon = serializer
+        .serialize_tree(&css_tree, &combined_imports, import_tree_count, has_ooo)
+        .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
 
-    while let Some(stmt) = stmts.pop_front() {
-        if stmt.is_invisible() {
-            continue;
-        }
+    let result = serializer.finish(prev_requires_semicolon);
 
-        let is_group_end = stmt.is_group_end();
-        let requires_semicolon = Serializer::requires_semicolon(&stmt);
-        let closing_brace_line = serializer.stmt_closing_brace_line(&stmt);
+    if timing {
+        let t_serial = std::time::Instant::now();
+        let total = t_serial - t_start;
+        let entry_parse = t_parse - t_start;
+        let eval_phase = t_eval - t_parse;
+        let serial = t_serial - t_eval;
 
-        let buf_len_before = serializer.buffer_len();
+        let import_parse = IMPORT_PARSE_TIME.with(|t| {
+            let v = t.get();
+            t.set(std::time::Duration::ZERO);
+            v
+        });
 
-        serializer
-            .visit_group(stmt, prev_was_group_end, prev_requires_semicolon, had_previous_visible)
-            .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
+        let total_parse = entry_parse + import_parse;
+        let pure_eval = eval_phase - import_parse;
 
-        // Track whether any visible statement has been processed,
-        // even if it wrote nothing (e.g. stripped sourcemap comment)
-        had_previous_visible = true;
-
-        // If the statement wrote nothing (e.g. stripped sourcemap comment),
-        // don't update prev state — the next real statement should get
-        // a normal separator, not group_end or semicolon from the phantom.
-        if serializer.buffer_len() == buf_len_before {
-            continue;
-        }
-
-        // Sub-problem C at top level: comment after closing `}` on same source line
-        if let Some(brace_line) = closing_brace_line {
-            let next_visible = stmts.iter().position(|s| !s.is_invisible());
-            if let Some(idx) = next_visible {
-                if let Some(comment_line) = serializer.comment_start_line(&stmts[idx]) {
-                    if comment_line == brace_line {
-                        if let CssStmt::Comment(ref comment, span) = stmts[idx] {
-                            let comment = comment.clone();
-                            serializer
-                                .write_inline_comment(&comment, span)
-                                .map_err(|e| {
-                                    raw_to_parse_error(&map, *e, options.unicode_error_messages)
-                                })?;
-                            stmts.remove(idx);
-                        }
-                    }
-                }
-            }
-        }
-
-        prev_was_group_end = is_group_end;
-        prev_requires_semicolon = requires_semicolon;
+        eprintln!(
+            "TIMING: total={:.1}ms  parse={:.1}ms ({:.0}%) [entry={:.1}ms + imports={:.1}ms]  eval={:.1}ms ({:.0}%)  serialize={:.1}ms ({:.0}%)",
+            total.as_secs_f64() * 1000.0,
+            total_parse.as_secs_f64() * 1000.0,
+            total_parse.as_secs_f64() / total.as_secs_f64() * 100.0,
+            entry_parse.as_secs_f64() * 1000.0,
+            import_parse.as_secs_f64() * 1000.0,
+            pure_eval.as_secs_f64() * 1000.0,
+            pure_eval.as_secs_f64() / total.as_secs_f64() * 100.0,
+            serial.as_secs_f64() * 1000.0,
+            serial.as_secs_f64() / total.as_secs_f64() * 100.0,
+        );
     }
 
-    Ok(serializer.finish(prev_requires_semicolon))
+    Ok(result)
+}
+
+/// Compile multiple Sass files in parallel.
+///
+/// Returns results in the same order as the input paths.
+/// Each compilation is independent with its own arena and scope.
+///
+/// Requires the `parallel` feature.
+///
+/// ```
+/// # use grass_compiler as grass;
+/// # #[cfg(feature = "parallel")]
+/// fn main() -> Result<(), Box<grass::Error>> {
+///     let results = grass::from_paths(&["a.scss", "b.scss"], &grass::Options::default());
+///     Ok(())
+/// }
+/// ```
+#[cfg(feature = "parallel")]
+pub fn from_paths<P: AsRef<Path> + Sync>(
+    paths: &[P],
+    options: &Options,
+) -> Vec<Result<String>> {
+    use rayon::prelude::*;
+    paths.par_iter().map(|p| from_path(p, options)).collect()
 }
 
 /// Compile CSS from a path
@@ -343,6 +371,11 @@ mod wasm_fs {
     pub struct JsFs {
         callbacks: JsFsCallbacks,
     }
+
+    // Safety: WASM is single-threaded, so Send+Sync are trivially safe.
+    // These are required because the Fs trait has Send+Sync supertraits.
+    unsafe impl Send for JsFs {}
+    unsafe impl Sync for JsFs {}
 
     impl std::fmt::Debug for JsFs {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
