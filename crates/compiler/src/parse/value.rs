@@ -1335,7 +1335,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         parser,
                     ),
                     None => {
-                        Err(("Interpolation<'a> isn't allowed in namespaces.", ident_span).into())
+                        Err(("Interpolation isn't allowed in namespaces.", ident_span).into())
                     }
                 }
             }

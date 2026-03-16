@@ -23,9 +23,10 @@ test!(
     "a {\n  color: abs((0/0));\n}\n",
     "a {\n  color: calc(NaN);\n}\n"
 );
-error!(
+test!(
     unitless_nan_round_number,
-    "a {\n  color: round((0/0));\n}\n", "Error: Infinity or NaN toInt"
+    "a {\n  color: round((0/0));\n}\n",
+    "a {\n  color: calc(NaN);\n}\n"
 );
 error!(
     unitless_nan_ceil_number,
@@ -98,9 +99,10 @@ error!(
     "@use \"sass:math\";\na {\n  color: percentage(math.acos(2));\n}\n",
     "Error: $number: Expected calc(NaN * 1deg) to have no units."
 );
-error!(
+test!(
     unitful_nan_round,
-    "@use \"sass:math\";\na {\n  color: round(math.acos(2));\n}\n", "Error: Infinity or NaN toInt"
+    "@use \"sass:math\";\na {\n  color: round(math.acos(2));\n}\n",
+    "a {\n  color: calc(NaN * 1deg);\n}\n"
 );
 error!(
     unitful_nan_ceil,

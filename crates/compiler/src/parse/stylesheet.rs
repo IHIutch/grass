@@ -2201,7 +2201,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         if self.is_plain_css() {
             return Err((
-                "Interpolation<'a> isn't allowed in plain CSS.",
+                "Interpolation isn't allowed in plain CSS.",
                 contents.span,
             )
                 .into());

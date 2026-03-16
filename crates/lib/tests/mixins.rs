@@ -30,7 +30,7 @@ test!(
 test!(
     mixin_ruleset_and_style,
     "@mixin a {\n  b {\n    color: red;\n  }\n  color: blue;\n}\nd {\n  @include a;\n}\n",
-    "d {\n  color: blue;\n}\nd b {\n  color: red;\n}\n"
+    "d b {\n  color: red;\n}\nd {\n  color: blue;\n}\n"
 );
 test!(
     mixin_style_and_ruleset,
@@ -625,7 +625,7 @@ test!(
             color: $color;
         }
     }",
-    ".parent {\n  background-color: red;\n  border-color: red;\n}\n.parent .child {\n  background-color: yellow;\n  color: blue;\n  border-color: yellow;\n}\n"
+    ".parent {\n  background-color: red;\n}\n.parent .child {\n  background-color: yellow;\n  color: blue;\n  border-color: yellow;\n}\n.parent {\n  border-color: red;\n}\n"
 );
 test!(
     sass_spec__mixin_environment_locality,

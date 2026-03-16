@@ -538,7 +538,7 @@ fn try_extend_with_raw<'a>(
             let expr = parser.parse_expression(None, None, None)?;
             parser.expect_char('}')?;
             if parser.is_plain_css() {
-                return Err(("Interpolation<'a> isn't allowed in plain CSS.", expr.span).into());
+                return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
             }
             let span = parser.toks_mut().span_from(pos);
             if had_whitespace {
@@ -677,7 +677,7 @@ fn parse_condition_primary<'a>(
         parser.expect_char('}')?;
 
         if parser.is_plain_css() {
-            return Err(("Interpolation<'a> isn't allowed in plain CSS.", expr.span).into());
+            return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
         }
 
         // Check if followed by `(` — forms an interpolated function name
@@ -800,7 +800,7 @@ fn parse_css_function_args<'a>(
                 let expr = parser.parse_expression(None, None, None)?;
                 parser.expect_char('}')?;
                 if parser.is_plain_css() {
-                    return Err(("Interpolation<'a> isn't allowed in plain CSS.", expr.span).into());
+                    return Err(("Interpolation isn't allowed in plain CSS.", expr.span).into());
                 }
                 buffer.add_expr(expr);
             }

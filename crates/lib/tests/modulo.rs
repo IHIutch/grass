@@ -163,17 +163,17 @@ test!(
 test!(
     negative_finite_mod_infinity,
     "a {\n  color: -5 % (1/0);\n}\n",
-    "a {\n  color: calc(infinity);\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     positive_finite_mod_negative_infinity,
     "a {\n  color: 5 % (-1/0);\n}\n",
-    "a {\n  color: calc(-infinity);\n}\n"
+    "a {\n  color: calc(NaN);\n}\n"
 );
 test!(
     negative_finite_mod_negative_infinity,
     "a {\n  color: -5 % (-1/0);\n}\n",
-    "a {\n  color: calc(NaN);\n}\n"
+    "a {\n  color: -5;\n}\n"
 );
 test!(
     zero_mod_negative,
