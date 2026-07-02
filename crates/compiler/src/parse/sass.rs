@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{cell::Cell, path::Path};
 
 use codemap::Span;
 
@@ -18,6 +18,7 @@ pub(crate) struct SassParser<'a> {
     pub spaces: Option<bool>,
     pub next_indentation_end: Option<usize>,
     pub consume_newlines: bool,
+    pub recursion_depth: Cell<usize>,
 }
 
 impl<'a> BaseParser for SassParser<'a> {
@@ -121,6 +122,10 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
     fn arena(&self) -> &'a bumpalo::Bump {
         self.arena
+    }
+
+    fn recursion_depth(&self) -> &Cell<usize> {
+        &self.recursion_depth
     }
 
     fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
@@ -446,6 +451,7 @@ impl<'a> SassParser<'a> {
             next_indentation_end: None,
             spaces: None,
             consume_newlines: false,
+            recursion_depth: Cell::new(0),
         }
     }
 

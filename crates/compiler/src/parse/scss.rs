@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{cell::Cell, path::Path};
 
 use codemap::Span;
 
@@ -13,6 +13,7 @@ pub(crate) struct ScssParser<'a> {
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
     pub arena: &'a bumpalo::Bump,
+    pub recursion_depth: Cell<usize>,
 }
 
 impl<'a> ScssParser<'a> {
@@ -34,6 +35,7 @@ impl<'a> ScssParser<'a> {
             flags,
             options,
             arena,
+            recursion_depth: Cell::new(0),
         }
     }
 }
@@ -83,5 +85,9 @@ impl<'a> StylesheetParser<'a> for ScssParser<'a> {
 
     fn arena(&self) -> &'a bumpalo::Bump {
         self.arena
+    }
+
+    fn recursion_depth(&self) -> &Cell<usize> {
+        &self.recursion_depth
     }
 }

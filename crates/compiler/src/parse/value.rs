@@ -509,7 +509,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         match first {
             Some(Token { kind: '(', .. }) => self.parse_paren_expr(parser),
             Some(Token { kind: '/', .. }) => self.parse_unary_operation(parser),
-            Some(Token { kind: '[', .. }) => Self::parse_expression(parser, None, true, false),
+            Some(Token { kind: '[', .. }) => {
+                let guard_span = parser.toks().current_span();
+                parser.with_recursion_guard(guard_span, |parser| {
+                    Self::parse_expression(parser, None, true, false)
+                })
+            }
             Some(Token { kind: '$', .. }) => Self::parse_variable(parser),
             Some(Token { kind: '&', .. }) => Self::parse_selector(parser),
             Some(Token { kind: '"', .. }) | Some(Token { kind: '\'', .. }) => Ok(parser
@@ -765,6 +770,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     }
 
     fn parse_paren_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
+        let guard_span = parser.toks().current_span();
+        parser.with_recursion_guard(guard_span, |parser| self.parse_paren_expr_inner(parser))
+    }
+
+    fn parse_paren_expr_inner(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
         let start = parser.toks().cursor();
         if parser.is_plain_css() {
             return Err((

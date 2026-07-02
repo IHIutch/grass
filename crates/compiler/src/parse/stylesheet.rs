@@ -9,6 +9,29 @@ use std::{
 
 static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Maximum nesting depth allowed for recursive parsing (nested blocks,
+/// parenthesized/bracketed sub-expressions) AND for recursive user-defined
+/// function/mixin/content-block invocation during evaluation (see
+/// `Visitor::run_user_defined_callable` in evaluate/visitor.rs). Deeply
+/// nested/recursive input can overflow the stack — a Rust stack overflow
+/// always aborts the process, so this guard exists to reject such input with
+/// a normal error instead.
+///
+/// This value is bounded by the *smallest* stack grass runs on, not by how
+/// deep real stylesheets nest (Bootstrap nests ~10 levels; dart-sass 1.97.3
+/// itself stack-overflows on this machine around 450-500 levels of brace
+/// nesting in release mode). The binding constraint is debug-build stack
+/// frames on a 1 MiB thread (napi's default worker-thread stack size, and
+/// smaller than cargo test's 2 MiB default): recursive user-defined-callable
+/// evaluation frames are large enough in debug builds that depths above
+/// ~40-56 overflowed a 1 MiB stack in testing, while grass's own release-mode
+/// crash threshold (no guard) was observed between 1,000 and 10,000 levels.
+/// 32 keeps a safety margin below the observed debug-mode failure point while
+/// still comfortably exceeding realistic nesting; see
+/// crates/lib/tests/deep_nesting.rs, which exercises this on an explicit
+/// 1 MiB-stack thread.
+pub(crate) const MAX_RECURSION_DEPTH: usize = 32;
+
 use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
 
@@ -40,6 +63,27 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn flags(&self) -> &ContextFlags;
     fn flags_mut(&mut self) -> &mut ContextFlags;
     fn arena(&self) -> &'a bumpalo::Bump;
+    fn recursion_depth(&self) -> &Cell<usize>;
+
+    /// Guards a recursive parse of a nested construct (a block's children, or
+    /// a parenthesized/bracketed sub-expression), erroring instead of
+    /// overflowing the stack once `MAX_RECURSION_DEPTH` is exceeded.
+    fn with_recursion_guard<T>(
+        &mut self,
+        span: Span,
+        f: impl FnOnce(&mut Self) -> SassResult<T>,
+    ) -> SassResult<T> {
+        let depth = self.recursion_depth().get();
+
+        if depth >= MAX_RECURSION_DEPTH {
+            return Err(("Too much nesting.", span).into());
+        }
+
+        self.recursion_depth().set(depth + 1);
+        let result = f(self);
+        self.recursion_depth().set(depth);
+        result
+    }
 
     #[allow(clippy::type_complexity)]
     const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr<'a>>>> = None;
@@ -333,7 +377,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         child: fn(&mut Self) -> SassResult<AstStmt<'a>>,
     ) -> SassResult<Spanned<Vec<AstStmt<'a>>>> {
         let start = self.toks().cursor();
-        let children = self.parse_children(child)?;
+        let guard_span = self.toks().current_span();
+        let children =
+            self.with_recursion_guard(guard_span, |parser| parser.parse_children(child))?;
         let span = self.toks_mut().span_from(start);
         self.whitespace_without_comments();
         Ok(Spanned {

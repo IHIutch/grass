@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{cell::Cell, collections::BTreeMap, path::Path};
 
 use codemap::{Span, Spanned};
 
@@ -16,6 +16,7 @@ pub(crate) struct CssParser<'a> {
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
     pub arena: &'a bumpalo::Bump,
+    pub recursion_depth: Cell<usize>,
 }
 
 impl<'a> BaseParser for CssParser<'a> {
@@ -88,6 +89,10 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
         self.arena
     }
 
+    fn recursion_depth(&self) -> &Cell<usize> {
+        &self.recursion_depth
+    }
+
     const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr<'a>>>> =
         Some(Self::parse_identifier_like);
 
@@ -149,6 +154,7 @@ impl<'a> CssParser<'a> {
             flags: ContextFlags::empty(),
             options,
             arena,
+            recursion_depth: Cell::new(0),
         }
     }
 

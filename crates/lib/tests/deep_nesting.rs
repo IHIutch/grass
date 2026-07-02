@@ -19,21 +19,18 @@ fn is_ok_on_small_stack(input: String) -> bool {
 }
 
 #[test]
-#[ignore = "crashes the process (stack overflow abort) until the parser recursion guard lands"]
 fn deeply_nested_rules_error_cleanly() {
     let input = format!("{}b:c;{}", "a{".repeat(50_000), "}".repeat(50_000));
     assert!(!is_ok_on_small_stack(input));
 }
 
 #[test]
-#[ignore = "crashes the process (stack overflow abort) until the parser recursion guard lands"]
 fn deeply_nested_parens_error_cleanly() {
     let input = format!("a{{b: {}1{};}}", "(".repeat(100_000), ")".repeat(100_000));
     assert!(!is_ok_on_small_stack(input));
 }
 
 #[test]
-#[ignore = "crashes the process (stack overflow abort) until the parser recursion guard lands"]
 fn deeply_nested_brackets_error_cleanly() {
     let input = format!("a{{b: {}1{};}}", "[".repeat(100_000), "]".repeat(100_000));
     assert!(!is_ok_on_small_stack(input));
