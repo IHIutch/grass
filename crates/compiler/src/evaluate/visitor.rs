@@ -31,7 +31,7 @@ use crate::{
     lexer::Lexer,
     parse::{
         AtRootQueryParser, CssParser, KeyframesSelectorParser, SassParser, ScssParser,
-        StylesheetParser, MAX_RECURSION_DEPTH,
+        StylesheetParser,
     },
     selector::{
         ComplexSelectorComponent, ExtendRule, ExtendedSelector, Extension, ExtensionStore,
@@ -50,6 +50,51 @@ use super::{
     css_tree::{CssTree, CssTreeIdx},
     env::Environment,
 };
+
+/// Maximum nesting depth allowed for recursive user-defined
+/// function/mixin/content-block invocation during evaluation — see
+/// `Visitor::run_user_defined_callable`. This is separate from, and much
+/// tighter than, `MAX_PARSER_RECURSION_DEPTH` (parse/stylesheet.rs): a
+/// recursive callable's evaluation frame (argument binding, scope setup,
+/// the full `visit_stmt`/`visit_expr` chain for its body, the closure passed
+/// to `run_user_defined_callable`) costs far more stack per level than a
+/// parser recursion step, so the same constant would force the worse of the
+/// two everywhere.
+///
+/// Measured unguarded crash boundaries for callable recursion (a
+/// `sum($n)`-shaped function — `@if $n <= 0 { @return 0 } @return $n +
+/// sum($n - 1)`, no tail-call elimination since Sass has none — on an
+/// explicit small-stack thread):
+///
+///   - release build, 1 MiB stack (napi's real worker-thread size, and the
+///     only stack size this recursion actually runs on in production —
+///     napi/CLI/wasm all ship release builds): survives 120, crashes at 128.
+///   - debug build, 2 MiB stack (cargo test's actual default thread stack):
+///     survives 56, crashes at 64.
+///
+/// These two numbers are in direct tension with dart-sass compatibility:
+/// `sum(40)` and `sum(100)`-style bounded recursion compile in every other
+/// Sass implementation and must compile here too (grass previously rejected
+/// `sum(40)`, a confirmed regression — see solo todo #123 round-2 review).
+/// Supporting `sum(100)` requires a guard of at least 101, which:
+///
+///   - leaves only ~1.2x margin under the release+1 MiB *crash* point (128)
+///     and is 8% below the highest depth directly confirmed safe there (120)
+///     — nowhere near a full 2x margin, because 128 is the actual ceiling in
+///     the one environment this code ships on, not an arbitrary choice.
+///   - has NO margin under debug+2 MiB — that environment's own unguarded
+///     ceiling (64) is below what dart-sass-compatible recursion needs, so
+///     no guard value can be both dart-sass-compatible and safe on a 2 MiB
+///     debug stack. debug+2 MiB is never a deployment target (only
+///     `cargo test`'s own process), so this constant is sized against the
+///     real release+1 MiB deployment ceiling instead. The tests in
+///     crates/lib/tests/deep_nesting.rs that exercise callable recursion
+///     near this limit run on an explicitly larger stack for exactly this
+///     reason — see the comment there.
+///
+/// 110 sits 10 levels below the confirmed-safe 120 in release+1 MiB (real,
+/// measured margin, short of 2x) and 9 above the 101 `sum(100)` needs.
+const MAX_CALLABLE_RECURSION_DEPTH: usize = 110;
 
 /// Result of evaluating an if() condition.
 /// Sass atoms evaluate to True/False; CSS atoms remain as CSS.
@@ -3750,7 +3795,7 @@ impl<'a> Visitor<'a> {
         span: Span,
         run: R,
     ) -> SassResult<V> {
-        if self.recursion_depth >= MAX_RECURSION_DEPTH {
+        if self.recursion_depth >= MAX_CALLABLE_RECURSION_DEPTH {
             return Err(("Too much nesting.", span).into());
         }
 

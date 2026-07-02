@@ -9,28 +9,36 @@ use std::{
 
 static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Maximum nesting depth allowed for recursive parsing (nested blocks,
-/// parenthesized/bracketed sub-expressions) AND for recursive user-defined
-/// function/mixin/content-block invocation during evaluation (see
-/// `Visitor::run_user_defined_callable` in evaluate/visitor.rs). Deeply
-/// nested/recursive input can overflow the stack — a Rust stack overflow
-/// always aborts the process, so this guard exists to reject such input with
-/// a normal error instead.
+/// Maximum nesting depth allowed for recursive parsing: entering a nested
+/// block's children (`with_children`) or a parenthesized/bracketed
+/// sub-expression (`parse_paren_expr`, the `[` dispatch arm). Deeply nested
+/// input can overflow the stack — a Rust stack overflow always aborts the
+/// process, so this guard exists to reject such input with a normal error
+/// instead. See `MAX_CALLABLE_RECURSION_DEPTH` in evaluate/visitor.rs for the
+/// separate, much tighter limit on recursive function/mixin/content-block
+/// *evaluation* — parser frames and evaluator-callable frames have very
+/// different stack costs, so one shared constant would force the worst of
+/// both (this is why the two are split; an earlier version of this guard
+/// used a single constant and was too strict — see solo todo #123).
 ///
-/// This value is bounded by the *smallest* stack grass runs on, not by how
-/// deep real stylesheets nest (Bootstrap nests ~10 levels; dart-sass 1.97.3
-/// itself stack-overflows on this machine around 450-500 levels of brace
-/// nesting in release mode). The binding constraint is debug-build stack
-/// frames on a 1 MiB thread (napi's default worker-thread stack size, and
-/// smaller than cargo test's 2 MiB default): recursive user-defined-callable
-/// evaluation frames are large enough in debug builds that depths above
-/// ~40-56 overflowed a 1 MiB stack in testing, while grass's own release-mode
-/// crash threshold (no guard) was observed between 1,000 and 10,000 levels.
-/// 32 keeps a safety margin below the observed debug-mode failure point while
-/// still comfortably exceeding realistic nesting; see
-/// crates/lib/tests/deep_nesting.rs, which exercises this on an explicit
-/// 1 MiB-stack thread.
-pub(crate) const MAX_RECURSION_DEPTH: usize = 32;
+/// Sized from the two real environments grass runs in, not from how deep
+/// real stylesheets nest (Bootstrap ~10 levels; sass-spec's deepest
+/// legitimate fixture, non_conformant/scss/huge.hrx, nests 59). Measured
+/// unguarded parser-only crash boundaries (deeply nested `a{a{a{...}}}`, no
+/// user callables) on an explicit small-stack thread:
+///
+///   - release build, 1 MiB stack (napi's default worker-thread size):
+///     survives 300, crashes at 384.
+///   - debug build, 2 MiB stack (cargo test's actual default thread stack):
+///     survives 224, crashes at 256.
+///
+/// debug+2 MiB is the binding constraint. 128 gives exactly 2x margin below
+/// that 256 crash point (and >2x under release+1 MiB), while still clearing
+/// huge.hrx's 59 levels with over 2x headroom. dart-sass 1.97.3 itself
+/// stack-overflows on this machine around 450-500 levels of brace nesting,
+/// so matching or exceeding dart-sass's own ceiling was never in tension
+/// with this value.
+pub(crate) const MAX_PARSER_RECURSION_DEPTH: usize = 128;
 
 use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
@@ -75,7 +83,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     ) -> SassResult<T> {
         let depth = self.recursion_depth().get();
 
-        if depth >= MAX_RECURSION_DEPTH {
+        if depth >= MAX_PARSER_RECURSION_DEPTH {
             return Err(("Too much nesting.", span).into());
         }
 
