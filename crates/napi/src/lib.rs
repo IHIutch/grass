@@ -20,6 +20,23 @@ pub struct CompileResult {
     pub css: String,
 }
 
+// `AssertUnwindSafe`/`UnwindSafe` bounds below are sound: these closures only
+// read owned inputs, and on panic the compiler state being unwound through is
+// discarded rather than reused, so there is no observable broken invariant.
+fn catch<T>(f: impl FnOnce() -> napi::Result<T> + std::panic::UnwindSafe) -> napi::Result<T> {
+    match std::panic::catch_unwind(f) {
+        Ok(r) => r,
+        Err(panic) => {
+            let msg = panic
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "internal compiler panic".to_string());
+            Err(napi::Error::from_reason(format!("grass internal error: {msg}")))
+        }
+    }
+}
+
 fn build_options(opts: Option<CompileOptions>) -> Options<'static> {
     let mut options = Options::default();
 
@@ -50,11 +67,14 @@ fn build_options(opts: Option<CompileOptions>) -> Options<'static> {
 
 #[napi]
 pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<CompileResult> {
-    let opts = build_options(options);
+    catch(|| {
+        let opts = build_options(options);
 
-    let css = from_path(&path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let css =
+            from_path(&path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    Ok(CompileResult { css })
+        Ok(CompileResult { css })
+    })
 }
 
 #[napi]
@@ -62,13 +82,15 @@ pub fn compile_string(
     source: String,
     options: Option<CompileOptions>,
 ) -> napi::Result<CompileResult> {
-    let opts = build_options(options);
+    catch(|| {
+        let opts = build_options(options);
 
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let css = from_string_with_file_name(source, cwd.join("stdin"), &opts)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let css = from_string_with_file_name(source, cwd.join("stdin"), &opts)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    Ok(CompileResult { css })
+        Ok(CompileResult { css })
+    })
 }
 
 pub struct CompileTask {
@@ -81,8 +103,11 @@ impl Task for CompileTask {
     type JsValue = CompileResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        let path = &self.path;
         let opts = build_options(self.options.take());
-        from_path(&self.path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
+        catch(std::panic::AssertUnwindSafe(|| {
+            from_path(path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
+        }))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -102,8 +127,11 @@ impl Task for CompileStringTask {
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let opts = build_options(self.options.take());
         let cwd = std::env::current_dir().unwrap_or_default();
-        from_string_with_file_name(self.source.clone(), cwd.join("stdin"), &opts)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))
+        let source = self.source.clone();
+        catch(std::panic::AssertUnwindSafe(|| {
+            from_string_with_file_name(source, cwd.join("stdin"), &opts)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        }))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
