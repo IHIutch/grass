@@ -31,7 +31,7 @@ use crate::{
     lexer::Lexer,
     parse::{
         AtRootQueryParser, CssParser, KeyframesSelectorParser, SassParser, ScssParser,
-        StylesheetParser,
+        StylesheetParser, MAX_RECURSION_DEPTH,
     },
     selector::{
         ComplexSelectorComponent, ExtendRule, ExtendedSelector, Extension, ExtensionStore,
@@ -222,6 +222,11 @@ pub struct Visitor<'a> {
     import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
+    /// Nesting depth of user-defined function/mixin/content-block invocations.
+    /// Guards against stack overflow from unbounded recursion (e.g. a
+    /// function that calls itself with no terminating `@if`); see
+    /// `run_user_defined_callable`.
+    recursion_depth: usize,
 }
 
 #[allow(dead_code)]
@@ -281,6 +286,7 @@ impl<'a> Visitor<'a> {
             files_seen: FxHashSet::default(),
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
+            recursion_depth: 0,
         }
     }
 
@@ -3733,6 +3739,29 @@ impl<'a> Visitor<'a> {
     }
 
     pub(crate) fn run_user_defined_callable<
+        F: UserDefinedCallable,
+        V: fmt::Debug,
+        R: FnOnce(F, &mut Self) -> SassResult<V>,
+    >(
+        &mut self,
+        arguments: MaybeEvaledArguments<'static>,
+        func: F,
+        env: &Environment,
+        span: Span,
+        run: R,
+    ) -> SassResult<V> {
+        if self.recursion_depth >= MAX_RECURSION_DEPTH {
+            return Err(("Too much nesting.", span).into());
+        }
+
+        self.recursion_depth += 1;
+        let result = self.run_user_defined_callable_inner(arguments, func, env, span, run);
+        self.recursion_depth -= 1;
+
+        result
+    }
+
+    fn run_user_defined_callable_inner<
         F: UserDefinedCallable,
         V: fmt::Debug,
         R: FnOnce(F, &mut Self) -> SassResult<V>,

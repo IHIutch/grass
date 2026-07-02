@@ -37,14 +37,12 @@ fn deeply_nested_brackets_error_cleanly() {
 }
 
 #[test]
-#[ignore = "crashes the process (stack overflow abort) until the evaluator recursion guard lands"]
 fn unbounded_recursive_function_errors_cleanly() {
     let input = "@function f($n) {\n  @return f($n + 1);\n}\na { b: f(1); }\n".to_string();
     assert!(!is_ok_on_small_stack(input));
 }
 
 #[test]
-#[ignore = "crashes the process (stack overflow abort) until the evaluator recursion guard lands"]
 fn unbounded_recursive_mixin_errors_cleanly() {
     let input = "@mixin m($n) {\n  @include m($n + 1);\n}\na { @include m(1); }\n".to_string();
     assert!(!is_ok_on_small_stack(input));

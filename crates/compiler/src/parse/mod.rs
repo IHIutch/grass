@@ -7,7 +7,7 @@ pub(crate) use keyframes::KeyframesSelectorParser;
 pub(crate) use media_query::MediaQueryParser;
 pub(crate) use sass::SassParser;
 pub(crate) use scss::ScssParser;
-pub(crate) use stylesheet::StylesheetParser;
+pub(crate) use stylesheet::{StylesheetParser, MAX_RECURSION_DEPTH};
 
 mod at_root_query;
 mod base;
