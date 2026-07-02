@@ -1,15 +1,15 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This project uses **solo todos** (via the solo MCP server, project `grass`) for issue tracking.
 
 ## Quick Reference
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-```
+- `mcp__solo__todo_list` — find available work (unblocked, open todos)
+- `mcp__solo__todo_get` — view todo details and comments
+- `mcp__solo__todo_create` — file new work (title, body, priority high/medium/low, tags)
+- `mcp__solo__todo_comment_create` — record progress notes
+- `mcp__solo__todo_complete` — complete work
+- `mcp__solo__todo_set_blockers` — track dependencies between todos
 
 ## Non-Interactive Shell Commands
 
@@ -35,90 +35,25 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
-<!-- BEGIN BEADS INTEGRATION -->
-## Issue Tracking with bd (beads)
+## Issue Tracking with solo todos
 
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Version-controlled: Built on Dolt with cell-level merge
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
-
-```bash
-bd ready --json
-```
-
-**Create new issues:**
-
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
-
-**Claim and update:**
-
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
+**IMPORTANT**: This project uses **solo todos** (solo MCP, project `grass`) for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
 
 ### Workflow for AI Agents
 
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Auto-Sync
-
-bd automatically syncs with git:
-
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
-- No manual export/import needed!
+1. **Check ready work**: `todo_list` (filter out completed and blocked todos)
+2. **Work on it**: Implement, test, document
+3. **Discover new work?** Create a new todo with context in the body (what was found, where, and what's needed)
+4. **Record progress**: add a comment (`todo_comment_create`) with what was done, what remains, and current test counts
+5. **Complete**: `todo_complete` — leave a final comment summarizing total impact (e.g., "Fixed 35 sass-spec tests: ...")
 
 ### Important Rules
 
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
+- ✅ Use solo todos for ALL task tracking; use blockers for dependencies
+- ✅ Keep todo titles/bodies accurate — if a todo says "~1,259 failures" and you fixed 135, update it to say "~1,124 failures"
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT use external issue trackers
 - ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
 
 ## Landing the Plane (Session Completion)
 
@@ -147,29 +82,27 @@ For more details, see README.md and docs/QUICKSTART.md.
 
 ## Issue Tracking Discipline — MANDATORY
 
-**🚨 ALWAYS update issues. This is NOT optional. Every task must have a corresponding issue update.**
+**🚨 ALWAYS update todos. This is NOT optional. Every task must have a corresponding todo update.**
 
-Updating issues is a **blocking requirement** — not a cleanup step you do at the end. If you wrote code, you MUST update issues before responding to the user. No exceptions.
+Updating todos is a **blocking requirement** — not a cleanup step you do at the end. If you wrote code, you MUST update todos before responding to the user. No exceptions.
 
 ### At every step:
 
-- **Before starting work**: Claim an issue (`bd update <id> --claim`) or create one if none exists. Never write code without a tracked issue.
-- **With every commit**: Update the relevant issue's notes with what was done, what remains, and current test counts.
-- **After fixing tests**: Update the issue **description** (not just notes) to reflect the new failure count. Run sass-spec to get accurate numbers.
-- **When partially completing an issue**: Add notes summarizing what's fixed, what's still broken, and what blocks the rest — so the next session can pick up without re-exploring.
-- **When closing**: Include a close reason summarizing total impact (e.g., "Fixed 35 sass-spec tests: ...").
-- **When discovering new work**: Create linked issues immediately (`bd create ... --deps discovered-from:<id>`).
+- **Before starting work**: Pick an existing todo or create one if none exists. Never write code without a tracked todo.
+- **With every commit**: Add a comment to the relevant todo with what was done, what remains, and current test counts.
+- **After fixing tests**: Update the todo **body** (not just comments) to reflect the new failure count. Run sass-spec to get accurate numbers.
+- **When partially completing a todo**: Add a comment summarizing what's fixed, what's still broken, and what blocks the rest — so the next session can pick up without re-exploring.
+- **When completing**: Leave a comment summarizing total impact (e.g., "Fixed 35 sass-spec tests: ...").
+- **When discovering new work**: Create a new todo immediately, referencing the todo it was discovered from.
 
 ### At session boundaries:
 
-- **Session start**: Run `bd list --status=open` and verify issue descriptions still reflect reality. Update counts and priorities if they've drifted.
-- **Session end**: All issues touched during the session must have current, accurate descriptions and notes before pushing.
+- **Session start**: List open todos and verify their bodies still reflect reality. Update counts and priorities if they've drifted.
+- **Session end**: All todos touched during the session must have current, accurate bodies and comments before pushing.
 
 ### What "update" means:
 
-An issue update is NOT just adding notes. It means the issue's **title, description, and status** accurately reflect the current state of the world. If an issue says "~1,259 failures" and you fixed 135 of them, the title and description must be updated to say "~1,124 failures".
-
-<!-- END BEADS INTEGRATION -->
+A todo update is NOT just adding comments. It means the todo's **title, body, and status** accurately reflect the current state of the world.
 
 # grass - Sass compiler in Rust
 
@@ -265,13 +198,9 @@ When modifying test expectations:
 
 ### Outdated sass-spec Tests
 
-When you discover a sass-spec test whose expected output doesn't match dart-sass 1.97.3, file it as a beads issue under the **grass-cll** epic:
+When you discover a sass-spec test whose expected output doesn't match dart-sass 1.97.3, add it to the solo todo **"Outdated sass-spec expectations (blank-line failures) + 3 uninvestigated spec bugs"** (append the test path and a brief description to its body).
 
-```bash
-bd create --title="Outdated: <test-path> — <brief description>" --type=task --priority=4 --parent=grass-cll
-```
-
-Do NOT spend time trying to match outdated expectations. Verify against dart-sass, file under grass-cll, and move on.
+Do NOT spend time trying to match outdated expectations. Verify against dart-sass, record it on that todo, and move on.
 
 ## Project Structure
 - `crates/compiler/` - core compiler (grass_compiler crate)
@@ -315,13 +244,13 @@ cd prototype && node bench.js 2>/dev/null
 ## Session Discipline
 
 ### Time-box investigations: 15 minutes max
-If a fix isn't converging after 15 minutes, **stop**. Commit what works, file the rest as a beads issue, and move on. A 100-minute commit should have been 3-4 separate commits.
+If a fix isn't converging after 15 minutes, **stop**. Commit what works, file the rest as a solo todo, and move on. A 100-minute commit should have been 3-4 separate commits.
 
 ### Smaller commits, more often
 Commit each independent fix immediately. Don't bundle unrelated fixes into one commit. If you're fixing NaN handling AND adjust/change semantics AND none keyword support, those are 3 commits.
 
 ### Abandon and document, don't revert silently
-When an approach doesn't work (e.g., you try a fix, discover it cascades, and revert), **file a beads issue** with what you learned so the next session doesn't repeat the exploration. Use `bd create --title="..." --description="Attempted X, failed because Y. Approach Z might work." -t task -p 3`.
+When an approach doesn't work (e.g., you try a fix, discover it cascades, and revert), **file a solo todo** with what you learned so the next session doesn't repeat the exploration (e.g., body: "Attempted X, failed because Y. Approach Z might work.").
 
 ### Batch edits before building
 Make all obvious/mechanical edits before the first `cargo build`. If you're adding the same validation to 16 functions, edit all 16 files first, then build once. Don't build-edit-build-edit sequentially.

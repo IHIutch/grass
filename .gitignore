@@ -38,7 +38,3 @@ sass-fairy
 duomo
 ibm-cloud-cognitive
 pico
-
-# Dolt database files (added by bd init)
-.dolt/
-*.db
