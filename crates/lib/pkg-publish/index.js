@@ -171,9 +171,42 @@ export function compileString(source, options = {}) {
 }
 
 export function compileAsync(path, options = {}) {
+  if (nativeBinding && typeof nativeBinding.compileAsync === "function") {
+    const opts = buildOptions(options);
+    return nativeBinding
+      .compileAsync(path, {
+        style: opts.style,
+        loadPaths: opts.loadPaths,
+        quiet: opts.quiet,
+        charset: opts.charset,
+      })
+      .then(
+        (result) => makeResult(result.css, path),
+        (e) => {
+          throw new Error(typeof e === "string" ? e : e.message || String(e));
+        }
+      );
+  }
+  // WASM (or missing-export) fallback: sync compile off a microtask.
   return Promise.resolve().then(() => compile(path, options));
 }
 
 export function compileStringAsync(source, options = {}) {
+  if (nativeBinding && typeof nativeBinding.compileStringAsync === "function") {
+    const opts = buildOptions(options);
+    return nativeBinding
+      .compileStringAsync(source, {
+        style: opts.style,
+        loadPaths: opts.loadPaths,
+        quiet: opts.quiet,
+        charset: opts.charset,
+      })
+      .then(
+        (result) => makeResult(result.css, null),
+        (e) => {
+          throw new Error(typeof e === "string" ? e : e.message || String(e));
+        }
+      );
+  }
   return Promise.resolve().then(() => compileString(source, options));
 }
