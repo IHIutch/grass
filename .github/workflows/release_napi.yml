@@ -76,7 +76,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ contains(matrix.target, 'aarch64-unknown-linux-musl') && 'aarch64-linux-gnu-gcc' || '' }}
           CC_aarch64_unknown_linux_gnu: ${{ contains(matrix.target, 'aarch64-unknown-linux-gnu') && 'aarch64-linux-gnu-gcc' || '' }}
           CC_aarch64_unknown_linux_musl: ${{ contains(matrix.target, 'aarch64-unknown-linux-musl') && 'aarch64-linux-gnu-gcc' || '' }}
-        run: npx napi build --platform --release --target ${{ matrix.target }}
+        run: npx napi build --platform --profile release-napi --target ${{ matrix.target }}
 
       # Rename .node file to include platform suffix
       - name: Rename artifact
