@@ -317,3 +317,11 @@ error!(
     "Error: Parent selectors can't have suffixes in plain CSS.",
     grass::Options::default().input_syntax(InputSyntax::Css)
 );
+
+// Verified against dart-sass 1.97.3; previously hit a todo!() panic
+test!(
+    moz_document_css_passthrough,
+    "@-moz-document url-prefix() {\n  a {\n    b: c;\n  }\n}\n",
+    "@-moz-document url-prefix() {\n  a {\n    b: c;\n  }\n}\n",
+    grass::Options::default().input_syntax(InputSyntax::Css)
+);

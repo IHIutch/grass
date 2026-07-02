@@ -1317,10 +1317,6 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }))
     }
 
-    fn _parse_moz_document_rule(&mut self, _name: Interpolation<'a>) -> SassResult<AstStmt<'a>> {
-        todo!("special cased @-moz-document not yet implemented")
-    }
-
     fn unknown_at_rule(&mut self, name: Interpolation<'a>, start: usize) -> SassResult<AstStmt<'a>> {
         let was_in_unknown_at_rule = self.flags().in_unknown_at_rule();
         self.flags_mut().set(ContextFlags::IN_UNKNOWN_AT_RULE, true);

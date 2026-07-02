@@ -120,3 +120,10 @@ error!(
 );
 
 // todo: test scoping in rule
+
+// Verified against dart-sass 1.97.3
+test!(
+    moz_document_scss_passthrough,
+    "@-moz-document url-prefix() {\n  a {\n    b: c;\n  }\n}\n",
+    "@-moz-document url-prefix() {\n  a {\n    b: c;\n  }\n}\n"
+);
