@@ -21,6 +21,9 @@
     "grass.*.node"
   ],
   "type": "module",
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
   "exports": {
     ".": {
       "node": {

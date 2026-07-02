@@ -90,6 +90,11 @@ jobs:
             fi
           done
 
+      - name: Test native module
+        if: contains(fromJSON('["aarch64-apple-darwin","x86_64-unknown-linux-gnu","x86_64-pc-windows-msvc"]'), matrix.target)
+        working-directory: crates/napi
+        run: node test.mjs
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -142,6 +147,10 @@ jobs:
           done
           echo "=== Package contents ==="
           ls -la crates/lib/pkg-publish/*.node crates/lib/pkg-publish/*.wasm
+
+      - name: Smoke test package before publish
+        working-directory: crates/lib/pkg-publish
+        run: npm test
 
       - name: Publish
         working-directory: crates/lib/pkg-publish

@@ -35,7 +35,8 @@
     "build": "napi build --platform --release",
     "build-debug": "napi build --platform",
     "artifacts": "napi artifacts",
-    "version": "napi version"
+    "version": "napi version",
+    "test": "node test.mjs"
   },
   "optionalDependencies": {
     "ihiutch-grass-napi-darwin-arm64": "0.13.14",

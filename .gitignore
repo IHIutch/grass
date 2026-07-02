@@ -6,6 +6,7 @@ node_modules/
 
 # devops
 /target
+*.node
 coverage
 pkg
 flamegraph.svg

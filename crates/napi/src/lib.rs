@@ -123,3 +123,45 @@ pub fn compile_string_async(
 ) -> AsyncTask<CompileStringTask> {
     AsyncTask::new(CompileStringTask { source, options })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_string_produces_css() {
+        let res = compile_string("a { b: c }".to_owned(), None).unwrap();
+        assert_eq!(res.css, "a {\n  b: c;\n}\n");
+    }
+
+    #[test]
+    fn compile_string_compressed_style() {
+        let opts = CompileOptions {
+            style: Some("compressed".to_owned()),
+            load_paths: None,
+            quiet: None,
+            charset: None,
+        };
+        let res = compile_string("a { b: c }".to_owned(), Some(opts)).unwrap();
+        assert_eq!(res.css, "a{b:c}");
+    }
+
+    #[test]
+    fn compile_string_invalid_input_is_err_not_panic() {
+        assert!(compile_string("a { b: ".to_owned(), None).is_err());
+    }
+
+    #[test]
+    fn compile_task_compute_ok_and_err() {
+        let mut task = CompileStringTask {
+            source: "a { b: c }".to_owned(),
+            options: None,
+        };
+        assert!(task.compute().is_ok());
+        let mut bad = CompileStringTask {
+            source: "a {".to_owned(),
+            options: None,
+        };
+        assert!(bad.compute().is_err());
+    }
+}
