@@ -1,10 +1,4 @@
-use codemap::Span;
-
-use crate::{
-    builtin::builtin_imports::Unit,
-    error::SassResult,
-    value::{conversion_factor, Number, Value},
-};
+use crate::{builtin::builtin_imports::*, color::space::ColorSpace, value::conversion_factor};
 
 use super::GlobalFunctionMap;
 
@@ -34,6 +28,35 @@ pub(crate) fn angle_value(num: Value, name: &str, span: Span) -> SassResult<Numb
     }
 
     Ok(angle.num)
+}
+
+/// Parse an optional $space argument from the argument list.
+pub(super) fn parse_space_arg(
+    args: &mut ArgumentResult,
+    pos: usize,
+    span: Span,
+) -> SassResult<Option<ColorSpace>> {
+    match args.get(pos, "space") {
+        Some(space_val) => match &space_val.node {
+            Value::String(s, QuoteKind::Quoted) => Err((
+                format!("$space: Expected {} to be an unquoted string.", s),
+                span,
+            )
+                .into()),
+            Value::String(s, QuoteKind::None) => {
+                let space = ColorSpace::from_name(s)
+                    .ok_or_else(|| (format!("$space: Unknown color space \"{}\".", s), span))?;
+                Ok(Some(space))
+            }
+            Value::Null => Ok(None),
+            v => Err((
+                format!("$space: {} is not a string.", v.inspect(span)?),
+                span,
+            )
+                .into()),
+        },
+        None => Ok(None),
+    }
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

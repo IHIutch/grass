@@ -2,6 +2,8 @@ use crate::builtin::builtin_imports::*;
 use crate::color::space::ColorSpace;
 use crate::value::number::fuzzy_equals;
 
+use super::parse_space_arg;
+
 fn bool_to_value(b: bool) -> Value {
     if b { Value::True } else { Value::False }
 }
@@ -158,41 +160,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
         }
     };
 
-    let target_space = match args.get(2, "space") {
-        Some(space_val) => {
-            let space_str = match &space_val.node {
-                Value::String(s, QuoteKind::Quoted) => {
-                    return Err((
-                        format!("$space: Expected {} to be an unquoted string.", s),
-                        span,
-                    )
-                        .into())
-                }
-                Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => {
-                    // null means use the color's own space
-                    color.color_space().name().to_owned().into()
-                }
-                v => {
-                    return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
-                        span,
-                    )
-                        .into())
-                }
-            };
-            ColorSpace::from_name(&space_str).ok_or_else(|| {
-                (
-                    format!("$space: Unknown color space \"{}\".", space_str),
-                    span,
-                )
-            })?
-        }
-        None => color.color_space(),
-    };
+    let target_space = parse_space_arg(&mut args, 2, span)?.unwrap_or_else(|| color.color_space());
 
     // Use to_space_for_channel_access to avoid the HSL fallback for
     // out-of-gamut RGB — we need actual RGB channel values, not HSL.
@@ -263,38 +231,7 @@ pub(crate) fn is_in_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> Sa
         .get_err(0, "color")?
         .assert_color_with_name("color", span)?;
 
-    let target_space = match args.get(1, "space") {
-        Some(space_val) => {
-            let space_str = match &space_val.node {
-                Value::String(s, QuoteKind::Quoted) => {
-                    return Err((
-                        format!("$space: Expected {} to be an unquoted string.", s),
-                        span,
-                    )
-                        .into());
-                }
-                Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => color.color_space().name().into(),
-                v => {
-                    return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
-                        span,
-                    )
-                        .into())
-                }
-            };
-            ColorSpace::from_name(&space_str).ok_or_else(|| {
-                (
-                    format!("$space: Unknown color space \"{}\".", space_str),
-                    span,
-                )
-            })?
-        }
-        None => color.color_space(),
-    };
+    let target_space = parse_space_arg(&mut args, 1, span)?.unwrap_or_else(|| color.color_space());
 
     let color_in_space = if target_space == color.color_space() {
         color.as_ref().clone()
@@ -313,38 +250,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         .get_err(0, "color")?
         .assert_color_with_name("color", span)?;
 
-    let target_space = match args.get(1, "space") {
-        Some(space_val) => {
-            let space_str = match &space_val.node {
-                Value::String(s, QuoteKind::Quoted) => {
-                    return Err((
-                        format!("$space: Expected {} to be an unquoted string.", s),
-                        span,
-                    )
-                        .into());
-                }
-                Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => color.color_space().name().into(),
-                v => {
-                    return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
-                        span,
-                    )
-                        .into())
-                }
-            };
-            ColorSpace::from_name(&space_str).ok_or_else(|| {
-                (
-                    format!("$space: Unknown color space \"{}\".", space_str),
-                    span,
-                )
-            })?
-        }
-        None => color.color_space(),
-    };
+    let target_space = parse_space_arg(&mut args, 1, span)?.unwrap_or_else(|| color.color_space());
 
     let method = args.get_err(2, "method")?;
     let method_str = match &method {
@@ -434,38 +340,7 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
         }
     };
 
-    let target_space = match args.get(2, "space") {
-        Some(space_val) => {
-            let space_str = match &space_val.node {
-                Value::String(s, QuoteKind::Quoted) => {
-                    return Err((
-                        format!("$space: Expected {} to be an unquoted string.", s),
-                        span,
-                    )
-                        .into());
-                }
-                Value::String(s, QuoteKind::None) => s.clone(),
-                Value::Null => color.color_space().name().into(),
-                v => {
-                    return Err((
-                        format!(
-                            "$space: {} is not a string.",
-                            v.inspect(span)?
-                        ),
-                        span,
-                    )
-                        .into())
-                }
-            };
-            ColorSpace::from_name(&space_str).ok_or_else(|| {
-                (
-                    format!("$space: Unknown color space \"{}\".", space_str),
-                    span,
-                )
-            })?
-        }
-        None => color.color_space(),
-    };
+    let target_space = parse_space_arg(&mut args, 2, span)?.unwrap_or_else(|| color.color_space());
 
     let color_in_space = if target_space == color.color_space() {
         color.as_ref().clone()

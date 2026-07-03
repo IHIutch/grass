@@ -6,37 +6,10 @@ use crate::color::space::ColorSpace;
 use super::{
     angle_value,
     css_color4::construct_color,
+    parse_space_arg,
     rgb::{function_string, parse_channels, percentage_or_unitless},
     ParsedChannels,
 };
-
-/// Parse an optional $space argument from the argument list.
-fn parse_space_arg(args: &mut ArgumentResult, pos: usize, span: Span) -> SassResult<Option<ColorSpace>> {
-    match args.get(pos, "space") {
-        Some(space_val) => match &space_val.node {
-            Value::String(s, QuoteKind::Quoted) => {
-                Err((
-                    format!("$space: Expected {} to be an unquoted string.", s),
-                    span,
-                )
-                    .into())
-            }
-            Value::String(s, QuoteKind::None) => {
-                let space = ColorSpace::from_name(s).ok_or_else(|| {
-                    (format!("$space: Unknown color space \"{}\".", s), span)
-                })?;
-                Ok(Some(space))
-            }
-            Value::Null => Ok(None),
-            v => Err((
-                format!("$space: {} is not a string.", v.inspect(span)?),
-                span,
-            )
-                .into()),
-        },
-        None => Ok(None),
-    }
-}
 
 fn hsl_3_args(
     name: &'static str,
