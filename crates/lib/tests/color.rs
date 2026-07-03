@@ -928,3 +928,20 @@ test!(
     "@use \"sass:color\";\na {\n  b: color.invert(hsl(200, 100%, 50%));\n}\n",
     "a {\n  b: hsl(20, 100%, 50%);\n}\n"
 );
+// dart-sass 1.97.3 verdict: explicit `$space: null` is NOT treated as omitted
+// for color.change/adjust/scale — it errors, same as any other non-string value.
+error!(
+    change_explicit_null_space_errors,
+    "@use \"sass:color\";\na {b: color.change(red, $lightness: 50%, $space: null)}",
+    "Error: $space: null is not a string."
+);
+error!(
+    adjust_explicit_null_space_errors,
+    "@use \"sass:color\";\na {b: color.adjust(red, $lightness: 5%, $space: null)}",
+    "Error: $space: null is not a string."
+);
+error!(
+    scale_explicit_null_space_errors,
+    "@use \"sass:color\";\na {b: color.scale(red, $lightness: 5%, $space: null)}",
+    "Error: $space: null is not a string."
+);

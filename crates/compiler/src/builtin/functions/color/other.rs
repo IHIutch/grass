@@ -364,6 +364,10 @@ fn update_components(
                     .into());
             }
             Value::String(s, QuoteKind::None) => s.clone(),
+            // Explicit `$space: null` is intentionally NOT treated as omitted here:
+            // dart-sass 1.97.3 also errors on it (verified against `npx sass@1.97.3`),
+            // unlike `parse_space_arg` in `color::mod`, which some other color
+            // functions use and where explicit null IS equivalent to omitted.
             v => {
                 return Err((
                     format!(
