@@ -3043,11 +3043,16 @@ impl<'a> Visitor<'a> {
     /// warning), and `Deprecation::is_future` combined with
     /// `Options::future_deprecation` (future deprecations are dropped unless
     /// explicitly opted into).
+    /// `message` is constructed lazily: building a deprecation message can be
+    /// nontrivial (serializing operands, walking `as_slash` chains), and
+    /// most calls end up discarded by dedup/silence/quiet/future gating
+    /// before the text is ever shown. Only the two branches that actually
+    /// consume the text (fatal-error, warn) invoke `message`.
     pub(crate) fn emit_deprecation(
         &mut self,
-        message: &str,
         deprecation: Deprecation,
         span: Span,
+        message: impl FnOnce() -> SassResult<String>,
     ) -> SassResult<()> {
         // Mirrors dart-sass's `_warningsEmitted` dedup, which runs before fatal/silence
         // handling: a given call site only ever triggers once, even if evaluated repeatedly
@@ -3057,6 +3062,7 @@ impl<'a> Visitor<'a> {
         }
 
         if self.options.fatal_deprecations.contains(&deprecation) {
+            let message = message()?;
             return Err((
                 format!(
                     "{message}\n\nThis is only an error because you've set the {} \
@@ -3077,8 +3083,11 @@ impl<'a> Visitor<'a> {
             return Ok(());
         }
 
+        let message = message()?;
         let loc = self.map.look_up_span(span);
-        self.options.logger.warn(loc, message);
+        self.options
+            .logger
+            .warn_deprecation(loc, &message, deprecation.id());
 
         Ok(())
     }
@@ -3714,13 +3723,15 @@ impl<'a> Visitor<'a> {
     fn without_slash(&mut self, v: Value) -> SassResult<Value> {
         if let Value::Dimension(number) = &v {
             if number.as_slash.is_some() {
-                let message = format!(
-                    "Using / for division is deprecated and will be removed in Dart Sass \
-                     2.0.0.\n\nRecommendation: {}\n\nMore info and automated migrator: \
-                     https://sass-lang.com/d/slash-div",
-                    Self::slash_recommendation(number, self.empty_span)
-                );
-                self.emit_deprecation(&message, Deprecation::SlashDiv, self.empty_span)?;
+                let span = self.empty_span;
+                self.emit_deprecation(Deprecation::SlashDiv, span, || {
+                    Ok(format!(
+                        "Using / for division is deprecated and will be removed in Dart Sass \
+                         2.0.0.\n\nRecommendation: {}\n\nMore info and automated migrator: \
+                         https://sass-lang.com/d/slash-div",
+                        Self::slash_recommendation(number, span)
+                    ))
+                })?;
             }
         }
 
@@ -5060,15 +5071,16 @@ impl<'a> Visitor<'a> {
                     // values (matches dart-sass exactly for literal
                     // operands like `(1/2)`, diverges for variables/nested
                     // expressions — see todo #130 design record).
-                    let left_text = left.to_css_string(span, false)?;
-                    let right_text = right.to_css_string(span, false)?;
-                    let message = format!(
-                        "Using / for division outside of calc() is deprecated and will be \
-                         removed in Dart Sass 2.0.0.\n\nRecommendation: math.div({left_text}, \
-                         {right_text}) or calc({left_text} / {right_text})\n\nMore info and \
-                         automated migrator: https://sass-lang.com/d/slash-div"
-                    );
-                    self.emit_deprecation(&message, Deprecation::SlashDiv, span)?;
+                    self.emit_deprecation(Deprecation::SlashDiv, span, || {
+                        let left_text = left.to_css_string(span, false)?;
+                        let right_text = right.to_css_string(span, false)?;
+                        Ok(format!(
+                            "Using / for division outside of calc() is deprecated and will be \
+                             removed in Dart Sass 2.0.0.\n\nRecommendation: math.div({left_text}, \
+                             {right_text}) or calc({left_text} / {right_text})\n\nMore info and \
+                             automated migrator: https://sass-lang.com/d/slash-div"
+                        ))
+                    })?;
                 }
 
                 div(left, right, self.options, span)?

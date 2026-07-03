@@ -15,8 +15,8 @@ fn slash_div_warns_outside_calc() {
     assert_eq!(warnings.len(), 1);
     assert!(
         warnings[0].starts_with(
-            "Using / for division outside of calc() is deprecated and will be removed in Dart \
-             Sass 2.0.0."
+            "DEPRECATION WARNING [slash-div]: Using / for division outside of calc() is \
+             deprecated and will be removed in Dart Sass 2.0.0."
         ),
         "unexpected warning: {}",
         warnings[0]
@@ -40,7 +40,8 @@ fn slash_div_warns_when_slash_tagged_value_is_used() {
     assert_eq!(warnings.len(), 1);
     assert!(
         warnings[0].starts_with(
-            "Using / for division is deprecated and will be removed in Dart Sass 2.0.0."
+            "DEPRECATION WARNING [slash-div]: Using / for division is deprecated and will be \
+             removed in Dart Sass 2.0.0."
         ),
         "unexpected warning: {}",
         warnings[0]
