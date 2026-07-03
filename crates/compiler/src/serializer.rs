@@ -1201,7 +1201,11 @@ impl<'a> Serializer<'a> {
     }
 
     fn finish_for_expr(self) -> String {
-        // SAFETY: todo
+        // SAFETY: `buffer` only ever receives complete UTF-8 sequences: ASCII
+        // byte literals (`push(b'...')`) and whole `&str::as_bytes()` slices
+        // (`extend_from_slice`). No code path writes a partial multi-byte
+        // sequence, so the buffer is always valid UTF-8.
+        debug_assert!(std::str::from_utf8(&self.buffer).is_ok());
         unsafe { String::from_utf8_unchecked(self.buffer) }
     }
 
@@ -1216,7 +1220,11 @@ impl<'a> Serializer<'a> {
             self.write_optional_newline();
         }
 
-        // SAFETY: todo
+        // SAFETY: `buffer` only ever receives complete UTF-8 sequences: ASCII
+        // byte literals (`push(b'...')`) and whole `&str::as_bytes()` slices
+        // (`extend_from_slice`). No code path writes a partial multi-byte
+        // sequence, so the buffer is always valid UTF-8.
+        debug_assert!(std::str::from_utf8(&self.buffer).is_ok());
         let mut as_string = unsafe { String::from_utf8_unchecked(self.buffer) };
 
         if is_not_ascii && self.options.is_compressed() && self.options.allows_charset {
