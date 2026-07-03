@@ -334,28 +334,30 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
     for i in 0..list_one.len() {
         for j in 0..list_two.len() {
             let selection = select(&list_one[i], &list_two[j]);
-            selections[i][j] = selection.clone();
             lengths[i + 1][j + 1] = if selection.is_none() {
                 std::cmp::max(lengths[i + 1][j], lengths[i][j + 1])
             } else {
                 lengths[i][j] + 1
             };
+            selections[i][j] = selection;
         }
     }
 
     fn backtrack<T: Clone>(
         i: isize,
         j: isize,
-        lengths: Vec<Vec<i32>>,
-        selections: &mut Vec<Vec<Option<T>>>,
+        lengths: &[Vec<i32>],
+        selections: &[Vec<Option<T>>],
     ) -> Vec<T> {
         if i == -1 || j == -1 {
             return Vec::new();
         }
 
-        let selection = selections.get(i as usize).cloned().unwrap_or_default();
-
-        if let Some(Some(selection)) = selection.get(j as usize) {
+        if let Some(Some(selection)) = selections
+            .get(i as usize)
+            .and_then(|row| row.get(j as usize))
+            .map(Option::as_ref)
+        {
             let mut tmp = backtrack(i - 1, j - 1, lengths, selections);
             tmp.push(selection.clone());
             return tmp;
@@ -370,8 +372,8 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
     backtrack(
         (list_one.len() as isize).saturating_sub(1),
         (list_two.len() as isize).saturating_sub(1),
-        lengths,
-        &mut selections,
+        &lengths,
+        &selections,
     )
 }
 
