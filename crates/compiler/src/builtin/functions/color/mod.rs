@@ -59,6 +59,21 @@ pub(super) fn parse_space_arg(
     }
 }
 
+pub(crate) fn function_string(
+    name: &'static str,
+    args: &[Value],
+    visitor: &mut Visitor,
+    span: Span,
+) -> SassResult<String> {
+    let args = args
+        .iter()
+        .map(|arg| arg.to_css_string(span, visitor.options.is_compressed()))
+        .collect::<SassResult<Vec<_>>>()?
+        .join(", ");
+
+    Ok(format!("{}({})", name, args))
+}
+
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     css_color4::declare(f);
     hsl::declare(f);

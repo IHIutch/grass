@@ -3,6 +3,8 @@ use crate::color::space::ColorSpace;
 
 use super::ParsedChannels;
 
+pub(crate) use super::function_string;
+
 /// Try to parse a string part from a "channel/alpha" split as a value.
 /// Handles "none", plain numbers (0.4), percentages (40%), and special
 /// CSS functions (var(), calc(), env(), attr(), min(), max(), clamp()).
@@ -49,21 +51,6 @@ fn parse_number_with_unit(s: &str) -> Option<(&str, Unit)> {
         }
     }
     None
-}
-
-pub(crate) fn function_string(
-    name: &'static str,
-    args: &[Value],
-    visitor: &mut Visitor,
-    span: Span,
-) -> SassResult<String> {
-    let args = args
-        .iter()
-        .map(|arg| arg.to_css_string(span, visitor.options.is_compressed()))
-        .collect::<SassResult<Vec<_>>>()?
-        .join(", ");
-
-    Ok(format!("{}({})", name, args))
 }
 
 fn inner_rgb_2_arg(
