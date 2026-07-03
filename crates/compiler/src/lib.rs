@@ -122,6 +122,10 @@ fn raw_to_parse_error(map: &CodeMap, err: Error, unicode: bool) -> Box<Error> {
     Box::new(Error::from_loc(message, map.look_up_span(span), unicode))
 }
 
+/// ⚠ Memory note: each call permanently leaks its parse arena (the returned
+/// `StyleSheet<'static>` borrows from it). Do not call this per-request in a
+/// long-running process; for one-shot compilation use [`from_string`] /
+/// [`from_path`], which free everything.
 pub fn parse_stylesheet<P: AsRef<Path>>(
     input: String,
     file_name: P,
