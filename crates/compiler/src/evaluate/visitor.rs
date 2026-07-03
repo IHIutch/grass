@@ -42,7 +42,7 @@ use crate::{
         ArgList, CalculationArg, CalculationName, Number, SassCalculation, SassFunction, SassMap,
         SassNumber, UserDefinedFunction, Value,
     },
-    ContextFlags, InputSyntax, Options,
+    ContextFlags, Deprecation, InputSyntax, Options,
 };
 
 use super::{
@@ -200,6 +200,13 @@ pub struct Visitor<'a> {
     pub(crate) original_selector: Option<SelectorList>,
     // avoid emitting duplicate warnings for the same span
     pub(crate) warnings_emitted: FxHashSet<Span>,
+    // avoid emitting duplicate deprecation warnings for the same deprecation + span. This
+    // matters in practice: a deprecation site inside a function/mixin body can be evaluated
+    // many times (e.g. once per @each iteration), and dart-sass's own `_warn` dedupes on
+    // (message, span) so a single call site only ever warns once. We key on span alone since
+    // (unlike dart-sass, which builds messages from unevaluated AST text) our message text is
+    // built from evaluated operands and can vary call to call — see todo #130 design record.
+    pub(crate) deprecation_warnings_emitted: FxHashSet<(Deprecation, Span)>,
     pub(crate) media_queries: Option<Vec<MediaQuery>>,
     pub(crate) media_query_sources: Option<FxIndexSet<MediaQuery>>,
     pub(crate) extender: ExtensionStore,
@@ -296,6 +303,7 @@ impl<'a> Visitor<'a> {
             original_selector: None,
             flags,
             warnings_emitted: FxHashSet::default(),
+            deprecation_warnings_emitted: FxHashSet::default(),
             media_queries: None,
             media_query_sources: None,
             env: Environment::new(),
@@ -753,7 +761,7 @@ impl<'a> Visitor<'a> {
     fn visit_return_rule(&mut self, ret: AstReturn<'static>) -> SassResult<Option<Value>> {
         let val = self.visit_expr(ret.val)?;
 
-        Ok(Some(self.without_slash(val)))
+        Ok(Some(self.without_slash(val)?))
     }
 
     pub(crate) fn visit_stmt_arc(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
@@ -769,7 +777,7 @@ impl<'a> Visitor<'a> {
             AstStmt::VariableDecl(decl) => self.visit_variable_decl_ref(decl),
             AstStmt::Return(ret) => {
                 let val = self.visit_expr_ref(&ret.val)?;
-                Ok(Some(self.without_slash(val)))
+                Ok(Some(self.without_slash(val)?))
             }
             AstStmt::Style(style) => self.visit_style_ref(style),
             AstStmt::If(if_stmt) => self.visit_if_stmt_ref(if_stmt),
@@ -870,7 +878,7 @@ impl<'a> Visitor<'a> {
         }
 
         let value = self.visit_expr_ref(&decl.value)?;
-        let value = self.without_slash(value);
+        let value = self.without_slash(value)?;
 
         self.env.insert_var(
             name,
@@ -1114,7 +1122,7 @@ impl<'a> Visitor<'a> {
 
             // todo: superfluous clone?
             let value = self.visit_expr(variable.expr.node.clone())?;
-            let value = self.without_slash(value);
+            let value = self.without_slash(value)?;
 
             new_values.insert(
                 variable.name.node,
@@ -1926,7 +1934,7 @@ impl<'a> Visitor<'a> {
 
             for var in use_rule.configuration {
                 let value = self.visit_expr(var.expr.node)?;
-                let value = self.without_slash(value);
+                let value = self.without_slash(value)?;
                 values.insert(
                     var.name.node,
                     ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span)),
@@ -3028,6 +3036,53 @@ impl<'a> Visitor<'a> {
         self.options.logger.warn(loc, message);
     }
 
+    /// Like [`Visitor::emit_warning`], but for a deprecated feature.
+    ///
+    /// Honors `Options::fatal_deprecation` (turns the warning into an
+    /// error), `Options::silence_deprecation` / `Options::quiet` (drops the
+    /// warning), and `Deprecation::is_future` combined with
+    /// `Options::future_deprecation` (future deprecations are dropped unless
+    /// explicitly opted into).
+    pub(crate) fn emit_deprecation(
+        &mut self,
+        message: &str,
+        deprecation: Deprecation,
+        span: Span,
+    ) -> SassResult<()> {
+        // Mirrors dart-sass's `_warningsEmitted` dedup, which runs before fatal/silence
+        // handling: a given call site only ever triggers once, even if evaluated repeatedly
+        // (e.g. inside a function called from a loop).
+        if !self.deprecation_warnings_emitted.insert((deprecation, span)) {
+            return Ok(());
+        }
+
+        if self.options.fatal_deprecations.contains(&deprecation) {
+            return Err((
+                format!(
+                    "{message}\n\nThis is only an error because you've set the {} \
+                     deprecation to be fatal.\nRemove this setting if you need to keep using \
+                     this feature.",
+                    deprecation.id()
+                ),
+                span,
+            )
+                .into());
+        }
+
+        if self.options.quiet || self.options.silence_deprecations.contains(&deprecation) {
+            return Ok(());
+        }
+
+        if deprecation.is_future() && !self.options.future_deprecations.contains(&deprecation) {
+            return Ok(());
+        }
+
+        let loc = self.map.look_up_span(span);
+        self.options.logger.warn(loc, message);
+
+        Ok(())
+    }
+
     fn visit_warn_rule(&mut self, warn_rule: AstWarn<'static>) -> SassResult<()> {
         if self.warnings_emitted.insert(warn_rule.span) {
             let value = self.visit_expr(warn_rule.value)?;
@@ -3318,7 +3373,7 @@ impl<'a> Visitor<'a> {
 
         'outer: for val in list {
             if each_stmt.variables.len() == 1 {
-                let val = self.without_slash(val);
+                let val = self.without_slash(val)?;
                 self.env
                     .scopes_mut()
                     .insert_var_last(each_stmt.variables[0], val);
@@ -3328,7 +3383,7 @@ impl<'a> Visitor<'a> {
                         .into_iter()
                         .chain(std::iter::once(Value::Null).cycle()),
                 ) {
-                    let val = self.without_slash(val);
+                    let val = self.without_slash(val)?;
                     self.env.scopes_mut().insert_var_last(var, val);
                 }
             }
@@ -3529,7 +3584,7 @@ impl<'a> Visitor<'a> {
         }
 
         let value = self.visit_expr(decl.value)?;
-        let value = self.without_slash(value);
+        let value = self.without_slash(value)?;
 
         self.env.insert_var(
             name,
@@ -3639,20 +3694,37 @@ impl<'a> Visitor<'a> {
         self.serialize(result, quote, span)
     }
 
-    #[allow(clippy::unused_self)]
-    fn without_slash(&mut self, v: Value) -> Value {
-        match v {
-            Value::Dimension(SassNumber { .. }) if v.as_slash().is_some() => {
-                // todo: emit warning. we don't currently because it can be quite loud
-                // self.emit_warning(
-                //     Cow::Borrowed("Using / for division is deprecated and will be removed at some point in the future"),
-                //     self.empty_span,
-                // );
+    /// The dart-sass `recommendation()` helper for a slash-separated
+    /// `SassNumber`: recurses through `as_slash` so e.g. a number built from
+    /// `math.div(1, 2)` results in `math.div(1, 2)` rather than the plain
+    /// division result.
+    fn slash_recommendation(number: &SassNumber, span: Span) -> String {
+        match &number.as_slash {
+            Some(parts) => format!(
+                "math.div({}, {})",
+                Self::slash_recommendation(&parts.0, span),
+                Self::slash_recommendation(&parts.1, span)
+            ),
+            None => Value::Dimension(number.clone())
+                .to_css_string(span, false)
+                .unwrap_or_else(|_| format!("{}{}", number.num.0, number.unit)),
+        }
+    }
+
+    fn without_slash(&mut self, v: Value) -> SassResult<Value> {
+        if let Value::Dimension(number) = &v {
+            if number.as_slash.is_some() {
+                let message = format!(
+                    "Using / for division is deprecated and will be removed in Dart Sass \
+                     2.0.0.\n\nRecommendation: {}\n\nMore info and automated migrator: \
+                     https://sass-lang.com/d/slash-div",
+                    Self::slash_recommendation(number, self.empty_span)
+                );
+                self.emit_deprecation(&message, Deprecation::SlashDiv, self.empty_span)?;
             }
-            _ => {}
         }
 
-        v.without_slash()
+        Ok(v.without_slash())
     }
 
     fn eval_maybe_args(
@@ -3675,14 +3747,14 @@ impl<'a> Visitor<'a> {
 
         for expr in arguments.positional {
             let val = self.visit_expr(expr)?;
-            positional.push(self.without_slash(val));
+            positional.push(self.without_slash(val)?);
         }
 
         let mut named = BTreeMap::new();
 
         for (key, expr) in arguments.named {
             let val = self.visit_expr(expr)?;
-            named.insert(key, self.without_slash(val));
+            named.insert(key, self.without_slash(val)?);
         }
 
         if arguments.rest.is_none() {
@@ -3702,26 +3774,24 @@ impl<'a> Visitor<'a> {
         match rest {
             Value::Map(rest) => self.add_rest_map(&mut named, rest)?,
             Value::List(elems, list_separator, _) => {
-                positional.extend(
-                    Rc::unwrap_or_clone(elems)
-                        .into_iter()
-                        .map(|e| self.without_slash(e)),
-                );
+                for e in Rc::unwrap_or_clone(elems) {
+                    positional.push(self.without_slash(e)?);
+                }
                 separator = list_separator;
             }
             Value::ArgList(arglist) => {
                 // todo: superfluous clone
                 for (&key, value) in arglist.keywords() {
-                    named.insert(key, self.without_slash(value.clone()));
+                    named.insert(key, self.without_slash(value.clone())?);
                 }
 
-                positional.extend(
-                    arglist.elems.into_iter().map(|e| self.without_slash(e)),
-                );
+                for e in arglist.elems {
+                    positional.push(self.without_slash(e)?);
+                }
                 separator = arglist.separator;
             }
             _ => {
-                positional.push(self.without_slash(rest));
+                positional.push(self.without_slash(rest)?);
             }
         }
 
@@ -3766,7 +3836,7 @@ impl<'a> Visitor<'a> {
         for (key, val) in rest {
             match key.node {
                 Value::String(text, ..) => {
-                    let val = self.without_slash(val);
+                    let val = self.without_slash(val)?;
                     named.insert(Identifier::from(text.as_str()), val);
                 }
                 _ => {
@@ -3854,7 +3924,7 @@ impl<'a> Visitor<'a> {
                         || {
                             // todo: superfluous clone
                             let v = visitor.visit_expr(argument.default.clone().unwrap())?;
-                            Ok(visitor.without_slash(v))
+                            visitor.without_slash(v)
                         },
                         SassResult::Ok,
                     )?;
@@ -3956,7 +4026,7 @@ impl<'a> Visitor<'a> {
             SassFunction::Builtin(func, _name) => {
                 let evaluated = self.eval_maybe_args(arguments, span)?;
                 let val = func.0(evaluated, self)?;
-                Ok(self.without_slash(val))
+                self.without_slash(val)
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
                 .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
@@ -4523,7 +4593,7 @@ impl<'a> Visitor<'a> {
             } else {
                 args.get_err(2, "if-false")?
             };
-            return Ok(self.without_slash(value));
+            return self.without_slash(value);
         }
 
         if_arguments().verify(if_expr.0.positional.len(), &if_expr.0.named, if_expr.0.span)?;
@@ -4555,7 +4625,7 @@ impl<'a> Visitor<'a> {
             self.visit_expr(if_false)?
         };
 
-        Ok(self.without_slash(value))
+        self.without_slash(value)
     }
 
     fn visit_css_if(&mut self, css_if: CssIfExpression<'static>) -> SassResult<Value> {
@@ -4569,7 +4639,7 @@ impl<'a> Visitor<'a> {
             match self.eval_if_condition(&clause.condition)? {
                 ConditionResult::True => {
                     let value = self.visit_expr(clause.value.clone())?;
-                    return Ok(self.without_slash(value));
+                    return self.without_slash(value);
                 }
                 ConditionResult::False => continue,
                 ConditionResult::Css(remaining) => {
@@ -4983,13 +5053,22 @@ impl<'a> Visitor<'a> {
                         span,
                     );
                 } else if left_is_number && right_is_number {
-                    // todo: emit warning here. it prints too frequently, so we do not currently
-                    // self.emit_warning(
-                    //     Cow::Borrowed(format!(
-                    //         "Using / for division outside of calc() is deprecated"
-                    //     )),
-                    //     span,
-                    // );
+                    // NOTE: dart-sass builds this recommendation from the
+                    // original (unevaluated) expression AST, so e.g. `12 /
+                    // $n` recommends `math.div(12, $n)`. We only have the
+                    // evaluated operands here, so this instead prints their
+                    // values (matches dart-sass exactly for literal
+                    // operands like `(1/2)`, diverges for variables/nested
+                    // expressions — see todo #130 design record).
+                    let left_text = left.to_css_string(span, false)?;
+                    let right_text = right.to_css_string(span, false)?;
+                    let message = format!(
+                        "Using / for division outside of calc() is deprecated and will be \
+                         removed in Dart Sass 2.0.0.\n\nRecommendation: math.div({left_text}, \
+                         {right_text}) or calc({left_text} / {right_text})\n\nMore info and \
+                         automated migrator: https://sass-lang.com/d/slash-div"
+                    );
+                    self.emit_deprecation(&message, Deprecation::SlashDiv, span)?;
                 }
 
                 div(left, right, self.options, span)?

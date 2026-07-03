@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{builtin::Builtin, Fs, Logger, StdFs, StdLogger};
+use crate::{builtin::Builtin, Deprecation, Fs, Logger, StdFs, StdLogger};
 
 /// Configuration for Sass compilation
 ///
@@ -19,6 +19,9 @@ pub struct Options<'a> {
     pub(crate) quiet: bool,
     pub(crate) input_syntax: Option<InputSyntax>,
     pub(crate) custom_fns: FxHashMap<String, Builtin>,
+    pub(crate) silence_deprecations: FxHashSet<Deprecation>,
+    pub(crate) fatal_deprecations: FxHashSet<Deprecation>,
+    pub(crate) future_deprecations: FxHashSet<Deprecation>,
 }
 
 impl Default for Options<'_> {
@@ -34,6 +37,9 @@ impl Default for Options<'_> {
             quiet: false,
             input_syntax: None,
             custom_fns: FxHashMap::default(),
+            silence_deprecations: FxHashSet::default(),
+            fatal_deprecations: FxHashSet::default(),
+            future_deprecations: FxHashSet::default(),
         }
     }
 }
@@ -172,6 +178,42 @@ impl<'a> Options<'a> {
     #[cfg(any(feature = "custom-builtin-fns", doc))]
     pub fn add_custom_fn<S: Into<String>>(mut self, name: S, func: Builtin) -> Self {
         self.custom_fns.insert(name.into(), func);
+        self
+    }
+
+    /// Silence warnings for the given deprecation.
+    ///
+    /// By default, all active (non-future) deprecations emit a warning when
+    /// triggered. This method adds a single deprecation to the set that is
+    /// silenced instead.
+    #[must_use]
+    #[inline]
+    pub fn silence_deprecation(mut self, deprecation: Deprecation) -> Self {
+        self.silence_deprecations.insert(deprecation);
+        self
+    }
+
+    /// Treat the given deprecation as a fatal error instead of a warning.
+    ///
+    /// This method adds a single deprecation to the set that, when
+    /// triggered, causes compilation to fail with an error instead of
+    /// emitting a warning.
+    #[must_use]
+    #[inline]
+    pub fn fatal_deprecation(mut self, deprecation: Deprecation) -> Self {
+        self.fatal_deprecations.insert(deprecation);
+        self
+    }
+
+    /// Opt in to a deprecation that is not yet active by default.
+    ///
+    /// Some deprecations (dart-sass's "future" deprecations) are disabled by
+    /// default until a later release. This method adds a single deprecation
+    /// to the set that is opted into early.
+    #[must_use]
+    #[inline]
+    pub fn future_deprecation(mut self, deprecation: Deprecation) -> Self {
+        self.future_deprecations.insert(deprecation);
         self
     }
 

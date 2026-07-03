@@ -69,6 +69,7 @@ use wasm_bindgen::prelude::*;
 
 use codemap::CodeMap;
 
+pub use crate::deprecation::Deprecation;
 pub use crate::error::{
     PublicSassErrorKind as ErrorKind, SassError as Error, SassResult as Result,
 };
@@ -103,6 +104,7 @@ mod builtin;
 mod color;
 mod common;
 mod context_flags;
+mod deprecation;
 mod error;
 mod evaluate;
 mod fs;
