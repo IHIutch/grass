@@ -1,4 +1,4 @@
-pub(crate) use bin_op::{cmp, div};
+pub(crate) use bin_op::div;
 pub(crate) use env::Environment;
 pub use visitor::Visitor;
 

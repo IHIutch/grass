@@ -119,7 +119,31 @@ pub(crate) fn random(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     )))
 }
 
-pub(crate) fn min(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+/// Compares `lhs` to `rhs` the same way `evaluate::cmp` compares two
+/// `Value::Dimension`s, without constructing either as a `Value`. Mirrors
+/// the ordering (and the exact "Incompatible units" error text/argument
+/// order) of `Value::cmp`'s `Dimension` arm, where `lhs` plays the role of
+/// `self` and `rhs` plays the role of `other`.
+fn cmp_dimension(
+    lhs: (&Number, &Unit),
+    rhs: (&Number, &Unit),
+    span: Span,
+) -> SassResult<Option<Ordering>> {
+    let (num, unit) = lhs;
+    let (num2, unit2) = rhs;
+
+    if !unit.comparable(unit2) {
+        return Err((format!("Incompatible units {} and {}.", unit2, unit), span).into());
+    }
+
+    Ok(if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {
+        num.partial_cmp(num2)
+    } else {
+        num.partial_cmp(&num2.convert(unit2, unit))
+    })
+}
+
+pub(crate) fn min(args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
     args.min_args(1)?;
     let span = args.span();
     let mut nums = args
@@ -142,19 +166,10 @@ pub(crate) fn min(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     };
 
     for (num, unit) in nums {
-        let lhs = Value::Dimension(SassNumber {
-            num,
-            unit: unit.clone(),
-            as_slash: None,
-        });
-        let rhs = Value::Dimension(SassNumber {
-            num: (min.0),
-            unit: min.1.clone(),
-            as_slash: None,
-        });
-
-        if crate::evaluate::cmp(&lhs, &rhs, visitor.options, span, BinaryOp::LessThan)?.is_truthy()
-        {
+        if matches!(
+            cmp_dimension((&num, &unit), (&min.0, &min.1), span)?,
+            Some(Ordering::Less)
+        ) {
             min = (num, unit);
         }
     }
@@ -165,7 +180,7 @@ pub(crate) fn min(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     }))
 }
 
-pub(crate) fn max(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+pub(crate) fn max(args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
     args.min_args(1)?;
     let span = args.span();
     let mut nums = args
@@ -188,20 +203,10 @@ pub(crate) fn max(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     };
 
     for (num, unit) in nums {
-        let lhs = Value::Dimension(SassNumber {
-            num,
-            unit: unit.clone(),
-            as_slash: None,
-        });
-        let rhs = Value::Dimension(SassNumber {
-            num: (max.0),
-            unit: max.1.clone(),
-            as_slash: None,
-        });
-
-        if crate::evaluate::cmp(&lhs, &rhs, visitor.options, span, BinaryOp::GreaterThan)?
-            .is_truthy()
-        {
+        if matches!(
+            cmp_dimension((&num, &unit), (&max.0, &max.1), span)?,
+            Some(Ordering::Greater)
+        ) {
             max = (num, unit);
         }
     }
