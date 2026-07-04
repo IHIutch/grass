@@ -868,9 +868,7 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            if self.env.var_exists(decl.name, decl.namespace, decl.span)? {
-                let value = self.env.get_var(name, decl.namespace).unwrap();
-
+            if let Some(value) = self.env.try_get_var(name, decl.namespace)? {
                 if value != Value::Null {
                     return Ok(None);
                 }

@@ -396,6 +396,26 @@ impl Environment {
         }
     }
 
+    /// Resolves a variable the same way [`Self::get_var`] does, but returns
+    /// `Ok(None)` instead of an "Undefined variable" error when it isn't
+    /// found. A missing namespaced module is still an error.
+    pub fn try_get_var(
+        &mut self,
+        name: Spanned<Identifier>,
+        namespace: Option<Spanned<Identifier>>,
+    ) -> SassResult<Option<Value>> {
+        if let Some(namespace) = namespace {
+            let modules = (*self.modules).borrow();
+            let module = modules.get(namespace.node, namespace.span)?;
+            return Ok((*module).borrow().get_var_no_err(name.node));
+        }
+
+        match self.scopes.get_var(name) {
+            Ok(v) => Ok(Some(v)),
+            Err(_) => self.get_variable_from_global_modules(name.node, name.span),
+        }
+    }
+
     pub fn insert_var(
         &mut self,
         name: Spanned<Identifier>,
