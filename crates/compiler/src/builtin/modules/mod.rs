@@ -305,9 +305,12 @@ fn member_map<V: fmt::Debug + Clone + 'static>(
     let mut all_maps: Vec<Rc<dyn MapView<Value = V>>> =
         others.into_iter().filter(|map| !map.is_empty()).collect();
 
+    if all_maps.is_empty() {
+        return Rc::new(local_map);
+    }
+
     all_maps.push(Rc::new(local_map));
 
-    // todo: potential optimization when all_maps.len() == 1
     Rc::new(MergedMapView::new(all_maps))
 }
 
