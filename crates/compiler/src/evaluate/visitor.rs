@@ -804,13 +804,18 @@ impl<'a> Visitor<'a> {
                     .inspect(err.span)?;
                 Err((value, err.span).into())
             }
-            // For remaining variants, clone and delegate to owned visitor.
-            // Cloning is cheap: arena refs are just pointer copies.
+            // Each/Media/Include delegate to `_ref`/borrowing visitors above and no
+            // longer clone at dispatch. The remaining variants below still clone
+            // and delegate to an owned visitor; that clone is NOT always cheap —
+            // RuleSet/UnknownAtRule/Extend/AtRootRule clone an owned `Interpolation`,
+            // For clones owned `AstExpr` bounds, and FunctionDecl/Mixin/ContentRule/
+            // Use/Forward clone owned argument/config Vecs. Converting those is
+            // out of scope for this pass (see Plan 022).
             AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset.clone()),
             AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt.clone()),
-            AstStmt::Each(each_stmt) => self.visit_each_stmt(*each_stmt.clone()),
-            AstStmt::Media(media_rule) => self.visit_media_rule(media_rule.clone()),
-            AstStmt::Include(include_stmt) => self.visit_include_stmt(*include_stmt.clone()),
+            AstStmt::Each(each_stmt) => self.visit_each_stmt(each_stmt),
+            AstStmt::Media(media_rule) => self.visit_media_rule(media_rule),
+            AstStmt::Include(include_stmt) => self.visit_include_stmt(include_stmt),
             AstStmt::While(while_stmt) => self.visit_while_stmt(while_stmt),
             AstStmt::FunctionDecl(func) => {
                 self.visit_function_decl(func.clone());
@@ -2781,15 +2786,15 @@ impl<'a> Visitor<'a> {
 
     fn visit_media_queries(
         &mut self,
-        queries: Interpolation<'static>,
+        queries: &Interpolation<'static>,
         span: Span,
     ) -> SassResult<Vec<CssMediaQuery>> {
-        let resolved = self.perform_interpolation(queries, true)?;
+        let resolved = self.perform_interpolation_ref(queries, true)?;
 
         CssMediaQuery::parse_list(&resolved, span)
     }
 
-    fn visit_media_rule(&mut self, media_rule: AstMedia<'static>) -> SassResult<Option<Value>> {
+    fn visit_media_rule(&mut self, media_rule: &AstMedia<'static>) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
                 "Media rules may not be used within nested declarations.",
@@ -2798,7 +2803,7 @@ impl<'a> Visitor<'a> {
                 .into());
         }
 
-        let queries1 = self.visit_media_queries(media_rule.query, media_rule.query_span)?;
+        let queries1 = self.visit_media_queries(&media_rule.query, media_rule.query_span)?;
 
         let nest_at_rule = self.is_plain_css && self.plain_css_style_rule_depth > 1;
 
@@ -3280,7 +3285,7 @@ impl<'a> Visitor<'a> {
         v
     }
 
-    fn visit_include_stmt(&mut self, include_stmt: AstInclude<'static>) -> SassResult<Option<Value>> {
+    fn visit_include_stmt(&mut self, include_stmt: &AstInclude<'static>) -> SassResult<Option<Value>> {
         let mixin = self
             .env
             .get_mixin(include_stmt.name, include_stmt.namespace)?;
@@ -3295,15 +3300,15 @@ impl<'a> Visitor<'a> {
                         .into());
                 }
 
-                let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
+                let args = self.eval_args(include_stmt.args.clone(), include_stmt.name.span)?;
                 mixin(args, self)?;
 
                 Ok(None)
             }
             Mixin::BuiltinWithContent(mixin) => {
-                let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
+                let args = self.eval_args(include_stmt.args.clone(), include_stmt.name.span)?;
 
-                if let Some(content) = include_stmt.content {
+                if let Some(content) = include_stmt.content.clone() {
                     let callable_content = Rc::new(CallableContentBlock {
                         content,
                         env: self.env.new_closure(),
@@ -3322,7 +3327,11 @@ impl<'a> Visitor<'a> {
                     return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
 
-                let AstInclude { args, content, .. } = include_stmt;
+                // `args`/`content` still require a clone here: `eval_args` and
+                // `run_user_defined_callable` take owned `ArgumentInvocation`/
+                // `AstContentBlock` (Plan 022 territory to make them borrow).
+                let args = include_stmt.args.clone();
+                let content = include_stmt.content.clone();
 
                 let old_in_mixin = self.flags.in_mixin();
                 self.flags.set(ContextFlags::IN_MIXIN, true);
@@ -3369,8 +3378,8 @@ impl<'a> Visitor<'a> {
         );
     }
 
-    fn visit_each_stmt(&mut self, each_stmt: AstEach<'static>) -> SassResult<Option<Value>> {
-        let list = self.visit_expr(each_stmt.list)?.as_list();
+    fn visit_each_stmt(&mut self, each_stmt: &AstEach<'static>) -> SassResult<Option<Value>> {
+        let list = self.visit_expr_ref(&each_stmt.list)?.as_list();
 
         // todo: not setting semi_global: true maybe means we can't assign to global scope when declared as global
         self.env.scope_enter();
