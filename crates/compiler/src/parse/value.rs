@@ -998,7 +998,6 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         let format = if alpha == 1.0 {
             ColorFormat::Literal(parser.toks_mut().raw_text(start - 1))
         } else {
-            let _ = parser.toks_mut().raw_text(start - 1);
             ColorFormat::Infer
         };
 
