@@ -450,6 +450,17 @@ impl Value {
         }
     }
 
+    /// Returns the length `self` would have as a list, without cloning any
+    /// elements. Must mirror the arms of [`Value::as_list`] exactly.
+    pub fn list_len(&self) -> usize {
+        match self {
+            Value::List(v, ..) => v.len(),
+            Value::Map(m) => m.iter().count(),
+            Value::ArgList(v) => v.elems.len(),
+            _ => 1,
+        }
+    }
+
     pub fn separator(&self) -> ListSeparator {
         match self {
             Value::List(_, list_separator, _) => *list_separator,

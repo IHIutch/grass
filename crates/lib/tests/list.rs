@@ -16,6 +16,12 @@ test!(
     "a {\n  color: length((1, 2, 3, 4, 5));\n}\n",
     "a {\n  color: 5;\n}\n"
 );
+// verified against dart-sass 1.97.3: `echo 'a { color: length(foo); }' | npx sass@1.97.3 --stdin --style=expanded` -> `a {\n  color: 1;\n}\n`
+test!(
+    length_of_single_value,
+    "a {\n  color: length(foo);\n}\n",
+    "a {\n  color: 1;\n}\n"
+);
 test!(
     nth_space_separated,
     "a {\n  color: nth(a b c, 1);\n}\n",
@@ -25,6 +31,12 @@ test!(
     nth_negative_index,
     "a {\n  color: nth(a b c, -2);\n}\n",
     "a {\n  color: b;\n}\n"
+);
+// verified against dart-sass 1.97.3: `echo 'a { color: nth((a, b, c), -1); }' | npx sass@1.97.3 --stdin --style=expanded` -> `a {\n  color: c;\n}\n`
+test!(
+    nth_negative_index_comma_separated,
+    "a {\n  color: nth((a, b, c), -1);\n}\n",
+    "a {\n  color: c;\n}\n"
 );
 test!(
     nth_comma_separated,
@@ -40,6 +52,12 @@ test!(
     nth_map,
     "a {\n  color: nth((c: d, e: f, g: h), 2);\n}\n",
     "a {\n  color: e f;\n}\n"
+);
+// verified against dart-sass 1.97.3: `echo 'a { color: nth((c: d, e: f, g: h), -1); }' | npx sass@1.97.3 --stdin --style=expanded` -> `a {\n  color: g h;\n}\n`
+test!(
+    nth_map_negative_index,
+    "a {\n  color: nth((c: d, e: f, g: h), -1);\n}\n",
+    "a {\n  color: g h;\n}\n"
 );
 test!(
     list_separator_space_separated,
@@ -341,6 +359,12 @@ test!(
     index_found_map,
     "a {\n  color: index((width: 10px, height: 20px), (height 20px));\n}\n",
     "a {\n  color: 2;\n}\n"
+);
+// verified against dart-sass 1.97.3: `echo 'a { color: index((a: b), (x y)); }' | npx sass@1.97.3 --stdin --style=expanded` -> no `color` declaration emitted (null)
+test!(
+    index_not_found_map,
+    "a {\n  color: index((a: b), (x y));\n}\n",
+    ""
 );
 test!(
     index_unit_conversions,
