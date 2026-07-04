@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use codemap::Span;
 
 use crate::{ast::CssMediaQuery, error::SassResult};
@@ -7,7 +9,10 @@ use super::{ComplexSelector, SimpleSelector};
 #[derive(Clone, Debug)]
 pub(crate) struct Extension {
     /// The selector in which the `@extend` appeared.
-    pub extender: ComplexSelector,
+    ///
+    /// `Rc`-shared: an `Extension` clone (common in the extend/merge loops)
+    /// bumps a refcount instead of deep-copying the selector.
+    pub extender: Rc<ComplexSelector>,
 
     /// The selector that's being extended.
     ///
@@ -27,7 +32,9 @@ pub(crate) struct Extension {
 
     /// The media query context to which this extend is restricted, or `None` if
     /// it can apply within any context.
-    pub media_context: Option<Vec<CssMediaQuery>>,
+    ///
+    /// `Rc`-shared for the same reason as `extender`.
+    pub media_context: Option<Rc<Vec<CssMediaQuery>>>,
 
     /// The span in which `extender` was defined.
     pub span: Span,
@@ -48,7 +55,7 @@ impl Extension {
     ) -> Self {
         Self {
             specificity: specificity.unwrap_or_else(|| extender.max_specificity()),
-            extender,
+            extender: Rc::new(extender),
             target: None,
             span,
             is_optional: true,
@@ -65,7 +72,7 @@ impl Extension {
     /// extend selectors in the same context.
     pub fn assert_compatible_media_context(
         &self,
-        media_context: &Option<Vec<CssMediaQuery>>,
+        media_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<()> {
         // If this extension has no media context, it can extend anything.
         let expected = match &self.media_context {
@@ -75,7 +82,7 @@ impl Extension {
 
         // If the target selector's media context matches, it's compatible.
         if let Some(ctx) = media_context {
-            if expected == ctx {
+            if expected.as_ref() == ctx {
                 return Ok(());
             }
         }
@@ -89,7 +96,7 @@ impl Extension {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn with_extender(mut self, extender: ComplexSelector) -> Self {
-        self.extender = extender;
+        self.extender = Rc::new(extender);
         self
     }
 }

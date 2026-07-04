@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     hash::Hash,
+    rc::Rc,
 };
 
 use codemap::Span;
@@ -374,7 +375,7 @@ impl ExtensionStore {
                     .map(|simple| (simple, extenders.clone()))
                     .collect();
 
-            current = store.extend_list(current, Some(&extensions), &None)?;
+            current = store.extend_list(current, Some(&extensions), None)?;
         }
         Ok(current)
     }
@@ -391,7 +392,7 @@ impl ExtensionStore {
         &mut self,
         list: SelectorList,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<SelectorList> {
         // This could be written more simply using Vec<Vec<T>>, but we want to avoid
         // any allocations in the common case where no extends apply.
@@ -433,7 +434,7 @@ impl ExtensionStore {
         &mut self,
         complex: &ComplexSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // The complex selectors that each compound selector in `complex.components`
         // can expand to.
@@ -556,7 +557,7 @@ impl ExtensionStore {
         &mut self,
         compound: &CompoundSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
         in_original: bool,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // If there's more than one target and they all need to match, we track
@@ -619,7 +620,7 @@ impl ExtensionStore {
             if let Some(states) = options.first() {
                 for state in states {
                     state.assert_compatible_media_context(media_query_context)?;
-                    result.push(state.extender.clone());
+                    result.push(state.extender.as_ref().clone());
                 }
             }
             return Ok(Some(result));
@@ -735,7 +736,7 @@ impl ExtensionStore {
         &mut self,
         simple: &SimpleSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
         targets_used: &mut FxHashSet<SimpleSelector>,
     ) -> SassResult<Option<Vec<Vec<Extension>>>> {
         if let SimpleSelector::Pseudo(pseudo) = simple {
@@ -772,7 +773,7 @@ impl ExtensionStore {
         &mut self,
         pseudo: Pseudo,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<Pseudo>>> {
         let extended = self.extend_list(
             pseudo
@@ -1078,7 +1079,7 @@ impl ExtensionStore {
         }
 
         if !self.extensions.is_empty() {
-            selector = self.extend_list(selector, None, media_query_context)?;
+            selector = self.extend_list(selector, None, media_query_context.as_ref())?;
         }
         let extended_selector = ExtendedSelector::new(selector.clone());
         if let Some(media_query_context) = media_query_context.clone() {
@@ -1105,7 +1106,7 @@ impl ExtensionStore {
         }
         // Apply pending extensions to this selector (e.g., @extend a before load-css)
         if !self.extensions.is_empty() {
-            list = self.extend_list(list, None, &None)?;
+            list = self.extend_list(list, None, None)?;
             selector.set_inner(list.clone());
         }
         self.register_selector(list, selector);
@@ -1171,13 +1172,18 @@ impl ExtensionStore {
 
         let mut new_extensions: Option<FxIndexMap<ComplexSelector, Extension>> = None;
 
+        // Built once and `Rc::clone`d per complex selector below, instead of
+        // deep-cloning the whole media-query Vec for every one.
+        let media_context_rc: Option<Rc<Vec<CssMediaQuery>>> =
+            media_context.clone().map(Rc::new);
+
         for complex in extender.components {
             let state = Extension {
                 specificity: complex.max_specificity(),
-                extender: complex.clone(),
+                extender: Rc::new(complex.clone()),
                 target: Some(target.clone()),
                 span,
-                media_context: media_context.clone(),
+                media_context: media_context_rc.clone(),
                 is_optional: extend.is_optional,
                 is_original: false,
                 left: None,
@@ -1278,7 +1284,7 @@ impl ExtensionStore {
             let selectors: Vec<ComplexSelector> = match self.extend_complex(
                 &extension.extender,
                 Some(new_extensions),
-                &extension.media_context,
+                extension.media_context.as_deref(),
             )? {
                 Some(v) => v,
                 None => {
@@ -1298,7 +1304,7 @@ impl ExtensionStore {
             }
             */
 
-            let contains_extension = selectors.first() == Some(&extension.extender);
+            let contains_extension = selectors.first() == Some(extension.extender.as_ref());
 
             let mut first = true;
             for complex in selectors {
@@ -1353,7 +1359,8 @@ impl ExtensionStore {
         for selector in selectors {
             let media_query_context = self.media_contexts.get(&selector).cloned();
             let old_value = selector.as_selector_list().clone();
-            let new_value = self.extend_list(old_value, Some(new_extensions), &media_query_context)?;
+            let new_value =
+                self.extend_list(old_value, Some(new_extensions), media_query_context.as_ref())?;
 
             // If no extends actually happened (for example because unification
             // failed), we don't need to re-register the selector.
