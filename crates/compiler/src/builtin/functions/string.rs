@@ -222,18 +222,20 @@ pub(crate) fn str_insert(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
     // Insert substring at char position, rather than byte position
     let insert = |idx, s1: &str, s2: &str| -> String {
-        s1.chars()
-            .enumerate()
-            .map(|(i, c)| {
-                if i + 1 == idx {
-                    c.to_string() + s2
-                } else if idx == 0 && i == 0 {
-                    s2.to_owned() + &c.to_string()
-                } else {
-                    c.to_string()
-                }
-            })
-            .collect::<String>()
+        let mut result = String::with_capacity(s1.len() + s2.len());
+
+        if idx == 0 {
+            result.push_str(s2);
+        }
+
+        for (i, c) in s1.chars().enumerate() {
+            result.push(c);
+            if i + 1 == idx {
+                result.push_str(s2);
+            }
+        }
+
+        result
     };
 
     let string = if index_int > 0 {
