@@ -55,6 +55,10 @@ pub(crate) struct ComplexSelector {
     /// Pre-computed hash of components (computed at construction time).
     /// Since components are never mutated after construction, this is always valid.
     cached_hash: u64,
+
+    /// Pre-computed specificity (computed at construction time).
+    /// Since components are never mutated after construction, this is always valid.
+    cached_specificity: Specificity,
 }
 
 impl PartialEq for ComplexSelector {
@@ -142,11 +146,25 @@ fn omit_spaces_around(component: &ComplexSelectorComponent) -> bool {
 impl ComplexSelector {
     pub fn new(components: Vec<ComplexSelectorComponent>, line_break: bool) -> Self {
         let cached_hash = FxBuildHasher.hash_one(&components);
+        let cached_specificity = Self::compute_specificity(&components);
         Self {
             components,
             line_break,
             cached_hash,
+            cached_specificity,
         }
+    }
+
+    fn compute_specificity(components: &[ComplexSelectorComponent]) -> Specificity {
+        let mut min = 0;
+        let mut max = 0;
+        for component in components {
+            if let ComplexSelectorComponent::Compound(compound) = component {
+                min += compound.min_specificity();
+                max += compound.max_specificity();
+            }
+        }
+        Specificity::new(min, max)
     }
 
     pub fn max_specificity(&self) -> i32 {
@@ -158,15 +176,7 @@ impl ComplexSelector {
     }
 
     pub fn specificity(&self) -> Specificity {
-        let mut min = 0;
-        let mut max = 0;
-        for component in &self.components {
-            if let ComplexSelectorComponent::Compound(compound) = component {
-                min += compound.min_specificity();
-                max += compound.max_specificity();
-            }
-        }
-        Specificity::new(min, max)
+        self.cached_specificity
     }
 
     pub fn is_invisible(&self) -> bool {

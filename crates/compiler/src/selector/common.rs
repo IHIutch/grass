@@ -38,6 +38,7 @@ impl fmt::Display for QualifiedName {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Specificity {
     pub min: i32,
     pub max: i32,
