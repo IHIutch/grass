@@ -354,17 +354,13 @@ impl<'a> Serializer<'a> {
     }
 
     fn write_selector_list_filtered(&mut self, list: &SelectorList, filter_bogus: bool) {
-        let complexes: Vec<_> = list
-            .components
-            .iter()
-            .filter(|c| {
-                !c.is_invisible() && (!filter_bogus || !c.is_bogus(false))
-            })
-            .collect();
-
         let mut first = true;
 
-        for complex in complexes {
+        for complex in list
+            .components
+            .iter()
+            .filter(|c| !c.is_invisible() && (!filter_bogus || !c.is_bogus(false)))
+        {
             if first {
                 first = false;
             } else {
