@@ -373,8 +373,17 @@ impl Module {
         }
     }
 
+    pub(crate) fn scope_ref(&self) -> &ModuleScope {
+        match self {
+            Self::Builtin { scope }
+            | Self::Environment { scope, .. }
+            | Self::Forwarded(ForwardedModule { scope, .. })
+            | Self::Shadowed(ShadowedModule { scope, .. }) => scope,
+        }
+    }
+
     pub fn get_var(&self, name: Spanned<Identifier>) -> SassResult<Value> {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         match scope.variables.get(name.node) {
             Some(v) => Ok(v),
@@ -383,13 +392,13 @@ impl Module {
     }
 
     pub fn get_var_no_err(&self, name: Identifier) -> Option<Value> {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.variables.get(name)
     }
 
     pub fn get_mixin_no_err(&self, name: Identifier) -> Option<Mixin> {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.mixins.get(name)
     }
@@ -431,7 +440,7 @@ impl Module {
     }
 
     pub fn get_mixin(&self, name: Spanned<Identifier>) -> SassResult<Mixin> {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         match scope.mixins.get(name.node) {
             Some(v) => Ok(v),
@@ -440,7 +449,7 @@ impl Module {
     }
 
     pub fn insert_builtin_mixin(&mut self, name: &'static str, mixin: BuiltinMixin) {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.mixins.insert(name.into(), Mixin::Builtin(mixin));
     }
@@ -450,7 +459,7 @@ impl Module {
         name: &'static str,
         mixin: BuiltinMixin,
     ) {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope
             .mixins
@@ -460,31 +469,31 @@ impl Module {
     pub fn insert_builtin_var(&mut self, name: &'static str, value: Value) {
         let ident = name.into();
 
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.variables.insert(ident, value);
     }
 
     pub fn get_fn(&self, name: Identifier) -> Option<SassFunction> {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.functions.get(name)
     }
 
     pub fn var_exists(&self, name: Identifier) -> bool {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.variables.get(name).is_some()
     }
 
     pub fn mixin_exists(&self, name: Identifier) -> bool {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.mixins.get(name).is_some()
     }
 
     pub fn fn_exists(&self, name: Identifier) -> bool {
-        let scope = self.scope();
+        let scope = self.scope_ref();
 
         scope.functions.get(name).is_some()
     }
@@ -508,7 +517,7 @@ impl Module {
 
     pub fn functions(&self, span: Span) -> SassMap {
         SassMap::new_with(
-            self.scope()
+            self.scope_ref()
                 .functions
                 .iter()
                 .into_iter()
@@ -525,7 +534,7 @@ impl Module {
 
     pub fn mixins(&self, span: Span) -> SassMap {
         SassMap::new_with(
-            self.scope()
+            self.scope_ref()
                 .mixins
                 .iter()
                 .into_iter()
@@ -545,7 +554,7 @@ impl Module {
 
     pub fn variables(&self, span: Span) -> SassMap {
         SassMap::new_with(
-            self.scope()
+            self.scope_ref()
                 .variables
                 .iter()
                 .into_iter()
