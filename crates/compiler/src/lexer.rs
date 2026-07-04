@@ -28,6 +28,11 @@ impl Lexer {
             .collect()
     }
 
+    /// Iterates the characters in `[start, cursor)` without allocating a `String`.
+    pub fn raw_chars(&self, start: usize) -> impl Iterator<Item = char> + '_ {
+        self.buf[start..self.cursor].iter().map(|t| t.kind)
+    }
+
     pub fn next_char_is(&self, c: char) -> bool {
         matches!(self.peek(), Some(Token { kind, .. }) if kind == c)
     }

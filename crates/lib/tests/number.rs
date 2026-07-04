@@ -232,3 +232,62 @@ error!(
     scientific_notation_no_number_after_decimal,
     "a {\n  color: 1.e3;\n}\n", "Error: Expected digit."
 );
+
+// Edge battery for Plan 023's stack-buffer number parsing (parse/value.rs
+// `parse_number`); expectations verified byte-for-byte against
+// `npx sass@1.97.3 --stdin --style=expanded`.
+test!(
+    edge_battery_large_exponent,
+    "a {\n  b: 1e100;\n}\n",
+    "a {\n  b: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;\n}\n"
+);
+test!(
+    edge_battery_exact_integer_exponent,
+    "a {\n  b: 1e15;\n}\n",
+    "a {\n  b: 1000000000000000;\n}\n"
+);
+test!(
+    edge_battery_decimal_with_exponent,
+    "a {\n  b: 1.5e15;\n}\n",
+    "a {\n  b: 1500000000000000;\n}\n"
+);
+test!(
+    edge_battery_two_decimal_digits_with_exponent,
+    "a {\n  b: 9.99e15;\n}\n",
+    "a {\n  b: 9990000000000000;\n}\n"
+);
+test!(
+    edge_battery_very_large_exponent,
+    "a {\n  b: 5e300;\n}\n",
+    "a {\n  b: 5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;\n}\n"
+);
+test!(
+    edge_battery_leading_dot,
+    "a {\n  b: .5;\n}\n",
+    "a {\n  b: 0.5;\n}\n"
+);
+test!(
+    edge_battery_small_decimal,
+    "a {\n  b: 0.00001;\n}\n",
+    "a {\n  b: 0.00001;\n}\n"
+);
+test!(
+    edge_battery_negative_large_exponent,
+    "a {\n  b: -1e20;\n}\n",
+    "a {\n  b: -100000000000000000000;\n}\n"
+);
+test!(
+    edge_battery_long_integer_part_with_decimal,
+    "a {\n  b: 100000000000000.5;\n}\n",
+    "a {\n  b: 100000000000000.5;\n}\n"
+);
+test!(
+    edge_battery_many_significant_digits,
+    "a {\n  b: 3.14159265358979;\n}\n",
+    "a {\n  b: 3.1415926536;\n}\n"
+);
+test!(
+    edge_battery_negative_exponent_underflow,
+    "a {\n  b: 1e-45;\n}\n",
+    "a {\n  b: 0;\n}\n"
+);

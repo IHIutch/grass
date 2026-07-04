@@ -1077,7 +1077,31 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         ValueParser::try_decimal(parser, parser.toks().cursor() != after_sign)?;
         ValueParser::try_exponent(parser)?;
 
-        let number: f64 = parser.toks_mut().raw_text(start).parse().unwrap();
+        // Numeric literals are bounded-length in practice, so we feed `str::parse`
+        // from a stack buffer instead of allocating a `String`; a pathological
+        // literal that overflows the buffer falls back to the heap path. This
+        // keeps `str::parse::<f64>` as the sole numeric authority for bit-exactness.
+        const STACK_CAP: usize = 64;
+        let mut stack_buf = [0u8; STACK_CAP];
+        let mut len = 0;
+        let mut overflowed = false;
+
+        for c in parser.toks().raw_chars(start) {
+            if len >= STACK_CAP {
+                overflowed = true;
+                break;
+            }
+            // Every char consumed above (sign, digits, '.', 'e'/'E') is ASCII,
+            // so this cast preserves the byte value exactly.
+            stack_buf[len] = c as u8;
+            len += 1;
+        }
+
+        let number: f64 = if overflowed {
+            parser.toks_mut().raw_text(start).parse().unwrap()
+        } else {
+            std::str::from_utf8(&stack_buf[..len]).unwrap().parse().unwrap()
+        };
 
         let unit = if parser.scan_char('%') {
             Unit::Percent
@@ -1097,15 +1121,18 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         .span(parser.toks_mut().span_from(start)))
     }
 
-    fn try_decimal(parser: &mut P, allow_trailing_dot: bool) -> SassResult<Option<String>> {
+    /// Consumes a trailing `.digits` decimal part, if present. The consumed
+    /// text is recovered later from the token buffer (see `parse_number`), so
+    /// this only needs to advance the cursor, not build a `String`.
+    fn try_decimal(parser: &mut P, allow_trailing_dot: bool) -> SassResult<()> {
         if !matches!(parser.toks().peek(), Some(Token { kind: '.', .. })) {
-            return Ok(None);
+            return Ok(());
         }
 
         match parser.toks().peek_n(1) {
             Some(Token { kind, .. }) if !kind.is_ascii_digit() => {
                 if allow_trailing_dot {
-                    return Ok(None);
+                    return Ok(());
                 }
 
                 return Err(("Expected digit.", parser.toks().current_span()).into());
@@ -1114,30 +1141,23 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             None => return Err(("Expected digit.", parser.toks().current_span()).into()),
         }
 
-        let mut buffer = String::new();
-
         parser.expect_char('.')?;
-        buffer.push('.');
 
-        while let Some(Token { kind, .. }) = parser.toks().peek() {
-            if !kind.is_ascii_digit() {
-                break;
-            }
-            buffer.push(kind);
+        while matches!(parser.toks().peek(), Some(Token { kind, .. }) if kind.is_ascii_digit()) {
             parser.toks_mut().next();
         }
 
-        Ok(Some(buffer))
+        Ok(())
     }
 
-    fn try_exponent(parser: &mut P) -> SassResult<Option<String>> {
-        let mut buffer = String::new();
-
+    /// Consumes a trailing `e`/`E` exponent part, if present. See `try_decimal`
+    /// for why the consumed text doesn't need to be collected here.
+    fn try_exponent(parser: &mut P) -> SassResult<()> {
         match parser.toks().peek() {
             Some(Token {
                 kind: 'e' | 'E', ..
-            }) => buffer.push('e'),
-            _ => return Ok(None),
+            }) => {}
+            _ => return Ok(()),
         }
 
         let next = match parser.toks().peek_n(1) {
@@ -1145,14 +1165,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 kind: kind @ ('0'..='9' | '-' | '+'),
                 ..
             }) => kind,
-            _ => return Ok(None),
+            _ => return Ok(()),
         };
 
         parser.toks_mut().next();
 
         if next == '+' || next == '-' {
             parser.toks_mut().next();
-            buffer.push(next);
         }
 
         match parser.toks().peek() {
@@ -1162,17 +1181,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             _ => return Err(("Expected digit.", parser.toks().current_span()).into()),
         }
 
-        while let Some(tok) = parser.toks().peek() {
-            if !tok.kind.is_ascii_digit() {
-                break;
-            }
-
-            buffer.push(tok.kind);
-
+        while matches!(parser.toks().peek(), Some(Token { kind, .. }) if kind.is_ascii_digit()) {
             parser.toks_mut().next();
         }
 
-        Ok(Some(buffer))
+        Ok(())
     }
 
     fn parse_plus_expr(&mut self, parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
