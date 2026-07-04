@@ -1253,7 +1253,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         let ident_span = parser.toks_mut().span_from(start);
 
         let plain = identifier.as_plain();
-        let lower = plain.map(str::to_ascii_lowercase);
+        // Most identifiers are already all-lowercase (function names, custom
+        // idents, css keywords), so only allocate a lowercase copy when the
+        // identifier actually contains an uppercase ASCII letter.
+        let lower_owned = plain
+            .filter(|p| p.bytes().any(|b| b.is_ascii_uppercase()))
+            .map(str::to_ascii_lowercase);
 
         if let Some(plain) = plain {
             if plain == "if" && parser.toks().next_char_is('(') {
@@ -1297,7 +1302,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 return Ok(AstExpr::UnaryOp(UnaryOp::Not, parser.arena().alloc(value.node), span).span(span));
             }
 
-            let lower_ref = lower.as_ref().unwrap();
+            let lower_ref: &str = lower_owned.as_deref().unwrap_or(plain);
 
             if !parser.toks().next_char_is('(') {
                 match plain {
@@ -1307,7 +1312,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     _ => {}
                 }
 
-                if let Some(color) = NAMED_COLORS.get_by_name(lower_ref.as_str()) {
+                if let Some(color) = NAMED_COLORS.get_by_name(lower_ref) {
                     return Ok(AstExpr::Color(Rc::new(Color::new(
                         color[0],
                         color[1],
@@ -1349,8 +1354,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
             Some(Token { kind: '(', .. }) => {
                 if let Some(plain) = plain {
-                    let arguments =
-                        parser.parse_argument_invocation(false, lower.as_deref() == Some("var"))?;
+                    let arguments = parser.parse_argument_invocation(
+                        false,
+                        plain.eq_ignore_ascii_case("var"),
+                    )?;
 
                     let is_css_custom = plain.starts_with("--");
                     Ok(AstExpr::FunctionCall(FunctionCallExpr {
