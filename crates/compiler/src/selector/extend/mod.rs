@@ -796,7 +796,7 @@ impl ExtensionStore {
         let mut complexes = if pseudo.normalized_name() == "not"
             && !pseudo
                 .selector
-                .clone()
+                .as_deref()
                 .unwrap()
                 .components
                 .iter()
@@ -882,7 +882,7 @@ impl ExtensionStore {
         // In order to support those browsers, we break up the contents of a `:not`
         // unless it originally contained a selector list.
         if pseudo.normalized_name() == "not"
-            && pseudo.selector.clone().unwrap().components.len() == 1
+            && pseudo.selector.as_deref().unwrap().components.len() == 1
         {
             let result = complexes
                 .into_iter()
@@ -1072,8 +1072,8 @@ impl ExtensionStore {
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<ExtendedSelector> {
         if !selector.is_invisible() {
-            for complex in selector.components.clone() {
-                self.originals.insert(&complex);
+            for complex in &selector.components {
+                self.originals.insert(complex);
             }
         }
 
@@ -1099,8 +1099,8 @@ impl ExtensionStore {
     ) -> SassResult<()> {
         let mut list = selector.as_selector_list().clone();
         if !list.is_invisible() {
-            for complex in list.components.clone() {
-                self.originals.insert(&complex);
+            for complex in &list.components {
+                self.originals.insert(complex);
             }
         }
         // Apply pending extensions to this selector (e.g., @extend a before load-css)
