@@ -4,17 +4,22 @@ set -euo pipefail
 # Profile-Guided Optimization build for grass
 #
 # PGO gives LLVM real runtime data about branch prediction, function hotness,
-# and code layout. Typically yields ~11% speedup over a standard release build.
+# and code layout. Typically yields ~14% speedup over a standard release build
+# (measured 1.16x on USWDS and Bootstrap, 2026-07-03).
 #
 # Usage:
 #   ./build-pgo.sh                    # Build PGO-optimized binary
 #   ./build-pgo.sh --benchmark        # Build + benchmark vs standard release
 #   ./build-pgo.sh --clean            # Remove PGO artifacts
+#
+# WORKLOAD/WORKLOAD_FLAGS can be overridden via env vars (e.g. for CI, where
+# prototype/packages is untracked and unavailable):
+#   PGO_WORKLOAD=bootstrap/scss/bootstrap.scss PGO_WORKLOAD_FLAGS="--style=expanded" ./build-pgo.sh
 
 CARGO="${CARGO:-$HOME/.cargo/bin/cargo}"
 PGO_DIR="/tmp/grass-pgo-$$"
-WORKLOAD="prototype/packages/uswds/_index-direct.scss"
-WORKLOAD_FLAGS="--style=expanded -I prototype/packages"
+WORKLOAD="${PGO_WORKLOAD:-prototype/packages/uswds/_index-direct.scss}"
+WORKLOAD_FLAGS="${PGO_WORKLOAD_FLAGS:---style=expanded -I prototype/packages}"
 PROFILE_RUNS=5
 
 case "${1:-}" in
@@ -31,13 +36,25 @@ case "${1:-}" in
         ;;
 esac
 
+if [ ! -f "$WORKLOAD" ]; then
+    echo "Error: workload file '$WORKLOAD' not found. Set PGO_WORKLOAD to an existing .scss file."
+    exit 1
+fi
+
 # Find llvm-profdata
+#
+# IMPORTANT: profraw format must match the rustc LLVM version. The rustup
+# llvm-tools-preview profdata always matches; system LLVM (Xcode/Homebrew) may
+# not, if it drifts from the rustc toolchain's bundled LLVM. Prefer the rustup
+# one in CI.
 if command -v llvm-profdata &>/dev/null; then
     PROFDATA="llvm-profdata"
 elif xcrun --find llvm-profdata &>/dev/null 2>&1; then
     PROFDATA="xcrun llvm-profdata"
+elif [ -x "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata" ]; then
+    PROFDATA="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata"
 else
-    echo "Error: llvm-profdata not found. Install Xcode or LLVM toolchain."
+    echo "Error: llvm-profdata not found. Install Xcode, LLVM, or run: rustup component add llvm-tools-preview"
     exit 1
 fi
 
