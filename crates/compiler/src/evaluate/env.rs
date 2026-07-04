@@ -28,7 +28,7 @@ pub(crate) struct Environment {
     pub nested_forwarded_modules: Option<Mutable<Vec<Mutable<Vec<Mutable<Module>>>>>>,
     /// Cached source identity maps for conflict detection in @forward.
     /// Maps member name → source module pointer for all previously forwarded members.
-    forwarded_member_sources: ForwardedMemberSources,
+    forwarded_member_sources: Rc<ForwardedMemberSources>,
 }
 
 type SourcePtr = *const RefCell<Module>;
@@ -50,7 +50,7 @@ impl Environment {
             forwarded_modules: Rc::new(RefCell::new(Vec::new())),
             imported_modules: Rc::new(RefCell::new(Vec::new())),
             nested_forwarded_modules: None,
-            forwarded_member_sources: ForwardedMemberSources::default(),
+            forwarded_member_sources: Rc::new(ForwardedMemberSources::default()),
         }
     }
 
@@ -63,7 +63,7 @@ impl Environment {
             forwarded_modules: Rc::clone(&self.forwarded_modules),
             imported_modules: Rc::clone(&self.imported_modules),
             nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Rc::clone),
-            forwarded_member_sources: self.forwarded_member_sources.clone(),
+            forwarded_member_sources: Rc::clone(&self.forwarded_member_sources),
         }
     }
 
@@ -81,7 +81,7 @@ impl Environment {
             forwarded_modules: Rc::new(RefCell::new(Vec::new())),
             imported_modules: Rc::clone(&self.imported_modules),
             nested_forwarded_modules: self.nested_forwarded_modules.as_ref().map(Rc::clone),
-            forwarded_member_sources: self.forwarded_member_sources.clone(),
+            forwarded_member_sources: Rc::clone(&self.forwarded_member_sources),
         }
     }
 
@@ -522,7 +522,7 @@ impl Environment {
             // Actually, we need identities to compare against future modules.
             // Use the full tree walk.
             let new_sources = collect_source_identities(new_module);
-            self.forwarded_member_sources = new_sources;
+            self.forwarded_member_sources = Rc::new(new_sources);
             return Ok(());
         }
 
@@ -565,14 +565,15 @@ impl Environment {
         }
 
         // Merge new sources into the cache.
+        let cache = Rc::make_mut(&mut self.forwarded_member_sources);
         for (name, source) in new_sources.variables {
-            self.forwarded_member_sources.variables.entry(name).or_insert(source);
+            cache.variables.entry(name).or_insert(source);
         }
         for (name, source) in new_sources.functions {
-            self.forwarded_member_sources.functions.entry(name).or_insert(source);
+            cache.functions.entry(name).or_insert(source);
         }
         for (name, source) in new_sources.mixins {
-            self.forwarded_member_sources.mixins.entry(name).or_insert(source);
+            cache.mixins.entry(name).or_insert(source);
         }
 
         Ok(())
