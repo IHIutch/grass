@@ -26,6 +26,7 @@ pub use sass_number::SassNumber;
 
 mod arglist;
 mod calculation;
+mod key_hash;
 mod map;
 pub(crate) mod number;
 mod sass_function;

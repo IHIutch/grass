@@ -45,6 +45,18 @@ pub(crate) fn fuzzy_equals(a: f64, b: f64) -> bool {
     (a - b).abs() <= epsilon() && (a * inverse_epsilon()).round() == (b * inverse_epsilon()).round()
 }
 
+/// A hash component consistent with [`fuzzy_equals`]: `fuzzy_equals(a, b)`
+/// implies `fuzzy_hash_component(a) == fuzzy_hash_component(b)`, since
+/// `fuzzy_equals` requires (among other things) that the two values round to
+/// the same value on the same `inverse_epsilon()` grid. This mirrors
+/// dart-sass's `fuzzyHashCode` (lib/src/util/number.dart); unlike dart-sass we
+/// don't special-case non-finite values, since Rust's float-to-int cast
+/// saturates instead of panicking, which already gives a deterministic result
+/// for +/-infinity and NaN.
+pub(crate) fn fuzzy_hash_component(n: f64) -> i64 {
+    (n * inverse_epsilon()).round() as i64
+}
+
 pub(crate) fn fuzzy_as_int(num: f64) -> Option<i64> {
     if !num.is_finite() {
         return None;

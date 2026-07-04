@@ -182,7 +182,7 @@ impl Unit {
     }
 
     /// Used internally to determine if two units are comparable or not
-    fn kind(&self) -> UnitKind {
+    pub(crate) fn kind(&self) -> UnitKind {
         match self {
             Unit::Px | Unit::Mm | Unit::In | Unit::Cm | Unit::Q | Unit::Pt | Unit::Pc => {
                 UnitKind::Absolute
