@@ -637,7 +637,7 @@ impl Pseudo {
                         let mut components: Vec<ComplexSelectorComponent> =
                             parents.map(<[_]>::to_vec).unwrap_or_default();
                         components.push(ComplexSelectorComponent::Compound(compound.clone()));
-                        complex1.is_super_selector(&ComplexSelector::new(components, false))
+                        complex1.is_super_selector(&ComplexSelector::new_transient(components, false))
                     })
             }
             "has" | "host" | "host-context" => {

@@ -745,8 +745,8 @@ fn complex_is_parent_superselector(
     one.push(ComplexSelectorComponent::Compound(base.clone()));
     two.push(ComplexSelectorComponent::Compound(base));
 
-    ComplexSelector::new(one, false)
-        .is_super_selector(&ComplexSelector::new(two, false))
+    ComplexSelector::new_transient(one, false)
+        .is_super_selector(&ComplexSelector::new_transient(two, false))
 }
 
 /// Returns a list of all possible paths through the given lists.

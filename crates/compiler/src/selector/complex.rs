@@ -52,13 +52,22 @@ pub(crate) struct ComplexSelector {
     /// Whether a line break should be emitted *before* this selector.
     pub line_break: bool,
 
-    /// Pre-computed hash of components (computed at construction time).
+    /// Pre-computed hash of components (computed at construction time), unless
+    /// this is a transient selector (see `new_transient`), in which case it's
+    /// meaningless and must never be read.
     /// Since components are never mutated after construction, this is always valid.
     cached_hash: u64,
 
     /// Pre-computed specificity (computed at construction time).
     /// Since components are never mutated after construction, this is always valid.
     cached_specificity: Specificity,
+
+    /// True for selectors built via `new_transient`, which skip computing
+    /// `cached_hash` because they exist only to be compared (e.g. via
+    /// `is_super_selector`) and are discarded immediately after. Checked by a
+    /// debug assertion in `Hash::hash` — transient selectors must never be
+    /// inserted into a `ComplexSelectorHashSet` or used as a hash map/set key.
+    is_transient: bool,
 }
 
 impl PartialEq for ComplexSelector {
@@ -71,6 +80,11 @@ impl Eq for ComplexSelector {}
 
 impl Hash for ComplexSelector {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        debug_assert!(
+            !self.is_transient,
+            "attempted to hash a transient ComplexSelector (built via new_transient); \
+             transient selectors must never be inserted into a hash map/set"
+        );
         state.write_u64(self.cached_hash);
     }
 }
@@ -152,6 +166,23 @@ impl ComplexSelector {
             line_break,
             cached_hash,
             cached_specificity,
+            is_transient: false,
+        }
+    }
+
+    /// Like `new`, but skips computing the hash. Only use this for
+    /// comparison-only selectors (e.g. built solely to call
+    /// `is_super_selector` on) that are discarded immediately and never
+    /// inserted into a `ComplexSelectorHashSet` or used as a hash map/set key
+    /// — doing so trips the debug assertion in `Hash::hash`.
+    pub fn new_transient(components: Vec<ComplexSelectorComponent>, line_break: bool) -> Self {
+        let cached_specificity = Self::compute_specificity(&components);
+        Self {
+            components,
+            line_break,
+            cached_hash: 0,
+            cached_specificity,
+            is_transient: true,
         }
     }
 
