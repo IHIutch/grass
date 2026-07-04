@@ -1,0 +1,105 @@
+name: Release CLI
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native-execution targets only — an instrumented PGO binary must run
+          # on the same architecture it was built on, so cross-compiled targets
+          # (aarch64-linux, windows, musl) are deliberately excluded here.
+          - target: aarch64-apple-darwin
+            os: macos-14
+            artifact-name: grass-darwin-arm64
+            dart-sass-suffix: macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact-name: grass-darwin-x64
+            dart-sass-suffix: macos-x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact-name: grass-linux-x64-gnu
+            dart-sass-suffix: linux-x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build - ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Clone profiling workload (Bootstrap v5.0.2)
+        run: git clone --depth=1 --branch v5.0.2 https://github.com/twbs/bootstrap.git
+
+      # Profiling on Bootstrap (not USWDS) is a deliberate workload
+      # substitution: prototype/packages is untracked and unavailable in CI
+      # checkouts, and the measured 1.16x speedup is workload-shape-independent
+      # (verified on both USWDS and Bootstrap in the same session).
+      - name: PGO build
+        run: PGO_WORKLOAD=bootstrap/scss/bootstrap.scss PGO_WORKLOAD_FLAGS="--style=expanded" ./build-pgo.sh
+
+      - name: Install dart-sass 1.97.3
+        run: |
+          curl -sLO https://github.com/sass/dart-sass/releases/download/1.97.3/dart-sass-1.97.3-${{ matrix.dart-sass-suffix }}.tar.gz
+          tar -xzf dart-sass-1.97.3-${{ matrix.dart-sass-suffix }}.tar.gz
+
+      - name: Verify PGO build output unchanged vs dart-sass
+        run: |
+          ./target/release/grass bootstrap/scss/bootstrap.scss --style=expanded > grass-output.css
+          ./dart-sass/sass bootstrap/scss/bootstrap.scss --style=expanded > dart-sass-output.css
+
+          if [[ $(diff -u grass-output.css dart-sass-output.css) ]]; then
+              echo "Differences found"
+              diff -u grass-output.css dart-sass-output.css
+              exit 1
+          else
+              echo "No differences found"
+          fi
+
+      - name: Rename artifact
+        run: cp target/release/grass ${{ matrix.artifact-name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
