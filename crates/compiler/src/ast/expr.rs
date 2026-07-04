@@ -108,7 +108,7 @@ pub enum AstExpr<'a> {
     },
     Color(Rc<Color>),
     CssIf(&'a CssIfExpression<'a>),
-    FunctionCall(FunctionCallExpr<'a>),
+    FunctionCall(&'a FunctionCallExpr<'a>),
     If(&'a Ternary<'a>),
     InterpolatedFunction(&'a InterpolatedFunction<'a>),
     List(ListExpr<'a>),
@@ -251,10 +251,12 @@ mod size_tests {
     use super::*;
     use std::mem::size_of;
 
-    /// Verify AstExpr stays ≤ 64 bytes. If this fails, a new large variant
-    /// was added without boxing — check which variant grew and box it.
+    /// Verify AstExpr stays <= 40 bytes. FunctionCall was arena-allocated (Plan
+    /// 024), matching every other multi-field variant, dropping the enum from
+    /// 64 to 40 bytes. If this fails, a new large variant was added without
+    /// boxing/arena-refing it — check which variant grew and box it.
     #[test]
     fn ast_expr_size() {
-        assert!(size_of::<AstExpr>() <= 64, "AstExpr grew to {} bytes", size_of::<AstExpr>());
+        assert!(size_of::<AstExpr>() <= 40, "AstExpr grew to {} bytes", size_of::<AstExpr>());
     }
 }

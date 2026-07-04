@@ -1360,14 +1360,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     )?;
 
                     let is_css_custom = plain.starts_with("--");
-                    Ok(AstExpr::FunctionCall(FunctionCallExpr {
+                    Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
                         namespace: None,
                         name: Identifier::from(plain),
                         original_name: CompactString::from(plain),
                         arguments: parser.arena().alloc(arguments),
                         span: parser.toks_mut().span_from(start),
                         is_css_custom_function: is_css_custom,
-                    })
+                    }))
                     .span(parser.toks_mut().span_from(start)))
                 } else {
                     let arguments = parser.parse_argument_invocation(false, false)?;
@@ -1422,14 +1422,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             return Err(("Module namespaces aren't allowed in plain CSS.", span).into());
         }
 
-        Ok(AstExpr::FunctionCall(FunctionCallExpr {
+        Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
             namespace: Some(namespace),
             name: Identifier::from(&name),
             original_name: CompactString::from(name),
             arguments: parser.arena().alloc(args),
             span,
             is_css_custom_function: false,
-        })
+        }))
         .span(span))
     }
 
@@ -1902,14 +1902,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     .span(parser.toks_mut().span_from(start)))
                 } else {
                     let is_css_custom = ident.starts_with("--");
-                    Ok(AstExpr::FunctionCall(FunctionCallExpr {
+                    Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
                         namespace: None,
                         name: Identifier::from(&ident),
                         original_name: CompactString::from(ident),
                         arguments: parser.arena().alloc(parser.parse_argument_invocation(false, false)?),
                         span: parser.toks_mut().span_from(start),
                         is_css_custom_function: is_css_custom,
-                    })
+                    }))
                     .span(parser.toks_mut().span_from(start)))
                 }
             }
