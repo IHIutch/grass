@@ -288,11 +288,26 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for LimitedMa
     }
 }
 
+/// A view over several forwarded module maps, resolved in reverse order so
+/// that later entries (and ultimately the local module, always last) shadow
+/// earlier ones.
+///
+/// The key SET of a `MergedMapView` is frozen once constructed: `insert`
+/// only ever overwrites the value for a key that already exists in one of
+/// the wrapped submaps (it panics otherwise, see below), and `remove` is
+/// never called on this type (module members can't be removed through it —
+/// `@use ... with` configuration removal goes through a separate
+/// `Configuration` map, not through `ModuleScope`'s `MapView`s). This makes
+/// it safe to cache a name -> submap-index lookup table with no
+/// invalidation logic: the table is built once, lazily, on first use.
 #[derive(Debug)]
-pub(crate) struct MergedMapView<V: fmt::Debug + Clone>(
-    pub Vec<Rc<dyn MapView<Value = V>>>,
-    FxHashSet<Identifier>,
-);
+pub(crate) struct MergedMapView<V: fmt::Debug + Clone> {
+    maps: Vec<Rc<dyn MapView<Value = V>>>,
+    unique_keys: FxHashSet<Identifier>,
+    /// name -> index into `maps`, built lazily in forward iteration order
+    /// (last writer wins) so it agrees with `.iter().rev().find_map(..)`.
+    index: RefCell<Option<FxHashMap<Identifier, usize>>>,
+}
 
 impl<V: fmt::Debug + Clone> MergedMapView<V> {
     pub fn new(maps: Vec<Rc<dyn MapView<Value = V>>>) -> Self {
@@ -301,14 +316,33 @@ impl<V: fmt::Debug + Clone> MergedMapView<V> {
             keys
         });
 
-        Self(maps, unique_keys)
+        Self {
+            maps,
+            unique_keys,
+            index: RefCell::new(None),
+        }
+    }
+
+    fn submap_index(&self, name: Identifier) -> Option<usize> {
+        if self.index.borrow().is_none() {
+            let mut built = FxHashMap::default();
+            for (idx, map) in self.maps.iter().enumerate() {
+                for key in map.keys() {
+                    built.insert(key, idx);
+                }
+            }
+            *self.index.borrow_mut() = Some(built);
+        }
+
+        self.index.borrow().as_ref().unwrap().get(&name).copied()
     }
 }
 
 impl<V: fmt::Debug + Clone> MapView for MergedMapView<V> {
     type Value = V;
     fn get(&self, name: Identifier) -> Option<Self::Value> {
-        self.0.iter().rev().find_map(|map| (*map).get(name))
+        let idx = self.submap_index(name)?;
+        self.maps[idx].get(name)
     }
 
     fn remove(&self, _name: Identifier) -> Option<Self::Value> {
@@ -316,35 +350,99 @@ impl<V: fmt::Debug + Clone> MapView for MergedMapView<V> {
     }
 
     fn len(&self) -> usize {
-        self.1.len()
+        self.unique_keys.len()
     }
 
     fn contains_key(&self, name: Identifier) -> bool {
-        self.0.iter().rev().any(|map| map.contains_key(name))
+        self.submap_index(name).is_some()
     }
 
     fn insert(&self, name: Identifier, value: Self::Value) -> Option<Self::Value> {
-        for map in self.0.iter().rev() {
-            if map.contains_key(name) {
-                return map.insert(name, value);
-            }
+        if let Some(idx) = self.submap_index(name) {
+            return self.maps[idx].insert(name, value);
         }
 
         unreachable!("New entries may not be added to MergedMapView")
     }
 
     fn keys(&self) -> Vec<Identifier> {
-        let mut keys: Vec<_> = self.1.iter().copied().collect();
+        let mut keys: Vec<_> = self.unique_keys.iter().copied().collect();
         keys.sort();
         keys
     }
 
     fn iter(&self) -> Vec<(Identifier, Self::Value)> {
-        let mut keys: Vec<_> = self.1.iter().copied().collect();
+        let mut keys: Vec<_> = self.unique_keys.iter().copied().collect();
         keys.sort();
         keys.into_iter()
             .map(|name| (name, self.get(name).unwrap()))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod merged_map_view_tests {
+    use super::*;
+
+    fn stub(entries: &[(&str, i32)]) -> Rc<dyn MapView<Value = i32>> {
+        let map: FxHashMap<Identifier, i32> = entries
+            .iter()
+            .map(|(k, v)| (Identifier::from(*k), *v))
+            .collect();
+        Rc::new(BaseMapView(Rc::new(RefCell::new(map))))
+    }
+
+    #[test]
+    fn precedence_matches_reverse_scan() {
+        // Two stub maps sharing a key: the later map in the vec (index 1)
+        // must win, matching `.iter().rev().find_map(..)` on the old path.
+        let first = stub(&[("shared", 1), ("only-first", 10)]);
+        let second = stub(&[("shared", 2), ("only-second", 20)]);
+
+        let merged = MergedMapView::new(vec![first, second]);
+
+        assert_eq!(merged.get(Identifier::from("shared")), Some(2));
+        assert_eq!(merged.get(Identifier::from("only-first")), Some(10));
+        assert_eq!(merged.get(Identifier::from("only-second")), Some(20));
+        assert_eq!(merged.get(Identifier::from("missing")), None);
+    }
+
+    #[test]
+    fn contains_key_matches_get() {
+        let first = stub(&[("shared", 1)]);
+        let second = stub(&[("shared", 2), ("only-second", 20)]);
+
+        let merged = MergedMapView::new(vec![first, second]);
+
+        assert!(merged.contains_key(Identifier::from("shared")));
+        assert!(merged.contains_key(Identifier::from("only-second")));
+        assert!(!merged.contains_key(Identifier::from("missing")));
+    }
+
+    #[test]
+    fn live_value_mutation_through_submap_is_visible() {
+        let first = stub(&[("only-first", 10)]);
+        let second = stub(&[("shared", 2)]);
+
+        let merged = MergedMapView::new(vec![Rc::clone(&first), Rc::clone(&second)]);
+
+        // Build the index via a first get, then mutate the winning submap
+        // directly (as `MergedMapView::insert` does) and confirm the change
+        // is visible through the already-built index.
+        assert_eq!(merged.get(Identifier::from("shared")), Some(2));
+        assert_eq!(second.insert(Identifier::from("shared"), 99), Some(2));
+        assert_eq!(merged.get(Identifier::from("shared")), Some(99));
+    }
+
+    #[test]
+    fn insert_overwrites_existing_key_via_index() {
+        let first = stub(&[("only-first", 10)]);
+        let second = stub(&[("shared", 2)]);
+
+        let merged = MergedMapView::new(vec![first, second]);
+
+        assert_eq!(merged.insert(Identifier::from("shared"), 42), Some(2));
+        assert_eq!(merged.get(Identifier::from("shared")), Some(42));
     }
 }
 
