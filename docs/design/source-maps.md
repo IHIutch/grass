@@ -132,18 +132,31 @@ without touching >10 write sites").
 
 **This spike avoids that entirely.** Because mappings are only ever needed at two chokepoints (not
 on every byte written), `record_mapping` computes the generated line/column by **scanning only the
-unscanned tail of the buffer**, `self.buffer[mapping_scan_pos..]`, counting `\n` bytes and UTF-8
-lead bytes since the last mapping was recorded, then advancing `mapping_scan_pos` to
-`buffer.len()`. Total scan cost across a whole serialization is `O(total output size)` — each byte
-is scanned exactly once, no matter how many mappings are collected — and zero write sites needed
-touching. This is implemented in `serializer.rs::record_mapping` (new method).
+unscanned tail of the buffer**, `self.buffer[state.scan_pos..]`, counting `\n` bytes and UTF-8
+lead bytes since the last mapping was recorded, then advancing `state.scan_pos` to `buffer.len()`.
+Total scan cost across a whole serialization is `O(total output size)` — each byte is scanned
+exactly once, no matter how many mappings are collected — and zero write sites needed touching.
+This is implemented in `serializer.rs::record_mapping` (new method).
 
 One subtlety verified safe: `write_style`'s custom-property path (`reindent_buffer_from`)
 `truncate`s and rewrites buffer bytes *after* `record_mapping` has already run and advanced
-`mapping_scan_pos` past the pre-truncation length for that declaration. Since the scan always
-starts fresh from `mapping_scan_pos` (an index, not a cached line/col snapshot) at the *next*
-mapping call, and never re-scans a region twice, the truncate-and-rewrite is invisible to the
-tracker — it only ever sees the buffer's final bytes in that region.
+`scan_pos` past the pre-truncation length for that declaration. Since the scan always starts fresh
+from `scan_pos` (an index, not a cached line/col snapshot) at the *next* mapping call, and never
+re-scans a region twice, the truncate-and-rewrite is invisible to the tracker — it only ever sees
+the buffer's final bytes in that region.
+
+**Round-1 review finding, fixed:** the first version of this spike stored the five mapping fields
+(`mappings: Vec<_>`, `mapping_sources: Vec<_>`, `scan_pos`/`dst_line`/`dst_col: usize`) directly on
+`Serializer`, always-initialized in *both* constructors — including `new_expr`, the per-`#{...}`-
+interpolation constructor used at very high frequency during expression serialization, which never
+maps anything. That cost showed up as a measurable option-OFF regression (+2-4.5%, confirmed by
+the reviewer's order-swap-controlled hyperfine A/B; see "Inertness gate results" below). The fix
+collapses all five fields into a single `mapping_state: Option<Box<MappingState>>`: `None`
+whenever the option is off, and **always** `None` in `new_expr` regardless of the option (there is
+no `CodeMap` there and expression serialization never maps). `record_mapping` gates on the `Option`
+and does nothing when it's `None`. Only the top-level `Serializer::new` allocates a `Box` when
+`options.source_map` is `true`. This restores the off-path and the `new_expr` hot path to a single
+pointer-sized field.
 
 ### VLQ: hand-rolled, not a crate
 
@@ -180,9 +193,10 @@ needed).
   byte-identical to `from_string` in both cases.
 - `crates/compiler/src/source_map.rs` (new module) — `RawMapping`, `encode_vlq`,
   `build_source_map_json`.
-- `Serializer` gained `mappings`, `mapping_sources`, `mapping_scan_pos`, `mapping_dst_line`,
-  `mapping_dst_col` fields, a `record_mapping` method, and a `take_mappings()` accessor —
-  `crates/compiler/src/serializer.rs`.
+- `Serializer` gained one field, `mapping_state: Option<Box<MappingState>>` (a new private struct
+  holding `mappings`, `sources`, `scan_pos`, `dst_line`, `dst_col`), a `record_mapping` method, and
+  a `take_mappings()` accessor — `crates/compiler/src/serializer.rs`. See "Round-1 review finding,
+  fixed" above for why this is a single `Option<Box<_>>` rather than five plain fields.
 
 **Refactor to avoid duplicating the compile driver:** `from_string_with_file_name`'s body (parse →
 visit → serialize loop → finish) was extracted into a private `compile_impl` returning `(String,
@@ -216,18 +230,30 @@ decoded dart-sass fixtures) — these run without needing a full compile.
   pre-existing failures** across the same 13 targets (solo todos #144/#145) — name-set diffed
   against the baseline list and it matches exactly; no new failures, none fixed.
 - **clippy:** `~/.cargo/bin/cargo clippy --features=macro -- -D warnings` → clean.
-- **Perf (hyperfine, option off, base `080457e` vs branch binary):**
-  - USWDS (`/tmp/_grass_perf_check.scss -I prototype/packages`, 10 runs, 4 warmup): base 274.3ms
-    ±3.9ms vs branch 273.6ms ±3.0ms — branch 1.00× (no measurable difference).
-  - Bootstrap v5.0.2 (`/private/tmp/bootstrap-bench/scss/bootstrap.scss`): first pass showed a
-    1.02× (±0.06) gap with an outlier warning; a second, higher-powered rerun (15 warmup, 15+
-    runs) came back 1.00× (54.1ms vs 54.2ms) — the initial gap was measurement noise from ambient
-    machine load, not a real cost. No regression.
-  - Machine load was checked before each run (`uptime` 1-min < 6, no `cargo`/`rustc` processes
-    running) per the todo #123 protocol.
+- **Perf, round 1 (five-field `Serializer`, since reverted):** initial hyperfine A/B looked clean
+  (both workloads ~1.00×), but round-1 review caught it with an order-swap-controlled A/B: branch
+  was consistently slower with the option off — USWDS +2.1-2.9%, Bootstrap +2.9-4.5% — across four
+  measurements and both benchmark orderings. Root cause: five always-initialized mapping fields on
+  `Serializer` (~64 bytes, two `Vec`s), present in **both** constructors including `new_expr`, the
+  per-`#{...}`-interpolation hot path. This was the plan's own hard STOP condition
+  ("perf regresses with the option off") and required a design fix, not just re-measuring — see
+  "Round-1 review finding, fixed" above.
+- **Perf, round 2 (after collapsing to `mapping_state: Option<Box<MappingState>>`), option off,
+  base `080457e` vs branch binary, order-swap protocol (each pair run in both orderings), machine
+  load checked before each run (`uptime` 1-min < 6, no `cargo`/`rustc` processes running):**
+  - USWDS (`/tmp/_grass_perf_check.scss -I prototype/packages`, 15 warmup, 15 runs each):
+    - order A (base, then branch): base 264.7ms ±2.7ms vs branch 264.8ms ±1.8ms — 1.00×.
+    - order B (branch, then base): branch 265.0ms ±1.6ms vs base 265.2ms ±2.1ms — 1.00×.
+  - Bootstrap v5.0.2 (`/private/tmp/bootstrap-bench/scss/bootstrap.scss`, 5 warmup, 20 runs each):
+    - order A (base, then branch): base 52.7ms ±0.6ms vs branch 52.7ms ±0.6ms — 1.00×.
+    - order B (branch, then base): branch 52.6ms ±0.5ms vs base 52.7ms ±0.6ms — 1.00×.
+  - All four measurements land at 1.00× with the faster side flipping between orderings (split
+    direction) — the noise signature the order-swap control is designed to surface, not a
+    consistent same-direction cost. Passes the plan's inertness gate.
 
-No STOP condition triggered. The option is provably inert when off: same code path
-(`compile_impl`), same output, same test pass/fail set, same performance.
+No STOP condition triggered in the final state. The option is provably inert when off: same code
+path (`compile_impl`), same output, same test pass/fail set, same performance (order-swap
+confirmed, not just single-direction 1.00× readings that round 1 relied on).
 
 ## Deferred slices (not built — design-only per spike scope)
 
@@ -248,7 +274,7 @@ Filing-ready for the reviewer to create as solo todos:
    once the napi slice lands (WASM path likely mirrors it).
 4. **`sourcesContent` / URL-style options** — `--embed-sources` (add `sourcesContent`) and
    `--source-map-urls={relative,absolute}` (rewrite the `sources` array to `file://` URLs).
-   Straightforward once file names are tracked; the linear-scan `mapping_sources` dedup (see
+   Straightforward once file names are tracked; the linear-scan `MappingState::sources` dedup (see
    "Source file list" above) would benefit from becoming a `HashMap` first if this lands. Effort: **S**.
 5. **At-rule / comment / media / supports mappings** — extend `record_mapping` calls to the
    remaining `CssStmt` variants in `visit_stmt` using the exact same pattern established for
@@ -306,3 +332,8 @@ Filing-ready for the reviewer to create as solo todos:
 - Left `sources` ordering as "first mapping seen" rather than trying to replicate dart-sass's
   exact dependency-graph-order semantics for complex `@forward` chains — the two-file case tested
   matches, deeper cases are an open question (above), not a bug found.
+- Round-1 review caught an option-off perf regression that a same-direction-only hyperfine A/B
+  missed; round 2 used an order-swap protocol (each workload run in both binary orderings) to
+  distinguish a real regression from ambient-load noise, and that protocol is now the standard for
+  any future perf claim on this spike — a single-ordering 1.00× reading is not sufficient
+  evidence by itself.

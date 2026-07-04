@@ -138,17 +138,29 @@ pub(crate) struct Serializer<'a> {
     in_custom_property: bool,
     /// Plan 013 design-spike prototype: gathers (generated position -> source
     /// position) mappings for style declarations and selectors when
-    /// `options.source_map` is set. `record_mapping` is a no-op otherwise, so
-    /// this is inert (empty, unused) whenever the option is off.
+    /// `options.source_map` is set. `None` whenever the option is off, and
+    /// ALWAYS `None` for expression serializers (`new_expr` — there is no
+    /// `CodeMap` and expression serialization never maps). A single
+    /// `Option<Box<_>>` keeps the off-path (and the very-high-frequency
+    /// `new_expr` path, once per `#{...}` interpolation) down to one
+    /// pointer-sized field instead of five always-initialized fields
+    /// (round-1 review finding: the five-field version cost 2-4.5% even
+    /// with the option off, from extra struct-init/move cost in `new_expr`).
+    mapping_state: Option<Box<MappingState>>,
+}
+
+/// Plan 013 design-spike prototype: see `Serializer::mapping_state`.
+#[derive(Default)]
+struct MappingState {
     mappings: Vec<crate::source_map::RawMapping>,
     /// Deduplicated, first-appearance-ordered source file names; indexed by
     /// `RawMapping::src_file_idx`.
-    mapping_sources: Vec<String>,
+    sources: Vec<String>,
     /// Byte offset into `buffer` already scanned for generated line/column
-    /// tracking; `record_mapping` only rescans `buffer[mapping_scan_pos..]`.
-    mapping_scan_pos: usize,
-    mapping_dst_line: usize,
-    mapping_dst_col: usize,
+    /// tracking; `record_mapping` only rescans `buffer[scan_pos..]`.
+    scan_pos: usize,
+    dst_line: usize,
+    dst_col: usize,
 }
 
 impl<'a> Serializer<'a> {
@@ -164,11 +176,11 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
-            mappings: Vec::new(),
-            mapping_sources: Vec::new(),
-            mapping_scan_pos: 0,
-            mapping_dst_line: 0,
-            mapping_dst_col: 0,
+            mapping_state: if options.source_map {
+                Some(Box::new(MappingState::default()))
+            } else {
+                None
+            },
         }
     }
 
@@ -186,11 +198,9 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
-            mappings: Vec::new(),
-            mapping_sources: Vec::new(),
-            mapping_scan_pos: 0,
-            mapping_dst_line: 0,
-            mapping_dst_col: 0,
+            // Always None: expression serialization has no CodeMap and never
+            // produces mappings, regardless of `options.source_map`.
+            mapping_state: None,
         }
     }
 
@@ -1819,60 +1829,59 @@ impl<'a> Serializer<'a> {
 
     /// Plan 013 design-spike prototype: record a mapping from the current
     /// generated (buffer) position to `src_pos`, if source-map collection is
-    /// enabled. No-op (and thus zero-cost beyond the two flag checks) when
-    /// `options.source_map` is false or there is no `CodeMap` (expression
-    /// serializers created via `new_expr`).
+    /// enabled. No-op when `mapping_state` is `None` — the option is off, or
+    /// this is an expression serializer (`new_expr` always leaves it `None`).
     ///
     /// Generated line/column are tracked by scanning only the unscanned tail
-    /// of `buffer` (`buffer[mapping_scan_pos..]`) rather than instrumenting
-    /// every low-level `buffer.push`/`extend_from_slice` call site — the
-    /// serializer has dozens of those, and touching them all would be a much
-    /// larger and riskier change for a design spike. This scan is amortized
-    /// O(total output size) across the whole serialization, since each byte
-    /// is scanned at most once.
+    /// of `buffer` (`buffer[scan_pos..]`) rather than instrumenting every
+    /// low-level `buffer.push`/`extend_from_slice` call site — the serializer
+    /// has dozens of those, and touching them all would be a much larger and
+    /// riskier change for a design spike. This scan is amortized O(total
+    /// output size) across the whole serialization, since each byte is
+    /// scanned at most once.
     fn record_mapping(&mut self, src_pos: codemap::Pos) {
-        if !self.options.source_map {
+        let Some(state) = &mut self.mapping_state else {
             return;
-        }
+        };
 
+        // `mapping_state` is only ever `Some` via `new`, which always pairs
+        // it with `map: Some(map)` (gated on the same `options.source_map`
+        // check) — `new_expr` leaves both `None`. So this is infallible in
+        // practice, but stays a graceful no-op rather than an unwrap.
         let Some(map) = self.map else { return };
 
         debug_assert!(
-            self.mapping_scan_pos <= self.buffer.len(),
-            "mapping_scan_pos must never point past the current buffer end"
+            state.scan_pos <= self.buffer.len(),
+            "mapping scan_pos must never point past the current buffer end"
         );
 
-        for &byte in &self.buffer[self.mapping_scan_pos..] {
+        for &byte in &self.buffer[state.scan_pos..] {
             if byte == b'\n' {
-                self.mapping_dst_line += 1;
-                self.mapping_dst_col = 0;
+                state.dst_line += 1;
+                state.dst_col = 0;
             } else if byte & 0b1100_0000 != 0b1000_0000 {
                 // Skip UTF-8 continuation bytes so multi-byte characters
                 // count as a single column, matching typical column
                 // conventions used by source map consumers for ASCII-mostly
                 // CSS. Full UTF-16-code-unit column semantics (as used by
                 // dart-sass/JS tooling) are a deferred-slice open question.
-                self.mapping_dst_col += 1;
+                state.dst_col += 1;
             }
         }
-        self.mapping_scan_pos = self.buffer.len();
+        state.scan_pos = self.buffer.len();
 
         let loc = map.look_up_pos(src_pos);
-        let src_file_idx = match self
-            .mapping_sources
-            .iter()
-            .position(|name| name == loc.file.name())
-        {
+        let src_file_idx = match state.sources.iter().position(|name| name == loc.file.name()) {
             Some(idx) => idx,
             None => {
-                self.mapping_sources.push(loc.file.name().to_owned());
-                self.mapping_sources.len() - 1
+                state.sources.push(loc.file.name().to_owned());
+                state.sources.len() - 1
             }
         };
 
-        self.mappings.push(crate::source_map::RawMapping {
-            dst_line: self.mapping_dst_line,
-            dst_col: self.mapping_dst_col,
+        state.mappings.push(crate::source_map::RawMapping {
+            dst_line: state.dst_line,
+            dst_col: state.dst_col,
             src_file_idx,
             src_line: loc.position.line,
             src_col: loc.position.column,
@@ -1880,12 +1889,12 @@ impl<'a> Serializer<'a> {
     }
 
     /// Take the mappings and source list collected via `record_mapping`.
-    /// Only meaningful when `options.source_map` was set; empty otherwise.
+    /// Empty when `mapping_state` was `None` (option off).
     pub(crate) fn take_mappings(&mut self) -> (Vec<crate::source_map::RawMapping>, Vec<String>) {
-        (
-            std::mem::take(&mut self.mappings),
-            std::mem::take(&mut self.mapping_sources),
-        )
+        match self.mapping_state.take() {
+            Some(state) => (state.mappings, state.sources),
+            None => (Vec::new(), Vec::new()),
+        }
     }
 
     /// Write a comment inline (after a semicolon or opening brace) without indentation
