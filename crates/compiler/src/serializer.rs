@@ -136,6 +136,19 @@ pub(crate) struct Serializer<'a> {
     _span: Span,
     in_calculation: bool,
     in_custom_property: bool,
+    /// Plan 013 design-spike prototype: gathers (generated position -> source
+    /// position) mappings for style declarations and selectors when
+    /// `options.source_map` is set. `record_mapping` is a no-op otherwise, so
+    /// this is inert (empty, unused) whenever the option is off.
+    mappings: Vec<crate::source_map::RawMapping>,
+    /// Deduplicated, first-appearance-ordered source file names; indexed by
+    /// `RawMapping::src_file_idx`.
+    mapping_sources: Vec<String>,
+    /// Byte offset into `buffer` already scanned for generated line/column
+    /// tracking; `record_mapping` only rescans `buffer[mapping_scan_pos..]`.
+    mapping_scan_pos: usize,
+    mapping_dst_line: usize,
+    mapping_dst_col: usize,
 }
 
 impl<'a> Serializer<'a> {
@@ -151,6 +164,11 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
+            mappings: Vec::new(),
+            mapping_sources: Vec::new(),
+            mapping_scan_pos: 0,
+            mapping_dst_line: 0,
+            mapping_dst_col: 0,
         }
     }
 
@@ -168,6 +186,11 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
+            mappings: Vec::new(),
+            mapping_sources: Vec::new(),
+            mapping_scan_pos: 0,
+            mapping_dst_line: 0,
+            mapping_dst_col: 0,
         }
     }
 
@@ -1588,6 +1611,8 @@ impl<'a> Serializer<'a> {
             self.write_indentation();
         }
 
+        self.record_mapping(style.property_span.low());
+
         self.buffer
             .extend_from_slice(style.property.resolve_ref().as_bytes());
         self.buffer.push(b':');
@@ -1790,6 +1815,77 @@ impl<'a> Serializer<'a> {
     /// Get the source line number for a span position
     fn source_line(&self, pos: codemap::Pos) -> usize {
         self.map.map_or(0, |m| m.look_up_pos(pos).position.line)
+    }
+
+    /// Plan 013 design-spike prototype: record a mapping from the current
+    /// generated (buffer) position to `src_pos`, if source-map collection is
+    /// enabled. No-op (and thus zero-cost beyond the two flag checks) when
+    /// `options.source_map` is false or there is no `CodeMap` (expression
+    /// serializers created via `new_expr`).
+    ///
+    /// Generated line/column are tracked by scanning only the unscanned tail
+    /// of `buffer` (`buffer[mapping_scan_pos..]`) rather than instrumenting
+    /// every low-level `buffer.push`/`extend_from_slice` call site — the
+    /// serializer has dozens of those, and touching them all would be a much
+    /// larger and riskier change for a design spike. This scan is amortized
+    /// O(total output size) across the whole serialization, since each byte
+    /// is scanned at most once.
+    fn record_mapping(&mut self, src_pos: codemap::Pos) {
+        if !self.options.source_map {
+            return;
+        }
+
+        let Some(map) = self.map else { return };
+
+        debug_assert!(
+            self.mapping_scan_pos <= self.buffer.len(),
+            "mapping_scan_pos must never point past the current buffer end"
+        );
+
+        for &byte in &self.buffer[self.mapping_scan_pos..] {
+            if byte == b'\n' {
+                self.mapping_dst_line += 1;
+                self.mapping_dst_col = 0;
+            } else if byte & 0b1100_0000 != 0b1000_0000 {
+                // Skip UTF-8 continuation bytes so multi-byte characters
+                // count as a single column, matching typical column
+                // conventions used by source map consumers for ASCII-mostly
+                // CSS. Full UTF-16-code-unit column semantics (as used by
+                // dart-sass/JS tooling) are a deferred-slice open question.
+                self.mapping_dst_col += 1;
+            }
+        }
+        self.mapping_scan_pos = self.buffer.len();
+
+        let loc = map.look_up_pos(src_pos);
+        let src_file_idx = match self
+            .mapping_sources
+            .iter()
+            .position(|name| name == loc.file.name())
+        {
+            Some(idx) => idx,
+            None => {
+                self.mapping_sources.push(loc.file.name().to_owned());
+                self.mapping_sources.len() - 1
+            }
+        };
+
+        self.mappings.push(crate::source_map::RawMapping {
+            dst_line: self.mapping_dst_line,
+            dst_col: self.mapping_dst_col,
+            src_file_idx,
+            src_line: loc.position.line,
+            src_col: loc.position.column,
+        });
+    }
+
+    /// Take the mappings and source list collected via `record_mapping`.
+    /// Only meaningful when `options.source_map` was set; empty otherwise.
+    pub(crate) fn take_mappings(&mut self) -> (Vec<crate::source_map::RawMapping>, Vec<String>) {
+        (
+            std::mem::take(&mut self.mappings),
+            std::mem::take(&mut self.mapping_sources),
+        )
     }
 
     /// Write a comment inline (after a semicolon or opening brace) without indentation
@@ -2026,6 +2122,7 @@ impl<'a> Serializer<'a> {
                 self.write_indentation();
                 let sel_list = selector.as_selector_list();
                 let brace_line = Some(self.source_line(sel_list.span.high()));
+                self.record_mapping(sel_list.span.low());
                 self.write_top_level_selector_list(&sel_list);
 
                 // Comment-only body on same line as `{`: render single-line (issue_894)

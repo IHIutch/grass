@@ -115,6 +115,7 @@ mod options;
 mod parse;
 mod selector;
 mod serializer;
+mod source_map;
 mod unit;
 mod utils;
 mod value;
@@ -177,6 +178,42 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     file_name: P,
     options: &Options,
 ) -> Result<String> {
+    let (css, _mappings, _sources) = compile_impl(input, file_name, options)?;
+    Ok(css)
+}
+
+/// Compile CSS from a string, additionally returning a Source Map v3 JSON
+/// document when [`Options::source_map`] is enabled.
+///
+/// This is a Plan 013 design-spike prototype: only top-level style
+/// declarations and selectors produce mappings. The second tuple element is
+/// `None` whenever `options.source_map()` was not set to `true`, in which
+/// case this function's CSS output is byte-identical to [`from_string`].
+///
+/// Not yet wired into the CLI, napi, or WASM surfaces — see
+/// `docs/design/source-maps.md` for the full design and deferred work.
+pub fn from_string_with_source_map<S: Into<String>>(
+    input: S,
+    options: &Options,
+) -> Result<(String, Option<String>)> {
+    let (css, mappings, sources) = compile_impl(input.into(), "stdin", options)?;
+
+    let map_json = if options.source_map {
+        Some(crate::source_map::build_source_map_json(
+            &mappings, &sources, "",
+        ))
+    } else {
+        None
+    };
+
+    Ok((css, map_json))
+}
+
+fn compile_impl<P: AsRef<Path>>(
+    input: String,
+    file_name: P,
+    options: &Options,
+) -> Result<(String, Vec<crate::source_map::RawMapping>, Vec<String>)> {
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
@@ -275,7 +312,10 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
         prev_requires_semicolon = requires_semicolon;
     }
 
-    Ok(serializer.finish(prev_requires_semicolon))
+    let (mappings, sources) = serializer.take_mappings();
+    let css = serializer.finish(prev_requires_semicolon);
+
+    Ok((css, mappings, sources))
 }
 
 /// Compile CSS from a path

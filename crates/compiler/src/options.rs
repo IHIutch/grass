@@ -22,6 +22,7 @@ pub struct Options<'a> {
     pub(crate) silence_deprecations: FxHashSet<Deprecation>,
     pub(crate) fatal_deprecations: FxHashSet<Deprecation>,
     pub(crate) future_deprecations: FxHashSet<Deprecation>,
+    pub(crate) source_map: bool,
 }
 
 impl Default for Options<'_> {
@@ -40,6 +41,7 @@ impl Default for Options<'_> {
             silence_deprecations: FxHashSet::default(),
             fatal_deprecations: FxHashSet::default(),
             future_deprecations: FxHashSet::default(),
+            source_map: false,
         }
     }
 }
@@ -214,6 +216,21 @@ impl<'a> Options<'a> {
     #[inline]
     pub fn future_deprecation(mut self, deprecation: Deprecation) -> Self {
         self.future_deprecations.insert(deprecation);
+        self
+    }
+
+    /// Enable collection of a Source Map v3 mapping alongside the compiled CSS.
+    ///
+    /// This is a design-spike prototype: only top-level style declarations and
+    /// selectors are mapped, and only [`crate::from_string_with_source_map`]
+    /// consumes this flag. It has no effect on [`crate::from_string`] or
+    /// [`crate::from_path`], and it never changes CSS output.
+    ///
+    /// By default, this value is `false`.
+    #[must_use]
+    #[inline]
+    pub const fn source_map(mut self, source_map: bool) -> Self {
+        self.source_map = source_map;
         self
     }
 
