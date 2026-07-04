@@ -184,6 +184,14 @@ impl UserDefinedCallable for Rc<CallableContentBlock> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CallableContentBlock {
+    // Stored owned rather than as `&'static AstContentBlock<'static>`: doing so
+    // would require `visit_include_stmt`'s `include_stmt` parameter (and its
+    // whole dispatch chain back through `visit_stmt_ref`) to be typed as a
+    // genuinely `'static` reference rather than the anonymous elided lifetime
+    // used throughout the visitor, which is out of scope for this pass. The
+    // clone here is bounded by the mixin's declared-argument count, not by
+    // call/loop-iteration count, unlike the `ArgumentInvocation` clones this
+    // plan targets.
     content: AstContentBlock<'static>,
     env: Environment,
 }
@@ -804,13 +812,14 @@ impl<'a> Visitor<'a> {
                     .inspect(err.span)?;
                 Err((value, err.span).into())
             }
-            // Each/Media/Include delegate to `_ref`/borrowing visitors above and no
-            // longer clone at dispatch. The remaining variants below still clone
-            // and delegate to an owned visitor; that clone is NOT always cheap —
-            // RuleSet/UnknownAtRule/Extend/AtRootRule clone an owned `Interpolation`,
-            // For clones owned `AstExpr` bounds, and FunctionDecl/Mixin/ContentRule/
-            // Use/Forward clone owned argument/config Vecs. Converting those is
-            // out of scope for this pass (see Plan 022).
+            // Each/Media/Include/ContentRule delegate to `_ref`/borrowing visitors
+            // above and no longer clone at dispatch. The remaining variants below
+            // still clone and delegate to an owned visitor; that clone is NOT
+            // always cheap — RuleSet/UnknownAtRule/Extend/AtRootRule clone an
+            // owned `Interpolation`, For clones owned `AstExpr` bounds, and
+            // FunctionDecl/Mixin/Use/Forward clone owned argument/config Vecs.
+            // Converting those (declaration sites, not call sites) is out of
+            // scope for this pass (see Plan 022).
             AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset.clone()),
             AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt.clone()),
             AstStmt::Each(each_stmt) => self.visit_each_stmt(each_stmt),
@@ -825,7 +834,7 @@ impl<'a> Visitor<'a> {
                 self.visit_mixin_decl(mixin.clone());
                 Ok(None)
             }
-            AstStmt::ContentRule(content_rule) => self.visit_content_rule(*content_rule.clone()),
+            AstStmt::ContentRule(content_rule) => self.visit_content_rule(content_rule),
             AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule(*unknown_at_rule.clone()),
             AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule.clone()),
             AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule.clone()),
@@ -2429,12 +2438,12 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn visit_content_rule(&mut self, content_rule: AstContentRule<'static>) -> SassResult<Option<Value>> {
+    fn visit_content_rule(&mut self, content_rule: &AstContentRule<'static>) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
             #[allow(mutable_borrow_reservation_conflict)]
             self.run_user_defined_callable(
-                MaybeEvaledArguments::Invocation(content_rule.args),
+                MaybeEvaledArguments::Invocation(&content_rule.args),
                 Rc::clone(content),
                 &content.env.clone(),
                 span,
@@ -3300,13 +3309,13 @@ impl<'a> Visitor<'a> {
                         .into());
                 }
 
-                let args = self.eval_args(include_stmt.args.clone(), include_stmt.name.span)?;
+                let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
                 mixin(args, self)?;
 
                 Ok(None)
             }
             Mixin::BuiltinWithContent(mixin) => {
-                let args = self.eval_args(include_stmt.args.clone(), include_stmt.name.span)?;
+                let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
 
                 if let Some(content) = include_stmt.content.clone() {
                     let callable_content = Rc::new(CallableContentBlock {
@@ -3327,10 +3336,7 @@ impl<'a> Visitor<'a> {
                     return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
 
-                // `args`/`content` still require a clone here: `eval_args` and
-                // `run_user_defined_callable` take owned `ArgumentInvocation`/
-                // `AstContentBlock` (Plan 022 territory to make them borrow).
-                let args = include_stmt.args.clone();
+                let args = &include_stmt.args;
                 let content = include_stmt.content.clone();
 
                 let old_in_mixin = self.flags.in_mixin();
@@ -3717,7 +3723,7 @@ impl<'a> Visitor<'a> {
 
     fn eval_maybe_args(
         &mut self,
-        args: MaybeEvaledArguments<'static>,
+        args: MaybeEvaledArguments<'_, 'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
         match args {
@@ -3728,21 +3734,21 @@ impl<'a> Visitor<'a> {
 
     fn eval_args(
         &mut self,
-        arguments: ArgumentInvocation<'static>,
+        arguments: &ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
         let mut positional = Vec::with_capacity(arguments.positional.len());
 
-        for expr in arguments.positional {
-            let val = self.visit_expr(expr)?;
+        for expr in &arguments.positional {
+            let val = self.visit_expr_ref(expr)?;
             positional.push(self.without_slash(val)?);
         }
 
         let mut named = BTreeMap::new();
 
-        for (key, expr) in arguments.named {
-            let val = self.visit_expr(expr)?;
-            named.insert(key, self.without_slash(val)?);
+        for (key, expr) in &arguments.named {
+            let val = self.visit_expr_ref(expr)?;
+            named.insert(*key, self.without_slash(val)?);
         }
 
         if arguments.rest.is_none() {
@@ -3755,7 +3761,7 @@ impl<'a> Visitor<'a> {
             });
         }
 
-        let rest = self.visit_expr(arguments.rest.unwrap())?;
+        let rest = self.visit_expr_ref(arguments.rest.as_ref().unwrap())?;
 
         let mut separator = ListSeparator::Undecided;
 
@@ -3793,7 +3799,7 @@ impl<'a> Visitor<'a> {
             });
         }
 
-        match self.visit_expr(arguments.keyword_rest.unwrap())? {
+        match self.visit_expr_ref(arguments.keyword_rest.as_ref().unwrap())? {
             Value::Map(keyword_rest) => {
                 self.add_rest_map(&mut named, keyword_rest)?;
 
@@ -3847,7 +3853,7 @@ impl<'a> Visitor<'a> {
         R: FnOnce(F, &mut Self) -> SassResult<V>,
     >(
         &mut self,
-        arguments: MaybeEvaledArguments<'static>,
+        arguments: MaybeEvaledArguments<'_, 'static>,
         func: F,
         env: &Environment,
         span: Span,
@@ -3870,7 +3876,7 @@ impl<'a> Visitor<'a> {
         R: FnOnce(F, &mut Self) -> SassResult<V>,
     >(
         &mut self,
-        arguments: MaybeEvaledArguments<'static>,
+        arguments: MaybeEvaledArguments<'_, 'static>,
         func: F,
         env: &Environment,
         span: Span,
@@ -3993,7 +3999,7 @@ impl<'a> Visitor<'a> {
     pub(crate) fn run_function_callable(
         &mut self,
         func: SassFunction,
-        arguments: ArgumentInvocation<'static>,
+        arguments: &'static ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<Value> {
         self.run_function_callable_with_maybe_evaled(
@@ -4006,7 +4012,7 @@ impl<'a> Visitor<'a> {
     pub(crate) fn run_function_callable_with_maybe_evaled(
         &mut self,
         func: SassFunction,
-        arguments: MaybeEvaledArguments<'static>,
+        arguments: MaybeEvaledArguments<'_, 'static>,
         span: Span,
     ) -> SassResult<Value> {
         match func {
@@ -4044,11 +4050,11 @@ impl<'a> Visitor<'a> {
                 let arguments = match arguments {
                     MaybeEvaledArguments::Invocation(args) => {
                         has_named = !args.named.is_empty() || args.keyword_rest.is_some();
-                        rest = args.rest;
+                        rest = args.rest.as_ref();
 
                         let mut result = Vec::with_capacity(args.positional.len());
-                        for arg in args.positional {
-                            let value = self.visit_expr(arg)?;
+                        for arg in &args.positional {
+                            let value = self.visit_expr_ref(arg)?;
 
                             // When calc() falls back to Plain function (due to
                             // $variables in space-separated content), validate
@@ -4093,7 +4099,7 @@ impl<'a> Visitor<'a> {
                 }
 
                 if let Some(rest_arg) = rest {
-                    let rest = self.visit_expr(rest_arg)?;
+                    let rest = self.visit_expr_ref(rest_arg)?;
                     if !first {
                         buffer.push_str(", ");
                     }
@@ -4126,12 +4132,12 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_list_expr(&mut self, list: ListExpr<'static>) -> SassResult<Value> {
+    fn visit_list_expr(&mut self, list: &ListExpr<'static>) -> SassResult<Value> {
         let elems = list
             .elems
-            .into_iter()
+            .iter()
             .map(|e| {
-                let value = self.visit_expr(e.node)?;
+                let value = self.visit_expr_ref(&e.node)?;
                 Ok(value)
             })
             .collect::<SassResult<Vec<_>>>()?;
@@ -4139,9 +4145,8 @@ impl<'a> Visitor<'a> {
         Ok(Value::List(Rc::new(elems), list.separator, list.brackets))
     }
 
-    fn visit_function_call_expr(&mut self, func_call: FunctionCallExpr<'static>) -> SassResult<Value> {
+    fn visit_function_call_expr(&mut self, func_call: &FunctionCallExpr<'static>) -> SassResult<Value> {
         let name = func_call.name;
-        let original_name = func_call.original_name;
 
         // If the function name starts with -- AND was written with hyphens in source
         // (not underscores normalized to hyphens), treat as CSS custom function
@@ -4149,9 +4154,9 @@ impl<'a> Visitor<'a> {
             return self.run_function_callable(
                 SassFunction::Plain {
                     name,
-                    original_name,
+                    original_name: func_call.original_name.clone(),
                 },
-                func_call.arguments.clone(),
+                func_call.arguments,
                 func_call.span,
             );
         }
@@ -4172,7 +4177,7 @@ impl<'a> Visitor<'a> {
                 } else {
                     SassFunction::Plain {
                         name,
-                        original_name,
+                        original_name: func_call.original_name.clone(),
                     }
                 }
             }
@@ -4181,19 +4186,20 @@ impl<'a> Visitor<'a> {
         let old_in_function = self.flags.in_function();
         self.flags.set(ContextFlags::IN_FUNCTION, true);
         let value =
-            self.run_function_callable(func, func_call.arguments.clone(), func_call.span)?;
+            self.run_function_callable(func, func_call.arguments, func_call.span)?;
         self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
 
         Ok(value)
     }
 
-    fn visit_interpolated_func_expr(&mut self, func: InterpolatedFunction<'static>) -> SassResult<Value> {
+    fn visit_interpolated_func_expr(&mut self, func: &InterpolatedFunction<'static>) -> SassResult<Value> {
         let InterpolatedFunction {
             name,
             arguments: args,
             span,
         } = func;
-        let fn_name = self.perform_interpolation(name, false)?;
+        let span = *span;
+        let fn_name = self.perform_interpolation_ref(name, false)?;
 
         if !args.named.is_empty() || args.keyword_rest.is_some() {
             return Err(("Plain CSS functions don't support keyword arguments.", span).into());
@@ -4202,18 +4208,18 @@ impl<'a> Visitor<'a> {
         let mut buffer = format!("{}(", fn_name);
 
         let mut first = true;
-        for arg in args.positional {
+        for arg in &args.positional {
             if first {
                 first = false;
             } else {
                 buffer.push_str(", ");
             }
-            let evaluated = self.evaluate_to_css(&arg, QuoteKind::Quoted, span)?;
+            let evaluated = self.evaluate_to_css(arg, QuoteKind::Quoted, span)?;
             buffer.push_str(&evaluated);
         }
 
-        if let Some(rest_arg) = args.rest {
-            let rest = self.visit_expr(rest_arg)?;
+        if let Some(rest_arg) = &args.rest {
+            let rest = self.visit_expr_ref(rest_arg)?;
             if !first {
                 buffer.push_str(", ");
             }
@@ -4252,26 +4258,22 @@ impl<'a> Visitor<'a> {
             AstExpr::Variable { name, namespace } => self.env.get_var(*name, *namespace)?,
             AstExpr::ParentSelector => self.visit_parent_selector(),
             AstExpr::BinaryOp(binop) => {
-                self.visit_bin_op(binop.lhs.clone(), binop.op, binop.rhs.clone(), binop.allows_slash, binop.span)?
+                self.visit_bin_op(&binop.lhs, binop.op, &binop.rhs, binop.allows_slash, binop.span)?
             }
             AstExpr::Paren(inner) => self.visit_expr_ref(inner)?,
-            AstExpr::UnaryOp(op, inner, span) => {
-                self.visit_unary_op(*op, (*inner).clone(), *span)?
-            }
-            AstExpr::List(list) => self.visit_list_expr(list.clone())?,
-            AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text.clone(), *quote)?,
+            AstExpr::UnaryOp(op, inner, span) => self.visit_unary_op(*op, inner, *span)?,
+            AstExpr::List(list) => self.visit_list_expr(list)?,
+            AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text, *quote)?,
             AstExpr::Calculation { name, args } => {
-                self.visit_calculation_expr(*name, args.clone(), self.empty_span)?
+                self.visit_calculation_expr(*name, args, self.empty_span)?
             }
-            AstExpr::CssIf(css_if) => self.visit_css_if((*css_if).clone())?,
-            AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call.clone())?,
-            AstExpr::If(if_expr) => self.visit_ternary((*if_expr).clone())?,
-            AstExpr::InterpolatedFunction(func) => {
-                self.visit_interpolated_func_expr((*func).clone())?
-            }
-            AstExpr::Map(map) => self.visit_map(map.clone())?,
+            AstExpr::CssIf(css_if) => self.visit_css_if(css_if)?,
+            AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
+            AstExpr::If(if_expr) => self.visit_ternary(if_expr)?,
+            AstExpr::InterpolatedFunction(func) => self.visit_interpolated_func_expr(func)?,
+            AstExpr::Map(map) => self.visit_map(map)?,
             AstExpr::Supports(condition) => Value::String(
-                self.visit_supports_condition((*condition).clone())?.into(),
+                self.visit_supports_condition_ref(condition)?.into(),
                 QuoteKind::None,
             ),
         })
@@ -4305,14 +4307,14 @@ impl<'a> Visitor<'a> {
 
     fn visit_calculation_value(
         &mut self,
-        expr: AstExpr<'static>,
+        expr: &AstExpr<'static>,
         in_min_or_max: bool,
         span: Span,
     ) -> SassResult<CalculationArg> {
         Ok(match expr {
             AstExpr::Paren(inner) => {
                 let result =
-                    self.visit_calculation_value(inner.clone(), in_min_or_max, span)?;
+                    self.visit_calculation_value(inner, in_min_or_max, span)?;
 
                 match result {
                     CalculationArg::String(text) => {
@@ -4326,7 +4328,7 @@ impl<'a> Visitor<'a> {
             }
             AstExpr::String(string_expr, _span) => {
                 debug_assert!(string_expr.1 == QuoteKind::None);
-                let text = self.perform_interpolation(string_expr.0.clone(), false)?;
+                let text = self.perform_interpolation_ref(&string_expr.0, false)?;
                 if string_expr.0.contents.len() == 1
                     && matches!(
                         string_expr.0.contents.first(),
@@ -4341,8 +4343,8 @@ impl<'a> Visitor<'a> {
             AstExpr::BinaryOp(binop) => {
                 SassCalculation::operate_internal(
                     binop.op,
-                    self.visit_calculation_value(binop.lhs.clone(), in_min_or_max, span)?,
-                    self.visit_calculation_value(binop.rhs.clone(), in_min_or_max, span)?,
+                    self.visit_calculation_value(&binop.lhs, in_min_or_max, span)?,
+                    self.visit_calculation_value(&binop.rhs, in_min_or_max, span)?,
                     in_min_or_max,
                     !self.flags.in_supports_declaration(),
                     self.options,
@@ -4356,7 +4358,7 @@ impl<'a> Visitor<'a> {
             | AstExpr::FunctionCall { .. }
             | AstExpr::If(..)
             | AstExpr::UnaryOp(..) => {
-                let result = self.visit_expr(expr)?;
+                let result = self.visit_expr_ref(expr)?;
                 match result {
                     Value::Dimension(SassNumber {
                         num,
@@ -4388,7 +4390,7 @@ impl<'a> Visitor<'a> {
     fn visit_calculation_expr(
         &mut self,
         name: CalculationName,
-        mut ast_args: Vec<AstExpr<'static>>,
+        ast_args: &[AstExpr<'static>],
         span: Span,
     ) -> SassResult<Value> {
         // For single-arg functions (abs, round), when calculation arg
@@ -4402,13 +4404,13 @@ impl<'a> Visitor<'a> {
 
         let resolved = ast_args
             .iter()
-            .map(|arg| self.visit_calculation_value(arg.clone(), name.in_min_or_max(), span))
+            .map(|arg| self.visit_calculation_value(arg, name.in_min_or_max(), span))
             .collect::<SassResult<Vec<_>>>();
 
         let mut args = match resolved {
             Ok(args) => args,
             Err(e) if single_arg_fallback => {
-                let val = self.visit_expr(ast_args.remove(0))?;
+                let val = self.visit_expr_ref(&ast_args[0])?;
                 return match val {
                     Value::Dimension(n) if name == CalculationName::Abs => {
                         Ok(Value::Dimension(SassNumber {
@@ -4557,8 +4559,8 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_unary_op(&mut self, op: UnaryOp, expr: AstExpr<'static>, span: Span) -> SassResult<Value> {
-        let operand = self.visit_expr(expr)?;
+    fn visit_unary_op(&mut self, op: UnaryOp, expr: &AstExpr<'static>, span: Span) -> SassResult<Value> {
+        let operand = self.visit_expr_ref(expr)?;
 
         match op {
             UnaryOp::Plus => operand.unary_plus(self, span),
@@ -4568,12 +4570,12 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_ternary(&mut self, if_expr: Ternary<'static>) -> SassResult<Value> {
+    fn visit_ternary(&mut self, if_expr: &Ternary<'static>) -> SassResult<Value> {
         // When rest args are present, evaluate all args eagerly (can't do lazy
         // evaluation since rest values are already evaluated)
         if if_expr.0.rest.is_some() {
             let span = if_expr.0.span;
-            let mut args = self.eval_args(if_expr.0, span)?;
+            let mut args = self.eval_args(&if_expr.0, span)?;
             args.max_args(3)?;
             let value = if args.get_err(0, "condition")?.is_truthy() {
                 args.get_err(1, "if-true")?
@@ -4585,37 +4587,46 @@ impl<'a> Visitor<'a> {
 
         if_arguments().verify(if_expr.0.positional.len(), &if_expr.0.named, if_expr.0.span)?;
 
-        let mut positional = if_expr.0.positional;
-        let mut named = if_expr.0.named;
+        let positional = &if_expr.0.positional;
+        let named = &if_expr.0.named;
 
-        let condition = if positional.is_empty() {
-            named.remove(&Identifier::from("condition")).unwrap()
+        // Consume positional args left-to-right, falling back to named lookup
+        // once positional is exhausted (mirrors ArgumentResult::get semantics
+        // without needing to mutate/remove from the borrowed invocation).
+        let mut next_idx = 0;
+
+        let condition = if next_idx < positional.len() {
+            let v = &positional[next_idx];
+            next_idx += 1;
+            v
         } else {
-            positional.remove(0)
+            named.get(&Identifier::from("condition")).unwrap()
         };
 
-        let if_true = if positional.is_empty() {
-            named.remove(&Identifier::from("if_true")).unwrap()
+        let if_true = if next_idx < positional.len() {
+            let v = &positional[next_idx];
+            next_idx += 1;
+            v
         } else {
-            positional.remove(0)
+            named.get(&Identifier::from("if_true")).unwrap()
         };
 
-        let if_false = if positional.is_empty() {
-            named.remove(&Identifier::from("if_false")).unwrap()
+        let if_false = if next_idx < positional.len() {
+            &positional[next_idx]
         } else {
-            positional.remove(0)
+            named.get(&Identifier::from("if_false")).unwrap()
         };
 
-        let value = if self.visit_expr(condition)?.is_truthy() {
-            self.visit_expr(if_true)?
+        let value = if self.visit_expr_ref(condition)?.is_truthy() {
+            self.visit_expr_ref(if_true)?
         } else {
-            self.visit_expr(if_false)?
+            self.visit_expr_ref(if_false)?
         };
 
         self.without_slash(value)
     }
 
-    fn visit_css_if(&mut self, css_if: CssIfExpression<'static>) -> SassResult<Value> {
+    fn visit_css_if(&mut self, css_if: &CssIfExpression<'static>) -> SassResult<Value> {
         // Validate: sass() and raw substitutions cannot coexist in same condition
         for clause in &css_if.clauses {
             self.check_no_sass_with_raw(&clause.condition, css_if.span)?;
@@ -4632,7 +4643,7 @@ impl<'a> Visitor<'a> {
                 ConditionResult::Css(remaining) => {
                     // This clause has CSS parts that can't be evaluated.
                     // Collect remaining clauses as CSS output.
-                    return self.build_css_if_output(&remaining, clause, &css_if);
+                    return self.build_css_if_output(&remaining, clause, css_if);
                 }
             }
         }
@@ -4905,7 +4916,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_string(&mut self, mut text: Interpolation<'static>, quote: QuoteKind) -> SassResult<Value> {
+    fn visit_string(&mut self, text: &Interpolation<'static>, quote: QuoteKind) -> SassResult<Value> {
         // Don't use [performInterpolation] here because we need to get the raw text
         // from strings, rather than the semantic value.
         let old_in_supports_declaration = self.flags.in_supports_declaration();
@@ -4913,25 +4924,24 @@ impl<'a> Visitor<'a> {
 
         let result = match text.contents.len() {
             0 => String::new(),
-            1 => match text.contents.pop() {
-                Some(InterpolationPart::String(s)) => s,
-                Some(InterpolationPart::Expr(Spanned { node, span })) => {
-                    match self.visit_expr(node)? {
+            1 => match &text.contents[0] {
+                InterpolationPart::String(s) => s.clone(),
+                InterpolationPart::Expr(Spanned { node, span }) => {
+                    match self.visit_expr_ref(node)? {
                         Value::String(s, ..) => s.to_string(),
-                        e => self.serialize(e, QuoteKind::None, span)?,
+                        e => self.serialize(e, QuoteKind::None, *span)?,
                     }
                 }
-                None => unreachable!(),
             },
             _ => text
                 .contents
-                .into_iter()
+                .iter()
                 .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s),
+                    InterpolationPart::String(s) => Ok(s.clone()),
                     InterpolationPart::Expr(Spanned { node, span }) => {
-                        match self.visit_expr(node)? {
+                        match self.visit_expr_ref(node)? {
                             Value::String(s, ..) => Ok(s.to_string()),
-                            e => self.serialize(e, QuoteKind::None, span),
+                            e => self.serialize(e, QuoteKind::None, *span),
                         }
                     }
                 })
@@ -4946,13 +4956,13 @@ impl<'a> Visitor<'a> {
         Ok(Value::String(result.into(), quote))
     }
 
-    fn visit_map(&mut self, map: AstSassMap<'static>) -> SassResult<Value> {
+    fn visit_map(&mut self, map: &AstSassMap<'static>) -> SassResult<Value> {
         let mut sass_map = SassMap::new();
 
-        for pair in map.0 {
+        for pair in &map.0 {
             let key_span = pair.0.span;
-            let key = self.visit_expr(pair.0.node)?;
-            let value = self.visit_expr(pair.1)?;
+            let key = self.visit_expr_ref(&pair.0.node)?;
+            let value = self.visit_expr_ref(&pair.1)?;
 
             if sass_map.get_ref(&key).is_some() {
                 return Err(("Duplicate key.", key_span).into());
@@ -4972,62 +4982,62 @@ impl<'a> Visitor<'a> {
 
     fn visit_bin_op(
         &mut self,
-        lhs: AstExpr<'static>,
+        lhs: &AstExpr<'static>,
         op: BinaryOp,
-        rhs: AstExpr<'static>,
+        rhs: &AstExpr<'static>,
         allows_slash: bool,
         span: Span,
     ) -> SassResult<Value> {
-        let left = self.visit_expr(lhs)?;
+        let left = self.visit_expr_ref(lhs)?;
 
         Ok(match op {
             BinaryOp::SingleEq => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 single_eq(&left, &right, self.options, span)?
             }
             BinaryOp::Or => {
                 if left.is_truthy() {
                     left
                 } else {
-                    self.visit_expr(rhs)?
+                    self.visit_expr_ref(rhs)?
                 }
             }
             BinaryOp::And => {
                 if left.is_truthy() {
-                    self.visit_expr(rhs)?
+                    self.visit_expr_ref(rhs)?
                 } else {
                     left
                 }
             }
             BinaryOp::Equal => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 Value::bool(left == right)
             }
             BinaryOp::NotEqual => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 Value::bool(left != right)
             }
             BinaryOp::GreaterThan
             | BinaryOp::GreaterThanEqual
             | BinaryOp::LessThan
             | BinaryOp::LessThanEqual => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 cmp(&left, &right, self.options, span, op)?
             }
             BinaryOp::Plus => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 add(left, right, self.options, span)?
             }
             BinaryOp::Minus => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 sub(left, right, self.options, span)?
             }
             BinaryOp::Mul => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 mul(left, right, self.options, span)?
             }
             BinaryOp::Div => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
 
                 let left_is_number = matches!(left, Value::Dimension { .. });
                 let right_is_number = matches!(right, Value::Dimension { .. });
@@ -5062,7 +5072,7 @@ impl<'a> Visitor<'a> {
                 div(left, right, self.options, span)?
             }
             BinaryOp::Rem => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 rem(left, right, self.options, span)?
             }
         })

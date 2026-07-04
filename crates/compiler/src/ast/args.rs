@@ -151,9 +151,17 @@ impl<'a> ArgumentInvocation<'a> {
 }
 
 // todo: hack for builtin `call`
+//
+// Two lifetimes: `'b` is how long *this borrow* of the invocation is held
+// (may be short-lived, e.g. a reference into an owned `AstInclude` field),
+// while `'a` is the arena/AST content lifetime (always 'static in practice).
+// Keeping them separate lets callers pass either a genuinely `'static`
+// reference (e.g. `FunctionCallExpr::arguments`, which is itself an arena
+// reference) or a shorter-lived one (e.g. `&include_stmt.args`) without
+// forcing the latter to prove it's `'static`.
 #[derive(Debug, Clone)]
-pub(crate) enum MaybeEvaledArguments<'a> {
-    Invocation(ArgumentInvocation<'a>),
+pub(crate) enum MaybeEvaledArguments<'b, 'a> {
+    Invocation(&'b ArgumentInvocation<'a>),
     Evaled(ArgumentResult),
 }
 
