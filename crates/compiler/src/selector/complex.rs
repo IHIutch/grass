@@ -276,16 +276,10 @@ impl ComplexSelector {
                     return false;
                 }
 
-                let parents = other
-                    .components
-                    .iter()
-                    .take(other.components.len() - 1)
-                    .skip(i2)
-                    .cloned()
-                    .collect();
+                let parents = &other.components[i2..other.components.len() - 1];
                 return compound1.is_super_selector(
                     other.components.last().unwrap().as_compound(),
-                    &Some(parents),
+                    Some(parents),
                 );
             }
 
@@ -294,18 +288,11 @@ impl ComplexSelector {
                 if let Some(ComplexSelectorComponent::Compound(compound2)) =
                     other.components.get(after_super_selector - 1)
                 {
-                    if compound1.is_super_selector(
-                        compound2,
-                        &Some(
-                            other
-                                .components
-                                .iter()
-                                .take(after_super_selector - 1)
-                                .skip(i2 + 1)
-                                .cloned()
-                                .collect(),
-                        ),
-                    ) {
+                    let parents = other
+                        .components
+                        .get(i2 + 1..after_super_selector - 1)
+                        .unwrap_or(&[]);
+                    if compound1.is_super_selector(compound2, Some(parents)) {
                         break;
                     }
                 }
@@ -460,6 +447,52 @@ impl Display for ComplexSelectorComponent {
         match self {
             Self::Compound(c) => write!(f, "{}", c),
             Self::Combinator(c) => write!(f, "{}", c),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Combinator, ComplexSelectorComponent};
+
+    fn dummy_components(n: usize) -> Vec<ComplexSelectorComponent> {
+        (0..n)
+            .map(|i| {
+                if i % 2 == 0 {
+                    ComplexSelectorComponent::Combinator(Combinator::Child)
+                } else {
+                    ComplexSelectorComponent::Combinator(Combinator::NextSibling)
+                }
+            })
+            .collect()
+    }
+
+    /// Range-equivalence check for the slice conversion in `is_super_selector`:
+    /// `take(n - 1).skip(m + 1)` must always agree with `[m + 1..n - 1]`.
+    #[test]
+    fn range_equivalence_take_skip_vs_slice() {
+        let components = dummy_components(8);
+
+        // (n, m) combos matching real usage shapes: remaining1 == 1 case (n ==
+        // components.len()), the inner-scan case (n == after_super_selector), and
+        // the first-loop-iteration edge case where m + 1 > n - 1 (empty range).
+        for &(n, m) in &[(8usize, 0usize), (6, 2), (5, 1), (4, 3)] {
+            let via_take_skip: Vec<ComplexSelectorComponent> = components
+                .iter()
+                .take(n - 1)
+                .skip(m + 1)
+                .cloned()
+                .collect();
+            // Mirrors the real call site's `.get(range).unwrap_or(&[])` guard,
+            // since a plain slice index panics when m + 1 > n - 1.
+            let via_slice: &[ComplexSelectorComponent] =
+                components.get(m + 1..n - 1).unwrap_or(&[]);
+
+            assert_eq!(
+                via_take_skip.as_slice(),
+                via_slice,
+                "n={n}, m={m}: take/skip and slice disagree"
+            );
         }
     }
 }

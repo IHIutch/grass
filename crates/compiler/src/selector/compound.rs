@@ -76,7 +76,7 @@ impl CompoundSelector {
     pub fn is_super_selector(
         &self,
         other: &Self,
-        parents: &Option<Vec<ComplexSelectorComponent>>,
+        parents: Option<&[ComplexSelectorComponent]>,
     ) -> bool {
         // Pseudo-elements effectively change the target of a compound selector.
         // If either has a pseudo-element, they both must have the same one,
@@ -101,7 +101,7 @@ impl CompoundSelector {
                         let pe2_compound = CompoundSelector {
                             components: vec![pe2.clone()],
                         };
-                        if !pseudo.is_super_selector(&pe2_compound, parents.clone()) {
+                        if !pseudo.is_super_selector(&pe2_compound, parents) {
                             return false;
                         }
                     }
@@ -135,7 +135,7 @@ impl CompoundSelector {
                 },
             ) = simple1
             {
-                if !pseudo.is_super_selector(other, parents.clone()) {
+                if !pseudo.is_super_selector(other, parents) {
                     return false;
                 }
             } else if !simple1.is_super_selector_of_compound(other) {
@@ -327,7 +327,7 @@ impl CompoundSelector {
 fn compound_components_is_superselector(
     compound1: &[SimpleSelector],
     compound2: &[SimpleSelector],
-    parents: &Option<Vec<ComplexSelectorComponent>>,
+    parents: Option<&[ComplexSelectorComponent]>,
 ) -> bool {
     if compound1.is_empty() {
         return true;

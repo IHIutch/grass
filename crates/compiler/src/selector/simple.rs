@@ -617,7 +617,7 @@ impl Pseudo {
     pub fn is_super_selector(
         &self,
         compound: &CompoundSelector,
-        parents: Option<Vec<ComplexSelectorComponent>>,
+        parents: Option<&[ComplexSelectorComponent]>,
     ) -> bool {
         debug_assert!(self.selector.is_some());
         match self.normalized_name() {
@@ -634,7 +634,8 @@ impl Pseudo {
                     .components
                     .iter()
                     .any(move |complex1| {
-                        let mut components = parents.clone().unwrap_or_default();
+                        let mut components: Vec<ComplexSelectorComponent> =
+                            parents.map(<[_]>::to_vec).unwrap_or_default();
                         components.push(ComplexSelectorComponent::Compound(compound.clone()));
                         complex1.is_super_selector(&ComplexSelector::new(components, false))
                     })

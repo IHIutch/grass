@@ -456,12 +456,12 @@ fn merge_final_combinators(
 
             match (combinator_one, combinator_two) {
                 (Combinator::FollowingSibling, Combinator::FollowingSibling) => {
-                    if compound_one.is_super_selector(&compound_two, &None) {
+                    if compound_one.is_super_selector(&compound_two, None) {
                         result.push_front(vec![vec![
                             ComplexSelectorComponent::Compound(compound_two),
                             ComplexSelectorComponent::Combinator(Combinator::FollowingSibling),
                         ]]);
-                    } else if compound_two.is_super_selector(&compound_one, &None) {
+                    } else if compound_two.is_super_selector(&compound_one, None) {
                         result.push_front(vec![vec![
                             ComplexSelectorComponent::Compound(compound_one),
                             ComplexSelectorComponent::Combinator(Combinator::FollowingSibling),
@@ -507,7 +507,7 @@ fn merge_final_combinators(
                         compound_one.clone()
                     };
 
-                    if following_sibling_selector.is_super_selector(&next_sibling_selector, &None) {
+                    if following_sibling_selector.is_super_selector(&next_sibling_selector, None) {
                         result.push_front(vec![vec![
                             ComplexSelectorComponent::Compound(next_sibling_selector),
                             ComplexSelectorComponent::Combinator(Combinator::NextSibling),
@@ -571,7 +571,7 @@ fn merge_final_combinators(
             if *combinator_one == Combinator::Child && !components_two.is_empty() {
                 if let Some(ComplexSelectorComponent::Compound(c1)) = components_one.back() {
                     if let Some(ComplexSelectorComponent::Compound(c2)) = components_two.back() {
-                        if c2.is_super_selector(c1, &None) {
+                        if c2.is_super_selector(c1, None) {
                             components_two.pop_back();
                         }
                     }
@@ -589,7 +589,7 @@ fn merge_final_combinators(
             if *combinator_two == Combinator::Child && !components_one.is_empty() {
                 if let Some(ComplexSelectorComponent::Compound(c1)) = components_one.back() {
                     if let Some(ComplexSelectorComponent::Compound(c2)) = components_two.back() {
-                        if c1.is_super_selector(c2, &None) {
+                        if c1.is_super_selector(c2, None) {
                             components_one.pop_back();
                         }
                     }
