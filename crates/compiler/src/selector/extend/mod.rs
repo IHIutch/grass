@@ -1351,20 +1351,17 @@ impl ExtensionStore {
         new_extensions: &FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>,
     ) -> SassResult<()> {
         for selector in selectors {
-            let old_value = selector.clone().into_selector().0;
-            selector.set_inner(self.extend_list(
-                old_value.clone(),
-                Some(new_extensions),
-                &self.media_contexts.get(&selector).cloned(),
-            )?);
+            let media_query_context = self.media_contexts.get(&selector).cloned();
+            let old_value = selector.as_selector_list().clone();
+            let new_value = self.extend_list(old_value, Some(new_extensions), &media_query_context)?;
 
             // If no extends actually happened (for example because unification
             // failed), we don't need to re-register the selector.
-            let selector_as_selector = selector.clone().into_selector().0;
-            if old_value == selector_as_selector {
+            if new_value == *selector.as_selector_list() {
                 continue;
             }
-            self.register_selector(selector_as_selector, &selector);
+            selector.set_inner(new_value.clone());
+            self.register_selector(new_value, &selector);
         }
         Ok(())
     }
