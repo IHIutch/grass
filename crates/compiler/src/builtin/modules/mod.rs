@@ -483,19 +483,19 @@ impl Module {
     pub fn var_exists(&self, name: Identifier) -> bool {
         let scope = self.scope_ref();
 
-        scope.variables.get(name).is_some()
+        scope.variables.contains_key(name)
     }
 
     pub fn mixin_exists(&self, name: Identifier) -> bool {
         let scope = self.scope_ref();
 
-        scope.mixins.get(name).is_some()
+        scope.mixins.contains_key(name)
     }
 
     pub fn fn_exists(&self, name: Identifier) -> bool {
         let scope = self.scope_ref();
 
-        scope.functions.get(name).is_some()
+        scope.functions.contains_key(name)
     }
 
     pub fn insert_builtin(

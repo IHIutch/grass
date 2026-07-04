@@ -35,6 +35,9 @@ impl<T> MapView for Rc<dyn MapView<Value = T>> {
     fn len(&self) -> usize {
         (**self).len()
     }
+    fn contains_key(&self, name: Identifier) -> bool {
+        (**self).contains_key(name)
+    }
     fn keys(&self) -> Vec<Identifier> {
         (**self).keys()
     }
@@ -69,6 +72,10 @@ impl<T: fmt::Debug + Clone> MapView for BaseMapView<T> {
     type Value = T;
     fn get(&self, name: Identifier) -> Option<Self::Value> {
         (*self.0).borrow().get(&name).cloned()
+    }
+
+    fn contains_key(&self, name: Identifier) -> bool {
+        (*self.0).borrow().contains_key(&name)
     }
 
     fn len(&self) -> usize {
@@ -115,6 +122,11 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for Unprefixe
 
     fn len(&self) -> usize {
         self.0.len()
+    }
+
+    fn contains_key(&self, name: Identifier) -> bool {
+        let name = Identifier::from(format!("{}{}", self.1, name));
+        self.0.contains_key(name)
     }
 
     fn keys(&self) -> Vec<Identifier> {
@@ -165,6 +177,16 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for PrefixedM
 
     fn len(&self) -> usize {
         self.0.len()
+    }
+
+    fn contains_key(&self, name: Identifier) -> bool {
+        if !name.as_str().starts_with(&self.1) {
+            return false;
+        }
+
+        let name = Identifier::from(name.as_str().strip_prefix(&self.1).unwrap());
+
+        self.0.contains_key(name)
     }
 
     fn keys(&self) -> Vec<Identifier> {
@@ -249,6 +271,14 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for LimitedMa
         self.1.len()
     }
 
+    fn contains_key(&self, name: Identifier) -> bool {
+        if !self.1.contains(&name) {
+            return false;
+        }
+
+        self.0.contains_key(name)
+    }
+
     fn keys(&self) -> Vec<Identifier> {
         self.1.iter().copied().collect()
     }
@@ -287,6 +317,10 @@ impl<V: fmt::Debug + Clone> MapView for MergedMapView<V> {
 
     fn len(&self) -> usize {
         self.1.len()
+    }
+
+    fn contains_key(&self, name: Identifier) -> bool {
+        self.0.iter().rev().any(|map| map.contains_key(name))
     }
 
     fn insert(&self, name: Identifier, value: Self::Value) -> Option<Self::Value> {
@@ -345,6 +379,14 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for PublicMem
 
     fn len(&self) -> usize {
         self.0.len()
+    }
+
+    fn contains_key(&self, name: Identifier) -> bool {
+        if !name.is_public() {
+            return false;
+        }
+
+        self.0.contains_key(name)
     }
 
     fn keys(&self) -> Vec<Identifier> {
