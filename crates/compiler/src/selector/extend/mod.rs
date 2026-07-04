@@ -1271,21 +1271,22 @@ impl ExtensionStore {
             FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>,
         > = None;
         for extension in extensions {
-            let mut sources = self
-                .extensions
-                .get(&extension.target.clone().unwrap())
-                .unwrap()
-                .clone();
+            let target = extension.target.as_ref().unwrap();
+            let mut sources = self.extensions.remove(target).unwrap();
 
             // `extend_existing_selectors` would have thrown already.
-            let selectors: Vec<ComplexSelector> = if let Some(v) = self.extend_complex(
+            let selectors: Vec<ComplexSelector> = match self.extend_complex(
                 &extension.extender,
                 Some(new_extensions),
                 &extension.media_context,
             )? {
-                v
-            } else {
-                continue;
+                Some(v) => v,
+                None => {
+                    // No expansion happened; `sources` is unmodified, so put it back
+                    // exactly as taken.
+                    self.extensions.insert(target.clone(), sources);
+                    continue;
+                }
             };
             // todo: when we add error handling, this error is special
             /*
@@ -1328,18 +1329,17 @@ impl ExtensionStore {
                         }
                     }
 
-                    if new_extensions.contains_key(&extension.target.clone().unwrap()) {
+                    if new_extensions.contains_key(target) {
                         additional_extensions
                             .get_or_insert_with(FxHashMap::default)
-                            .entry(extension.target.clone().unwrap())
+                            .entry(target.clone())
                             .or_insert_with(FxIndexMap::default)
                             .insert(complex.clone(), with_extender);
                     }
                 }
             }
             // Write the modified sources back to self.extensions.
-            self.extensions
-                .insert(extension.target.clone().unwrap(), sources);
+            self.extensions.insert(target.clone(), sources);
         }
         Ok(additional_extensions)
     }
