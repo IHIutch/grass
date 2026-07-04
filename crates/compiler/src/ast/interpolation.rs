@@ -41,6 +41,31 @@ impl<'a> Interpolation<'a> {
         }
     }
 
+    /// Like `add_string`, but takes a borrowed `&str`. Avoids an extra
+    /// allocation at call sites that would otherwise build a throwaway
+    /// `String` purely to hand it to `add_string`.
+    pub fn add_str(&mut self, s: &str) {
+        match self.contents.last_mut() {
+            Some(InterpolationPart::String(existing)) => existing.push_str(s),
+            _ => self.contents.push(InterpolationPart::String(s.to_owned())),
+        }
+    }
+
+    /// Returns a mutable handle to the trailing string part, creating an
+    /// empty one if the interpolation is empty or ends in an expression.
+    /// Appends made through this handle merge into the existing text
+    /// without any intermediate `String` allocation.
+    pub fn trailing_string_mut(&mut self) -> &mut String {
+        if !matches!(self.contents.last(), Some(InterpolationPart::String(_))) {
+            self.contents.push(InterpolationPart::String(String::new()));
+        }
+
+        match self.contents.last_mut() {
+            Some(InterpolationPart::String(s)) => s,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn add_char(&mut self, c: char) {
         match self.contents.last_mut() {
             Some(InterpolationPart::String(existing)) => existing.push(c),

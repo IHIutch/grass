@@ -140,14 +140,29 @@ pub(crate) trait BaseParser {
         unit: bool,
     ) -> SassResult<String> {
         let mut text = String::new();
+        self.parse_identifier_into(&mut text, normalize, unit)?;
+        Ok(text)
+    }
 
+    /// Like `parse_identifier`, but appends into a caller-supplied buffer
+    /// instead of allocating and returning a new `String`. Use this at hot
+    /// call sites that would otherwise immediately copy the returned String
+    /// into another buffer and discard it.
+    fn parse_identifier_into(
+        &mut self,
+        text: &mut String,
+        // default=false
+        normalize: bool,
+        // default=false
+        unit: bool,
+    ) -> SassResult<()> {
         if self.scan_char('-') {
             text.push('-');
 
             if self.scan_char('-') {
                 text.push('-');
-                self.parse_identifier_body(&mut text, normalize, unit)?;
-                return Ok(text);
+                self.parse_identifier_body(text, normalize, unit)?;
+                return Ok(());
             }
         }
 
@@ -168,9 +183,9 @@ pub(crate) trait BaseParser {
             }
         }
 
-        self.parse_identifier_body(&mut text, normalize, unit)?;
+        self.parse_identifier_body(text, normalize, unit)?;
 
-        Ok(text)
+        Ok(())
     }
 
     fn parse_identifier_body(
@@ -476,7 +491,7 @@ pub(crate) trait BaseParser {
                 }
                 c => {
                     if self.looking_at_identifier() {
-                        buffer.push_str(&self.parse_identifier(false, false)?);
+                        self.parse_identifier_into(&mut buffer, false, false)?;
                     } else {
                         self.toks_mut().next();
                         buffer.push(c);
@@ -569,6 +584,16 @@ pub(crate) trait BaseParser {
         let start = self.toks().cursor();
         func(self);
         self.toks().raw_text(start)
+    }
+
+    /// Like `raw_text`, but appends into a caller-supplied buffer instead of
+    /// allocating and returning a new `String`. Use this at hot call sites
+    /// that would otherwise immediately copy the returned String into
+    /// another buffer and discard it.
+    fn append_raw_text<T>(&mut self, buf: &mut String, func: impl Fn(&mut Self) -> T) {
+        let start = self.toks().cursor();
+        func(self);
+        buf.extend(self.toks().raw_chars(start));
     }
 
     fn fallible_raw_text<T>(

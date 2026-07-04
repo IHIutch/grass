@@ -2118,7 +2118,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             // hacks.
             let mut name_buffer = Interpolation::new();
             name_buffer.add_char(self.toks_mut().next().unwrap().kind);
-            name_buffer.add_string(self.raw_text(Self::whitespace));
+            self.append_raw_text(name_buffer.trailing_string_mut(), Self::whitespace);
             name_buffer.add_interpolation(self.parse_interpolated_identifier()?);
             name_buffer
         } else if !self.is_plain_css() {
@@ -2407,6 +2407,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let mut brackets = Vec::new();
         let mut wrote_newline = false;
+        let mut ident_buf = String::new();
 
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
@@ -2532,7 +2533,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
                 _ => {
                     if self.looking_at_identifier() {
-                        buffer.add_string(self.parse_identifier(false, false)?);
+                        ident_buf.clear();
+                        self.parse_identifier_into(&mut ident_buf, false, false)?;
+                        buffer.add_str(&ident_buf);
                     } else {
                         buffer.add_char(tok.kind);
                         self.toks_mut().next();
@@ -2697,7 +2700,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         {
             starts_with_punctuation = true;
             name_buffer.add_char(self.toks_mut().next().unwrap().kind);
-            name_buffer.add_string(self.raw_text(Self::whitespace));
+            self.append_raw_text(name_buffer.trailing_string_mut(), Self::whitespace);
         }
 
         if !self.looking_at_interpolated_identifier() {
@@ -2724,7 +2727,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         let mut mid_buffer = String::new();
-        mid_buffer.push_str(&self.raw_text(Self::whitespace));
+        self.append_raw_text(&mut mid_buffer, Self::whitespace);
 
         if !self.scan_char(':') {
             if !mid_buffer.is_empty() {
@@ -2774,7 +2777,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             return Ok(DeclarationOrBuffer::Buffer(name_buffer));
         }
 
-        let post_colon_whitespace = self.raw_text(Self::whitespace);
+        // Whitespace consumption is intentionally not materialized into a
+        // `String` here (unlike the `raw_text`-based sites above) since it's
+        // only ever needed as either an emptiness check (cursor delta, below)
+        // or appended into `mid_buffer` -- both of which `raw_chars` serves
+        // directly without an intermediate allocation.
+        let post_colon_whitespace_start = self.toks().cursor();
+        let _ = self.whitespace();
         if self.looking_at_children()? {
             if self.is_plain_css() {
                 return Err((
@@ -2793,9 +2802,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }))));
         }
 
-        mid_buffer.push_str(&post_colon_whitespace);
-        let could_be_selector =
-            post_colon_whitespace.is_empty() && self.looking_at_interpolated_identifier();
+        let could_be_selector = self.toks().cursor() == post_colon_whitespace_start
+            && self.looking_at_interpolated_identifier();
+        mid_buffer.extend(self.toks().raw_chars(post_colon_whitespace_start));
 
         let before_decl = self.toks().cursor();
 
@@ -3107,6 +3116,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     ) -> SassResult<Interpolation<'a>> {
         let mut buffer = Interpolation::new();
         let mut brackets: Vec<char> = Vec::new();
+        let mut ident_buf = String::new();
 
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
@@ -3201,7 +3211,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
                 _ => {
                     if self.looking_at_identifier() {
-                        buffer.add_string(self.parse_identifier(false, false)?);
+                        ident_buf.clear();
+                        self.parse_identifier_into(&mut ident_buf, false, false)?;
+                        buffer.add_str(&ident_buf);
                     } else {
                         buffer.add_char(self.toks_mut().next().unwrap().kind);
                     }
