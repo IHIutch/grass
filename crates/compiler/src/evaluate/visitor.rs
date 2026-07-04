@@ -1118,8 +1118,7 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            // todo: superfluous clone?
-            let value = self.visit_expr(variable.expr.node.clone())?;
+            let value = self.visit_expr_ref(&variable.expr.node)?;
             let value = self.without_slash(value)?;
 
             new_values.insert(
@@ -1201,7 +1200,7 @@ impl<'a> Visitor<'a> {
                 self.parenthesize_supports_condition((*inner).clone(), None)?
             )),
             AstSupportsCondition::Interpolation(expr) => {
-                self.evaluate_to_css(expr.clone(), QuoteKind::None, self.empty_span)
+                self.evaluate_to_css(expr, QuoteKind::None, self.empty_span)
             }
             AstSupportsCondition::Declaration { name, value } => {
                 let old_in_supports_decl = self.flags.in_supports_declaration();
@@ -1216,9 +1215,9 @@ impl<'a> Visitor<'a> {
 
                 let result = format!(
                     "({}:{}{})",
-                    self.evaluate_to_css(name.clone(), QuoteKind::Quoted, self.empty_span)?,
+                    self.evaluate_to_css(name, QuoteKind::Quoted, self.empty_span)?,
                     if is_custom_property { "" } else { " " },
-                    self.evaluate_to_css(value.clone(), QuoteKind::Quoted, self.empty_span)?,
+                    self.evaluate_to_css(value, QuoteKind::Quoted, self.empty_span)?,
                 );
 
                 self.flags
@@ -3487,7 +3486,7 @@ impl<'a> Visitor<'a> {
             let mut result = None;
 
             'outer: while visitor
-                .visit_expr(while_stmt.condition.clone())?
+                .visit_expr_ref(&while_stmt.condition)?
                 .is_truthy()
             {
                 for stmt in while_stmt.body.iter() {
@@ -3501,35 +3500,6 @@ impl<'a> Visitor<'a> {
 
             Ok(result)
         })
-    }
-
-    fn visit_if_stmt(&mut self, if_stmt: AstIf<'static>) -> SassResult<Option<Value>> {
-        let mut clause: Option<&[AstStmt<'static>]> = if_stmt.else_clause;
-        for clause_to_check in &if_stmt.if_clauses {
-            if self.visit_expr(clause_to_check.condition.clone())?.is_truthy() {
-                clause = Some(clause_to_check.body);
-                break;
-            }
-        }
-
-        // todo: self.with_scope
-        self.env.scope_enter();
-
-        let mut result = None;
-
-        if let Some(stmts) = clause {
-            for stmt in stmts {
-                let val = self.visit_stmt(stmt)?;
-                if val.is_some() {
-                    result = val;
-                    break;
-                }
-            }
-        }
-
-        self.env.scope_exit();
-
-        Ok(result)
     }
 
     fn visit_loud_comment(&mut self, comment: AstLoudComment<'static>) -> SassResult<Option<Value>> {
@@ -3693,11 +3663,11 @@ impl<'a> Visitor<'a> {
 
     fn evaluate_to_css(
         &mut self,
-        expr: AstExpr<'static>,
+        expr: &AstExpr<'static>,
         quote: QuoteKind,
         span: Span,
     ) -> SassResult<String> {
-        let result = self.visit_expr(expr)?;
+        let result = self.visit_expr_ref(expr)?;
         self.serialize(result, quote, span)
     }
 
@@ -3931,8 +3901,7 @@ impl<'a> Visitor<'a> {
                     let name = argument.name;
                     let value = evaluated.named.remove(&argument.name).map_or_else(
                         || {
-                            // todo: superfluous clone
-                            let v = visitor.visit_expr(argument.default.clone().unwrap())?;
+                            let v = visitor.visit_expr_ref(argument.default.as_ref().unwrap())?;
                             visitor.without_slash(v)
                         },
                         SassResult::Ok,
@@ -4224,13 +4193,13 @@ impl<'a> Visitor<'a> {
         let mut buffer = format!("{}(", fn_name);
 
         let mut first = true;
-        for arg in args.positional.clone() {
+        for arg in args.positional {
             if first {
                 first = false;
             } else {
                 buffer.push_str(", ");
             }
-            let evaluated = self.evaluate_to_css(arg, QuoteKind::Quoted, span)?;
+            let evaluated = self.evaluate_to_css(&arg, QuoteKind::Quoted, span)?;
             buffer.push_str(&evaluated);
         }
 
@@ -4647,7 +4616,7 @@ impl<'a> Visitor<'a> {
         for clause in &css_if.clauses {
             match self.eval_if_condition(&clause.condition)? {
                 ConditionResult::True => {
-                    let value = self.visit_expr(clause.value.clone())?;
+                    let value = self.visit_expr_ref(&clause.value)?;
                     return self.without_slash(value);
                 }
                 ConditionResult::False => continue,
@@ -4673,7 +4642,7 @@ impl<'a> Visitor<'a> {
 
         // Add the first remaining clause
         let cond_str = self.serialize_if_condition(first_remaining)?;
-        let val_str = self.evaluate_to_css(first_clause.value.clone(), QuoteKind::None, css_if.span)?;
+        let val_str = self.evaluate_to_css(&first_clause.value, QuoteKind::None, css_if.span)?;
         parts.push(format!("{}: {}", cond_str, val_str));
 
         // Find remaining clauses after the first CSS one
@@ -4687,7 +4656,7 @@ impl<'a> Visitor<'a> {
             match &clause.condition {
                 IfCondition::Else => {
                     let val_str = self.evaluate_to_css(
-                        clause.value.clone(),
+                        &clause.value,
                         QuoteKind::None,
                         css_if.span,
                     )?;
@@ -4698,7 +4667,7 @@ impl<'a> Visitor<'a> {
                         ConditionResult::True => {
                             // Sass condition that's true — this becomes the value
                             let val_str = self.evaluate_to_css(
-                                clause.value.clone(),
+                                &clause.value,
                                 QuoteKind::None,
                                 css_if.span,
                             )?;
@@ -4713,7 +4682,7 @@ impl<'a> Visitor<'a> {
                         ConditionResult::Css(remaining) => {
                             let cond_str = self.serialize_if_condition(&remaining)?;
                             let val_str = self.evaluate_to_css(
-                                clause.value.clone(),
+                                &clause.value,
                                 QuoteKind::None,
                                 css_if.span,
                             )?;
@@ -4856,7 +4825,7 @@ impl<'a> Visitor<'a> {
     fn eval_if_atom(&mut self, atom: &IfConditionAtom<'static>) -> SassResult<ConditionResult> {
         match atom {
             IfConditionAtom::Sass(expr, _span) => {
-                let value = self.visit_expr(expr.clone())?;
+                let value = self.visit_expr_ref(expr)?;
                 if value.is_truthy() {
                     Ok(ConditionResult::True)
                 } else {
@@ -4866,7 +4835,7 @@ impl<'a> Visitor<'a> {
             IfConditionAtom::Css(interp, span)
             | IfConditionAtom::CssRaw(interp, span) => {
                 // Evaluate any interpolations within the CSS text
-                let text = self.perform_interpolation(interp.clone(), false)?;
+                let text = self.perform_interpolation_ref(interp, false)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
                     IfConditionAtom::Css(
                         Interpolation::new_plain(text),
@@ -4875,7 +4844,7 @@ impl<'a> Visitor<'a> {
                 )))
             }
             IfConditionAtom::Interp(expr, span) => {
-                let value = self.visit_expr(expr.clone())?;
+                let value = self.visit_expr_ref(expr)?;
                 let text = self.serialize(value, QuoteKind::None, *span)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
                     IfConditionAtom::Css(
