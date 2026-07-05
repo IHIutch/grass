@@ -695,14 +695,21 @@ pub fn lch_to_lab(l: f64, c: f64, h: f64) -> [f64; 3] {
     [l, c * h_rad.cos(), c * h_rad.sin()]
 }
 
+/// Normalize a hue to `[0, 360)`, matching dart-sass's `SassColor._normalizeHue`.
+/// This is deliberately a double modulo (not a single conditional add): dart-sass
+/// applies this exact formula whenever it constructs an Lch/OKLch/HSL/HWB color,
+/// and the extra `% 360.0` after the `+ 360.0` can shift the last bit relative to
+/// a plain `if h < 0.0 { h += 360.0 }`, which matters at extreme out-of-gamut
+/// magnitudes. `invert` is dart-sass's flip for a negative chroma/saturation.
+fn normalize_hue(hue: f64, invert: bool) -> f64 {
+    (hue % 360.0 + 360.0 + if invert { 180.0 } else { 0.0 }) % 360.0
+}
+
 /// Convert Lab to LCH.
 pub fn lab_to_lch(l: f64, a: f64, b: f64) -> [f64; 3] {
     let c = (a * a + b * b).sqrt();
-    let mut h = b.atan2(a) * 180.0 / PI;
-    if h < 0.0 {
-        h += 360.0;
-    }
-    [l, c, h]
+    let h = b.atan2(a) * 180.0 / PI;
+    [l, c, normalize_hue(h, false)]
 }
 
 /// Convert OKLab to XYZ-D65.

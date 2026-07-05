@@ -1028,3 +1028,34 @@ test!(
     "@use \"sass:color\";\na {b: color.to-space(lch(69.4695307685% 4338.814723033 181.6020122751deg), xyz-d50)}",
     "a {\n  b: color(xyz-d50 -1 0.4 2);\n}\n"
 );
+// dart-sass's `SassColor._normalizeHue` renormalizes an Lch/OKLch hue with
+// `(hue % 360 + 360) % 360`, not a plain `if h < 0 { h += 360 }`. The extra
+// modulo shifts the last bit at extreme magnitudes, which both changes far
+// out-of-gamut to-space() results and (as a side effect) makes a $space: lab
+// round-trip of an OKLch color with hue 0deg bit-exact instead of drifting to
+// 360deg. Expected values verified against npx sass@1.97.3 / sass-spec.
+test!(
+    to_space_hsl_to_lch_extreme_saturation,
+    "@use \"sass:color\";\na {b: color.to-space(hsl(20deg 999999% 50%), lch)}",
+    "a {\n  b: color-mix(in lch, color(xyz 136956388.67576775 59264689.51984791 -623200798.6134329) 100%, black);\n}\n"
+);
+test!(
+    to_space_xyz_to_oklch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz -999999 0 0), oklch)}",
+    "a {\n  b: color-mix(in oklch, color(xyz -999998.9999999988 0 -0.0000000009) 100%, black);\n}\n"
+);
+test!(
+    adjust_oklch_lab_space_noop_is_bit_exact,
+    "@use \"sass:color\";\na {b: color.adjust(oklch(50% 0.2 0deg), $space: lab)}",
+    "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
+);
+test!(
+    change_oklch_lab_space_noop_is_bit_exact,
+    "@use \"sass:color\";\na {b: color.change(oklch(50% 0.2 0deg), $space: lab)}",
+    "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
+);
+test!(
+    scale_oklch_lab_space_no_channels_is_bit_exact,
+    "@use \"sass:color\";\na {b: color.scale(oklch(50% 0.2 0deg), $space: lab)}",
+    "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
+);
