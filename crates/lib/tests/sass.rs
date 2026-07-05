@@ -117,13 +117,16 @@ a
     "a {\n  color: orange;\n}\n",
     grass::Options::default().input_syntax(InputSyntax::Sass)
 );
-error!(
+// dart-sass 1.97.3 verified: a loud comment spanning a newline in value position is accepted in
+// Sass-indented syntax (exit 0, no output since this is a bare variable declaration with no rule);
+// the "expected */." parse error this test expected no longer reproduces. grass already matches.
+test!(
     multiline_comment_in_value_position,
     r#"
 $a: /*
 loud */ red
 "#,
-    "Error: expected */.",
+    "",
     grass::Options::default().input_syntax(InputSyntax::Sass)
 );
 error!(
