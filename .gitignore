@@ -10,7 +10,7 @@ node_modules/
 coverage
 pkg
 flamegraph.svg
-perf*
+perf.data*
 dhat*
 *.tar.gz
 
