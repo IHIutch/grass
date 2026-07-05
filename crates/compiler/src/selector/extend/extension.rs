@@ -54,7 +54,7 @@ impl Extension {
         span: Span,
     ) -> Self {
         Self {
-            specificity: specificity.unwrap_or_else(|| extender.max_specificity()),
+            specificity: specificity.unwrap_or_else(|| extender.min_specificity()),
             extender: Rc::new(extender),
             target: None,
             span,

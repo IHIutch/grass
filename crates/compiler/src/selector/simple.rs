@@ -761,8 +761,8 @@ impl Pseudo {
             let mut min = 0;
             let mut max = 0;
             for complex in &selector.components {
-                min = min.max(complex.min_specificity());
-                max = max.max(complex.max_specificity());
+                min = min.max(complex.max_specificity());
+                max = max.max(complex.min_specificity());
             }
             Specificity { min, max }
         } else {
@@ -770,8 +770,8 @@ impl Pseudo {
             let mut min = BASE_SPECIFICITY.pow(3_u32);
             let mut max = 0;
             for complex in &selector.components {
-                min = min.min(complex.min_specificity());
-                max = max.max(complex.max_specificity());
+                min = min.min(complex.max_specificity());
+                max = max.max(complex.min_specificity());
             }
             Specificity { min, max }
         }

@@ -198,12 +198,19 @@ impl ComplexSelector {
         Specificity::new(min, max)
     }
 
+    // NOTE (Plan 028): these accessors were historically crossed (max read
+    // `.min` and vice versa). All call sites were verbatim-preserving that
+    // crossing, so this normalization also flips every call site's method
+    // name to keep behavior byte-identical. See Solo scratchpad #77 / todo
+    // #174 for the empirical fixture battery that ruled out a real semantic
+    // bug here (grass's old min/max pseudo-range model happens to agree with
+    // dart-sass's modern single-specificity model on every reachable case).
     pub fn max_specificity(&self) -> i32 {
-        self.specificity().min
+        self.specificity().max
     }
 
     pub fn min_specificity(&self) -> i32 {
-        self.specificity().max
+        self.specificity().min
     }
 
     pub fn specificity(&self) -> Specificity {
