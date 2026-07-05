@@ -73,13 +73,14 @@ fn inner_rgb_2_arg(
     } else if alpha.is_var() {
         match &color {
             Value::Color(color) => {
+                let rgb = color.to_rgb_channels_raw();
                 return Ok(Value::String(
                     format!(
                         "{}({}, {}, {}, {})",
                         name,
-                        color.red().to_string(is_compressed),
-                        color.green().to_string(is_compressed),
-                        color.blue().to_string(is_compressed),
+                        Number(rgb[0]).to_string(is_compressed),
+                        Number(rgb[1]).to_string(is_compressed),
+                        Number(rgb[2]).to_string(is_compressed),
                         alpha.to_css_string(args.span(), is_compressed)?
                     ).into(),
                     QuoteKind::None,
@@ -94,14 +95,15 @@ fn inner_rgb_2_arg(
         }
     } else if alpha.is_special_function() {
         let color = color.assert_color_with_name("color", args.span())?;
+        let rgb = color.to_rgb_channels_raw();
 
         return Ok(Value::String(
             format!(
                 "{}({}, {}, {}, {})",
                 name,
-                color.red().to_string(is_compressed),
-                color.green().to_string(is_compressed),
-                color.blue().to_string(is_compressed),
+                Number(rgb[0]).to_string(is_compressed),
+                Number(rgb[1]).to_string(is_compressed),
+                Number(rgb[2]).to_string(is_compressed),
                 alpha.to_css_string(args.span(), is_compressed)?
             ).into(),
             QuoteKind::None,
