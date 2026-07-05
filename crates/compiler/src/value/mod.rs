@@ -80,6 +80,12 @@ impl PartialEq for Value {
                     }
                 }
                 Value::Map(map2) => list1.is_empty() && map2.is_empty(),
+                Value::ArgList(list2) => {
+                    *sep1 == list2.separator
+                        && *brackets1 == Brackets::None
+                        && list1.len() == list2.elems.len()
+                        && list1.iter().zip(list2.elems.iter()).all(|(a, b)| a == b)
+                }
                 _ => false,
             },
             Value::Null => matches!(other, Value::Null),
@@ -113,18 +119,11 @@ impl PartialEq for Value {
             }
             Value::ArgList(list1) => match other {
                 Value::ArgList(list2) => list1 == list2,
-                Value::List(list2, ListSeparator::Comma, ..) => {
-                    if list1.len() != list2.len() {
-                        return false;
-                    }
-
-                    for (el1, el2) in list1.elems.iter().zip(list2.iter()) {
-                        if el1 != el2 {
-                            return false;
-                        }
-                    }
-
-                    true
+                Value::List(list2, sep2, brackets2) => {
+                    list1.separator == *sep2
+                        && *brackets2 == Brackets::None
+                        && list1.len() == list2.len()
+                        && list1.elems.iter().zip(list2.iter()).all(|(a, b)| a == b)
                 }
                 _ => false,
             },

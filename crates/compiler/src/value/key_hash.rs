@@ -27,21 +27,24 @@
 //!   that exact non-transitive web, every empty container gets one sentinel
 //!   hash; this is a superset of the required merges and is always
 //!   collision-safe.
-//! - **`List` hashing ignores `Brackets`.** `Value::eq` lets an `ArgList`
-//!   compare equal to a `List(Comma, ..)` of *any* bracket kind (the match
-//!   arm is `Value::List(list2, ListSeparator::Comma, ..)`), so `ArgList`'s
-//!   hash can't depend on brackets. Folding that into plain `List` hashing
-//!   too (rather than giving `List` a brackets-aware hash and a
-//!   brackets-blind one just for cross-comparison with `ArgList`) is simpler
-//!   and, again, only ever causes extra (safe) collisions between e.g. `(1,
+//! - **`List` hashing ignores `Brackets`.** As of Plan 035, `Value::eq`
+//!   requires an `ArgList` (always unbracketed) to match brackets with a
+//!   `List` it's compared against (i.e. only `Brackets::None` lists can be
+//!   eq to an `ArgList`), so this is no longer strictly required for
+//!   cross-type consistency. It's kept anyway: folding brackets into plain
+//!   `List` hashing (rather than giving `List` a brackets-aware hash and a
+//!   brackets-blind one just for cross-comparison with `ArgList`) is
+//!   simpler, and only ever causes extra (safe) collisions between e.g. `(1,
 //!   2)` and `[1, 2]`, which were never equal to begin with.
-//! - **`ArgList`'s `keywords` are not hashed**, matching the cross-type
-//!   `Value::eq` arm (`ArgList == List(Comma, ..)`), which also ignores
-//!   keywords. Note `Value::eq` is not even symmetric here — `list ==
-//!   arglist` (List's own match arm) always returns `false`, only `arglist
-//!   == list` can be `true` — a pre-existing quirk, not introduced or fixed
-//!   here. It doesn't threaten hash consistency: consistency only requires
-//!   `eq ⟹ same hash`, never the converse.
+//! - **`ArgList`'s `keywords` are not hashed**, matching `Value::eq`
+//!   (`ArgList == ArgList` and the `ArgList == List(..)` / `List(..) ==
+//!   ArgList` arms all ignore keywords, per dart-sass: `SassArgumentList`
+//!   doesn't override `SassList::==`, so keywords never factor into
+//!   equality). As of Plan 035, `Value::eq` is symmetric for ArgList/List
+//!   comparisons (a prior asymmetry — `list == arglist` always `false` while
+//!   `arglist == list` could be `true` — was a genuine bug, now fixed). This
+//!   doesn't threaten hash consistency either way: consistency only
+//!   requires `eq ⟹ same hash`, never the converse.
 //! - **`Color`, `Calculation`, `FunctionRef`, `MixinRef` fall back to a
 //!   single hash bucket per variant.** These were not in the plan's list of
 //!   hard cases, and doing them justice is substantially more work: `Color`
@@ -479,16 +482,18 @@ mod tests {
             BTreeMap::new(),
             ListSeparator::Comma,
         ));
+        // Brackets::None: an ArgList is never bracketed, and Value::eq (fixed
+        // in Plan 035 to match dart-sass's SassList::== exactly) now requires
+        // matching brackets, so a Bracketed list here would no longer be eq.
         let list = Value::List(
             Rc::new(vec![dim(1.0, Unit::None), dim(2.0, Unit::None)]),
             ListSeparator::Comma,
-            Brackets::Bracketed,
+            Brackets::None,
         );
-        // Only ArgList == List holds (Value::eq is asymmetric here -- List's
-        // own match arm has no ArgList case and always returns false). The
-        // invariant we need is eq ⟹ same hash, so we only need this
-        // direction to hold; assert_hash_consistent takes (a, b) and calls
-        // PartialEq::eq(a, b), so pass arglist first.
+        // Value::eq is symmetric here as of Plan 035 (both ArgList == List
+        // and List == ArgList hold); assert_hash_consistent only checks one
+        // direction (arglist first), which remains sufficient for the eq ⟹
+        // same hash invariant this module cares about.
         assert_hash_consistent(&arglist, &list);
     }
 

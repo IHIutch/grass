@@ -15,9 +15,10 @@ pub struct ArgList {
 
 impl PartialEq for ArgList {
     fn eq(&self, other: &Self) -> bool {
-        self.elems == other.elems
-            && self.keywords == other.keywords
-            && self.separator == other.separator
+        // Keywords are intentionally excluded: dart-sass's `SassArgumentList` doesn't
+        // override `==`, so it inherits `SassList`'s equality, which only compares
+        // contents/separator/brackets and never looks at keywords.
+        self.elems == other.elems && self.separator == other.separator
     }
 }
 
