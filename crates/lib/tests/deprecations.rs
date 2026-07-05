@@ -1307,3 +1307,107 @@ fn with_private_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+fn assert_color_module_compat_warning(input: &str, expected_prefix: &str) {
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1, "expected exactly one warning for {input}: {warnings:?}");
+    assert!(
+        warnings[0].starts_with(expected_prefix),
+        "unexpected warning for {input}: {}",
+        warnings[0]
+    );
+}
+
+fn assert_no_color_module_compat_warning(input: &str) {
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(
+        &[] as &[String],
+        logger.warning_messages().as_slice(),
+        "unexpected warning for {input}"
+    );
+}
+
+#[test]
+fn color_module_compat_invert_warns_for_number() {
+    assert_color_module_compat_warning(
+        "@use \"sass:color\";\na {\n  b: color.invert(50%);\n}\n",
+        "DEPRECATION WARNING [color-module-compat]: Passing a number (50%) to color.invert() \
+         is deprecated.\n\nRecommendation: invert(50%)",
+    );
+}
+
+#[test]
+fn color_module_compat_grayscale_warns_for_number() {
+    assert_color_module_compat_warning(
+        "@use \"sass:color\";\na {\n  b: color.grayscale(50%);\n}\n",
+        "DEPRECATION WARNING [color-module-compat]: Passing a number (50%) to \
+         color.grayscale() is deprecated.\n\nRecommendation: grayscale(50%)",
+    );
+}
+
+#[test]
+fn color_module_compat_opacity_warns_for_number_with_dart_typo() {
+    // Reproduces dart-sass's message verbatim, including its missing
+    // closing paren after the number ("(0.5 to" not "(0.5) to").
+    assert_color_module_compat_warning(
+        "@use \"sass:color\";\na {\n  b: color.opacity(0.5);\n}\n",
+        "DEPRECATION WARNING [color-module-compat]: Passing a number (0.5 to color.opacity() \
+         is deprecated.\n\nRecommendation: opacity(0.5)",
+    );
+}
+
+#[test]
+fn color_module_compat_alpha_warns_for_ms_filter() {
+    assert_color_module_compat_warning(
+        "@use \"sass:color\";\na {\n  b: color.alpha(alpha=50);\n}\n",
+        "DEPRECATION WARNING [color-module-compat]: Using color.alpha() for a Microsoft filter \
+         is deprecated.\n\nRecommendation: alpha(alpha=50)",
+    );
+}
+
+#[test]
+fn color_module_compat_does_not_warn_for_actual_colors() {
+    for input in [
+        "@use \"sass:color\";\na {\n  b: color.invert(red);\n}\n",
+        "@use \"sass:color\";\na {\n  b: color.grayscale(red);\n}\n",
+        "@use \"sass:color\";\na {\n  b: color.opacity(red);\n}\n",
+        "@use \"sass:color\";\na {\n  b: color.alpha(red);\n}\n",
+    ] {
+        assert_no_color_module_compat_warning(input);
+    }
+}
+
+#[test]
+fn color_module_compat_does_not_warn_for_global_forms() {
+    for input in [
+        "a {\n  b: invert(50%);\n}\n",
+        "a {\n  b: grayscale(50%);\n}\n",
+        "a {\n  b: opacity(0.5);\n}\n",
+        "a {\n  b: alpha(alpha=50);\n}\n",
+    ] {
+        let logger = TestLogger::default();
+        let options = grass::Options::default().logger(&logger);
+        grass::from_string(input.to_string(), &options).expect(input);
+        assert!(
+            !logger.warning_messages().iter().any(|w| w.contains("[color-module-compat]")),
+            "unexpected color-module-compat warning for {input}: {:?}",
+            logger.warning_messages()
+        );
+    }
+}
+
+#[test]
+fn color_module_compat_silenced() {
+    let input = "@use \"sass:color\";\na {\n  b: color.invert(50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::ColorModuleCompat);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}

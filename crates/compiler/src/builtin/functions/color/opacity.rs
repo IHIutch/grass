@@ -100,6 +100,25 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     }
 }
 
+/// Module-level `color.alpha()`: like the global form, an argument (or
+/// arguments) in the legacy Microsoft filter syntax still passes through as
+/// a plain CSS `alpha(...)` string, but the module form additionally warns
+/// `color-module-compat`.
+pub(crate) fn module_alpha(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let span = args.span();
+    let result = alpha(args, visitor)?;
+
+    if let Value::String(ref s, QuoteKind::None) = result {
+        visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+            Ok(format!(
+                "Using color.alpha() for a Microsoft filter is deprecated.\n\nRecommendation: {s}"
+            ))
+        })?;
+    }
+
+    Ok(result)
+}
+
 pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
     let span = args.span();
@@ -213,7 +232,7 @@ fn transparentize(
 /// Module-level `color.opacity()` — allows color and number passthrough,
 /// but NOT special function passthrough (var(), calc(), etc.).
 /// `color.opacity(var(--c))` errors, while `color.opacity(0.5)` passes through.
-pub(crate) fn module_opacity(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
+pub(crate) fn module_opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
     let span = args.span();
     match args.get_err(0, "color")? {
@@ -222,10 +241,20 @@ pub(crate) fn module_opacity(mut args: ArgumentResult, _visitor: &mut Visitor) -
             num,
             unit,
             as_slash: _,
-        }) => Ok(Value::String(
-            format!("opacity({}{})", num.inspect(), unit).into(),
-            QuoteKind::None,
-        )),
+        }) => {
+            let result = format!("opacity({}{})", num.inspect(), unit);
+            visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+                // Reproduces dart-sass's message verbatim, including its
+                // missing closing paren after the number.
+                Ok(format!(
+                    "Passing a number ({}{} to color.opacity() is deprecated.\n\n\
+                     Recommendation: {result}",
+                    num.inspect(),
+                    unit
+                ))
+            })?;
+            Ok(Value::String(result.into(), QuoteKind::None))
+        }
         v => Err((
             format!("$color: {} is not a color.", v.inspect(span)?),
             span,

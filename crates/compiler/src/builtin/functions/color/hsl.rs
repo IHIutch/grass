@@ -531,6 +531,34 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     grayscale(new_args, visitor)
 }
 
+/// Module-level `color.grayscale()`: like the global form, passing a number
+/// still passes through as a plain CSS `grayscale(...)` string, but the
+/// module form additionally warns `color-module-compat`.
+pub(crate) fn module_grayscale(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let span = args.span();
+    let peek = args
+        .named
+        .get(&Identifier::from("color"))
+        .or_else(|| args.positional.first());
+    let arg0_text = match peek {
+        Some(Value::Dimension(SassNumber { num, unit, .. })) => Some(format!("{}{}", num.inspect(), unit)),
+        _ => None,
+    };
+
+    let result = grayscale(args, visitor)?;
+
+    if let (Some(arg0_text), Value::String(ref s, QuoteKind::None)) = (&arg0_text, &result) {
+        visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+            Ok(format!(
+                "Passing a number ({arg0_text}) to color.grayscale() is deprecated.\n\n\
+                 Recommendation: {s}"
+            ))
+        })?;
+    }
+
+    Ok(result)
+}
+
 pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
     let span = args.span();
@@ -592,8 +620,8 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
 /// Global `invert()`: warns unless the `$color` argument is a plain number
 /// or special function (`var()`/`calc()`), matching dart-sass's global-only
-/// `invert` wrapper. `color.invert()` (the module form) uses `invert`
-/// directly, without this check.
+/// `invert` wrapper. `color.invert()` (the module form) uses `module_invert`
+/// instead, which warns `color-module-compat` in that same case.
 fn global_invert(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     let peek = args
         .named
@@ -613,6 +641,36 @@ fn global_invert(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
     }
 
     invert(args, visitor)
+}
+
+/// Module-level `color.invert()`: like the global form, passing a number
+/// still passes through as a plain CSS `invert(...)` string, but the module
+/// form additionally warns `color-module-compat` — dart-sass expects calls
+/// through the explicit `color.` namespace to always pass an actual color.
+pub(crate) fn module_invert(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let span = args.span();
+    let peek = args
+        .named
+        .get(&Identifier::from("color"))
+        .or_else(|| args.positional.first());
+
+    let arg0_text = match peek {
+        Some(Value::Dimension(SassNumber { num, unit, .. })) => Some(format!("{}{}", num.inspect(), unit)),
+        _ => None,
+    };
+
+    let result = invert(args, visitor)?;
+
+    if let (Some(arg0_text), Value::String(ref s, QuoteKind::None)) = (&arg0_text, &result) {
+        visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+            Ok(format!(
+                "Passing a number ({arg0_text}) to color.invert() is deprecated.\n\n\
+                 Recommendation: {s}"
+            ))
+        })?;
+    }
+
+    Ok(result)
 }
 
 pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
