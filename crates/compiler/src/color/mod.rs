@@ -344,12 +344,15 @@ impl Color {
         let weight1 = (combined_weight1 + Number::one()) / Number(2.0);
         let weight2 = Number::one() - weight1;
 
+        let self_rgb = self.to_rgb_channels_raw();
+        let other_rgb = other.to_rgb_channels_raw();
+
         Color {
             space: ColorSpace::Rgb,
             channels: [
-                Some((self.red() * weight1 + other.red() * weight2).0.clamp(0.0, 255.0)),
-                Some((self.green() * weight1 + other.green() * weight2).0.clamp(0.0, 255.0)),
-                Some((self.blue() * weight1 + other.blue() * weight2).0.clamp(0.0, 255.0)),
+                Some((Number(self_rgb[0]) * weight1 + Number(other_rgb[0]) * weight2).0.clamp(0.0, 255.0)),
+                Some((Number(self_rgb[1]) * weight1 + Number(other_rgb[1]) * weight2).0.clamp(0.0, 255.0)),
+                Some((Number(self_rgb[2]) * weight1 + Number(other_rgb[2]) * weight2).0.clamp(0.0, 255.0)),
             ],
             alpha: Some(
                 (self.alpha() * weight + other.alpha() * (Number::one() - weight))
