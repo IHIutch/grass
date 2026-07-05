@@ -894,6 +894,8 @@ impl<'a> Visitor<'a> {
             }
         }
 
+        self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
+
         let value = self.visit_expr_ref(&decl.value)?;
         let value = self.without_slash(value)?;
 
@@ -3108,6 +3110,45 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
+    /// Warns when a `!global` assignment would declare a variable that
+    /// doesn't already exist in the global scope, matching dart-sass's
+    /// `Deprecation.newGlobal`. The message differs depending on whether the
+    /// assignment is already at the stylesheet root (where `!global` is
+    /// redundant) or nested (where the recommendation is to pre-declare the
+    /// variable at the root instead).
+    ///
+    /// Note: unlike dart-sass's `node.originalName`, this uses the
+    /// normalized (underscore-to-hyphen) identifier in the nested-case
+    /// recommendation text, since grass doesn't retain the pre-normalization
+    /// spelling on `AstVariableDecl`.
+    fn maybe_warn_new_global(
+        &mut self,
+        name: Identifier,
+        namespace: Option<Spanned<Identifier>>,
+        is_global: bool,
+        span: Span,
+    ) -> SassResult<()> {
+        if !is_global || namespace.is_some() || self.env.global_var_exists(name, span)? {
+            return Ok(());
+        }
+
+        let at_root = self.env.at_root();
+
+        self.emit_deprecation(Deprecation::NewGlobal, span, || {
+            Ok(if at_root {
+                "As of Dart Sass 2.0.0, !global assignments won't be able to declare new \
+                 variables.\n\nSince this assignment is at the root of the stylesheet, the \
+                 !global flag is\nunnecessary and can safely be removed."
+                    .to_string()
+            } else {
+                format!(
+                    "As of Dart Sass 2.0.0, !global assignments won't be able to declare new \
+                     variables.\n\nRecommendation: add `${name}: null` at the stylesheet root."
+                )
+            })
+        })
+    }
+
     fn visit_warn_rule(&mut self, warn_rule: AstWarn<'static>) -> SassResult<()> {
         if self.warnings_emitted.insert(warn_rule.span) {
             let value = self.visit_expr(warn_rule.value)?;
@@ -3579,6 +3620,8 @@ impl<'a> Visitor<'a> {
                 }
             }
         }
+
+        self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
 
         let value = self.visit_expr(decl.value)?;
         let value = self.without_slash(value)?;

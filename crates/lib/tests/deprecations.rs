@@ -91,6 +91,46 @@ fn import_warns_once_per_occurrence() {
 }
 
 #[test]
+fn new_global_warns_at_root() {
+    let input = "$existing: 1;\na {\n  b: $existing;\n}\n$new-var: 2 !global;\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].starts_with(
+            "DEPRECATION WARNING [new-global]: As of Dart Sass 2.0.0, !global assignments won't \
+             be able to declare new variables."
+        ),
+        "unexpected warning: {}",
+        warnings[0]
+    );
+    assert!(warnings[0].contains("unnecessary and can safely be removed"));
+}
+
+#[test]
+fn new_global_warns_when_nested() {
+    let input = "a {\n  $new-var: 2 !global;\n  b: $new-var;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 2;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Recommendation: add `$new-var: null` at the stylesheet root."));
+}
+
+#[test]
+fn new_global_does_not_warn_for_existing_global() {
+    let input = "$g: 1;\na {\n  $g: 2 !global;\n  b: $g;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
 fn slash_div_warns_outside_calc() {
     let input = "a { b: (1/2) }";
     let logger = TestLogger::default();
