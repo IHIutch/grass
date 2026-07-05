@@ -688,3 +688,93 @@ fn bogus_combinators_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn color_functions_global_channel_getter_warns_without_prefix_and_alongside_global_builtin() {
+    let input = "a {\n  b: red(#fff);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 255;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [global-builtin]:"));
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: red() is deprecated. Suggestion:\n\n\
+         color.channel($color, \"red\", $space: rgb)"
+    ));
+}
+
+#[test]
+fn color_functions_module_channel_getter_warns_with_color_prefix_only() {
+    let input = "@use \"sass:color\";\na {\n  b: color.red(#fff);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [color-functions]: color.red() is deprecated. Suggestion:\n\n\
+         color.channel($color, \"red\", $space: rgb)"
+    ));
+}
+
+#[test]
+fn color_functions_warns_for_all_six_channel_getters() {
+    for (name, space) in [
+        ("red", "rgb"),
+        ("green", "rgb"),
+        ("blue", "rgb"),
+        ("hue", "hsl"),
+        ("saturation", "hsl"),
+        ("lightness", "hsl"),
+    ] {
+        let input = format!("@use \"sass:color\";\na {{\n  b: color.{name}(#abc);\n}}\n");
+        let logger = TestLogger::default();
+        let options = grass::Options::default().logger(&logger);
+        grass::from_string(input.clone(), &options).expect(&input);
+        let warnings = logger.warning_messages();
+        assert_eq!(warnings.len(), 1, "unexpected warnings for {name}: {warnings:?}");
+        assert!(
+            warnings[0].contains(&format!("color.channel($color, \"{name}\", $space: {space})")),
+            "unexpected warning for {name}: {}",
+            warnings[0]
+        );
+    }
+}
+
+#[test]
+fn color_functions_adjust_hue_warns_with_suggestion() {
+    let input = "a {\n  b: adjust-hue(red, 30deg);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: adjust-hue() is deprecated. Suggestion:\n\n\
+         color.adjust($color, $hue: 30deg)"
+    ));
+}
+
+#[test]
+fn color_functions_does_not_warn_for_channel_function() {
+    let input = "@use \"sass:color\";\na {\n  b: color.channel(#fff, \"red\");\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn color_functions_silenced() {
+    let input = "a {\n  b: red(#fff);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::ColorFunctions);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [global-builtin]:"));
+}

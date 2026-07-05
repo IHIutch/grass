@@ -139,6 +139,34 @@ pub(crate) fn hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         ).into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "hue", "hsl"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber {
+        num: color.hue(),
+        unit: Unit::Deg,
+        as_slash: None,
+    }))
+}
+
+fn global_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.hue() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "hue", "hsl"))
+    })?;
+
     Ok(Value::Dimension(SassNumber {
         num: color.hue(),
         unit: Unit::Deg,
@@ -159,6 +187,34 @@ pub(crate) fn saturation(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         ).into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "saturation", "hsl"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber {
+        num: color.saturation(),
+        unit: Unit::Percent,
+        as_slash: None,
+    }))
+}
+
+fn global_saturation(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.saturation() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "saturation", "hsl"))
+    })?;
+
     Ok(Value::Dimension(SassNumber {
         num: color.saturation(),
         unit: Unit::Percent,
@@ -178,6 +234,34 @@ pub(crate) fn lightness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             args.span(),
         ).into());
     }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "lightness", "hsl"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber {
+        num: color.lightness(),
+        unit: Unit::Percent,
+        as_slash: None,
+    }))
+}
+
+fn global_lightness(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.lightness() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "lightness", "hsl"))
+    })?;
 
     Ok(Value::Dimension(SassNumber {
         num: color.lightness(),
@@ -200,6 +284,20 @@ pub(crate) fn adjust_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     }
 
     let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span())?;
+
+    let span = args.span();
+    let suggested_value = SassNumber {
+        num: degrees,
+        unit: Unit::Deg,
+        as_slash: None,
+    };
+    let suggestion_text = serialize_number(&suggested_value, visitor.options, span)?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "adjust-hue() is deprecated. Suggestion:\n\ncolor.adjust($color, $hue: \
+             {suggestion_text})\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.adjust_hue(degrees))))
 }
@@ -588,15 +686,15 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     // hsl/hsla are plain-CSS-compatible constructors; never warn.
     f.insert("hsl", Builtin::new(hsl));
     f.insert("hsla", Builtin::new(hsla));
-    f.insert("hue", Builtin::new(hue).with_deprecated_global("color", "hue"));
+    f.insert("hue", Builtin::new(global_hue).with_deprecated_global("color", "hue"));
     f.insert(
         "saturation",
-        Builtin::new(saturation).with_deprecated_global("color", "saturation"),
+        Builtin::new(global_saturation).with_deprecated_global("color", "saturation"),
     );
     f.insert("adjust-hue", Builtin::new(adjust_hue).with_deprecated_global("color", "adjust"));
     f.insert(
         "lightness",
-        Builtin::new(lightness).with_deprecated_global("color", "lightness"),
+        Builtin::new(global_lightness).with_deprecated_global("color", "lightness"),
     );
     f.insert("lighten", Builtin::new(lighten).with_deprecated_global("color", "adjust"));
     f.insert("darken", Builtin::new(darken).with_deprecated_global("color", "adjust"));

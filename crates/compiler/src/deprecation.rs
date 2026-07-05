@@ -30,6 +30,10 @@ pub enum Deprecation {
     /// A selector with a leading, trailing, or doubled-up combinator (e.g.
     /// `+ .a`, `.a >`, `.a + + .b`).
     BogusCombinators,
+    /// Calling a global color function (or its `color.*` module
+    /// equivalent) that's been superseded by `color.channel()` /
+    /// `color.adjust()` / `color.scale()`.
+    ColorFunctions,
 }
 
 impl Deprecation {
@@ -46,6 +50,7 @@ impl Deprecation {
             Self::StrictUnary => "strict-unary",
             Self::IfFunction => "if-function",
             Self::BogusCombinators => "bogus-combinators",
+            Self::ColorFunctions => "color-functions",
         }
     }
 
@@ -61,7 +66,8 @@ impl Deprecation {
             | Self::GlobalBuiltin
             | Self::StrictUnary
             | Self::IfFunction
-            | Self::BogusCombinators => false,
+            | Self::BogusCombinators
+            | Self::ColorFunctions => false,
         }
     }
 }

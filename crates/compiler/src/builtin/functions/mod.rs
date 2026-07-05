@@ -34,6 +34,20 @@ pub(crate) fn global_builtin_message(module: &str, name: &str) -> String {
     )
 }
 
+/// Builds the `color-functions` deprecation message dart-sass shows for a
+/// deprecated single-channel getter (`red()`/`color.red()`,
+/// `hue()`/`color.hue()`, etc.), given whether it was called through its
+/// global name (`is_global`) or the `color.*` module, the function's own
+/// `name`, and the `sass:color` `$space` argument `color.channel()` needs
+/// (`"rgb"` for red/green/blue, `"hsl"` for hue/saturation/lightness).
+pub(crate) fn color_channel_getter_message(is_global: bool, name: &str, space: &str) -> String {
+    let prefix = if is_global { "" } else { "color." };
+    format!(
+        "{prefix}{name}() is deprecated. Suggestion:\n\ncolor.channel($color, \"{name}\", \
+         $space: {space})\n\nMore info: https://sass-lang.com/d/color-functions"
+    )
+}
+
 static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// A function implemented in rust that is accessible from within Sass

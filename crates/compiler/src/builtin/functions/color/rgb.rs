@@ -453,6 +453,32 @@ pub(crate) fn red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         ).into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "red", "rgb"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber::new_unitless(color.red())))
+}
+
+/// Global `red()`: same as [`red`], but warns without the `color.` prefix,
+/// matching dart-sass's global-only wrapper.
+fn global_red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.red() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "red", "rgb"))
+    })?;
+
     Ok(Value::Dimension(SassNumber::new_unitless(color.red())))
 }
 
@@ -469,6 +495,30 @@ pub(crate) fn green(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         ).into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "green", "rgb"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber::new_unitless(color.green())))
+}
+
+fn global_green(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.green() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "green", "rgb"))
+    })?;
+
     Ok(Value::Dimension(SassNumber::new_unitless(color.green())))
 }
 
@@ -484,6 +534,30 @@ pub(crate) fn blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
             args.span(),
         ).into());
     }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "blue", "rgb"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber::new_unitless(color.blue())))
+}
+
+fn global_blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.blue() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "blue", "rgb"))
+    })?;
 
     Ok(Value::Dimension(SassNumber::new_unitless(color.blue())))
 }
@@ -683,8 +757,8 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     // rgb/rgba are plain-CSS-compatible constructors; never warn.
     f.insert("rgb", Builtin::new(rgb));
     f.insert("rgba", Builtin::new(rgba));
-    f.insert("red", Builtin::new(red).with_deprecated_global("color", "red"));
-    f.insert("green", Builtin::new(green).with_deprecated_global("color", "green"));
-    f.insert("blue", Builtin::new(blue).with_deprecated_global("color", "blue"));
+    f.insert("red", Builtin::new(global_red).with_deprecated_global("color", "red"));
+    f.insert("green", Builtin::new(global_green).with_deprecated_global("color", "green"));
+    f.insert("blue", Builtin::new(global_blue).with_deprecated_global("color", "blue"));
     f.insert("mix", Builtin::new(mix).with_deprecated_global("color", "mix"));
 }
