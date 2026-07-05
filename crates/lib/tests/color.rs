@@ -315,6 +315,30 @@ test!(
     "a {\n  color: mix(black, white);\n}\n",
     "a {\n  color: rgb(127.5, 127.5, 127.5);\n}\n"
 );
+// Plan 027 / Solo scratchpad #76: mix() previously blended fractional input
+// channels through the rounding red()/green()/blue() getters instead of raw
+// channels. Expectations verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    mix_fractional_rgb_channels,
+    "a {\n  color: mix(#000, rgb(206.6, 226, 254.6), 5%);\n}\n",
+    "a {\n  color: rgb(196.27, 214.7, 241.87);\n}\n"
+);
+test!(
+    mix_fractional_hsl_input,
+    "a {\n  color: mix(hsl(210.5, 60.3%, 50.2%), #123456, 33.3%);\n}\n",
+    "a {\n  color: rgb(29.13386499, 76.8863389165, 125.48879501);\n}\n"
+);
+test!(
+    mix_fractional_alpha_weight,
+    "a {\n  color: mix(rgba(100.4, 50, 50, 0.4), rgba(20, 200.7, 30, 0.9), 25%);\n}\n",
+    "a {\n  color: rgba(28.04, 185.63, 32, 0.775);\n}\n"
+);
+test!(
+    mix_fractional_nested_bootstrap_shaped,
+    "a {\n  color: mix(#000, mix(white, #0d6efd, 80%), 5%);\n}\n",
+    "a {\n  color: rgb(196.27, 214.7, 241.87);\n}\n"
+);
 test!(
     change_color_blue,
     "a {\n  color: change-color(#102030, $blue: 5);\n}\n",
@@ -571,9 +595,24 @@ test!(
     "a {\n  color: rgb(1, var(--foo));\n}\n"
 );
 test!(
+    // Expectation updated for Plan 027 / Solo scratchpad #76: rgb(1%, 1, 1)'s
+    // red channel is fractional (2.55), and the var()-alpha fallback path
+    // must preserve raw channels rather than rounding through red()/green()/
+    // blue(). Verified against dart-sass 1.97.3:
+    // printf '%s' 'a { color: rgb(rgb(1%, 1, 1), var(--foo)); }' | npx sass@1.97.3 --stdin --style=expanded
+    // -> rgb(2.55, 1, 1, var(--foo))
     rgb_special_fn_2_arg_first_is_color,
     "a {\n  color: rgb(rgb(1%, 1, 1), var(--foo));;\n}\n",
-    "a {\n  color: rgb(3, 1, 1, var(--foo));\n}\n"
+    "a {\n  color: rgb(2.55, 1, 1, var(--foo));\n}\n"
+);
+// Plan 027 / Solo scratchpad #76: the calc()-alpha fallback path (same
+// code as the var()-alpha path above) also preserves raw channels.
+// Verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    rgba_special_fn_alpha_fractional_rgb_channels,
+    "a {\n  color: rgba(rgb(206.6, 226, 254.6), calc(1 - var(--x)));\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, calc(1 - var(--x)));\n}\n"
 );
 test!(
     interpolated_named_color_is_not_color,

@@ -22,6 +22,30 @@ test!(
     "@use \"sass:color\";\na {\n  color: color.whiteness(white);\n}\n",
     "a {\n  color: 100%;\n}\n"
 );
+// Plan 027 / Solo scratchpad #76: whiteness()/blackness() previously took
+// min/max over the rounding red()/green()/blue() getters instead of raw
+// channels. Expectations verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    whiteness_fractional_rgb_channels,
+    "@use \"sass:color\";\na {\n  color: color.whiteness(rgb(206.6, 226, 254.6));\n}\n",
+    "a {\n  color: 81.0196078431%;\n}\n"
+);
+test!(
+    blackness_fractional_rgb_channels,
+    "@use \"sass:color\";\na {\n  color: color.blackness(rgb(206.6, 226, 254.6));\n}\n",
+    "a {\n  color: 0.1568627451%;\n}\n"
+);
+test!(
+    adjust_color_whiteness_fractional_rgb_channels,
+    "a {\n  color: adjust-color(rgb(206.6, 226, 254.6), $whiteness: 5%);\n}\n",
+    "a {\n  color: rgb(219.35, 233.596875, 254.6);\n}\n"
+);
+test!(
+    adjust_color_blackness_fractional_rgb_channels,
+    "a {\n  color: adjust-color(rgb(206.6, 226, 254.6), $blackness: 5%);\n}\n",
+    "a {\n  color: rgb(206.6, 220.846875, 241.85);\n}\n"
+);
 test!(
     blackness_approx_50_pct,
     "@use \"sass:color\";\na {\n  color: color.blackness(color.hwb(0, 0%, 50%));\n}\n",
