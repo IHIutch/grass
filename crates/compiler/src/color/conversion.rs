@@ -709,6 +709,12 @@ fn normalize_hue(hue: f64, invert: bool) -> f64 {
 pub fn lab_to_lch(l: f64, a: f64, b: f64) -> [f64; 3] {
     let c = (a * a + b * b).sqrt();
     let h = b.atan2(a) * 180.0 / PI;
+    // dart-sass computes this in two separate stages that are NOT equivalent
+    // in IEEE double arithmetic: labToLch's own conditional `hue + 360` for a
+    // negative angle, THEN a second, independent renormalization when the Lch
+    // color is constructed (see `normalize_hue`). Collapsing these into one
+    // call changes the last bit at extreme magnitudes.
+    let h = if h >= 0.0 { h } else { h + 360.0 };
     [l, c, normalize_hue(h, false)]
 }
 

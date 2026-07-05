@@ -1059,3 +1059,20 @@ test!(
     "@use \"sass:color\";\na {b: color.scale(oklch(50% 0.2 0deg), $space: lab)}",
     "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
 );
+// dart-sass computes an out-of-gamut Lch/OKLch hue in TWO separate stages that
+// are not equivalent in IEEE double arithmetic: labToLch's own conditional
+// `hue + 360` for a negative angle, then an independent second renormalization
+// `(hue % 360 + 360) % 360` when the color is actually constructed. Collapsing
+// these into a single normalization (as an earlier version of this fix did)
+// still lands 1 ULP off from dart-sass at extreme magnitudes. Expected values
+// verified against sass-spec / npx sass@1.97.3.
+test!(
+    to_space_rgb_to_lch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color.change(black, $red: -999999), lch)}",
+    "a {\n  b: color-mix(in lch, color(xyz -152693379.43919504 -78732523.77333494 -7157502.161212466) 100%, black);\n}\n"
+);
+test!(
+    to_space_a98_rgb_to_lch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(a98-rgb -999999 0 0), lch)}",
+    "a {\n  b: color-mix(in lch, color(xyz -9041452038524.758 -4661998707364.329 -423818064305.86096) 100%, black);\n}\n"
+);
