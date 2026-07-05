@@ -35,13 +35,7 @@ fn stdin_expanded() {
 // Ground truth verified with dart-sass 1.97.3:
 //   printf 'a { b: c }' | npx sass@1.97.3 --stdin --style=compressed
 //   -> "a{b:c}\n" (dart-sass emits a trailing newline even in compressed mode)
-// BUG: grass's CLI omits the trailing newline in compressed style
-// (confirmed via ./target/debug/grass --stdin --style=compressed -> "a{b:c}"
-// with no trailing byte). Expanded style is unaffected. Reported to todo #128
-// instead of filed (bd removed from repo); production code intentionally not
-// touched per this plan's scope.
 #[test]
-#[ignore = "bug: grass CLI compressed-style output is missing dart-sass's trailing newline"]
 fn stdin_compressed() {
     let output = run_with_stdin(&["--stdin", "-s", "compressed"], "a { b: c }");
     assert!(output.status.success());

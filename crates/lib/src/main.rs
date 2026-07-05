@@ -249,27 +249,35 @@ fn main() -> std::io::Result<()> {
         &mut stdout_write
     };
 
-    buf_out.write_all(
-        if let Some(name) = matches.get_one::<String>("INPUT") {
-            from_path(name, options)
-        } else if matches.get_flag("STDIN") {
-            from_string(
-                {
-                    let mut buffer = String::new();
-                    stdin().read_to_string(&mut buffer)?;
-                    buffer
-                },
-                options,
-            )
-        } else {
-            unreachable!()
-        }
-        .unwrap_or_else(|e| {
-            eprintln!("{}", e);
-            std::process::exit(1)
-        })
-        .as_bytes(),
-    )?;
+    let css = if let Some(name) = matches.get_one::<String>("INPUT") {
+        from_path(name, options)
+    } else if matches.get_flag("STDIN") {
+        from_string(
+            {
+                let mut buffer = String::new();
+                stdin().read_to_string(&mut buffer)?;
+                buffer
+            },
+            options,
+        )
+    } else {
+        unreachable!()
+    }
+    .unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1)
+    });
+
+    // dart-sass's CLI always appends a trailing newline to non-empty output
+    // (compile_stylesheet.dart writes `css + "\n"` / uses `print`, which adds
+    // one); the library's returned CSS string itself never has one. grass's
+    // library output already ends in `\n` for expanded style, so only append
+    // when missing to avoid doubling it.
+    let mut bytes = css.into_bytes();
+    if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+        bytes.push(b'\n');
+    }
+    buf_out.write_all(&bytes)?;
     Ok(())
 }
 
