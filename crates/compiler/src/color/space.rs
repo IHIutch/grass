@@ -174,25 +174,40 @@ impl ColorSpace {
 
     /// Parse a color space name from a CSS/Sass string.
     pub fn from_name(name: &str) -> Option<Self> {
-        let lower = name.to_ascii_lowercase();
-        match lower.as_str() {
-            "rgb" => Some(Self::Rgb),
-            "hsl" => Some(Self::Hsl),
-            "hwb" => Some(Self::Hwb),
-            "srgb" => Some(Self::SRgb),
-            "srgb-linear" => Some(Self::SRgbLinear),
-            "display-p3" => Some(Self::DisplayP3),
-            "display-p3-linear" => Some(Self::DisplayP3Linear),
-            "a98-rgb" => Some(Self::A98Rgb),
-            "prophoto-rgb" => Some(Self::ProphotoRgb),
-            "rec2020" => Some(Self::Rec2020),
-            "lab" => Some(Self::Lab),
-            "lch" => Some(Self::Lch),
-            "oklab" => Some(Self::Oklab),
-            "oklch" => Some(Self::Oklch),
-            "xyz-d50" => Some(Self::XyzD50),
-            "xyz" | "xyz-d65" => Some(Self::XyzD65),
-            _ => None,
+        if name.eq_ignore_ascii_case("rgb") {
+            Some(Self::Rgb)
+        } else if name.eq_ignore_ascii_case("hsl") {
+            Some(Self::Hsl)
+        } else if name.eq_ignore_ascii_case("hwb") {
+            Some(Self::Hwb)
+        } else if name.eq_ignore_ascii_case("srgb") {
+            Some(Self::SRgb)
+        } else if name.eq_ignore_ascii_case("srgb-linear") {
+            Some(Self::SRgbLinear)
+        } else if name.eq_ignore_ascii_case("display-p3") {
+            Some(Self::DisplayP3)
+        } else if name.eq_ignore_ascii_case("display-p3-linear") {
+            Some(Self::DisplayP3Linear)
+        } else if name.eq_ignore_ascii_case("a98-rgb") {
+            Some(Self::A98Rgb)
+        } else if name.eq_ignore_ascii_case("prophoto-rgb") {
+            Some(Self::ProphotoRgb)
+        } else if name.eq_ignore_ascii_case("rec2020") {
+            Some(Self::Rec2020)
+        } else if name.eq_ignore_ascii_case("lab") {
+            Some(Self::Lab)
+        } else if name.eq_ignore_ascii_case("lch") {
+            Some(Self::Lch)
+        } else if name.eq_ignore_ascii_case("oklab") {
+            Some(Self::Oklab)
+        } else if name.eq_ignore_ascii_case("oklch") {
+            Some(Self::Oklch)
+        } else if name.eq_ignore_ascii_case("xyz-d50") {
+            Some(Self::XyzD50)
+        } else if name.eq_ignore_ascii_case("xyz") || name.eq_ignore_ascii_case("xyz-d65") {
+            Some(Self::XyzD65)
+        } else {
+            None
         }
     }
 
