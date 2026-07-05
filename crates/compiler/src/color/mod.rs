@@ -906,7 +906,8 @@ impl Color {
             // Read directly from HWB channels to avoid precision loss
             Number(self.channels[1].unwrap_or(0.0))
         } else {
-            self.red().min(self.green()).min(self.blue()) / Number(255.0)
+            let rgb = self.to_rgb_channels_raw();
+            Number(rgb[0].min(rgb[1]).min(rgb[2])) / Number(255.0)
         }
     }
 
@@ -915,7 +916,8 @@ impl Color {
             // Read directly from HWB channels to avoid precision loss
             Number(self.channels[2].unwrap_or(0.0))
         } else {
-            Number(1.0) - (self.red().max(self.green()).max(self.blue()) / Number(255.0))
+            let rgb = self.to_rgb_channels_raw();
+            Number(1.0) - (Number(rgb[0].max(rgb[1]).max(rgb[2])) / Number(255.0))
         }
     }
 }
