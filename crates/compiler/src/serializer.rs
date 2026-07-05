@@ -1130,13 +1130,33 @@ impl<'a> Serializer<'a> {
 
         let num = float.abs();
 
-        // For very large numbers that exceed f64's integer precision,
-        // format via scientific notation to avoid precision artifacts.
-        // f64 has ~15-17 significant decimal digits; beyond that, the
-        // decimal representation includes spurious non-zero digits.
-        // This matches dart-sass behavior where 1e100 outputs as 1 followed
-        // by 100 zeros.
-        if num >= 1e15 && num.fract() == 0.0 {
+        // dart-sass's `_writeNumber` (lib/src/visitor/serialize.dart) takes
+        // `fuzzyAsInt(number)`, which rounds via Dart's native `int` — a
+        // 64-bit twos-complement type. Below 2^63 that round-trips exactly
+        // (the double is already integer-valued, so rounding is a no-op),
+        // and dart prints that EXACT decimal integer. At/above 2^63,
+        // `int.round()` *saturates* to i64::MAX/MIN instead of the true
+        // value, `fuzzyEquals` then rejects the saturated result, and dart
+        // falls back to printing its own shortest-round-trip `toString()`
+        // with the exponent expanded via zero-padding — the same strategy
+        // this file used before this fix. So the two regimes need two
+        // different algorithms; verified against the real dart-sass
+        // library (`dart run`) at both the 2^53 (int-exactness) and 2^63
+        // (int64-saturation) boundaries, and against sass-spec's
+        // `values/numbers/{bounds,very_large}` and
+        // `core_functions/color/*/out_of_range` tests.
+        const I64_SATURATION_BOUNDARY: f64 = 9_223_372_036_854_775_808.0; // 2^63
+
+        if num >= 1e15 && num.fract() == 0.0 && num < I64_SATURATION_BOUNDARY {
+            // Rust's `{:.0}` uses an exact (not shortest-round-trip) decimal
+            // algorithm, so for an already-integer-valued f64 within this
+            // range it reproduces dart's exact string — unlike
+            // reconstructing from the shortest-round-trip `{:e}` mantissa,
+            // which may omit true non-zero low digits and get zero-padded
+            // incorrectly above 2^53.
+            let formatted = format!("{:.0}", num);
+            self.buffer.extend_from_slice(formatted.as_bytes());
+        } else if num >= I64_SATURATION_BOUNDARY && num.fract() == 0.0 {
             let s = format!("{:e}", num);
             if let Some(e_pos) = s.find('e') {
                 let mantissa = &s[..e_pos];
@@ -1156,9 +1176,7 @@ impl<'a> Serializer<'a> {
                 }
             } else {
                 let formatted = format!("{:.10}", num);
-                let trimmed = formatted
-                    .trim_end_matches('0')
-                    .trim_end_matches('.');
+                let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
                 self.buffer.extend_from_slice(trimmed.as_bytes());
             }
         } else {
