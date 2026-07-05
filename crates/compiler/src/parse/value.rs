@@ -2068,7 +2068,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     ) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
         debug_assert!(parser.toks().next_char_is('('));
 
-        Ok(Some(match name {
+        // Position of the opening paren — also where an ordinary function-call
+        // argument list would start, needed below to dual-parse shadowable names.
+        let call_start = parser.toks().cursor();
+
+        let calculation = match name {
             "calc" => {
                 // calc() is parsed as a calculation if possible. When parsing
                 // fails and the content contains dynamic elements (var(), env(),
@@ -2223,7 +2227,51 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 }
             }
             _ => return Ok(None),
+        };
+
+        // calc() and clamp() are reserved names in dart-sass: `@function calc(...)`
+        // is a parse error, so they can never be shadowed by a user/module function.
+        if matches!(name, "calc" | "clamp") {
+            return Ok(Some(calculation));
+        }
+
+        Self::try_parse_calculation_fallback(parser, name, call_start, calculation).map(Some)
+    }
+
+    /// For CSS math function names other than calc/clamp, dart-sass lets a
+    /// user-defined or module function of the same name shadow the calculation
+    /// (checked at evaluation time, since lexical scope isn't known while
+    /// parsing). Re-parse the same argument text as an ordinary function-call
+    /// argument list and carry both parses in one node so the evaluator can pick
+    /// the right one without reparsing. If the ordinary parse fails (calc-only
+    /// grammar, e.g. `pi`/`infinity` keywords or a bare nested calc), no user
+    /// function could have matched anyway, so just keep the calculation.
+    fn try_parse_calculation_fallback(
+        parser: &mut P,
+        name: &str,
+        call_start: usize,
+        calculation: Spanned<AstExpr<'a>>,
+    ) -> SassResult<Spanned<AstExpr<'a>>> {
+        let after_calc = parser.toks().cursor();
+
+        parser.toks_mut().set_cursor(call_start);
+        let invocation = parser.parse_argument_invocation(false, false);
+        parser.toks_mut().set_cursor(after_calc);
+
+        let invocation = match invocation {
+            Ok(invocation) => invocation,
+            Err(_) => return Ok(calculation),
+        };
+
+        let span = calculation.span;
+
+        Ok(AstExpr::CalculationWithFallback(parser.arena().alloc(CalculationWithFallbackExpr {
+            name: Identifier::from(name),
+            calculation: calculation.node,
+            invocation: parser.arena().alloc(invocation),
+            span,
         }))
+        .span(span))
     }
 
     fn reset_state(&mut self, parser: &mut P) -> SassResult<()> {

@@ -85,6 +85,23 @@ pub struct InterpolatedFunction<'a> {
     pub span: Span,
 }
 
+/// A call to a CSS math function name (e.g. `min`, `sqrt`, `round`) that dart-sass
+/// treats as shadowable: a user-defined or module function of the same name takes
+/// precedence over the calculation at evaluation time (scope isn't known at parse
+/// time). Carries both parses of the same argument text so the evaluator can pick
+/// one without reparsing. `calc` and `clamp` are reserved names and never use this.
+#[derive(Debug, Clone)]
+pub struct CalculationWithFallbackExpr<'a> {
+    /// Lowercased function name, used to look up a possible override in scope.
+    pub name: Identifier,
+    /// The calculation node, evaluated when no override is found.
+    pub calculation: AstExpr<'a>,
+    /// The same call parsed as an ordinary function invocation, used when an
+    /// override is found.
+    pub invocation: &'a ArgumentInvocation<'a>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AstSassMap<'a>(pub Vec<(Spanned<AstExpr<'a>>, AstExpr<'a>)>);
 
@@ -106,6 +123,7 @@ pub enum AstExpr<'a> {
         name: CalculationName,
         args: Vec<Self>,
     },
+    CalculationWithFallback(&'a CalculationWithFallbackExpr<'a>),
     Color(Rc<Color>),
     CssIf(&'a CssIfExpression<'a>),
     FunctionCall(&'a FunctionCallExpr<'a>),

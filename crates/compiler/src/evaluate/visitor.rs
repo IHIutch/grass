@@ -4192,6 +4192,27 @@ impl<'a> Visitor<'a> {
         Ok(value)
     }
 
+    /// Evaluate a CSS math function call (min, sqrt, round, ...) that dart-sass
+    /// allows a user-defined or module function to shadow. A user/module function
+    /// of the same name (found via `get_fn`, which never resolves to grass's own
+    /// global builtins) takes precedence over the calculation, matching dart's
+    /// `getFunction`-then-switch order in `visitFunctionExpression`.
+    fn visit_calculation_with_fallback(
+        &mut self,
+        node: &CalculationWithFallbackExpr<'static>,
+    ) -> SassResult<Value> {
+        match self.env.get_fn(node.name, None, node.span)? {
+            Some(func) => {
+                let old_in_function = self.flags.in_function();
+                self.flags.set(ContextFlags::IN_FUNCTION, true);
+                let value = self.run_function_callable(func, node.invocation, node.span);
+                self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
+                value
+            }
+            None => self.visit_expr_ref(&node.calculation),
+        }
+    }
+
     fn visit_interpolated_func_expr(&mut self, func: &InterpolatedFunction<'static>) -> SassResult<Value> {
         let InterpolatedFunction {
             name,
@@ -4267,6 +4288,7 @@ impl<'a> Visitor<'a> {
             AstExpr::Calculation { name, args } => {
                 self.visit_calculation_expr(*name, args, self.empty_span)?
             }
+            AstExpr::CalculationWithFallback(node) => self.visit_calculation_with_fallback(node)?,
             AstExpr::CssIf(css_if) => self.visit_css_if(css_if)?,
             AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
             AstExpr::If(if_expr) => self.visit_ternary(if_expr)?,
@@ -4353,6 +4375,7 @@ impl<'a> Visitor<'a> {
             }
             AstExpr::Number { .. }
             | AstExpr::Calculation { .. }
+            | AstExpr::CalculationWithFallback(..)
             | AstExpr::Variable { .. }
             | AstExpr::CssIf(..)
             | AstExpr::FunctionCall { .. }
