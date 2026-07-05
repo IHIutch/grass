@@ -1230,3 +1230,80 @@ fn moz_document_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn with_private_warns_for_use() {
+    let mut fs = TestFs::new();
+    fs.add_file("_mod.scss", "$-private: red !default;\na { b: $-private; }");
+
+    let input = "@use \"mod\" with ($-private: green);";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger).fs(&fs);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: green;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [with-private]: Configuring private variables is \
+         deprecated.\nThis will be an error in Dart Sass 2.0.0."
+    ));
+}
+
+#[test]
+fn with_private_warns_for_forward() {
+    let mut fs = TestFs::new();
+    fs.add_file("_mod.scss", "$-private: red !default;\na { b: $-private; }");
+
+    let input = "@forward \"mod\" with ($-private: green !default);";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger).fs(&fs);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [with-private]:"));
+}
+
+#[test]
+fn with_private_warns_for_load_css() {
+    let mut fs = TestFs::new();
+    fs.add_file("_mod.scss", "$-private: red !default;\na { b: $-private; }");
+
+    let input = "@use \"sass:meta\";\n@include meta.load-css(\"mod\", $with: (\"-private\": green));";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger).fs(&fs);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: green;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [with-private]: Configuring private variables (such as \
+         $-private) is deprecated.\nThis will be an error in Dart Sass 2.0.0."
+    ));
+}
+
+#[test]
+fn with_private_does_not_warn_for_public_variables() {
+    let mut fs = TestFs::new();
+    fs.add_file("_mod.scss", "$public: red !default;\na { b: $public; }");
+
+    let input = "@use \"mod\" with ($public: green);";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger).fs(&fs);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn with_private_silenced() {
+    let mut fs = TestFs::new();
+    fs.add_file("_mod.scss", "$-private: red !default;\na { b: $-private; }");
+
+    let input = "@use \"mod\" with ($-private: green);";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .fs(&fs)
+        .silence_deprecation(Deprecation::WithPrivate);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}

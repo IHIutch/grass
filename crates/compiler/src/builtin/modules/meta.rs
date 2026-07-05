@@ -38,6 +38,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
 
     let configuration = if let Some(with) = with {
         let mut values = FxHashMap::default();
+        let mut emitted_private_deprecation = false;
         for (key, value) in with {
             let name =
                 Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0.as_str());
@@ -48,6 +49,16 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
                     key.span,
                 )
                     .into());
+            }
+
+            if !name.is_public() && !emitted_private_deprecation {
+                emitted_private_deprecation = true;
+                visitor.emit_deprecation(Deprecation::WithPrivate, span, || {
+                    Ok(format!(
+                        "Configuring private variables (such as ${name}) is deprecated.\nThis \
+                         will be an error in Dart Sass 2.0.0."
+                    ))
+                })?;
             }
 
             values.insert(name, ConfiguredValue::explicit(value, args.span()));

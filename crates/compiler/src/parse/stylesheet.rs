@@ -1926,6 +1926,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let var_start = self.toks().cursor();
             let name = Identifier::from(self.parse_variable_name()?);
             let name_span = self.toks_mut().span_from(var_start);
+
+            if !name.is_public() {
+                self.parse_time_warnings_mut().push((
+                    Deprecation::WithPrivate,
+                    name_span,
+                    "Configuring private variables is deprecated.\nThis will be an error in \
+                     Dart Sass 2.0.0."
+                        .to_string(),
+                ));
+            }
+
             self.whitespace()?;
             self.expect_char(':')?;
             self.whitespace()?;
