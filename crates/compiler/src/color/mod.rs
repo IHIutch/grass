@@ -856,32 +856,44 @@ impl Color {
 
     /// Change `alpha` to value given
     pub fn with_alpha(&self, alpha: Number) -> Self {
-        let rgb = self.to_rgb_channels();
-        Color::from_rgba(
-            Number(rgb[0]).round(),
-            Number(rgb[1]).round(),
-            Number(rgb[2]).round(),
-            alpha,
+        let rgb = self.to_rgb_channels_raw();
+        Color::for_space(
+            ColorSpace::Rgb,
+            [
+                Some(rgb[0].clamp(0.0, 255.0)),
+                Some(rgb[1].clamp(0.0, 255.0)),
+                Some(rgb[2].clamp(0.0, 255.0)),
+            ],
+            Some(alpha.clamp(0.0, 1.0).0),
+            ColorFormat::Infer,
         )
     }
 
     pub fn fade_in(&self, amount: Number) -> Self {
-        let rgb = self.to_rgb_channels();
-        Color::from_rgba(
-            Number(rgb[0]).round(),
-            Number(rgb[1]).round(),
-            Number(rgb[2]).round(),
-            self.alpha() + amount,
+        let rgb = self.to_rgb_channels_raw();
+        Color::for_space(
+            ColorSpace::Rgb,
+            [
+                Some(rgb[0].clamp(0.0, 255.0)),
+                Some(rgb[1].clamp(0.0, 255.0)),
+                Some(rgb[2].clamp(0.0, 255.0)),
+            ],
+            Some((self.alpha() + amount).clamp(0.0, 1.0).0),
+            ColorFormat::Infer,
         )
     }
 
     pub fn fade_out(&self, amount: Number) -> Self {
-        let rgb = self.to_rgb_channels();
-        Color::from_rgba(
-            Number(rgb[0]).round(),
-            Number(rgb[1]).round(),
-            Number(rgb[2]).round(),
-            self.alpha() - amount,
+        let rgb = self.to_rgb_channels_raw();
+        Color::for_space(
+            ColorSpace::Rgb,
+            [
+                Some(rgb[0].clamp(0.0, 255.0)),
+                Some(rgb[1].clamp(0.0, 255.0)),
+                Some(rgb[2].clamp(0.0, 255.0)),
+            ],
+            Some((self.alpha() - amount).clamp(0.0, 1.0).0),
+            ColorFormat::Infer,
         )
     }
 }
