@@ -56,6 +56,11 @@ error!(
     configure_builtin_module,
     r#"@use "sass:math" with ($e: 5);"#, r#"Error: Built-in modules can't be configured."#
 );
+// Verified against dart-sass 1.97.3: `printf 'a { color: #{c}.b; }' | npx sass@1.97.3 --stdin`
+error!(
+    interpolation_in_namespace,
+    "a { color: #{c}.b; }", "Error: Interpolation isn't allowed in namespaces."
+);
 test!(
     use_as,
     "@use \"sass:math\" as foo;
