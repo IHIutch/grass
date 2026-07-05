@@ -409,10 +409,13 @@ test!(
     "a,\nb {\n  color: red;\n}\n",
     "a,\nb {\n  color: red;\n}\n"
 );
+// dart-sass 1.97.3 verified: nested rules hoist out and emit in written order relative to the
+// containing rule's own declarations; `a c, b c {...}` (written first) emits before `a, b {...}` —
+// grass already matches. Same mechanism as mixins.rs's mixin_ruleset_and_style.
 test!(
     nested_multiple_newline,
     "a,\nb {\n  c {\n    color: blue;\n  }\n  color: red;\n}\n",
-    "a,\nb {\n  color: red;\n}\na c,\nb c {\n  color: blue;\n}\n"
+    "a c,\nb c {\n  color: blue;\n}\na,\nb {\n  color: red;\n}\n"
 );
 test!(
     trailing_comma_newline,
@@ -473,10 +476,13 @@ test!(
     "\\! {\n  color: red;\n}\n",
     "\\! {\n  color: red;\n}\n"
 );
+// dart-sass 1.97.3 verified: consecutive leading combinators ("bogus-combinators") make the selector
+// invalid CSS; the rule is omitted from output entirely (with a deprecation warning), not passed
+// through literally — grass already matches.
 test!(
     multiple_consecutive_immediate_child,
     "> > foo {\n  color: foo;\n}\n",
-    "> > foo {\n  color: foo;\n}\n"
+    ""
 );
 error!(
     modifier_on_any_attr,
@@ -656,11 +662,10 @@ test!(
     "ℓ {\n  color: red;\n}\n",
     "@charset \"UTF-8\";\nℓ {\n  color: red;\n}\n"
 );
-test!(
-    plus_in_selector,
-    "+ {\n  color: &;\n}\n",
-    "+ {\n  color: +;\n}\n"
-);
+// dart-sass 1.97.3 verified: a bare leading combinator ("bogus-combinators") makes the selector
+// invalid CSS; the rule is omitted from output entirely (with a deprecation warning) — grass
+// already matches.
+test!(plus_in_selector, "+ {\n  color: &;\n}\n", "");
 test!(
     invalid_chars_in_pseudo_parens,
     ":c(@#$) {\n  color: &;\n}\n",
@@ -892,12 +897,15 @@ test!(
     }"#,
     "::foo(\"red\") {\n  color: ::foo(\"red\");\n}\n"
 );
+// dart-sass 1.97.3 verified: an unknown pseudo-element's functional argument is passed through
+// verbatim, preserving the original quote style (single quotes stay single) — not normalized to
+// double quotes. grass already matches.
 test!(
     pseudo_element_single_quotes,
     r#"::foo('red') {
         color: &;
     }"#,
-    "::foo(\"red\") {\n  color: ::foo(\"red\");\n}\n"
+    "::foo('red') {\n  color: ::foo('red');\n}\n"
 );
 test!(
     pseudo_element_loud_comments,
