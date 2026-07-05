@@ -1008,3 +1008,23 @@ error!(
     "@use \"sass:color\";\na {b: color.scale(red, $lightness: 5%, $space: null)}",
     "Error: $space: null is not a string."
 );
+// xyz-d50 <-> lab/lch must convert directly (both are already in the D50 white
+// point) rather than round-tripping through XYZ-D65. At extreme magnitudes that
+// detour introduces enough FP noise to push a boundary-exact L of 0 negative,
+// wrongly triggering the out-of-gamut color-mix() serialization fallback.
+// Expected values verified against npx sass@1.97.3.
+test!(
+    to_space_xyz_d50_to_lab_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), lab)}",
+    "a {\n  b: lab(0% -4037677156.674863 0);\n}\n"
+);
+test!(
+    to_space_xyz_d50_to_lch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), lch)}",
+    "a {\n  b: lch(0% 4037677156.674863 180deg);\n}\n"
+);
+test!(
+    to_space_lch_to_xyz_d50_round_trip,
+    "@use \"sass:color\";\na {b: color.to-space(lch(69.4695307685% 4338.814723033 181.6020122751deg), xyz-d50)}",
+    "a {\n  b: color(xyz-d50 -1 0.4 2);\n}\n"
+);

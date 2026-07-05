@@ -1049,6 +1049,35 @@ pub fn convert(
             from_linear_rgb(linear, to)
         }
 
+        // Source is XYZ-D50, target is Lab/LCH: already in D50, convert directly
+        // without an XYZ-D65 round trip (matches dart-sass's XyzD50ColorSpace.convert,
+        // which special-cases this exact pair to skip the linear-transform step).
+        (None, None) if from == ColorSpace::XyzD50
+            && (to == ColorSpace::Lab || to == ColorSpace::Lch) =>
+        {
+            let lab = xyz_d50_to_lab(channels[0], channels[1], channels[2]);
+            if to == ColorSpace::Lch {
+                lab_to_lch(lab[0], lab[1], lab[2])
+            } else {
+                lab
+            }
+        }
+
+        // Source is Lab/LCH, target is XYZ-D50: convert directly without an
+        // XYZ-D65 round trip (matches dart-sass's LabColorSpace.convert, which
+        // computes the XyzD50 triple directly and passes it straight through).
+        (None, None) if to == ColorSpace::XyzD50
+            && (from == ColorSpace::Lab || from == ColorSpace::Lch) =>
+        {
+            let [c0, c1, c2] = channels;
+            let lab = if from == ColorSpace::Lch {
+                lch_to_lab(c0, c1, c2)
+            } else {
+                channels
+            };
+            lab_to_xyz_d50(lab[0], lab[1], lab[2])
+        }
+
         // Fallback: go through XYZ-D65 (for XYZ↔XYZ, Lab↔OKLab, etc.)
         _ => {
             let xyz_d65 = to_xyz_d65(channels, from);
