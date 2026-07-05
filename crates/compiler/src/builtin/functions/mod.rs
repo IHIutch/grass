@@ -10,7 +10,17 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use std::sync::LazyLock;
 
-use crate::{ast::ArgumentResult, error::SassResult, evaluate::Visitor, value::Value};
+use codemap::Span;
+
+use crate::{
+    ast::ArgumentResult,
+    error::SassResult,
+    evaluate::Visitor,
+    serializer::serialize_number,
+    unit::Unit,
+    value::{Number, SassNumber, Value},
+    Options,
+};
 
 pub mod color;
 pub mod list;
@@ -46,6 +56,99 @@ pub(crate) fn color_channel_getter_message(is_global: bool, name: &str, space: &
         "{prefix}{name}() is deprecated. Suggestion:\n\ncolor.channel($color, \"{name}\", \
          $space: {space})\n\nMore info: https://sass-lang.com/d/color-functions"
     )
+}
+
+/// The legacy HSL/alpha channels `_suggestScaleAndAdjust` operates over —
+/// bundles the channel's dart-source name, its bounds, and the unit its
+/// `color.adjust(...)` suggestion is serialized with (`%` for lightness/
+/// saturation, unitless for alpha), matching `ColorChannel`/`LinearChannel`
+/// in dart's `lib/src/value/color/channel.dart`.
+pub(crate) enum LegacyChannel {
+    Lightness,
+    Saturation,
+    Alpha,
+}
+
+impl LegacyChannel {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Lightness => "lightness",
+            Self::Saturation => "saturation",
+            Self::Alpha => "alpha",
+        }
+    }
+
+    fn bounds(&self) -> (f64, f64) {
+        match self {
+            Self::Lightness | Self::Saturation => (0.0, 100.0),
+            Self::Alpha => (0.0, 1.0),
+        }
+    }
+
+    fn difference_unit(&self) -> Unit {
+        match self {
+            Self::Lightness | Self::Saturation => Unit::Percent,
+            Self::Alpha => Unit::None,
+        }
+    }
+}
+
+/// Transcribes dart-sass's `_suggestScaleAndAdjust` (lib/src/functions/color.dart):
+/// builds the `color.scale(...)` + `color.adjust(...)` suggestion pair shown for
+/// the deprecated lighten/darken/saturate/desaturate/opacify/fade-in/
+/// transparentize/fade-out functions.
+///
+/// `old_value` is the color's CURRENT value of `channel`, and `adjustment` is
+/// the signed delta requested by the user — both already on the channel's own
+/// scale (0-100 for lightness/saturation, 0-1 for alpha).
+pub(crate) fn suggest_scale_and_adjust(
+    old_value: Number,
+    adjustment: Number,
+    channel: LegacyChannel,
+    span: Span,
+    options: &Options,
+) -> SassResult<String> {
+    let channel_name = channel.name();
+    let (channel_min, channel_max) = channel.bounds();
+    let new_value = old_value.0 + adjustment.0;
+
+    let mut suggestion = String::from("Suggestion");
+
+    if adjustment.0 != 0.0 {
+        let factor = if new_value > channel_max {
+            1.0
+        } else if new_value < channel_min {
+            -1.0
+        } else if adjustment.0 > 0.0 {
+            adjustment.0 / (channel_max - old_value.0)
+        } else {
+            (new_value - old_value.0) / (old_value.0 - channel_min)
+        };
+
+        let factor_number = SassNumber {
+            num: Number(factor * 100.0),
+            unit: Unit::Percent,
+            as_slash: None,
+        };
+        let factor_text = serialize_number(&factor_number, options, span)?;
+        suggestion.push_str(&format!(
+            "s:\n\ncolor.scale($color, ${channel_name}: {factor_text})\n"
+        ));
+    } else {
+        suggestion.push_str(":\n\n");
+    }
+
+    let difference = SassNumber {
+        num: adjustment,
+        unit: channel.difference_unit(),
+        as_slash: None,
+    };
+    let difference_text = serialize_number(&difference, options, span)?;
+    suggestion.push_str(&format!(
+        "color.adjust($color, ${channel_name}: {difference_text})"
+    ));
+
+    Ok(suggestion)
 }
 
 static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);

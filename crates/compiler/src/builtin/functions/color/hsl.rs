@@ -304,22 +304,36 @@ pub(crate) fn adjust_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
 fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "lighten() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
 
     let mut amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
+
+    let suggestion = suggest_scale_and_adjust(
+        color.lightness(),
+        amount.num,
+        LegacyChannel::Lightness,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "lighten() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     amount.num /= Number(100.0);
 
@@ -328,22 +342,36 @@ fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value>
 
 fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "darken() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
 
     let mut amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
+
+    let suggestion = suggest_scale_and_adjust(
+        color.lightness(),
+        -amount.num,
+        LegacyChannel::Lightness,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "darken() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     amount.num /= Number(100.0);
 
@@ -378,46 +406,72 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         Ok(global_builtin_message("color", "adjust"))
     })?;
 
+    let span = args.span();
     let mut amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
 
-    amount.num /= Number(100.0);
-
-    let color = args
-        .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+    let color = args.get_err(0, "color")?.assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "saturate() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
+
+    let suggestion = suggest_scale_and_adjust(
+        color.saturation(),
+        amount.num,
+        LegacyChannel::Saturation,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "saturate() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
+
+    amount.num /= Number(100.0);
 
     Ok(Value::Color(Rc::new(color.saturate(amount.num))))
 }
 
 fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "desaturate() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
 
     let mut amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
+
+    let suggestion = suggest_scale_and_adjust(
+        color.saturation(),
+        -amount.num,
+        LegacyChannel::Saturation,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "desaturate() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     amount.num /= Number(100.0);
 

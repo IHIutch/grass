@@ -11,8 +11,8 @@ pub use functions::Builtin;
 /// Imports common to all builtin fns
 mod builtin_imports {
     pub(crate) use super::functions::{
-        color_channel_getter_message, global_builtin_message, Builtin, GlobalFunctionMap,
-        GLOBAL_FUNCTIONS,
+        color_channel_getter_message, global_builtin_message, suggest_scale_and_adjust, Builtin,
+        GlobalFunctionMap, LegacyChannel, GLOBAL_FUNCTIONS,
     };
 
     pub(crate) use codemap::{Span, Spanned};

@@ -154,6 +154,32 @@ fn assert_global_builtin_warning(input: &str, expected_module_dot_name: &str) {
     );
 }
 
+/// Like `assert_global_builtin_warning`, but for call sites that also trip a
+/// second, unrelated deprecation (e.g. `lighten()`/`saturate()` additionally
+/// warn under `color-functions` for their `_suggestScaleAndAdjust` message) —
+/// only checks that the global-builtin warning is present as the first one,
+/// without asserting the total warning count.
+fn assert_first_warning_is_global_builtin(input: &str, expected_module_dot_name: &str) {
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let _ = grass::from_string(input.to_string(), &options);
+    let warnings = logger.warning_messages();
+    assert!(!warnings.is_empty(), "expected at least one warning for {input}");
+    assert!(
+        warnings[0].starts_with(
+            "DEPRECATION WARNING [global-builtin]: Global built-in functions are deprecated and \
+             will be removed in Dart Sass 3.0.0."
+        ),
+        "unexpected warning for {input}: {}",
+        warnings[0]
+    );
+    assert!(
+        warnings[0].contains(&format!("Use {expected_module_dot_name} instead.")),
+        "expected warning for {input} to recommend {expected_module_dot_name}, got: {}",
+        warnings[0]
+    );
+}
+
 fn assert_no_global_builtin_warning(input: &str) {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
@@ -197,7 +223,10 @@ fn global_builtin_does_not_warn_for_if() {
 
 #[test]
 fn global_builtin_warns_for_unconditional_color_functions() {
-    assert_global_builtin_warning("a { b: lighten(red, 10%); }", "color.adjust");
+    // lighten() also trips color-functions (its own _suggestScaleAndAdjust
+    // warning) — see global_builtin_warns_for_unconditional_color_functions's
+    // sibling coverage in color_functions_scale_and_adjust_* below.
+    assert_first_warning_is_global_builtin("a { b: lighten(red, 10%); }", "color.adjust");
     assert_global_builtin_warning("a { b: adjust-color(red, $red: 5); }", "color.adjust");
     assert_global_builtin_warning("a { b: scale-color(red, $red: 5%); }", "color.scale");
     assert_global_builtin_warning("a { b: change-color(red, $red: 5); }", "color.change");
@@ -226,7 +255,10 @@ fn global_builtin_opacity_warns_only_for_color_arg() {
 #[test]
 fn global_builtin_saturate_warns_only_for_two_arg_form() {
     assert_no_global_builtin_warning("a { b: saturate(50%); }");
-    assert_global_builtin_warning("a { b: saturate(red, 10%); }", "color.adjust");
+    // The 2-arg form also trips color-functions (its own
+    // _suggestScaleAndAdjust warning) — see color_functions_scale_and_adjust_*
+    // below.
+    assert_first_warning_is_global_builtin("a { b: saturate(red, 10%); }", "color.adjust");
 }
 
 #[test]
@@ -754,6 +786,141 @@ fn color_functions_adjust_hue_warns_with_suggestion() {
     assert!(warnings[1].starts_with(
         "DEPRECATION WARNING [color-functions]: adjust-hue() is deprecated. Suggestion:\n\n\
          color.adjust($color, $hue: 30deg)"
+    ));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_lighten_warns_with_both_suggestions() {
+    // #036 has HSL lightness 20%; +20 stays in bounds, so both the scale and
+    // adjust suggestions are shown (dart-verified: 25%/20%).
+    let input = "a {\n  b: lighten(#036, 20%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: lighten() is deprecated. Suggestions:\n\n\
+         color.scale($color, $lightness: 25%)\n\
+         color.adjust($color, $lightness: 20%)"
+    ));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_darken_clamps_factor_at_negative_boundary() {
+    // #036's lightness (20%) minus 20 hits the channel's lower bound exactly,
+    // so the scale factor clamps to -100% (dart-verified).
+    let input = "a {\n  b: darken(#036, 20%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: darken() is deprecated. Suggestions:\n\n\
+         color.scale($color, $lightness: -100%)\n\
+         color.adjust($color, $lightness: -20%)"
+    ));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_saturate_two_arg_warns() {
+    // #036 is fully saturated (100%); +20 overflows the channel max, so the
+    // scale factor clamps to 100% (dart-verified).
+    let input = "a {\n  b: saturate(#036, 20%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: saturate() is deprecated. Suggestions:\n\n\
+         color.scale($color, $saturation: 100%)\n\
+         color.adjust($color, $saturation: 20%)"
+    ));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_desaturate_warns() {
+    let input = "a {\n  b: desaturate(#036, 20%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: desaturate() is deprecated. Suggestions:\n\n\
+         color.scale($color, $saturation: -20%)\n\
+         color.adjust($color, $saturation: -20%)"
+    ));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_omits_scale_suggestion_when_adjustment_is_zero() {
+    let input = "a {\n  b: lighten(#036, 0%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: lighten() is deprecated. Suggestion:\n\n\
+         color.adjust($color, $lightness: 0%)"
+    ));
+    assert!(!warnings[1].contains("color.scale"));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_opacify_and_fade_in_use_own_names() {
+    let input_opacify = "a {\n  b: opacify(rgba(0, 0, 0, 0.5), 0.2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input_opacify.to_string(), &options).expect(input_opacify);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: opacify() is deprecated. Suggestions:\n\n\
+         color.scale($color, $alpha: 40%)\n\
+         color.adjust($color, $alpha: 0.2)"
+    ));
+
+    let input_fade_in = "a {\n  b: fade-in(rgba(0, 0, 0, 0.5), 0.2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input_fade_in.to_string(), &options).expect(input_fade_in);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: fade-in() is deprecated. Suggestions:\n\n\
+         color.scale($color, $alpha: 40%)\n\
+         color.adjust($color, $alpha: 0.2)"
+    ));
+}
+
+#[test]
+fn color_functions_scale_and_adjust_transparentize_and_fade_out_use_own_names() {
+    let input_transparentize = "a {\n  b: transparentize(rgba(0, 0, 0, 0.5), 0.2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input_transparentize.to_string(), &options).expect(input_transparentize);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: transparentize() is deprecated. Suggestions:\n\n\
+         color.scale($color, $alpha: -40%)\n\
+         color.adjust($color, $alpha: -0.2)"
+    ));
+
+    let input_fade_out = "a {\n  b: fade-out(rgba(0, 0, 0, 0.5), 0.2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input_fade_out.to_string(), &options).expect(input_fade_out);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [color-functions]: fade-out() is deprecated. Suggestions:\n\n\
+         color.scale($color, $alpha: -40%)\n\
+         color.adjust($color, $alpha: -0.2)"
     ));
 }
 
