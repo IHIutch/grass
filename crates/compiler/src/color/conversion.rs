@@ -460,7 +460,7 @@ const REC2020_BETA: f64 = 0.018053968510807;
 
 /// Rec2020 gamma encode
 fn rec2020_encode(c: f64) -> f64 {
-    if c.abs() >= REC2020_BETA {
+    if c.abs() > REC2020_BETA {
         c.signum() * (REC2020_ALPHA * c.abs().powf(0.45) - (REC2020_ALPHA - 1.0))
     } else {
         c * 4.5
@@ -541,23 +541,24 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
 
     let delta = max - min;
 
-    // dart-sass formula: saturation = (max - lightness) / min(lightness, 1 - lightness)
+    // dart-sass formula: saturation = 100 * (max - lightness) / min(lightness, 1 - lightness)
+    // computed with the *100 applied to the numerator BEFORE dividing (operation
+    // order load-bearing for bit-exactness), then rescaled back to a 0-1 fraction
+    // to preserve this function's return contract.
     // Guard against division by zero when lightness is exactly 0 or 1.
     let mut saturation = if lightness == 0.0 || lightness == 1.0 {
         0.0
     } else {
-        (max - lightness) / lightness.min(1.0 - lightness)
+        (100.0 * (max - lightness) / lightness.min(1.0 - lightness)) / 100.0
     };
 
     let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
-        4.0 + (r - g) / delta
+        60.0 * (r - g) / delta + 240.0
     } else if (max - g).abs() < f64::EPSILON {
-        2.0 + (b - r) / delta
+        60.0 * (b - r) / delta + 120.0
     } else {
-        (g - b) / delta
+        60.0 * (g - b) / delta + 360.0
     };
-
-    hue *= 60.0;
 
     // For out-of-gamut values, saturation can come out negative.
     // Normalize by flipping sign and rotating hue by 180°.
@@ -620,7 +621,11 @@ pub fn srgb_to_hwb(r: f64, g: f64, b: f64) -> [f64; 3] {
         raw_hue(r, g, b, max, max - min)
     };
 
-    [hue, min, 1.0 - max]
+    // dart-sass formula: blackness = 100 - max * 100 (scale max BEFORE subtracting
+    // from 100 — operation order load-bearing), rescaled back to a 0-1 fraction to
+    // preserve this function's return contract. Whiteness (min * 100 in dart) needs
+    // no such reordering: it's a single multiply, unaffected by association.
+    [hue, min, (100.0 - max * 100.0) / 100.0]
 }
 
 /// Compute the raw hue from sRGB values, without saturation-based correction.
