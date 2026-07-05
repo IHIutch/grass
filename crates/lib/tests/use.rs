@@ -334,14 +334,22 @@ fn use_whitespace_and_comments() {
     );
 }
 
+// dart-sass 1.97.3 verified: a loud comment between the with-clause's closing paren and the `;` is
+// allowed (this errored under an older dart-sass); the original test's `@use "b"` also never matched
+// its own tempfile name, so it never actually reached module resolution. Fixed the name to match and
+// converted this to a success test, consistent with the sibling use_whitespace_and_comments test.
 #[test]
 fn use_loud_comment_after_close_paren_with() {
-    let input = r#"@use "b" as foo with ($a : red)  /**/  ;"#;
+    let input =
+        r#"@use "use_loud_comment_after_close_paren_with" as foo with ($a : red)  /**/  ;"#;
     tempfile!(
         "use_loud_comment_after_close_paren_with.scss",
         "$a: green !default; a { color: $a }"
     );
-    assert_err!(r#"Error: expected ";"."#, input);
+    assert_eq!(
+        "a {\n  color: red;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
 }
 
 #[test]
