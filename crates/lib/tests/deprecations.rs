@@ -189,8 +189,10 @@ fn global_builtin_warns_for_meta_functions() {
 
 #[test]
 fn global_builtin_does_not_warn_for_if() {
-    // `if()` has no `sass:*` module equivalent in dart-sass.
-    assert_no_global_builtin_warning("a { b: if(true, 1, 2); }");
+    // `if()` has no `sass:*` module equivalent in dart-sass. Uses the modern
+    // if() syntax so this doesn't also trip the (separate) if-function
+    // deprecation for the legacy call form.
+    assert_no_global_builtin_warning("a { b: if(sass(true): 1; else: 2); }");
 }
 
 #[test]
@@ -443,6 +445,246 @@ fn strict_unary_silenced() {
     let options = grass::Options::default()
         .logger(&logger)
         .silence_deprecation(Deprecation::StrictUnary);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn if_function_warns_with_suggestion() {
+    let input = "a {\n  b: if(true, 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 1;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].starts_with(
+            "DEPRECATION WARNING [if-function]: The Sass if() syntax is deprecated in favor \
+             of the modern CSS syntax."
+        ),
+        "unexpected warning: {}",
+        warnings[0]
+    );
+    assert!(warnings[0].contains("Suggestion: if(sass(true): 1; else: 2)"));
+    assert!(warnings[0].contains("More info: https://sass-lang.com/d/if-function"));
+}
+
+#[test]
+fn if_function_suggestion_uses_not_sass_when_if_true_is_null() {
+    let input = "a {\n  b: if(true, null, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Suggestion: if(not sass(true): 2)"));
+}
+
+#[test]
+fn if_function_suggestion_omits_else_when_if_false_is_null() {
+    let input = "a {\n  b: if(true, 1, null);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Suggestion: if(sass(true): 1)"));
+    assert!(!warnings[0].contains("else"));
+}
+
+#[test]
+fn if_function_reconstructs_nested_call_argument() {
+    let input = "$list: 1, 2, 3;\n@use \"sass:list\";\na {\n  b: if(list.length($list) > 2, list.nth($list, 3), list.nth($list, 1));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains(
+        "Suggestion: if(sass(list.length($list) > 2): list.nth($list, 3); else: list.nth($list, 1))"
+    ));
+}
+
+#[test]
+fn if_function_suggestion_adds_leading_zero_to_bare_decimals() {
+    // dart-sass reconstructs numeric-literal arguments via SassNumber's
+    // canonical (always-leading-zero) formatting, not raw source text.
+    let input = "$v: -1;\na {\n  b: if($v < 0, -.5, .5);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Suggestion: if(sass($v < 0): -0.5; else: 0.5)"));
+}
+
+#[test]
+fn if_function_omits_suggestion_for_non_three_arg_shape() {
+    // 4 positional args isn't a shape `if()`'s declaration accepts, so this
+    // still warns (parsing succeeds and the warning fires before argument
+    // validation) but then errors during evaluation — matching dart-sass.
+    let input = "a {\n  b: if(true, 1, 2, 3);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    assert!(grass::from_string(input.to_string(), &options).is_err());
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(!warnings[0].contains("Suggestion"));
+    assert!(warnings[0].ends_with("More info: https://sass-lang.com/d/if-function"));
+}
+
+#[test]
+fn if_function_does_not_warn_for_modern_syntax() {
+    let input = "a {\n  b: if(sass(true): 1; else: 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn if_function_warns_even_when_call_is_unreached() {
+    let input = "@function f() {\n  @if false {\n    @return if(true, 1, 2);\n  }\n  @return 0;\n}\na {\n  b: f();\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 0;\n}\n");
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn if_function_dedupes_repeated_call_site() {
+    let input =
+        "@each $n in 1, 2, 3 {\n  .c-#{$n} {\n    d: if(true, 1, 2);\n  }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn if_function_silenced() {
+    let input = "a {\n  b: if(true, 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::IfFunction);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn bogus_combinators_warns_for_leading_combinator_and_keeps_selector() {
+    let input = "+ .a {\n  b: c;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "+ .a {\n  b: c;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].starts_with(
+            "DEPRECATION WARNING [bogus-combinators]: The selector \"+ .a\" is invalid CSS.\n\
+             This will be an error in Dart Sass 2.0.0."
+        ),
+        "unexpected warning: {}",
+        warnings[0]
+    );
+    assert!(warnings[0].contains("https://sass-lang.com/d/bogus-combinators"));
+}
+
+#[test]
+fn bogus_combinators_warns_for_trailing_combinator_with_declaration_and_omits_rule() {
+    let input = ".a > {\n  b: c;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains(
+        "The selector \".a >\" is only valid for nesting and shouldn't\nhave children other \
+         than style rules. It will be omitted from the generated CSS."
+    ));
+}
+
+#[test]
+fn bogus_combinators_does_not_warn_when_trailing_combinator_only_nests_style_rules() {
+    let input = ".a > {\n  .b {\n    c: d;\n  }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, ".a > .b {\n  c: d;\n}\n");
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn bogus_combinators_warns_for_doubled_combinator_and_omits_rule() {
+    let input = ".a + + .b {\n  c: d;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0]
+        .contains("The selector \".a + + .b\" is invalid CSS. It will be omitted from the generated CSS."));
+}
+
+#[test]
+fn bogus_combinators_does_not_warn_for_valid_selectors() {
+    let input = ".a > .b {\n  c: d;\n}\na + .b {\n  c: d;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn bogus_combinators_warns_for_bogus_extender() {
+    let input = "+ .a {\n  @extend .b;\n  c: d;\n}\n.b {\n  e: f;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    // The extender's own style-rule warning, plus the @extend-specific one —
+    // not a third warning for `.b`'s selector list gaining "+ .a" via
+    // extension (that complex selector isn't original to `.b`'s own rule).
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings
+        .iter()
+        .any(|w| w.contains("is invalid CSS and shouldn't be an extender")));
+    assert!(warnings
+        .iter()
+        .any(|w| w.starts_with("DEPRECATION WARNING [bogus-combinators]: The selector \"+ .a\" is invalid CSS.\n")));
+}
+
+#[test]
+fn bogus_combinators_dedupes_repeated_call_site() {
+    // NOTE: dart-sass's own dedup key is `(message, span)` (evaluate.dart's
+    // `_warningsEmitted`), so it does NOT dedupe here (the selector text —
+    // and thus the message — differs each iteration: ".c-1", ".c-2", ...) —
+    // dart shows 3 warnings for this input. grass's `emit_deprecation`
+    // dedups by `(Deprecation, Span)` only (a pre-existing choice from the
+    // elseif/import/slash-div tranche, where the message text never varies
+    // by loop iteration for those IDs), so it collapses to 1 here. Fixing
+    // this would mean changing the shared dedup key for every deprecation,
+    // out of scope for this tranche — documented as a known divergence.
+    let input = "@each $n in 1, 2, 3 {\n  + .c-#{$n} {\n    d: e;\n  }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn bogus_combinators_silenced() {
+    let input = "+ .a {\n  b: c;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::BogusCombinators);
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }

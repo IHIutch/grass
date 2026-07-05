@@ -24,6 +24,12 @@ pub enum Deprecation {
     /// Writing `left -right` (whitespace before `+`/`-` but not after), which
     /// is ambiguous between a binary operation and a unary negation.
     StrictUnary,
+    /// Calling the legacy `if($condition, $if-true, $if-false)` syntax
+    /// instead of the modern `if(<condition>: <value>)` CSS syntax.
+    IfFunction,
+    /// A selector with a leading, trailing, or doubled-up combinator (e.g.
+    /// `+ .a`, `.a >`, `.a + + .b`).
+    BogusCombinators,
 }
 
 impl Deprecation {
@@ -38,6 +44,8 @@ impl Deprecation {
             Self::Import => "import",
             Self::GlobalBuiltin => "global-builtin",
             Self::StrictUnary => "strict-unary",
+            Self::IfFunction => "if-function",
+            Self::BogusCombinators => "bogus-combinators",
         }
     }
 
@@ -51,7 +59,9 @@ impl Deprecation {
             | Self::NewGlobal
             | Self::Import
             | Self::GlobalBuiltin
-            | Self::StrictUnary => false,
+            | Self::StrictUnary
+            | Self::IfFunction
+            | Self::BogusCombinators => false,
         }
     }
 }

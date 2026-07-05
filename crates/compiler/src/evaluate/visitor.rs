@@ -2736,6 +2736,26 @@ impl<'a> Visitor<'a> {
 
         let super_selector = self.style_rule_ignoring_at_root.clone().unwrap();
 
+        if let Some(original_selector) = self.original_selector.clone() {
+            for complex in &original_selector.components {
+                if !complex.is_bogus(true) {
+                    continue;
+                }
+
+                let text = complex.to_string();
+                let trimmed = text.trim();
+                let cant_or_shouldnt = if complex.is_useless() { "can't" } else { "shouldn't" };
+
+                self.emit_deprecation(Deprecation::BogusCombinators, extend_rule.span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is invalid CSS and {cant_or_shouldnt} be an \
+                         extender.\nThis will be an error in Dart Sass 2.0.0.\n\n\
+                         More info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            }
+        }
+
         let target_text = self.interpolation_to_value(extend_rule.value, false, true)?;
 
         let list = self.parse_selector_from_string(&target_text, false, true, extend_rule.span)?;
@@ -3148,6 +3168,96 @@ impl<'a> Visitor<'a> {
                 )
             })
         })
+    }
+
+    /// Warns for each bogus complex selector in a style rule's (already
+    /// resolved/extended) selector list, matching dart-sass's
+    /// `_warnForBogusCombinators` (called once per style rule, after its
+    /// children have been visited).
+    ///
+    /// Known, documented simplifications vs dart-sass:
+    /// - Uses the whole rule's `selector_span` rather than a per-complex-
+    ///   selector span (`ComplexSelector` doesn't carry its own span in
+    ///   grass), so multiple distinct bogus selectors within one
+    ///   comma-separated list share a span and (via `emit_deprecation`'s
+    ///   per-span dedup) only the first warns.
+    /// - The "valid for nesting" message omits dart's secondary `MultiSpan`
+    ///   annotation ("this is not a style rule") — grass's `Logger` only
+    ///   supports a single span per warning.
+    /// - The invisibility gate approximates dart's recursive
+    ///   `isInvisibleOtherThanBogusCombinators` (which also considers
+    ///   whether every descendant is invisible) with a selector-only check.
+    /// - A *trailing*-combinator-only selector (e.g. `a >`) is valid dart
+    ///   CSS-nesting syntax when every one of its children is itself a
+    ///   nested style rule (it gets flattened into e.g. `a > b`, which is no
+    ///   longer bogus, and is never warned about) — `only_nests_style_rules`
+    ///   approximates that check from the pre-evaluation AST body, so it
+    ///   doesn't follow control-flow (`@if`/`@each`) wrapping a nested rule.
+    ///   Leading/doubled-combinator bogus-ness persists through flattening
+    ///   in dart too, so those two shapes always warn regardless of this
+    ///   flag — just using the pre-flattened (this rule's own) selector text
+    ///   rather than each descendant's fully-flattened one.
+    fn warn_for_bogus_combinators(
+        &mut self,
+        selector: &SelectorList,
+        original_selector: &SelectorList,
+        selector_span: Span,
+        only_nests_style_rules: bool,
+    ) -> SassResult<()> {
+        if selector.is_invisible() {
+            return Ok(());
+        }
+
+        for complex in &selector.components {
+            if !complex.is_bogus(true) {
+                continue;
+            }
+
+            // A bogus complex selector that only arrived via `@extend` (not
+            // written directly on this rule) belongs to whichever rule wrote
+            // it originally — that rule already warned about it (dart
+            // achieves this via per-complex-selector span dedup; grass
+            // approximates it by only warning for complexes this rule itself
+            // wrote).
+            if !original_selector.components.contains(complex) {
+                continue;
+            }
+
+            let text = complex.to_string();
+            let trimmed = text.trim();
+
+            if complex.is_useless() {
+                self.emit_deprecation(Deprecation::BogusCombinators, selector_span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is invalid CSS. It will be omitted from \
+                         the generated CSS.\nThis will be an error in Dart Sass 2.0.0.\n\n\
+                         More info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            } else if complex.has_leading_combinator() {
+                if self.is_plain_css {
+                    continue;
+                }
+
+                self.emit_deprecation(Deprecation::BogusCombinators, selector_span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is invalid CSS.\nThis will be an error in \
+                         Dart Sass 2.0.0.\n\nMore info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            } else if !only_nests_style_rules {
+                self.emit_deprecation(Deprecation::BogusCombinators, selector_span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is only valid for nesting and shouldn't\n\
+                         have children other than style rules. It will be omitted from the \
+                         generated CSS.\nThis will be an error in Dart Sass 2.0.0.\n\n\
+                         More info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     fn visit_warn_rule(&mut self, warn_rule: AstWarn<'static>) -> SassResult<()> {
@@ -5299,6 +5409,17 @@ impl<'a> Visitor<'a> {
         let selector = self
             .extender
             .add_selector(parsed_selector, &self.media_queries)?;
+
+        let only_nests_style_rules = !ruleset_body.is_empty()
+            && ruleset_body
+                .iter()
+                .all(|stmt| matches!(stmt, AstStmt::RuleSet(..)));
+        self.warn_for_bogus_combinators(
+            &selector.as_selector_list(),
+            &original_selector,
+            ruleset.selector_span,
+            only_nests_style_rules,
+        )?;
 
         let rule = CssStmt::RuleSet {
             selector: selector.clone(),

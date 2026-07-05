@@ -248,7 +248,16 @@ impl ComplexSelector {
             }
         }
 
-        // Multiple adjacent combinators
+        self.has_adjacent_combinators()
+    }
+
+    /// Whether this selector has two or more consecutive combinator
+    /// components anywhere (e.g. `a > + b`, or a doubled leading combinator
+    /// `+ + a`). Matches dart-sass's `leadingCombinators.length > 1 ||
+    /// component.combinators.length > 1` check (dart groups a compound with
+    /// its *trailing* combinators; grass's flat component list makes both
+    /// cases the same "two adjacent combinator components" scan).
+    fn has_adjacent_combinators(&self) -> bool {
         let mut prev_was_combinator = false;
         for component in &self.components {
             let is_combinator = component.is_combinator();
@@ -259,6 +268,25 @@ impl ComplexSelector {
         }
 
         false
+    }
+
+    /// Whether this selector has exactly one leading combinator (e.g. `+ a`).
+    /// Doubled leading combinators are covered separately by
+    /// [`ComplexSelector::is_useless`], matching dart-sass's
+    /// `leadingCombinators.isNotEmpty` check used by the `bogus-combinators`
+    /// deprecation warning.
+    pub fn has_leading_combinator(&self) -> bool {
+        matches!(self.components.first(), Some(c) if c.is_combinator())
+    }
+
+    /// Whether this selector is bogus *and* can't be transformed into valid
+    /// CSS by `@extend` or nesting — i.e. it has a doubled/adjacent
+    /// combinator run anywhere (leading or not). Matches dart-sass's
+    /// `Selector.isUseless` (recursion into nested pseudo-selector arguments
+    /// is not replicated here — this only checks this selector's own
+    /// top-level component list).
+    pub fn is_useless(&self) -> bool {
+        self.has_adjacent_combinators()
     }
 
     /// Returns whether `self` is a superselector of `other`.

@@ -19,6 +19,77 @@ use super::StylesheetParser;
 
 pub(crate) type Predicate<'c, P> = &'c dyn Fn(&mut P) -> SassResult<bool>;
 
+/// Splits `s` on commas that appear at nesting depth 0 (tracking
+/// `(`/`[`/`{` so a comma inside a nested call, list, or map, or a quoted
+/// string, isn't treated as a separator). Used to recover per-argument
+/// source text for the `if-function` deprecation's message, since
+/// `ArgumentInvocation` only keeps a span for the whole call.
+///
+/// Returns `None` if the result doesn't have exactly `expected` parts.
+fn split_top_level_commas(s: &str, expected: usize) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    let mut in_string: Option<char> = None;
+    let mut chars = s.char_indices();
+
+    while let Some((i, c)) = chars.next() {
+        if let Some(quote) = in_string {
+            if c == '\\' {
+                chars.next();
+            } else if c == quote {
+                in_string = None;
+            }
+            continue;
+        }
+
+        match c {
+            '"' | '\'' => in_string = Some(c),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    parts.push(&s[start..]);
+
+    if parts.len() == expected {
+        Some(parts)
+    } else {
+        None
+    }
+}
+
+/// Inserts a leading `0` before any bare decimal (`.5` -> `0.5`, `-.5` ->
+/// `-0.5`) not already preceded by a digit. dart-sass's `if-function`
+/// deprecation message reconstructs numeric literals via `SassNumber`'s
+/// canonical (always-leading-zero) formatting rather than raw source text,
+/// so this closes that one specific, common gap between grass's
+/// source-text-based reconstruction and dart's AST-based one. Other, rarer
+/// dart normalizations (e.g. single- to double-quote strings) aren't
+/// replicated here.
+fn add_leading_zero_to_bare_decimals(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev: Option<char> = None;
+
+    for (i, c) in s.char_indices() {
+        if c == '.'
+            && !prev.is_some_and(|p| p.is_ascii_digit())
+            && s[i + 1..].starts_with(|n: char| n.is_ascii_digit())
+        {
+            out.push('0');
+        }
+        out.push(c);
+        prev = Some(c);
+    }
+
+    out
+}
+
 fn is_hex_color<'a>(interpolation: &Interpolation<'a>) -> bool {
     if let Some(plain) = interpolation.as_plain() {
         if ![3, 4, 6, 8].contains(&plain.len()) {
@@ -1373,8 +1444,18 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     return Ok(css_if);
                 }
                 // Fall back to legacy if($condition, $if-true, $if-false)
+                let args_start = parser.toks().cursor();
                 let call_args = parser.parse_argument_invocation(false, false)?;
+                let args_end = parser.toks().cursor();
                 let span = call_args.span;
+
+                let message = Self::legacy_if_deprecation_message(
+                    parser, &call_args, args_start, args_end,
+                );
+                parser
+                    .parse_time_warnings_mut()
+                    .push((Deprecation::IfFunction, span, message));
+
                 return Ok(AstExpr::If(parser.arena().alloc(Ternary(call_args))).span(span));
             } else if plain == "not" {
                 // In indented syntax, allow newlines after `not` so expressions
@@ -1491,6 +1572,58 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             )
             .span(parser.toks_mut().span_from(start))),
         }
+    }
+
+    /// Builds the `if-function` deprecation message (dart-sass's
+    /// `Deprecation.ifFunction`) for a legacy `if($condition, $if-true,
+    /// $if-false)` call.
+    ///
+    /// The `Suggestion:` line reconstructs the modern CSS-if syntax using
+    /// the *source text* of each argument (recovered via a top-level-comma
+    /// split of the raw `(...)` text, since `ArgumentInvocation` doesn't
+    /// retain per-argument spans) — this is only attempted for the exact
+    /// shape dart-sass's `modernSuggestion` getter accepts (3 positional
+    /// args, no named/rest/keyword-rest); any other shape omits the
+    /// suggestion entirely, matching dart exactly.
+    fn legacy_if_deprecation_message(
+        parser: &mut P,
+        call_args: &ArgumentInvocation<'a>,
+        args_start: usize,
+        args_end: usize,
+    ) -> String {
+        const BASE: &str =
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.\n\n";
+        const FOOTER: &str = "More info: https://sass-lang.com/d/if-function";
+
+        let suggestion = if call_args.positional.len() == 3
+            && call_args.named.is_empty()
+            && call_args.rest.is_none()
+            && call_args.keyword_rest.is_none()
+        {
+            let full = parser.toks().raw_text_range(args_start, args_end);
+            full.strip_prefix('(')
+                .and_then(|s| s.strip_suffix(')'))
+                .and_then(|inner| split_top_level_commas(inner, 3))
+                .map(|parts| {
+                    let condition = add_leading_zero_to_bare_decimals(parts[0].trim());
+                    let if_true = add_leading_zero_to_bare_decimals(parts[1].trim());
+                    let if_false = add_leading_zero_to_bare_decimals(parts[2].trim());
+
+                    if matches!(call_args.positional[2], AstExpr::Null) {
+                        format!("Suggestion: if(sass({condition}): {if_true})\n\n")
+                    } else if matches!(call_args.positional[1], AstExpr::Null) {
+                        format!("Suggestion: if(not sass({condition}): {if_false})\n\n")
+                    } else {
+                        format!(
+                            "Suggestion: if(sass({condition}): {if_true}; else: {if_false})\n\n"
+                        )
+                    }
+                })
+        } else {
+            None
+        };
+
+        format!("{BASE}{}{FOOTER}", suggestion.unwrap_or_default())
     }
 
     fn namespaced_expression(
