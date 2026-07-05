@@ -270,6 +270,30 @@ test!(
     "a {\n  color: opacify(rgba(0, 0, 17, 0.8), 0.2);\n}\n",
     "a {\n  color: #000011;\n}\n"
 );
+// Plan 027 / Solo scratchpad #76: with_alpha/fade_in/fade_out previously
+// rounded fractional channels via from_rgba()'s fuzzy_round. Expectations
+// verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    with_alpha_fractional_rgb_channels,
+    "a {\n  color: rgba(rgb(206.6, 226, 254.6), 0.5);\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, 0.5);\n}\n"
+);
+test!(
+    fade_in_fractional_rgb_channels,
+    "a {\n  color: fade-in(rgba(206.6, 226, 254.6, 0.5), 0.1);\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, 0.6);\n}\n"
+);
+test!(
+    fade_out_fractional_rgb_channels,
+    "a {\n  color: fade-out(rgba(206.6, 226, 254.6, 0.5), 0.1);\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, 0.4);\n}\n"
+);
+test!(
+    rgba_mix_fractional_channels_bootstrap_shaped,
+    "a {\n  color: rgba(mix(#0d6efd, #ced4da, 15%), .5);\n}\n",
+    "a {\n  color: rgba(177.05, 196.7, 223.25, 0.5);\n}\n"
+);
 test!(
     grayscale_1,
     "a {\n  color: grayscale(plum);\n}\n",
