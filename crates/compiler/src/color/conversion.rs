@@ -1239,9 +1239,22 @@ fn convert_direct(channels: [f64; 3], from: ColorSpace, to: ColorSpace) -> Optio
         (ColorSpace::Lab, ColorSpace::Lch) => Some(lab_to_lch(c0, c1, c2)),
         (ColorSpace::Lch, ColorSpace::Lab) => Some(lch_to_lab(c0, c1, c2)),
 
-        // OKLab ↔ OKLch
+        // OKLab <- OKLch: dart-sass's OklchColorSpace.convert computes a/b from
+        // chroma/hue, then always delegates to OklabColorSpace.convert, which
+        // only special-cases `dest == oklch` (a direct shortcut). For any other
+        // dest -- including oklab itself -- it falls through to the generic LMS
+        // path: cube the oklab-space values into raw LMS, then (via
+        // LmsColorSpace.convert's `case oklab`) cube-root them back and
+        // reapply the inverse matrix. That round trip is not a no-op in
+        // floating point, so it must be transcribed rather than shortcut.
+        (ColorSpace::Oklch, ColorSpace::Oklab) => {
+            let oklab = oklch_to_oklab(c0, c1, c2);
+            let lms = oklab_to_lms_raw(oklab[0], oklab[1], oklab[2]);
+            Some(lms_raw_to_oklab(lms))
+        }
+        // OKLab -> OKLch: OklabColorSpace.convert special-cases `dest == oklch`
+        // with a direct labToLch shortcut (no LMS round trip), so this stays exact.
         (ColorSpace::Oklab, ColorSpace::Oklch) => Some(oklab_to_oklch(c0, c1, c2)),
-        (ColorSpace::Oklch, ColorSpace::Oklab) => Some(oklch_to_oklab(c0, c1, c2)),
 
         // DisplayP3 ↔ DisplayP3Linear
         (ColorSpace::DisplayP3, ColorSpace::DisplayP3Linear) => {
