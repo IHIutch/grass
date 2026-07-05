@@ -3,8 +3,8 @@ use std::{cell::Cell, collections::BTreeMap, path::Path};
 use codemap::{Span, Spanned};
 
 use crate::{
-    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind, error::SassResult,
-    lexer::Lexer, ContextFlags, Options, Token,
+    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind,
+    deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token,
 };
 
 use super::{value::ValueParser, BaseParser, StylesheetParser};
@@ -17,6 +17,7 @@ pub(crate) struct CssParser<'a> {
     pub options: &'a Options<'a>,
     pub arena: &'a bumpalo::Bump,
     pub recursion_depth: Cell<usize>,
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> BaseParser for CssParser<'a> {
@@ -93,6 +94,10 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
         &self.recursion_depth
     }
 
+    fn parse_time_warnings_mut(&mut self) -> &mut Vec<(Deprecation, Span, String)> {
+        &mut self.parse_time_warnings
+    }
+
     const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr<'a>>>> =
         Some(Self::parse_identifier_like);
 
@@ -155,6 +160,7 @@ impl<'a> CssParser<'a> {
             options,
             arena,
             recursion_depth: Cell::new(0),
+            parse_time_warnings: Vec::new(),
         }
     }
 

@@ -8,6 +8,7 @@ use crate::{
     ast::{ArgumentDeclaration, ArgumentInvocation, AstExpr, CssStmt},
     ast::{Interpolation, MediaQuery},
     common::Identifier,
+    deprecation::Deprecation,
     utils::{BaseMapView, LimitedMapView, MapView, UnprefixedMapView},
     value::Value,
 };
@@ -572,6 +573,12 @@ pub struct StyleSheet<'a> {
     /// configuration conflicts: a module "could be configured" if it has `!default`
     /// variables matching the configuration keys.
     pub configurable_variables: FxHashSet<Identifier>,
+
+    /// Deprecation warnings discovered while parsing (e.g. `@elseif`), to be
+    /// emitted during evaluation once a logger is available. Mirrors
+    /// dart-sass's `Stylesheet.parseTimeWarnings`, replayed by
+    /// `Visitor::visit_stylesheet`.
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> StyleSheet<'a> {
@@ -584,6 +591,7 @@ impl<'a> StyleSheet<'a> {
             forwards: Vec::new(),
             pre_declared_global_variables: FxHashSet::default(),
             configurable_variables: FxHashSet::default(),
+            parse_time_warnings: Vec::new(),
         }
     }
 

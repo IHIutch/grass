@@ -2,7 +2,7 @@ use std::{cell::Cell, path::Path};
 
 use codemap::Span;
 
-use crate::{ast::*, error::SassResult, lexer::Lexer, ContextFlags, Options, Token};
+use crate::{ast::*, deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token};
 
 use super::{BaseParser, StylesheetParser};
 
@@ -19,6 +19,7 @@ pub(crate) struct SassParser<'a> {
     pub next_indentation_end: Option<usize>,
     pub consume_newlines: bool,
     pub recursion_depth: Cell<usize>,
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> BaseParser for SassParser<'a> {
@@ -126,6 +127,10 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
     fn recursion_depth(&self) -> &Cell<usize> {
         &self.recursion_depth
+    }
+
+    fn parse_time_warnings_mut(&mut self) -> &mut Vec<(Deprecation, Span, String)> {
+        &mut self.parse_time_warnings
     }
 
     fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
@@ -452,6 +457,7 @@ impl<'a> SassParser<'a> {
             spaces: None,
             consume_newlines: false,
             recursion_depth: Cell::new(0),
+            parse_time_warnings: Vec::new(),
         }
     }
 

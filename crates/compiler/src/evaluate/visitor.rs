@@ -376,6 +376,11 @@ impl<'a> Visitor<'a> {
         }
         let old_import_path = mem::replace(&mut self.current_import_path, style_sheet.url.clone());
 
+        for (deprecation, span, message) in &style_sheet.parse_time_warnings {
+            let message = message.clone();
+            self.emit_deprecation(*deprecation, *span, || Ok(message))?;
+        }
+
         for stmt in style_sheet.body {
             let result = self.visit_stmt(stmt)?;
             debug_assert!(result.is_none());

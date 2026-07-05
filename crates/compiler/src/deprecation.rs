@@ -12,6 +12,15 @@ use std::fmt;
 pub enum Deprecation {
     /// Using `/` for division outside of `calc()`.
     SlashDiv,
+    /// Using the `@elseif` typo instead of `@else if`.
+    Elseif,
+    /// Declaring a new variable with `!global`.
+    NewGlobal,
+    /// Using the legacy `@import` rule to load a Sass file.
+    Import,
+    /// Calling a built-in function via its global name instead of through
+    /// its `sass:*` module (e.g. `map-get()` instead of `map.get()`).
+    GlobalBuiltin,
 }
 
 impl Deprecation {
@@ -21,6 +30,10 @@ impl Deprecation {
     pub const fn id(self) -> &'static str {
         match self {
             Self::SlashDiv => "slash-div",
+            Self::Elseif => "elseif",
+            Self::NewGlobal => "new-global",
+            Self::Import => "import",
+            Self::GlobalBuiltin => "global-builtin",
         }
     }
 
@@ -29,7 +42,7 @@ impl Deprecation {
     #[must_use]
     pub const fn is_future(self) -> bool {
         match self {
-            Self::SlashDiv => false,
+            Self::SlashDiv | Self::Elseif | Self::NewGlobal | Self::Import | Self::GlobalBuiltin => false,
         }
     }
 }

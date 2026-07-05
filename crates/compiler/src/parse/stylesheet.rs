@@ -46,6 +46,7 @@ use rustc_hash::FxHashSet;
 use crate::{
     ast::*,
     common::{unvendor, Identifier, QuoteKind},
+    deprecation::Deprecation,
     error::SassResult,
     lexer::Lexer,
     utils::{is_name, is_name_start, is_plain_css_import, opposite_bracket},
@@ -72,6 +73,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn flags_mut(&mut self) -> &mut ContextFlags;
     fn arena(&self) -> &'a bumpalo::Bump;
     fn recursion_depth(&self) -> &Cell<usize>;
+    /// Deprecation warnings discovered while parsing (e.g. `@elseif`),
+    /// drained into the resulting `StyleSheet` at the end of `__parse` and
+    /// replayed by `Visitor::visit_stylesheet` once a logger is available.
+    fn parse_time_warnings_mut(&mut self) -> &mut Vec<(Deprecation, Span, String)>;
 
     /// Guards a recursive parse of a nested construct (a block's children, or
     /// a parenthesized/bracketed sub-expression), erroring instead of
@@ -148,13 +153,23 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.whitespace()?;
 
+        let before_at = self.toks().cursor();
+
         if self.scan_char('@') {
             if self.scan_identifier("else", true)? {
                 return Ok(true);
             }
 
             if self.scan_identifier("elseif", true)? {
-                // todo: deprecation warning here
+                let span = self.toks_mut().span_from(before_at);
+                self.parse_time_warnings_mut().push((
+                    Deprecation::Elseif,
+                    span,
+                    "@elseif is deprecated and will not be supported in future Sass \
+                     versions.\n\nRecommendation: @else if"
+                        .to_string(),
+                ));
+
                 let new_cursor = self.toks().cursor() - 2;
                 self.toks_mut().set_cursor(new_cursor);
                 return Ok(true);
@@ -292,6 +307,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         style_sheet.collect_pre_declared_global_variables();
         style_sheet.collect_configurable_variables();
+        style_sheet.parse_time_warnings = mem::take(self.parse_time_warnings_mut());
 
         Ok(style_sheet)
     }
@@ -1106,6 +1122,16 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         loop {
             self.whitespace()?;
             let argument = self.parse_import_argument(self.toks().cursor())?;
+
+            if let AstImport::Sass(ref dynamic_import) = argument {
+                self.parse_time_warnings_mut().push((
+                    Deprecation::Import,
+                    dynamic_import.span,
+                    "Sass @import rules are deprecated and will be removed in Dart Sass \
+                     3.0.0.\n\nMore info and automated migrator: https://sass-lang.com/d/import"
+                        .to_string(),
+                ));
+            }
 
             // todo: _inControlDirective
             if (self.flags().in_control_flow() || self.flags().in_mixin()) && argument.is_dynamic()
