@@ -124,7 +124,7 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                     named: BTreeMap::new(),
                     separator: ListSeparator::Comma,
                     span,
-                    touched: BTreeSet::new(),
+                    touched: FxHashSet::default(),
                 };
 
                 hwb_inner(args, visitor)

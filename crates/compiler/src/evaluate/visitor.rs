@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ffi::OsStr,
     fmt,
     iter::FromIterator,
@@ -3757,7 +3757,7 @@ impl<'a> Visitor<'a> {
                 named,
                 separator: ListSeparator::Undecided,
                 span,
-                touched: BTreeSet::new(),
+                touched: FxHashSet::default(),
             });
         }
 
@@ -3795,7 +3795,7 @@ impl<'a> Visitor<'a> {
                 named,
                 separator,
                 span: arguments.span,
-                touched: BTreeSet::new(),
+                touched: FxHashSet::default(),
             });
         }
 
@@ -3808,7 +3808,7 @@ impl<'a> Visitor<'a> {
                     named,
                     separator,
                     span: arguments.span,
-                    touched: BTreeSet::new(),
+                    touched: FxHashSet::default(),
                 })
             }
             v => Err((

@@ -2,12 +2,11 @@
 #![allow(unused_variables)]
 
 use std::{
-    collections::BTreeSet,
     fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use std::sync::LazyLock;
 
@@ -94,7 +93,7 @@ pub(crate) static GLOBAL_FUNCTIONS: LazyLock<GlobalFunctionMap> = LazyLock::new(
     m
 });
 
-pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<BTreeSet<&str>> = LazyLock::new(|| {
+pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
     GLOBAL_FUNCTIONS
         .keys()
         .copied()

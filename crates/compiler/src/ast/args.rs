@@ -5,6 +5,7 @@ use std::{
 };
 
 use codemap::{Span, Spanned};
+use rustc_hash::FxHashSet;
 
 use crate::{
     common::{Identifier, ListSeparator},
@@ -176,7 +177,7 @@ pub struct ArgumentResult {
     pub(crate) separator: ListSeparator,
     pub(crate) span: Span,
     // todo: hack
-    pub(crate) touched: BTreeSet<usize>,
+    pub(crate) touched: FxHashSet<usize>,
 }
 
 impl ArgumentResult {

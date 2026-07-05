@@ -17,6 +17,8 @@ mod builtin_imports {
     #[cfg(feature = "random")]
     pub(crate) use rand::{distributions::Alphanumeric, thread_rng, Rng};
 
+    pub(crate) use rustc_hash::FxHashSet;
+
     pub(crate) use crate::{
         ast::{Argument, ArgumentDeclaration, ArgumentResult, MaybeEvaledArguments},
         color::Color,
@@ -28,9 +30,5 @@ mod builtin_imports {
         Options,
     };
 
-    pub(crate) use std::{
-        cmp::Ordering,
-        collections::{BTreeMap, BTreeSet},
-        rc::Rc,
-    };
+    pub(crate) use std::{cmp::Ordering, collections::BTreeMap, rc::Rc};
 }

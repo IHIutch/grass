@@ -1,5 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::{builtin::builtin_imports::*, serializer::serialize_number, value::SassNumber};
 use crate::color::space::ColorSpace;
 
@@ -97,7 +95,7 @@ fn inner_hsl(
                     named: BTreeMap::new(),
                     separator: ListSeparator::Comma,
                     span: args.span(),
-                    touched: BTreeSet::new(),
+                    touched: FxHashSet::default(),
                 };
 
                 hsl_3_args(name, args, visitor)

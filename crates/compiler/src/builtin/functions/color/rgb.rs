@@ -420,7 +420,7 @@ fn inner_rgb(
                         named: BTreeMap::new(),
                         separator: ListSeparator::Comma,
                         span,
-                        touched: BTreeSet::new(),
+                        touched: FxHashSet::default(),
                     };
 
                     inner_rgb_3_arg(name, args, visitor)
