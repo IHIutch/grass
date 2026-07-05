@@ -38,6 +38,10 @@ test!(
     }",
     "a {\n  color: false;\n  color: false;\n}\n"
 );
+// dart-sass 1.97.3 verified: the propagation semantics were already correct (every scope resolves
+// $a to orange, the final reassignment) — only the emission order was stale. Nested rules hoist out
+// in written order relative to the containing rule's own trailing declaration, same mechanism as
+// mixins.rs's mixin_ruleset_and_style: the innermost `a b c d` block emits first, `a` last.
 test!(
     variable_redeclarations_propagate_to_outer_scopes,
     "
@@ -57,7 +61,7 @@ test!(
         color: $a;
     }
     ",
-    "a {\n  color: orange;\n}\na b {\n  color: orange;\n}\na b c {\n  color: orange;\n}\na b c d {\n  color: orange;\n}\n"
+    "a b c d {\n  color: orange;\n}\na b c {\n  color: orange;\n}\na b {\n  color: orange;\n}\na {\n  color: orange;\n}\n"
 );
 test!(
     local_variable_exists_in_inner_fn_mixin_scope,
