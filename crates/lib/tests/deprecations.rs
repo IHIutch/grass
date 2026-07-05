@@ -1175,3 +1175,58 @@ fn misplaced_rest_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn moz_document_warns_for_url_prefix_with_argument() {
+    let input = "@-moz-document url-prefix(a) {\n  a { b: c; }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [moz-document]: @-moz-document is deprecated and support will be \
+         removed in Dart Sass 2.0.0.\n\nFor details, see https://sass-lang.com/d/moz-document."
+    ));
+}
+
+#[test]
+fn moz_document_does_not_warn_for_empty_url_prefix() {
+    let input = "@-moz-document url-prefix() {\n  a { b: c; }\n}\n\
+                 @-moz-document url-prefix(\"\") {\n  a { b: c; }\n}\n\
+                 @-moz-document url-prefix('') {\n  a { b: c; }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn moz_document_warns_once_for_multiple_functions() {
+    let input = "@-moz-document url(http://www.w3.org/), url-prefix(http://www.w3.org/Style/), \
+                 domain(mozilla.org), regexp(\"https:.*\") {\n  a { b: c; }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn moz_document_warns_for_interpolation() {
+    let input = "@-moz-document url(#{\"sass-lang.com\"}) {\n  a { b: c; }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn moz_document_silenced() {
+    let input = "@-moz-document url-prefix(a) {\n  a { b: c; }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::MozDocument);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}

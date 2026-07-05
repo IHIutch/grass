@@ -1435,11 +1435,27 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 .set(ContextFlags::IN_CSS_FUNCTION_BODY, was_in_css_function);
         }
 
+        let span = self.toks_mut().span_from(start);
+
+        if omit_comments
+            && value
+                .as_ref()
+                .is_some_and(moz_document_prelude_needs_deprecation_warning)
+        {
+            self.parse_time_warnings_mut().push((
+                Deprecation::MozDocument,
+                span,
+                "@-moz-document is deprecated and support will be removed in Dart Sass \
+                 2.0.0.\n\nFor details, see https://sass-lang.com/d/moz-document."
+                    .to_string(),
+            ));
+        }
+
         Ok(AstStmt::UnknownAtRule(Box::new(AstUnknownAtRule {
             name,
             value,
             body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c)),
-            span: self.toks_mut().span_from(start),
+            span,
         })))
     }
 
@@ -3538,4 +3554,61 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         Ok(())
     }
+}
+
+/// Approximates dart-sass's per-function `needsDeprecationWarning` check for
+/// `@-moz-document` preludes (mirrors `mozDocumentRule` in
+/// `lib/src/parse/stylesheet.dart`): warns unless every top-level
+/// comma-separated term is a bare `url-prefix()` call with no argument or an
+/// empty string argument (Gecko's still-supported "select everything" form).
+///
+/// grass parses the whole prelude as raw interpolated text rather than
+/// dart's structured function-call grammar, so this operates on the
+/// flattened plain text instead of matching per-function; any dynamic
+/// `#{...}` interpolation trivially fails the check, matching dart (which
+/// always warns when the prelude contains interpolation).
+fn moz_document_prelude_needs_deprecation_warning(value: &Interpolation) -> bool {
+    // Unlike `Interpolation::as_plain`, this concatenates every `String`
+    // part instead of requiring exactly one — quoted string arguments (e.g.
+    // `url-prefix("")`) are parsed as their own interpolation chunk(s) even
+    // when they contain no actual `#{...}`, so a multi-chunk-but-still-fully-
+    // static prelude must not be treated as dynamic.
+    let mut text = String::new();
+    for part in &value.contents {
+        match part {
+            InterpolationPart::String(s) => text.push_str(s),
+            InterpolationPart::Expr(..) => return true,
+        }
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    !split_top_level_commas(trimmed).iter().all(|term| {
+        matches!(term.trim(), "url-prefix()" | "url-prefix(\"\")" | "url-prefix('')")
+    })
+}
+
+/// Splits `s` on commas that aren't nested inside parentheses.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    parts.push(&s[start..]);
+    parts
 }
