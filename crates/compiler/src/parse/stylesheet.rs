@@ -2617,6 +2617,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         let mut rest: Option<AstExpr<'a>> = None;
         let mut keyword_rest: Option<AstExpr<'a>> = None;
+        let mut emitted_rest_deprecation = false;
 
         while self.looking_at_expression() {
             let expression = self.parse_expression_until_comma(!for_mixin)?;
@@ -2633,10 +2634,20 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     return Err(("Duplicate argument.", name.span).into());
                 }
 
-                named.insert(
-                    name.node,
-                    self.parse_expression_until_comma(!for_mixin)?.node,
-                );
+                let value = self.parse_expression_until_comma(!for_mixin)?;
+
+                if rest.is_some() && !emitted_rest_deprecation {
+                    emitted_rest_deprecation = true;
+                    self.parse_time_warnings_mut().push((
+                        Deprecation::MisplacedRest,
+                        name.span.merge(value.span),
+                        "Named arguments must come before rest arguments.\nThis will be an \
+                         error in Dart Sass 2.0.0."
+                            .to_string(),
+                    ));
+                }
+
+                named.insert(name.node, value.node);
             } else if self.scan_char('.') {
                 self.expect_char('.')?;
                 self.expect_char('.')?;
@@ -2657,6 +2668,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 )
                     .into());
             } else {
+                if rest.is_some() && !emitted_rest_deprecation {
+                    emitted_rest_deprecation = true;
+                    self.parse_time_warnings_mut().push((
+                        Deprecation::MisplacedRest,
+                        expression.span,
+                        "Positional arguments must come before rest arguments.\nThis will be \
+                         an error in Dart Sass 2.0.0."
+                            .to_string(),
+                    ));
+                }
+
                 positional.push(expression.node);
             }
 

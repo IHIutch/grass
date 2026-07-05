@@ -1118,3 +1118,60 @@ fn abs_percent_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn misplaced_rest_warns_for_positional_after_rest() {
+    let input = "@mixin a($b, $args...) {}\na { @include a([1, 2]..., 3); }\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [misplaced-rest]: Positional arguments must come before rest \
+         arguments.\nThis will be an error in Dart Sass 2.0.0."
+    ));
+}
+
+#[test]
+fn misplaced_rest_warns_for_named_after_rest() {
+    let input = "@mixin a($a, $b, $c) {}\na { @include a([1, 2]..., $c: 3); }\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [misplaced-rest]: Named arguments must come before rest \
+         arguments.\nThis will be an error in Dart Sass 2.0.0."
+    ));
+}
+
+#[test]
+fn misplaced_rest_does_not_warn_for_correctly_ordered_args() {
+    let input = "@mixin a($a, $args...) {}\na { @include a(1, 2, 3...); }\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn misplaced_rest_dedupes_multiple_misplaced_args_at_one_call_site() {
+    let input = "@mixin a($b, $c, $args...) {}\na { @include a([1, 2]..., 3, 4); }\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn misplaced_rest_silenced() {
+    let input = "@mixin a($b, $args...) {}\na { @include a([1, 2]..., 3); }\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::MisplacedRest);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
