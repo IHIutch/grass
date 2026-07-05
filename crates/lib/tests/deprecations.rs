@@ -359,3 +359,90 @@ fn no_warning_inside_calc() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn strict_unary_warns() {
+    let input = "$a: 1;\n$b: 2;\na {\n  b: $a -$b;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: -1;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(
+        warnings[0].starts_with(
+            "DEPRECATION WARNING [strict-unary]: This operation is parsed as:\n\n    $a - $b"
+        ),
+        "unexpected warning: {}",
+        warnings[0]
+    );
+    assert!(warnings[0].contains("but you may have intended it to mean:\n\n    $a (-$b)"));
+    assert!(warnings[0].contains("https://sass-lang.com/d/strict-unary"));
+}
+
+#[test]
+fn strict_unary_warns_for_plus() {
+    let input = "$a: 1;\n$b: 2;\na {\n  b: $a +$b;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("This operation is parsed as:\n\n    $a + $b"));
+    assert!(warnings[0].contains("but you may have intended it to mean:\n\n    $a (+$b)"));
+}
+
+#[test]
+fn strict_unary_reconstructs_chained_left_operand() {
+    // The "left" side of the ambiguous operator can itself be a composite
+    // binary expression; the message should show the full chain, not just
+    // the immediately-preceding term.
+    let input = "$a: 1;\n$b: 2;\n$c: 3;\na {\n  b: $a - $b -$c;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("This operation is parsed as:\n\n    $a - $b - $c"));
+    assert!(warnings[0].contains("but you may have intended it to mean:\n\n    $a - $b (-$c)"));
+}
+
+#[test]
+fn strict_unary_does_not_warn_when_spaced_both_sides() {
+    let input = "$a: 1;\n$b: 2;\na {\n  b: $a - $b;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn strict_unary_does_not_warn_for_negative_number_literal() {
+    // `$a -1` attaches the `-` to the number literal (a space-separated
+    // list), which is unambiguous and never reaches the binary-operator path.
+    let input = "$a: 1;\na {\n  b: $a -1;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn strict_unary_dedupes_repeated_call_site() {
+    let input = "$a: 1;\n$b: 2;\n@each $n in 1, 2, 3 {\n  .c-#{$n} { d: $a -$b; }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn strict_unary_silenced() {
+    let input = "$a: 1;\n$b: 2;\na {\n  b: $a -$b;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::StrictUnary);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}

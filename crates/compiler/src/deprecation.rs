@@ -21,6 +21,9 @@ pub enum Deprecation {
     /// Calling a built-in function via its global name instead of through
     /// its `sass:*` module (e.g. `map-get()` instead of `map.get()`).
     GlobalBuiltin,
+    /// Writing `left -right` (whitespace before `+`/`-` but not after), which
+    /// is ambiguous between a binary operation and a unary negation.
+    StrictUnary,
 }
 
 impl Deprecation {
@@ -34,6 +37,7 @@ impl Deprecation {
             Self::NewGlobal => "new-global",
             Self::Import => "import",
             Self::GlobalBuiltin => "global-builtin",
+            Self::StrictUnary => "strict-unary",
         }
     }
 
@@ -42,7 +46,12 @@ impl Deprecation {
     #[must_use]
     pub const fn is_future(self) -> bool {
         match self {
-            Self::SlashDiv | Self::Elseif | Self::NewGlobal | Self::Import | Self::GlobalBuiltin => false,
+            Self::SlashDiv
+            | Self::Elseif
+            | Self::NewGlobal
+            | Self::Import
+            | Self::GlobalBuiltin
+            | Self::StrictUnary => false,
         }
     }
 }

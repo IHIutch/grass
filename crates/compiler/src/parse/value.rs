@@ -7,6 +7,7 @@ use crate::{
     ast::*,
     color::{Color, ColorFormat, NAMED_COLORS},
     common::{unvendor, BinaryOp, Brackets, Identifier, ListSeparator, QuoteKind, UnaryOp},
+    deprecation::Deprecation,
     error::SassResult,
     unit::Unit,
     utils::{as_hex, opposite_bracket},
@@ -43,6 +44,17 @@ pub(crate) struct ValueParser<'a, 'c, P: StylesheetParser<'a>> {
     parse_until: Option<Predicate<'c, P>>,
     was_consuming_newlines: bool,
     _a: PhantomData<&'a ()>,
+    /// Lexer buffer-index bounds `(start, end)` of the current
+    /// `single_expression`, used to reconstruct the source text of an
+    /// operand for the `strict-unary` deprecation message (dart-sass's
+    /// `Deprecation.strictUnary`) without needing a `CodeMap` at parse time.
+    single_expr_bounds: (usize, usize),
+    /// Bounds of each operand in `operands`, parallel to that stack.
+    operand_bounds: Option<Vec<(usize, usize)>>,
+    /// Parallel to `binary_operators`: whether this `+`/`-` occurrence is a
+    /// `strict-unary` candidate (preceded by whitespace, glued to its
+    /// right-hand operand).
+    ambiguous_unary: Option<Vec<bool>>,
 }
 
 impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
@@ -83,6 +95,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         value_parser.start = parser.toks().cursor();
 
         value_parser.single_expression = Some(value_parser.parse_single_expression(parser)?);
+        value_parser.single_expr_bounds = (value_parser.start, parser.toks().cursor());
 
         let mut value = value_parser.parse_value(parser)?;
         value.span = parser.toks_mut().span_from(start);
@@ -109,6 +122,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             single_equals,
             was_consuming_newlines: false,
             _a: PhantomData,
+            single_expr_bounds: (0, 0),
+            operand_bounds: None,
+            ambiguous_unary: None,
         }
     }
 
@@ -132,33 +148,34 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
 
             let first = parser.toks().peek();
+            let iter_start = parser.toks().cursor();
 
             match first {
                 Some(Token { kind: '(', .. }) => {
                     let expr = self.parse_paren_expr(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '[', .. }) => {
                     let expr = parser.parse_expression(None, Some(true), None)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '$', .. }) => {
                     let expr = Self::parse_variable(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '&', .. }) => {
                     let expr = Self::parse_selector(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '"', .. }) | Some(Token { kind: '\'', .. }) => {
                     let expr = parser
                         .parse_interpolated_string()?
                         .map_node(|s| AstExpr::String(s, parser.toks_mut().span_from(start)));
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '#', .. }) => {
                     let expr = self.parse_hash(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '=', .. }) => {
                     parser.toks_mut().next();
@@ -170,6 +187,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::SingleEq,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            false,
                             parser,
                         )?;
                     } else {
@@ -179,6 +197,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::Equal,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            false,
                             parser,
                         )?;
                     }
@@ -192,6 +211,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::NotEqual,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            false,
                             parser,
                         )?;
                     }
@@ -199,11 +219,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         if kind.is_ascii_whitespace() || kind == 'i' || kind == 'I' =>
                     {
                         let expr = Self::parse_important_expr(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     }
                     None => {
                         let expr = Self::parse_important_expr(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     }
                     Some(..) => break,
                 },
@@ -218,6 +238,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             },
                             span: parser.toks_mut().span_from(start),
                         },
+                        false,
                         parser,
                     )?;
                 }
@@ -232,6 +253,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             },
                             span: parser.toks_mut().span_from(start),
                         },
+                        false,
                         parser,
                     )?;
                 }
@@ -242,20 +264,36 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             node: BinaryOp::Mul,
                             span: parser.toks().current_span(),
                         },
+                        false,
                         parser,
                     )?;
                 }
                 Some(Token { kind: '+', .. }) => {
                     if self.single_expression.is_none() {
                         let expr = self.parse_unary_operation(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     } else {
+                        let space_before = matches!(
+                            parser.toks_mut().peek_previous(),
+                            Some(Token {
+                                kind: ' ' | '\t' | '\n' | '\r',
+                                ..
+                            })
+                        );
                         parser.toks_mut().next();
+                        let space_after = matches!(
+                            parser.toks().peek(),
+                            Some(Token {
+                                kind: ' ' | '\t' | '\n' | '\r',
+                                ..
+                            })
+                        );
                         self.add_operator(
                             Spanned {
                                 node: BinaryOp::Plus,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            space_before && !space_after,
                             parser,
                         )?;
                     }
@@ -277,20 +315,35 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         ))
                     {
                         let expr = ValueParser::parse_number(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     } else if parser.looking_at_interpolated_identifier() {
                         let expr = self.parse_identifier_like(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     } else if self.single_expression.is_none() {
                         let expr = self.parse_unary_operation(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     } else {
+                        let space_before = matches!(
+                            parser.toks_mut().peek_previous(),
+                            Some(Token {
+                                kind: ' ' | '\t' | '\n' | '\r',
+                                ..
+                            })
+                        );
                         parser.toks_mut().next();
+                        let space_after = matches!(
+                            parser.toks().peek(),
+                            Some(Token {
+                                kind: ' ' | '\t' | '\n' | '\r',
+                                ..
+                            })
+                        );
                         self.add_operator(
                             Spanned {
                                 node: BinaryOp::Minus,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            space_before && !space_after,
                             parser,
                         )?;
                     }
@@ -298,7 +351,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 Some(Token { kind: '/', .. }) => {
                     if self.single_expression.is_none() {
                         let expr = self.parse_unary_operation(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     } else {
                         parser.toks_mut().next();
                         self.add_operator(
@@ -306,6 +359,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::Div,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            false,
                             parser,
                         )?;
                     }
@@ -332,6 +386,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::Rem,
                                 span: parser.toks().current_span(),
                             },
+                            false,
                             parser,
                         )?;
                     } else {
@@ -343,21 +398,21 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             span,
                         )
                         .span(span);
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     }
                 }
                 Some(Token {
                     kind: '0'..='9', ..
                 }) => {
                     let expr = ValueParser::parse_number(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: '.', .. }) => {
                     if matches!(parser.toks().peek_n(1), Some(Token { kind: '.', .. })) {
                         break;
                     }
                     let expr = ValueParser::parse_number(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: 'a', .. }) => {
                     if !parser.is_plain_css() && parser.scan_identifier("and", false)? {
@@ -366,11 +421,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::And,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            false,
                             parser,
                         )?;
                     } else {
                         let expr = self.parse_identifier_like(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     }
                 }
                 Some(Token { kind: 'o', .. }) => {
@@ -380,20 +436,21 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 node: BinaryOp::Or,
                                 span: parser.toks_mut().span_from(start),
                             },
+                            false,
                             parser,
                         )?;
                     } else {
                         let expr = self.parse_identifier_like(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     }
                 }
                 Some(Token { kind: 'u', .. }) | Some(Token { kind: 'U', .. }) => {
                     if matches!(parser.toks().peek_n(1), Some(Token { kind: '+', .. })) {
                         let expr = Self::parse_unicode_range(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     } else {
                         let expr = self.parse_identifier_like(parser)?;
-                        self.add_single_expression(expr, parser)?;
+                        self.add_single_expression(expr, iter_start, parser)?;
                     }
                 }
                 Some(Token {
@@ -409,7 +466,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     ..
                 }) => {
                     let expr = self.parse_identifier_like(parser)?;
-                    self.add_single_expression(expr, parser)?;
+                    self.add_single_expression(expr, iter_start, parser)?;
                 }
                 Some(Token { kind: ',', .. }) => {
                     // If we discover we're parsing a list whose first element is a
@@ -566,7 +623,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
     fn resolve_one_operation(&mut self, parser: &mut P) -> SassResult<()> {
         let operator = self.binary_operators.as_mut().unwrap().pop().unwrap();
+        let is_ambiguous_unary = self
+            .ambiguous_unary
+            .as_mut()
+            .and_then(Vec::pop)
+            .unwrap_or(false);
         let operands = self.operands.as_mut().unwrap();
+        let left_bounds = self.operand_bounds.as_mut().and_then(Vec::pop);
+        let right_bounds = self.single_expr_bounds;
 
         let left = operands.pop().unwrap();
         let right = match self.single_expression.take() {
@@ -575,6 +639,27 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         };
 
         let span = left.span.merge(right.span);
+
+        if is_ambiguous_unary && matches!(operator, BinaryOp::Plus | BinaryOp::Minus) {
+            if let Some((left_start, left_end)) = left_bounds {
+                let op_str = if operator == BinaryOp::Plus { "+" } else { "-" };
+                let left_text = parser.toks().raw_text_range(left_start, left_end);
+                let right_text = parser.toks().raw_text_range(right_bounds.0, right_bounds.1);
+
+                parser.parse_time_warnings_mut().push((
+                    Deprecation::StrictUnary,
+                    span,
+                    format!(
+                        "This operation is parsed as:\n\n    {left_text} {op_str} {right_text}\n\n\
+                         but you may have intended it to mean:\n\n    {left_text} ({op_str}{right_text})\n\n\
+                         Add a space after {op_str} to clarify that it's meant to be a binary operation, or wrap\n\
+                         it in parentheses to make it a unary operation. This will be an error in future\n\
+                         versions of Sass.\n\n\
+                         More info and automated migrator: https://sass-lang.com/d/strict-unary"
+                    ),
+                ));
+            }
+        }
 
         if self.allow_slash
             && !parser.flags().in_parens()
@@ -595,6 +680,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 .span(span),
             );
             self.allow_slash = false;
+        }
+
+        if let Some((left_start, _)) = left_bounds {
+            self.single_expr_bounds = (left_start, right_bounds.1);
         }
 
         Ok(())
@@ -620,6 +709,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     fn add_single_expression(
         &mut self,
         expression: Spanned<AstExpr<'a>>,
+        expr_start: usize,
         parser: &mut P,
     ) -> SassResult<()> {
         if self.single_expression.is_some() {
@@ -652,11 +742,17 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         }
 
         self.single_expression = Some(expression);
+        self.single_expr_bounds = (expr_start, parser.toks().cursor());
 
         Ok(())
     }
 
-    fn add_operator(&mut self, op: Spanned<BinaryOp>, parser: &mut P) -> SassResult<()> {
+    fn add_operator(
+        &mut self,
+        op: Spanned<BinaryOp>,
+        is_ambiguous_unary: bool,
+        parser: &mut P,
+    ) -> SassResult<()> {
         if parser.is_plain_css() && op.node != BinaryOp::Div && op.node != BinaryOp::SingleEq {
             return Err(("Operators aren't allowed in plain CSS.", op.span).into());
         }
@@ -681,10 +777,16 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         self.binary_operators
             .get_or_insert_with(Default::default)
             .push(op.node);
+        self.ambiguous_unary
+            .get_or_insert_with(Default::default)
+            .push(is_ambiguous_unary);
 
         match self.single_expression.take() {
             Some(expr) => {
                 self.operands.get_or_insert_with(Vec::new).push(expr);
+                self.operand_bounds
+                    .get_or_insert_with(Vec::new)
+                    .push(self.single_expr_bounds);
             }
             None => return Err(("Expected expression.", op.span).into()),
         }
@@ -707,7 +809,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         parser.whitespace()?;
 
+        let right_start = parser.toks().cursor();
         self.single_expression = Some(self.parse_single_expression(parser)?);
+        self.single_expr_bounds = (right_start, parser.toks().cursor());
 
         if temporarily_consume_newlines {
             parser.set_consume_newlines(false);
@@ -2279,9 +2383,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         self.space_expressions = None;
         self.binary_operators = None;
         self.operands = None;
+        self.ambiguous_unary = None;
+        self.operand_bounds = None;
         parser.toks_mut().set_cursor(self.start);
         self.allow_slash = true;
         self.single_expression = Some(self.parse_single_expression(parser)?);
+        self.single_expr_bounds = (self.start, parser.toks().cursor());
 
         Ok(())
     }

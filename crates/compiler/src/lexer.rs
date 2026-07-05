@@ -33,6 +33,14 @@ impl Lexer {
         self.buf[start..self.cursor].iter().map(|t| t.kind)
     }
 
+    /// Like [`Lexer::raw_text`], but for an arbitrary `[start, end)` range of
+    /// buffer indices rather than `[start, cursor)`. Used to recover the
+    /// source text of an already-parsed operand (e.g. for the `strict-unary`
+    /// deprecation message) after the cursor has moved past it.
+    pub fn raw_text_range(&self, start: usize, end: usize) -> String {
+        self.buf[start..end].iter().map(|t| t.kind).collect()
+    }
+
     pub fn next_char_is(&self, c: char) -> bool {
         matches!(self.peek(), Some(Token { kind, .. }) if kind == c)
     }
