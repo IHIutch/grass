@@ -945,3 +945,103 @@ fn color_functions_silenced() {
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].starts_with("DEPRECATION WARNING [global-builtin]:"));
 }
+
+#[test]
+fn call_string_warns_with_quoted_reconstruction() {
+    let input = "a {\n  b: call(\"if\", true, 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [call-string]: Passing a string to call() is deprecated and will \
+         be illegal in Dart Sass 2.0.0.\n\nRecommendation: call(get-function(\"if\"))"
+    ));
+}
+
+#[test]
+fn call_string_reconstruction_preserves_unquoted_string() {
+    let input = "a {\n  b: call(unquote(\"if\"), true, 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [call-string]: Passing a string to call() is deprecated and will \
+         be illegal in Dart Sass 2.0.0.\n\nRecommendation: call(get-function(if))"
+    )));
+}
+
+#[test]
+fn call_string_does_not_warn_for_function_reference() {
+    let input = "@use \"sass:meta\";\na {\n  b: meta.call(meta.get-function(\"if\"), true, 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(
+        !logger.warning_messages().iter().any(|w| w.contains("[call-string]")),
+        "unexpected call-string warning: {:?}",
+        logger.warning_messages()
+    );
+}
+
+#[test]
+fn call_string_dedupes_repeated_call_site() {
+    let input = "@each $n in 1, 2, 3 {\n  a { b: call(\"if\", true, 1, 2); }\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.iter().filter(|w| w.contains("[call-string]")).count(), 1);
+}
+
+#[test]
+fn call_string_silenced() {
+    let input = "a {\n  b: call(\"if\", true, 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::CallString);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(
+        !logger.warning_messages().iter().any(|w| w.contains("[call-string]")),
+        "unexpected call-string warning: {:?}",
+        logger.warning_messages()
+    );
+}
+
+#[test]
+fn feature_exists_warns_for_global_and_module_forms() {
+    let input_global = "a {\n  b: feature-exists(\"at-error\");\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input_global.to_string(), &options).expect(input_global);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [global-builtin]:"));
+    assert!(warnings[1].starts_with(
+        "DEPRECATION WARNING [feature-exists]: The feature-exists() function is deprecated.\n\n\
+         More info: https://sass-lang.com/d/feature-exists"
+    ));
+
+    let input_module =
+        "@use \"sass:meta\";\na {\n  b: meta.feature-exists(\"at-error\");\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input_module.to_string(), &options).expect(input_module);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [feature-exists]:"));
+}
+
+#[test]
+fn feature_exists_silenced() {
+    let input = "@use \"sass:meta\";\na {\n  b: meta.feature-exists(\"at-error\");\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::FeatureExists);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}

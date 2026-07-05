@@ -34,6 +34,25 @@ pub enum Deprecation {
     /// equivalent) that's been superseded by `color.channel()` /
     /// `color.adjust()` / `color.scale()`.
     ColorFunctions,
+    /// Passing a string directly to `meta.call()` instead of a function
+    /// reference from `meta.get-function()`.
+    CallString,
+    /// Using `@-moz-document`.
+    MozDocument,
+    /// Calling `feature-exists()` / `meta.feature-exists()`.
+    FeatureExists,
+    /// Using a `color.*` module function (`color.red()`, `color.hwb()`,
+    /// etc.) in place of the plain-CSS function it shadows.
+    ColorModuleCompat,
+    /// Configuring a private (`-`/`_`-prefixed) variable via `@use ... with`,
+    /// `@forward ... with`, or `load-css()`'s `$with` argument.
+    WithPrivate,
+    /// A rest parameter (`$args...`) declared or passed before a positional
+    /// or named argument.
+    MisplacedRest,
+    /// Calling the global `abs()` function with a percentage argument
+    /// outside of `calc()`.
+    AbsPercent,
 }
 
 impl Deprecation {
@@ -51,6 +70,13 @@ impl Deprecation {
             Self::IfFunction => "if-function",
             Self::BogusCombinators => "bogus-combinators",
             Self::ColorFunctions => "color-functions",
+            Self::CallString => "call-string",
+            Self::MozDocument => "moz-document",
+            Self::FeatureExists => "feature-exists",
+            Self::ColorModuleCompat => "color-module-compat",
+            Self::WithPrivate => "with-private",
+            Self::MisplacedRest => "misplaced-rest",
+            Self::AbsPercent => "abs-percent",
         }
     }
 
@@ -67,7 +93,14 @@ impl Deprecation {
             | Self::StrictUnary
             | Self::IfFunction
             | Self::BogusCombinators
-            | Self::ColorFunctions => false,
+            | Self::ColorFunctions
+            | Self::CallString
+            | Self::MozDocument
+            | Self::FeatureExists
+            | Self::ColorModuleCompat
+            | Self::WithPrivate
+            | Self::MisplacedRest
+            | Self::AbsPercent => false,
         }
     }
 }

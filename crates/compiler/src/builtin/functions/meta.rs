@@ -35,10 +35,17 @@ fn if_(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
 
 pub(crate) fn feature_exists(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
+    let span = args.span();
     let feature = args
         .get_err(0, "feature")?
-        .assert_string_with_name("feature", args.span())?
+        .assert_string_with_name("feature", span)?
         .0;
+
+    visitor.emit_deprecation(Deprecation::FeatureExists, span, || {
+        Ok("The feature-exists() function is deprecated.\n\nMore info: \
+            https://sass-lang.com/d/feature-exists"
+            .to_string())
+    })?;
 
     #[allow(clippy::match_same_arms)]
     Ok(match feature.as_str() {
@@ -364,7 +371,21 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     let span = args.span();
     let func = match args.get_err(0, "function")? {
         Value::FunctionRef(f) => *f,
-        Value::String(name, ..) => {
+        value @ Value::String(..) => {
+            // dart-sass's message reconstructs the function name via the
+            // string Value's own `toString()`, which preserves its original
+            // quotedness (e.g. `unquote("if")` shows as `if`, not `"if"`).
+            let quoted_name = value.to_css_string(span, false)?;
+            visitor.emit_deprecation(Deprecation::CallString, span, || {
+                Ok(format!(
+                    "Passing a string to call() is deprecated and will be illegal in Dart Sass \
+                     2.0.0.\n\nRecommendation: call(get-function({quoted_name}))"
+                ))
+            })?;
+
+            let Value::String(name, ..) = value else {
+                unreachable!()
+            };
             let name = Identifier::from(name.as_str());
 
             match visitor.env.get_fn(name, None, span)? {
