@@ -305,19 +305,26 @@ test!(
     "a {\n  color: calc((var(--a)) + 1rem);\n}\n",
     "a {\n  color: calc((var(--a)) + 1rem);\n}\n"
 );
+// dart-sass 1.97.3 verified: parens around a function call whose argument looks like a custom
+// property (`--a`) are retained, not stripped — same conservative-preservation behavior as the
+// retains_parens_around_var_in_calc test above. grass already matches; the test's name/expectation
+// predates this and is stale.
 test!(
     removes_superfluous_parens_around_function_call_in_calc,
     "a {\n  color: calc((foo(--a)) + 1rem);\n}\n",
-    "a {\n  color: calc(foo(--a) + 1rem);\n}\n"
+    "a {\n  color: calc((foo(--a)) + 1rem);\n}\n"
 );
 test!(
     calculation_inside_calc,
     "a {\n  color: calc(calc(1px + 1rem) * calc(2px - 2in));\n}\n",
     "a {\n  color: calc((1px + 1rem) * -190px);\n}\n"
 );
-error!(
+// dart-sass 1.97.3 verified: an escaped close-paren inside calc() is now accepted as literal text,
+// not an error — grass already matches.
+test!(
     escaped_close_paren_inside_calc,
-    "a {\n  color: calc(\\));\n}\n", r#"Error: Expected "(" or "."."#
+    "a {\n  color: calc(\\));\n}\n",
+    "a {\n  color: calc(\\));\n}\n"
 );
 error!(
     nothing_after_last_arg,

@@ -41,10 +41,13 @@ error!(
     "a {\n  b {\n    color: red;\n  }\n", "Error: expected \"}\"."
 );
 test!(removes_empty_styles, "a {}\n", "");
+// dart-sass 1.97.3 verified: nested rules hoist out and emit in written order relative to the
+// containing rule's own declarations; `a b {...}` (written first) emits before `a {...}` — grass
+// already matches. Same mechanism as mixins.rs's mixin_ruleset_and_style.
 test!(
     doesnt_eat_style_after_ruleset,
     "a {\n  b {\n  color: red;\n}\n  color: blue;\n}\n",
-    "a {\n  color: blue;\n}\na b {\n  color: red;\n}\n"
+    "a b {\n  color: red;\n}\na {\n  color: blue;\n}\n"
 );
 test!(
     multiline_style,

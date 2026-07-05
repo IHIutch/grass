@@ -206,10 +206,12 @@ test!(
     "a {\n  color: comparable((23in/2fu), (23cm/2fu));\n}\n",
     "a {\n  color: true;\n}\n"
 );
+// dart-sass 1.97.3 verified: multiple denominator units are parenthesized in unit()'s string
+// output ("rem/(px*vh)"), not flattened bare ("rem/px*vh") — grass already matches.
 test!(
     complex_unit_many_denom_one_numer,
     "a {\n  color: unit((1rem/1px) / 1vh);\n}\n",
-    "a {\n  color: \"rem/px*vh\";\n}\n"
+    "a {\n  color: \"rem/(px*vh)\";\n}\n"
 );
 test!(
     complex_unit_empty_numerator_single_denom,
