@@ -324,13 +324,19 @@ pub(crate) fn zip(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("length", Builtin::new(length));
-    f.insert("nth", Builtin::new(nth));
-    f.insert("list-separator", Builtin::new(list_separator));
-    f.insert("set-nth", Builtin::new(set_nth));
-    f.insert("append", Builtin::new(append));
-    f.insert("join", Builtin::new(join));
-    f.insert("is-bracketed", Builtin::new(is_bracketed));
-    f.insert("index", Builtin::new(index));
-    f.insert("zip", Builtin::new(zip));
+    f.insert("length", Builtin::new(length).with_deprecated_global("list", "length"));
+    f.insert("nth", Builtin::new(nth).with_deprecated_global("list", "nth"));
+    f.insert(
+        "list-separator",
+        Builtin::new(list_separator).with_deprecated_global("list", "separator"),
+    );
+    f.insert("set-nth", Builtin::new(set_nth).with_deprecated_global("list", "set-nth"));
+    f.insert("append", Builtin::new(append).with_deprecated_global("list", "append"));
+    f.insert("join", Builtin::new(join).with_deprecated_global("list", "join"));
+    f.insert(
+        "is-bracketed",
+        Builtin::new(is_bracketed).with_deprecated_global("list", "is-bracketed"),
+    );
+    f.insert("index", Builtin::new(index).with_deprecated_global("list", "index"));
+    f.insert("zip", Builtin::new(zip).with_deprecated_global("list", "zip"));
 }

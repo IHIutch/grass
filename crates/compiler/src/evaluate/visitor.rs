@@ -18,6 +18,7 @@ type FxIndexSet<V> = indexmap::IndexSet<V, FxBuildHasher>;
 use crate::{
     ast::*,
     builtin::{
+        global_builtin_message,
         meta::if_arguments,
         modules::{
             declare_module_color, declare_module_list, declare_module_map, declare_module_math,
@@ -4221,6 +4222,11 @@ impl<'a> Visitor<'a> {
                 if let Some(f) = self.options.custom_fns.get(name.as_str()) {
                     SassFunction::Builtin(f.clone(), name)
                 } else if let Some(f) = GLOBAL_FUNCTIONS.get(name.as_str()) {
+                    if let Some((module, fn_name)) = f.2 {
+                        self.emit_deprecation(Deprecation::GlobalBuiltin, func_call.span, || {
+                            Ok(global_builtin_message(module, fn_name))
+                        })?;
+                    }
                     SassFunction::Builtin(f.clone(), name)
                 } else {
                     SassFunction::Plain {

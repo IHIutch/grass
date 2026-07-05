@@ -680,10 +680,11 @@ fn parse_interpolation_method(
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    // rgb/rgba are plain-CSS-compatible constructors; never warn.
     f.insert("rgb", Builtin::new(rgb));
     f.insert("rgba", Builtin::new(rgba));
-    f.insert("red", Builtin::new(red));
-    f.insert("green", Builtin::new(green));
-    f.insert("blue", Builtin::new(blue));
-    f.insert("mix", Builtin::new(mix));
+    f.insert("red", Builtin::new(red).with_deprecated_global("color", "red"));
+    f.insert("green", Builtin::new(green).with_deprecated_global("color", "green"));
+    f.insert("blue", Builtin::new(blue).with_deprecated_global("color", "blue"));
+    f.insert("mix", Builtin::new(mix).with_deprecated_global("color", "mix"));
 }

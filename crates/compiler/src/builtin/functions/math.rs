@@ -227,14 +227,17 @@ pub(crate) fn divide(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("percentage", Builtin::new(percentage));
-    f.insert("round", Builtin::new(round));
-    f.insert("ceil", Builtin::new(ceil));
-    f.insert("floor", Builtin::new(floor));
-    f.insert("abs", Builtin::new(abs));
-    f.insert("min", Builtin::new(min));
-    f.insert("max", Builtin::new(max));
-    f.insert("comparable", Builtin::new(comparable));
+    f.insert("percentage", Builtin::new(percentage).with_deprecated_global("math", "percentage"));
+    f.insert("round", Builtin::new(round).with_deprecated_global("math", "round"));
+    f.insert("ceil", Builtin::new(ceil).with_deprecated_global("math", "ceil"));
+    f.insert("floor", Builtin::new(floor).with_deprecated_global("math", "floor"));
+    f.insert("abs", Builtin::new(abs).with_deprecated_global("math", "abs"));
+    f.insert("min", Builtin::new(min).with_deprecated_global("math", "min"));
+    f.insert("max", Builtin::new(max).with_deprecated_global("math", "max"));
+    f.insert(
+        "comparable",
+        Builtin::new(comparable).with_deprecated_global("math", "compatible"),
+    );
     #[cfg(feature = "random")]
-    f.insert("random", Builtin::new(random));
+    f.insert("random", Builtin::new(random).with_deprecated_global("math", "random"));
 }

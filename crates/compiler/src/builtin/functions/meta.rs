@@ -438,21 +438,43 @@ pub(crate) fn keywords(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    // No module equivalent in dart-sass; never warns.
     f.insert("if", Builtin::new(if_));
-    f.insert("feature-exists", Builtin::new(feature_exists));
-    f.insert("unit", Builtin::new(unit));
-    f.insert("type-of", Builtin::new(type_of));
-    f.insert("unitless", Builtin::new(unitless));
-    f.insert("inspect", Builtin::new(inspect));
-    f.insert("variable-exists", Builtin::new(variable_exists));
+    f.insert(
+        "feature-exists",
+        Builtin::new(feature_exists).with_deprecated_global("meta", "feature-exists"),
+    );
+    // "unit"/"unitless" live here for shared code, but their dart-sass module
+    // replacement is math.unit / math.is-unitless, not meta.*.
+    f.insert("unit", Builtin::new(unit).with_deprecated_global("math", "unit"));
+    f.insert("type-of", Builtin::new(type_of).with_deprecated_global("meta", "type-of"));
+    f.insert("unitless", Builtin::new(unitless).with_deprecated_global("math", "is-unitless"));
+    f.insert("inspect", Builtin::new(inspect).with_deprecated_global("meta", "inspect"));
+    f.insert(
+        "variable-exists",
+        Builtin::new(variable_exists).with_deprecated_global("meta", "variable-exists"),
+    );
     f.insert(
         "global-variable-exists",
-        Builtin::new(global_variable_exists),
+        Builtin::new(global_variable_exists)
+            .with_deprecated_global("meta", "global-variable-exists"),
     );
-    f.insert("mixin-exists", Builtin::new(mixin_exists));
-    f.insert("function-exists", Builtin::new(function_exists));
-    f.insert("get-function", Builtin::new(get_function));
-    f.insert("call", Builtin::new(call));
-    f.insert("content-exists", Builtin::new(content_exists));
-    f.insert("keywords", Builtin::new(keywords));
+    f.insert(
+        "mixin-exists",
+        Builtin::new(mixin_exists).with_deprecated_global("meta", "mixin-exists"),
+    );
+    f.insert(
+        "function-exists",
+        Builtin::new(function_exists).with_deprecated_global("meta", "function-exists"),
+    );
+    f.insert(
+        "get-function",
+        Builtin::new(get_function).with_deprecated_global("meta", "get-function"),
+    );
+    f.insert("call", Builtin::new(call).with_deprecated_global("meta", "call"));
+    f.insert(
+        "content-exists",
+        Builtin::new(content_exists).with_deprecated_global("meta", "content-exists"),
+    );
+    f.insert("keywords", Builtin::new(keywords).with_deprecated_global("meta", "keywords"));
 }

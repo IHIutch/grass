@@ -30,6 +30,35 @@ mod test {
     }
 }
 
+/// Global `alpha()`: warns unless called with the legacy Microsoft filter
+/// syntax (`alpha(opacity=NN)`, parsed as an unquoted string) or with a
+/// non-legacy color (which `alpha` itself rejects with an error, matching
+/// dart-sass not warning in that case either). `color.alpha()` (the module
+/// form) uses `alpha` directly, without this check. The rest-args overload
+/// (more than one positional argument) never warns in dart-sass either.
+fn global_alpha(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    if args.len() <= 1 {
+        let peek = args
+            .named
+            .get(&Identifier::from("color"))
+            .or_else(|| args.positional.first());
+
+        let skip_warn = match peek {
+            Some(Value::String(s, QuoteKind::None)) => is_ms_filter(s),
+            Some(Value::Color(c)) => !c.color_space().is_legacy(),
+            _ => false,
+        };
+
+        if !skip_warn {
+            visitor.emit_deprecation(Deprecation::GlobalBuiltin, args.span(), || {
+                Ok(global_builtin_message("color", "alpha"))
+            })?;
+        }
+    }
+
+    alpha(args, visitor)
+}
+
 pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     if args.len() <= 1 {
         let color = args.get_err(0, "color")?;
@@ -75,7 +104,12 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     args.max_args(1)?;
     let span = args.span();
     match args.get_err(0, "color")? {
-        Value::Color(c) => Ok(Value::Dimension(SassNumber::new_unitless(c.alpha()))),
+        Value::Color(c) => {
+            visitor.emit_deprecation(Deprecation::GlobalBuiltin, span, || {
+                Ok(global_builtin_message("color", "opacity"))
+            })?;
+            Ok(Value::Dimension(SassNumber::new_unitless(c.alpha())))
+        }
         Value::Dimension(SassNumber {
             num,
             unit,
@@ -165,10 +199,19 @@ pub(crate) fn module_opacity(mut args: ArgumentResult, _visitor: &mut Visitor) -
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("alpha", Builtin::new(alpha));
+    // alpha/opacity warn conditionally on argument shape; the warning is
+    // emitted inline in their own function bodies above, not generically
+    // here (avoids a double warning).
+    f.insert("alpha", Builtin::new(global_alpha));
     f.insert("opacity", Builtin::new(opacity));
-    f.insert("opacify", Builtin::new(opacify));
-    f.insert("fade-in", Builtin::new(opacify));
-    f.insert("transparentize", Builtin::new(transparentize));
-    f.insert("fade-out", Builtin::new(transparentize));
+    f.insert("opacify", Builtin::new(opacify).with_deprecated_global("color", "adjust"));
+    f.insert("fade-in", Builtin::new(opacify).with_deprecated_global("color", "adjust"));
+    f.insert(
+        "transparentize",
+        Builtin::new(transparentize).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "fade-out",
+        Builtin::new(transparentize).with_deprecated_global("color", "adjust"),
+    );
 }

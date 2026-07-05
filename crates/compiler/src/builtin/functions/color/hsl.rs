@@ -276,6 +276,10 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         ));
     }
 
+    visitor.emit_deprecation(Deprecation::GlobalBuiltin, args.span(), || {
+        Ok(global_builtin_message("color", "adjust"))
+    })?;
+
     let mut amount = args
         .get_err(1, "amount")?
         .assert_number_with_name("amount", args.span())?;
@@ -359,6 +363,11 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             QuoteKind::None,
         ));
     }
+    if !matches!(val, Value::Dimension(..)) {
+        visitor.emit_deprecation(Deprecation::GlobalBuiltin, span, || {
+            Ok(global_builtin_message("color", "grayscale"))
+        })?;
+    }
     // Re-wrap and delegate to the main implementation
     let new_args = ArgumentResult {
         positional: vec![val],
@@ -427,6 +436,31 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         }
         Ok(Value::Color(Rc::new(color.complement())))
     }
+}
+
+/// Global `invert()`: warns unless the `$color` argument is a plain number
+/// or special function (`var()`/`calc()`), matching dart-sass's global-only
+/// `invert` wrapper. `color.invert()` (the module form) uses `invert`
+/// directly, without this check.
+fn global_invert(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let peek = args
+        .named
+        .get(&Identifier::from("color"))
+        .or_else(|| args.positional.first());
+
+    let skip_warn = match peek {
+        Some(Value::Dimension(..)) => true,
+        Some(v) => v.is_special_function(),
+        None => false,
+    };
+
+    if !skip_warn {
+        visitor.emit_deprecation(Deprecation::GlobalBuiltin, args.span(), || {
+            Ok(global_builtin_message("color", "invert"))
+        })?;
+    }
+
+    invert(args, visitor)
 }
 
 pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -551,17 +585,27 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    // hsl/hsla are plain-CSS-compatible constructors; never warn.
     f.insert("hsl", Builtin::new(hsl));
     f.insert("hsla", Builtin::new(hsla));
-    f.insert("hue", Builtin::new(hue));
-    f.insert("saturation", Builtin::new(saturation));
-    f.insert("adjust-hue", Builtin::new(adjust_hue));
-    f.insert("lightness", Builtin::new(lightness));
-    f.insert("lighten", Builtin::new(lighten));
-    f.insert("darken", Builtin::new(darken));
+    f.insert("hue", Builtin::new(hue).with_deprecated_global("color", "hue"));
+    f.insert(
+        "saturation",
+        Builtin::new(saturation).with_deprecated_global("color", "saturation"),
+    );
+    f.insert("adjust-hue", Builtin::new(adjust_hue).with_deprecated_global("color", "adjust"));
+    f.insert(
+        "lightness",
+        Builtin::new(lightness).with_deprecated_global("color", "lightness"),
+    );
+    f.insert("lighten", Builtin::new(lighten).with_deprecated_global("color", "adjust"));
+    f.insert("darken", Builtin::new(darken).with_deprecated_global("color", "adjust"));
+    // saturate/grayscale/invert warn conditionally on argument shape; the
+    // warning is emitted inline in their own function bodies above, not
+    // generically here (avoids a double warning).
     f.insert("saturate", Builtin::new(saturate));
-    f.insert("desaturate", Builtin::new(desaturate));
+    f.insert("desaturate", Builtin::new(desaturate).with_deprecated_global("color", "adjust"));
     f.insert("grayscale", Builtin::new(global_grayscale));
-    f.insert("complement", Builtin::new(complement));
-    f.insert("invert", Builtin::new(invert));
+    f.insert("complement", Builtin::new(complement).with_deprecated_global("color", "complement"));
+    f.insert("invert", Builtin::new(global_invert));
 }

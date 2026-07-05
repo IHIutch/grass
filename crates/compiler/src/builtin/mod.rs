@@ -2,15 +2,15 @@ mod functions;
 pub(crate) mod modules;
 
 pub(crate) use functions::{
-    color, list, map, math, meta, selector, string, DISALLOWED_PLAIN_CSS_FUNCTION_NAMES,
-    GLOBAL_FUNCTIONS,
+    color, global_builtin_message, list, map, math, meta, selector, string,
+    DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, GLOBAL_FUNCTIONS,
 };
 
 pub use functions::Builtin;
 
 /// Imports common to all builtin fns
 mod builtin_imports {
-    pub(crate) use super::functions::{Builtin, GlobalFunctionMap, GLOBAL_FUNCTIONS};
+    pub(crate) use super::functions::{global_builtin_message, Builtin, GlobalFunctionMap, GLOBAL_FUNCTIONS};
 
     pub(crate) use codemap::{Span, Spanned};
 
@@ -23,6 +23,7 @@ mod builtin_imports {
         ast::{Argument, ArgumentDeclaration, ArgumentResult, MaybeEvaledArguments},
         color::Color,
         common::{BinaryOp, Brackets, Identifier, ListSeparator, QuoteKind},
+        deprecation::Deprecation,
         error::SassResult,
         evaluate::Visitor,
         unit::Unit,

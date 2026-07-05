@@ -264,14 +264,20 @@ pub(crate) fn unique_id(args: ArgumentResult, _: &mut Visitor) -> SassResult<Val
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("to-upper-case", Builtin::new(to_upper_case));
-    f.insert("to-lower-case", Builtin::new(to_lower_case));
-    f.insert("str-length", Builtin::new(str_length));
-    f.insert("quote", Builtin::new(quote));
-    f.insert("unquote", Builtin::new(unquote));
-    f.insert("str-slice", Builtin::new(str_slice));
-    f.insert("str-index", Builtin::new(str_index));
-    f.insert("str-insert", Builtin::new(str_insert));
+    f.insert(
+        "to-upper-case",
+        Builtin::new(to_upper_case).with_deprecated_global("string", "to-upper-case"),
+    );
+    f.insert(
+        "to-lower-case",
+        Builtin::new(to_lower_case).with_deprecated_global("string", "to-lower-case"),
+    );
+    f.insert("str-length", Builtin::new(str_length).with_deprecated_global("string", "length"));
+    f.insert("quote", Builtin::new(quote).with_deprecated_global("string", "quote"));
+    f.insert("unquote", Builtin::new(unquote).with_deprecated_global("string", "unquote"));
+    f.insert("str-slice", Builtin::new(str_slice).with_deprecated_global("string", "slice"));
+    f.insert("str-index", Builtin::new(str_index).with_deprecated_global("string", "index"));
+    f.insert("str-insert", Builtin::new(str_insert).with_deprecated_global("string", "insert"));
     #[cfg(feature = "random")]
-    f.insert("unique-id", Builtin::new(unique_id));
+    f.insert("unique-id", Builtin::new(unique_id).with_deprecated_global("string", "unique-id"));
 }

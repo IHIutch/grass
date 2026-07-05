@@ -228,12 +228,36 @@ pub(crate) fn selector_unify(mut args: ArgumentResult, visitor: &mut Visitor) ->
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("is-superselector", Builtin::new(is_superselector));
-    f.insert("simple-selectors", Builtin::new(simple_selectors));
-    f.insert("selector-parse", Builtin::new(selector_parse));
-    f.insert("selector-nest", Builtin::new(selector_nest));
-    f.insert("selector-append", Builtin::new(selector_append));
-    f.insert("selector-extend", Builtin::new(selector_extend));
-    f.insert("selector-replace", Builtin::new(selector_replace));
-    f.insert("selector-unify", Builtin::new(selector_unify));
+    f.insert(
+        "is-superselector",
+        Builtin::new(is_superselector).with_deprecated_global("selector", "is-superselector"),
+    );
+    f.insert(
+        "simple-selectors",
+        Builtin::new(simple_selectors).with_deprecated_global("selector", "simple-selectors"),
+    );
+    f.insert(
+        "selector-parse",
+        Builtin::new(selector_parse).with_deprecated_global("selector", "parse"),
+    );
+    f.insert(
+        "selector-nest",
+        Builtin::new(selector_nest).with_deprecated_global("selector", "nest"),
+    );
+    f.insert(
+        "selector-append",
+        Builtin::new(selector_append).with_deprecated_global("selector", "append"),
+    );
+    f.insert(
+        "selector-extend",
+        Builtin::new(selector_extend).with_deprecated_global("selector", "extend"),
+    );
+    f.insert(
+        "selector-replace",
+        Builtin::new(selector_replace).with_deprecated_global("selector", "replace"),
+    );
+    f.insert(
+        "selector-unify",
+        Builtin::new(selector_unify).with_deprecated_global("selector", "unify"),
+    );
 }

@@ -237,10 +237,13 @@ pub(crate) fn map_set(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("map-get", Builtin::new(map_get));
-    f.insert("map-has-key", Builtin::new(map_has_key));
-    f.insert("map-keys", Builtin::new(map_keys));
-    f.insert("map-values", Builtin::new(map_values));
-    f.insert("map-merge", Builtin::new(map_merge));
-    f.insert("map-remove", Builtin::new(map_remove));
+    f.insert("map-get", Builtin::new(map_get).with_deprecated_global("map", "get"));
+    f.insert(
+        "map-has-key",
+        Builtin::new(map_has_key).with_deprecated_global("map", "has-key"),
+    );
+    f.insert("map-keys", Builtin::new(map_keys).with_deprecated_global("map", "keys"));
+    f.insert("map-values", Builtin::new(map_values).with_deprecated_global("map", "values"));
+    f.insert("map-merge", Builtin::new(map_merge).with_deprecated_global("map", "merge"));
+    f.insert("map-remove", Builtin::new(map_remove).with_deprecated_global("map", "remove"));
 }

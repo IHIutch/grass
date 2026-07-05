@@ -23,6 +23,17 @@ pub mod string;
 // todo: maybe Identifier instead of str?
 pub(crate) type GlobalFunctionMap = FxHashMap<&'static str, Builtin>;
 
+/// Builds the `global-builtin` deprecation message dart-sass shows for a
+/// global function call, given the `sass:*` module and function name that
+/// replaces it (e.g. `global_builtin_message("color", "adjust")`).
+pub(crate) fn global_builtin_message(module: &str, name: &str) -> String {
+    format!(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.\nUse \
+         {module}.{name} instead.\n\nMore info and automated migrator: \
+         https://sass-lang.com/d/import"
+    )
+}
+
 static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// A function implemented in rust that is accessible from within Sass
@@ -55,6 +66,7 @@ static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub struct Builtin(
     pub(crate) fn(ArgumentResult, &mut Visitor) -> SassResult<Value>,
     usize,
+    pub(crate) Option<(&'static str, &'static str)>,
 );
 
 impl fmt::Debug for Builtin {
@@ -69,7 +81,36 @@ impl fmt::Debug for Builtin {
 impl Builtin {
     pub fn new(body: fn(ArgumentResult, &mut Visitor) -> SassResult<Value>) -> Builtin {
         let count = FUNCTION_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(body, count)
+        Self(body, count, None)
+    }
+
+    /// Marks this global function as replaced by `{module}.{name}` in the
+    /// `sass:*` module system, for the `global-builtin` deprecation warning.
+    /// Only meaningful on entries in `GLOBAL_FUNCTIONS` — carrying this
+    /// alongside the `Builtin` itself avoids a second hashmap lookup on
+    /// every global function call in `Visitor::visit_function_call_expr`,
+    /// which measurably regressed Bootstrap compile time when the mapping
+    /// lived in a separate map (see solo todo #158 / scratchpad #86).
+    ///
+    /// Mappings are dart-derived from `lib/src/functions/*.dart`'s
+    /// `withDeprecationWarning` call sites. Deliberately NOT applied here
+    /// (handled elsewhere, or never deprecated by dart-sass):
+    /// - `grayscale`, `invert`, `opacity`, `saturate`, `alpha`: warn only
+    ///   for some argument shapes (color vs. plain-CSS-filter-number),
+    ///   implemented inline at their call sites in this module.
+    /// - `rgb`, `rgba`, `hsl`, `hsla`, `hwb`, `lab`, `lch`, `oklab`,
+    ///   `oklch`, `color`: plain-CSS-compatible color constructors, never
+    ///   deprecated.
+    /// - `ie-hex-str`: permanently global-only in dart-sass, no module form.
+    /// - `whiteness`, `blackness`: grass-only globals (dart-sass only
+    ///   exposes these as `color.whiteness`/`color.blackness`); not part of
+    ///   dart's global-builtin set at all.
+    /// - `if`: no module equivalent in dart-sass.
+    /// - `clamp`, `hypot`: pure CSS calculation syntax in dart-sass, never
+    ///   registered as global Sass functions.
+    pub(crate) fn with_deprecated_global(mut self, module: &'static str, name: &'static str) -> Self {
+        self.2 = Some((module, name));
+        self
     }
 }
 
