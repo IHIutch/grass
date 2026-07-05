@@ -1076,3 +1076,16 @@ test!(
     "@use \"sass:color\";\na {b: color.to-space(color(a98-rgb -999999 0 0), lch)}",
     "a {\n  b: color-mix(in lch, color(xyz -9041452038524.758 -4661998707364.329 -423818064305.86096) 100%, black);\n}\n"
 );
+// OKLab/OKLCH <-> Lab/LCH/XYZ-D50 must convert directly via the LMS<->XYZ-D50
+// matrices (dart-sass's LmsColorSpace/XyzD50ColorSpace special-case this),
+// not via an XYZ-D65 round trip. Expected values verified against sass-spec.
+test!(
+    to_space_oklab_to_lab_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(oklab(50% -999999 0), lab)}",
+    "a {\n  b: color-mix(in lab, color(xyz -76837317949857280 3783158056963294.5 5396109066377520) 100%, black);\n}\n"
+);
+test!(
+    to_space_xyz_d50_to_oklab_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), oklab)}",
+    "a {\n  b: color-mix(in oklab, color(xyz -955472.4660146532 28369.6809641542 -12314.0025504671) 100%, black);\n}\n"
+);

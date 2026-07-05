@@ -382,6 +382,21 @@ const OKLAB_OKLAB_TO_LMS: Mat3 = [
     0.99999999999999990, -0.08948417752981180, -1.29148554801940940,
 ];
 
+// Direct LMS <-> XYZ-D50 matrices, used for OKLab/OKLCH <-> Lab/LCH/XYZ-D50 so
+// those conversions don't take an unnecessary (and lossy, at extreme
+// magnitudes) detour through XYZ-D65.
+const LMS_TO_XYZ_D50: Mat3 = [
+     1.28858621817270600, -0.53787174449737450,  0.21358120275423640,
+    -0.00253387643187372,  1.09231679887191650, -0.08978292244004273,
+    -0.06937382305734124, -0.29500839894431263,  1.18948682451211420,
+];
+
+const XYZ_D50_TO_LMS: Mat3 = [
+    0.77070004204311720, 0.34924840261939616, -0.11202351884164681,
+    0.00559649248368848, 0.93707234011367690,  0.06972568836252771,
+    0.04633714262191069, 0.25277531574310524,  0.85145807674679600,
+];
+
 // ---- Transfer functions (gamma encode/decode) ----
 
 /// sRGB gamma encode (linear -> sRGB)
@@ -720,21 +735,40 @@ pub fn lab_to_lch(l: f64, a: f64, b: f64) -> [f64; 3] {
 
 /// Convert OKLab to XYZ-D65.
 pub fn oklab_to_xyz_d65(l: f64, a: f64, b: f64) -> [f64; 3] {
-    // OKLab -> LMS (cube roots)
-    let lms_g = mat3_mul(&OKLAB_OKLAB_TO_LMS, [l, a, b]);
-    // Undo cube root
-    let lms = [lms_g[0].powi(3), lms_g[1].powi(3), lms_g[2].powi(3)];
     // LMS -> XYZ-D65
-    mat3_mul(&OKLAB_LMS_TO_XYZ, lms)
+    mat3_mul(&OKLAB_LMS_TO_XYZ, oklab_to_lms_raw(l, a, b))
 }
 
 /// Convert XYZ-D65 to OKLab.
 pub fn xyz_d65_to_oklab(x: f64, y: f64, z: f64) -> [f64; 3] {
     // XYZ-D65 -> LMS
     let lms = mat3_mul(&OKLAB_XYZ_TO_LMS, [x, y, z]);
-    // Cube root
+    lms_raw_to_oklab(lms)
+}
+
+/// Convert OKLab to XYZ-D50, via the direct LMS<->XYZ-D50 matrix. Used for
+/// OKLab/OKLCH <-> Lab/LCH/XYZ-D50 conversions, which dart-sass routes through
+/// XYZ-D50 rather than XYZ-D65.
+fn oklab_to_xyz_d50(l: f64, a: f64, b: f64) -> [f64; 3] {
+    mat3_mul(&LMS_TO_XYZ_D50, oklab_to_lms_raw(l, a, b))
+}
+
+/// Convert XYZ-D50 to OKLab, via the direct LMS<->XYZ-D50 matrix.
+fn xyz_d50_to_oklab(x: f64, y: f64, z: f64) -> [f64; 3] {
+    let lms = mat3_mul(&XYZ_D50_TO_LMS, [x, y, z]);
+    lms_raw_to_oklab(lms)
+}
+
+/// OKLab -> raw (un-cube-rooted) LMS.
+fn oklab_to_lms_raw(l: f64, a: f64, b: f64) -> [f64; 3] {
+    let lms_g = mat3_mul(&OKLAB_OKLAB_TO_LMS, [l, a, b]);
+    // Undo cube root
+    [lms_g[0].powi(3), lms_g[1].powi(3), lms_g[2].powi(3)]
+}
+
+/// Raw (un-cube-rooted) LMS -> OKLab.
+fn lms_raw_to_oklab(lms: [f64; 3]) -> [f64; 3] {
     let lms_g = [cbrt_like_dart(lms[0]), cbrt_like_dart(lms[1]), cbrt_like_dart(lms[2])];
-    // LMS -> OKLab
     mat3_mul(&OKLAB_LMS_TO_OKLAB, lms_g)
 }
 
@@ -1089,6 +1123,60 @@ pub fn convert(
                 channels
             };
             lab_to_xyz_d50(lab[0], lab[1], lab[2])
+        }
+
+        // Source is OKLab/OKLCH, target is Lab/LCH or XYZ-D50: convert via the
+        // direct LMS<->XYZ-D50 matrices, without an XYZ-D65 round trip (matches
+        // dart-sass's LmsColorSpace.convert, which uses its `lmsToXyzD50`
+        // transformation matrix directly for these destinations).
+        (None, None)
+            if (from == ColorSpace::Oklab || from == ColorSpace::Oklch)
+                && (to == ColorSpace::Lab
+                    || to == ColorSpace::Lch
+                    || to == ColorSpace::XyzD50) =>
+        {
+            let [c0, c1, c2] = channels;
+            let oklab = if from == ColorSpace::Oklch {
+                oklch_to_oklab(c0, c1, c2)
+            } else {
+                channels
+            };
+            let xyz_d50 = oklab_to_xyz_d50(oklab[0], oklab[1], oklab[2]);
+            match to {
+                ColorSpace::XyzD50 => xyz_d50,
+                ColorSpace::Lch => {
+                    let lab = xyz_d50_to_lab(xyz_d50[0], xyz_d50[1], xyz_d50[2]);
+                    lab_to_lch(lab[0], lab[1], lab[2])
+                }
+                _ => xyz_d50_to_lab(xyz_d50[0], xyz_d50[1], xyz_d50[2]),
+            }
+        }
+
+        // Source is Lab/LCH or XYZ-D50, target is OKLab/OKLCH: convert via the
+        // direct LMS<->XYZ-D50 matrices, without an XYZ-D65 round trip (matches
+        // dart-sass's XyzD50ColorSpace.convert, which uses its `xyzD50ToLms`
+        // transformation matrix directly for these destinations).
+        (None, None)
+            if (to == ColorSpace::Oklab || to == ColorSpace::Oklch)
+                && (from == ColorSpace::Lab
+                    || from == ColorSpace::Lch
+                    || from == ColorSpace::XyzD50) =>
+        {
+            let [c0, c1, c2] = channels;
+            let xyz_d50 = match from {
+                ColorSpace::XyzD50 => channels,
+                ColorSpace::Lch => {
+                    let lab = lch_to_lab(c0, c1, c2);
+                    lab_to_xyz_d50(lab[0], lab[1], lab[2])
+                }
+                _ => lab_to_xyz_d50(c0, c1, c2),
+            };
+            let oklab = xyz_d50_to_oklab(xyz_d50[0], xyz_d50[1], xyz_d50[2]);
+            if to == ColorSpace::Oklch {
+                oklab_to_oklch(oklab[0], oklab[1], oklab[2])
+            } else {
+                oklab
+            }
         }
 
         // Fallback: go through XYZ-D65 (for XYZ↔XYZ, Lab↔OKLab, etc.)
