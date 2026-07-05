@@ -1,4 +1,4 @@
-use crate::{builtin::builtin_imports::*, evaluate::div};
+use crate::{builtin::builtin_imports::*, evaluate::div, serializer::serialize_number};
 
 pub(crate) fn percentage(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
@@ -65,6 +65,43 @@ pub(crate) fn abs(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         .get_err(0, "number")?
         .assert_number_with_name("number", args.span())?;
 
+    num.num = num.num.abs();
+
+    Ok(Value::Dimension(num))
+}
+
+/// Global `abs()` — unlike the other global math functions, this warns
+/// `abs-percent` instead of `global-builtin` when the argument has a `%`
+/// unit (dart-sass intends to eventually pass percentages through to a CSS
+/// `abs()` function rather than resolving them at compile time). Only
+/// non-percentage calls fall through to the ordinary global-builtin warning.
+/// `math.abs()` (the module form) always uses the plain `abs` above and
+/// never warns either way.
+fn global_abs(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let span = args.span();
+    let number = args
+        .get_err(0, "number")?
+        .assert_number_with_name("number", span)?;
+
+    if number.unit == Unit::Percent {
+        let number_text = serialize_number(&number, visitor.options, span)?;
+        visitor.emit_deprecation(Deprecation::AbsPercent, span, || {
+            Ok(format!(
+                "Passing percentage units to the global abs() function is deprecated.\nIn the \
+                 future, this will emit a CSS abs() function to be resolved by the \
+                 browser.\nTo preserve current behavior: math.abs({number_text})\nTo emit a CSS \
+                 abs() now: abs(#{{{number_text}}})\nMore info: \
+                 https://sass-lang.com/d/abs-percent"
+            ))
+        })?;
+    } else {
+        visitor.emit_deprecation(Deprecation::GlobalBuiltin, span, || {
+            Ok(global_builtin_message("math", "abs"))
+        })?;
+    }
+
+    let mut num = number;
     num.num = num.num.abs();
 
     Ok(Value::Dimension(num))
@@ -231,7 +268,9 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     f.insert("round", Builtin::new(round).with_deprecated_global("math", "round"));
     f.insert("ceil", Builtin::new(ceil).with_deprecated_global("math", "ceil"));
     f.insert("floor", Builtin::new(floor).with_deprecated_global("math", "floor"));
-    f.insert("abs", Builtin::new(abs).with_deprecated_global("math", "abs"));
+    // abs warns conditionally (abs-percent vs global-builtin), emitted
+    // inline in global_abs above, not generically here.
+    f.insert("abs", Builtin::new(global_abs));
     f.insert("min", Builtin::new(min).with_deprecated_global("math", "min"));
     f.insert("max", Builtin::new(max).with_deprecated_global("math", "max"));
     f.insert(

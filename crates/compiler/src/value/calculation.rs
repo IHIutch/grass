@@ -1109,7 +1109,7 @@ impl SassCalculation {
         // })
     }
 
-    fn simplify(arg: CalculationArg) -> CalculationArg {
+    pub(crate) fn simplify(arg: CalculationArg) -> CalculationArg {
         match arg {
             CalculationArg::Number(..)
             | CalculationArg::Operation { .. }

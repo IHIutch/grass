@@ -1045,3 +1045,76 @@ fn feature_exists_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn abs_percent_warns_for_bare_call() {
+    let input = "a {\n  b: abs(-50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 50%;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [abs-percent]: Passing percentage units to the global abs() \
+         function is deprecated.\nIn the future, this will emit a CSS abs() function to be \
+         resolved by the browser.\nTo preserve current behavior: math.abs(-50%)\nTo emit a CSS \
+         abs() now: abs(#{-50%})"
+    ));
+}
+
+#[test]
+fn abs_percent_warns_inside_explicit_calc() {
+    let input = "a {\n  b: calc(abs(50%));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [abs-percent]:"));
+}
+
+#[test]
+fn abs_percent_warns_for_named_arg_form() {
+    // The named-arg (non-calc-safe) form also trips global-builtin.
+    let input = "a {\n  b: abs($number: -50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [abs-percent]:"));
+}
+
+#[test]
+fn abs_does_not_warn_for_non_percent_units() {
+    let input = "a {\n  b: abs(-5px);\n  c: abs($number: -5px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(
+        !logger.warning_messages().iter().any(|w| w.contains("[abs-percent]")),
+        "unexpected abs-percent warning: {:?}",
+        logger.warning_messages()
+    );
+}
+
+#[test]
+fn abs_does_not_warn_for_module_form() {
+    let input = "@use \"sass:math\";\na {\n  b: math.abs(-50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}
+
+#[test]
+fn abs_percent_silenced() {
+    let input = "a {\n  b: abs(-50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::AbsPercent);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
+}

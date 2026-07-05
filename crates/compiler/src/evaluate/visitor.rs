@@ -38,6 +38,8 @@ use crate::{
         ComplexSelectorComponent, ExtendRule, ExtendedSelector, Extension, ExtensionStore,
         SelectorList, SelectorParser, SimpleSelector,
     },
+    serializer::serialize_number,
+    unit::Unit,
     utils::{to_sentence, trim_ascii},
     value::{
         ArgList, CalculationArg, CalculationName, Number, SassCalculation, SassFunction, SassMap,
@@ -4641,7 +4643,27 @@ impl<'a> Visitor<'a> {
             }
             CalculationName::Abs => {
                 Self::check_calc_args(&args, 1, "abs", span)?;
-                SassCalculation::abs(args.pop().unwrap(), self.options, span)
+                let arg = SassCalculation::simplify(args.pop().unwrap());
+                // Mirrors dart-sass's `SassCalculation.abs`: this also covers
+                // the legacy un-namespaced `abs(...)` call (routed here via
+                // `visit_calculation_with_fallback` for calc-safe argument
+                // shapes), not just an explicit `calc(abs(...))`.
+                if let CalculationArg::Number(ref n) = arg {
+                    if n.unit == Unit::Percent {
+                        let number_text = serialize_number(n, self.options, span)?;
+                        self.emit_deprecation(Deprecation::AbsPercent, span, || {
+                            Ok(format!(
+                                "Passing percentage units to the global abs() function is \
+                                 deprecated.\nIn the future, this will emit a CSS abs() function \
+                                 to be resolved by the browser.\nTo preserve current behavior: \
+                                 math.abs({number_text})\nTo emit a CSS abs() now: \
+                                 abs(#{{{number_text}}})\nMore info: \
+                                 https://sass-lang.com/d/abs-percent"
+                            ))
+                        })?;
+                    }
+                }
+                SassCalculation::abs(arg, self.options, span)
             }
             CalculationName::Exp => {
                 Self::check_calc_args(&args, 1, "exp", span)?;
