@@ -285,6 +285,7 @@ dependencies = [
  "codemap",
  "compact_str",
  "indexmap",
+ "js-sys",
  "lasso",
  "phf",
  "rand",

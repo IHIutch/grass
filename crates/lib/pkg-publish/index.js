@@ -103,10 +103,10 @@ const fsCallbacks = {
 
 // --- Public API ---
 
-function makeResult(css, inputPath) {
+function makeResult(css, inputPath, sourceMap) {
   const loadedUrls = [];
   if (inputPath) loadedUrls.push(pathToFileURL(resolve(inputPath)));
-  return { css, loadedUrls, sourceMap: undefined };
+  return { css, loadedUrls, sourceMap };
 }
 
 function buildOptions(options) {
@@ -115,6 +115,8 @@ function buildOptions(options) {
     loadPaths: options.loadPaths || [],
     quiet: options.quietDeps || options.quiet || false,
     charset: options.charset !== undefined ? options.charset : true,
+    sourceMap: options.sourceMap || false,
+    sourceMapIncludeSources: options.sourceMapIncludeSources || false,
   };
 }
 
@@ -128,8 +130,10 @@ export function compile(path, options = {}) {
         loadPaths: opts.loadPaths,
         quiet: opts.quiet,
         charset: opts.charset,
+        sourceMap: opts.sourceMap,
+        sourceMapIncludeSources: opts.sourceMapIncludeSources,
       });
-      return makeResult(result.css, path);
+      return makeResult(result.css, path, result.sourceMap);
     } catch (e) {
       throw new Error(typeof e === "string" ? e : e.message || String(e));
     }
@@ -137,8 +141,16 @@ export function compile(path, options = {}) {
 
   const wasm = loadWasm();
   try {
-    const css = wasm.compile_file(path, opts.loadPaths, opts.style, opts.quiet, fsCallbacks);
-    return makeResult(css, path);
+    const result = wasm.compile_file(
+      path,
+      opts.loadPaths,
+      opts.style,
+      opts.quiet,
+      opts.sourceMap,
+      opts.sourceMapIncludeSources,
+      fsCallbacks
+    );
+    return makeResult(result.css, path, result.sourceMap);
   } catch (e) {
     throw new Error(typeof e === "string" ? e : e.message || String(e));
   }
@@ -154,8 +166,10 @@ export function compileString(source, options = {}) {
         loadPaths: opts.loadPaths,
         quiet: opts.quiet,
         charset: opts.charset,
+        sourceMap: opts.sourceMap,
+        sourceMapIncludeSources: opts.sourceMapIncludeSources,
       });
-      return makeResult(result.css, null);
+      return makeResult(result.css, null, result.sourceMap);
     } catch (e) {
       throw new Error(typeof e === "string" ? e : e.message || String(e));
     }
@@ -163,8 +177,16 @@ export function compileString(source, options = {}) {
 
   const wasm = loadWasm();
   try {
-    const css = wasm.compile(source, opts.loadPaths, opts.style, opts.quiet, fsCallbacks);
-    return makeResult(css, null);
+    const result = wasm.compile(
+      source,
+      opts.loadPaths,
+      opts.style,
+      opts.quiet,
+      opts.sourceMap,
+      opts.sourceMapIncludeSources,
+      fsCallbacks
+    );
+    return makeResult(result.css, null, result.sourceMap);
   } catch (e) {
     throw new Error(typeof e === "string" ? e : e.message || String(e));
   }
@@ -179,9 +201,11 @@ export function compileAsync(path, options = {}) {
         loadPaths: opts.loadPaths,
         quiet: opts.quiet,
         charset: opts.charset,
+        sourceMap: opts.sourceMap,
+        sourceMapIncludeSources: opts.sourceMapIncludeSources,
       })
       .then(
-        (result) => makeResult(result.css, path),
+        (result) => makeResult(result.css, path, result.sourceMap),
         (e) => {
           throw new Error(typeof e === "string" ? e : e.message || String(e));
         }
@@ -200,9 +224,11 @@ export function compileStringAsync(source, options = {}) {
         loadPaths: opts.loadPaths,
         quiet: opts.quiet,
         charset: opts.charset,
+        sourceMap: opts.sourceMap,
+        sourceMapIncludeSources: opts.sourceMapIncludeSources,
       })
       .then(
-        (result) => makeResult(result.css, null),
+        (result) => makeResult(result.css, null, result.sourceMap),
         (e) => {
           throw new Error(typeof e === "string" ? e : e.message || String(e));
         }

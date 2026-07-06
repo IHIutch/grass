@@ -30,6 +30,7 @@ rand = { version = "0.8", optional = true }
 # todo: update to use text_size::TextRange
 codemap = "0.1.3"
 wasm-bindgen = { version = "0.2.68", optional = true }
+js-sys = { version = "0.3", optional = true }
 phf = { version = "0.11", features = ["macros"] }
 indexmap = "2"
 # todo: do we really need interning for things?
@@ -45,7 +46,7 @@ default = ["random", "custom-builtin-fns", "stacker"]
 # Option (enabled by default): enable the builtin functions `random([$limit])` and `unique-id()`
 random = ["rand"]
 # Option: expose JavaScript-friendly WebAssembly exports
-wasm-exports = ["wasm-bindgen"]
+wasm-exports = ["wasm-bindgen", "dep:js-sys"]
 # Option: expose internals necessary to implement custom builtin functions
 custom-builtin-fns = []
 # Option (enabled by default): grow the stack on demand at recursive parse

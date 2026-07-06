@@ -29,4 +29,26 @@ if (hasNative) {
   console.log("native async ok");
 }
 
+// sourceMap option (todo #162): absent by default; a real object (not a
+// JSON string) shaped like the Sass JS API's result when requested, on both
+// the native and WASM paths — matched here regardless of which one this
+// process actually loaded (see native/wasm branching in index.js).
+{
+  const plain = grass.compileString("a {\n  b: c;\n}\n");
+  assert.equal(plain.sourceMap, undefined);
+
+  const withMap = grass.compileString("a {\n  b: c;\n}\n", { sourceMap: true });
+  assert.equal(typeof withMap.sourceMap, "object");
+  assert.equal(withMap.sourceMap.version, 3);
+  assert.equal(withMap.sourceMap.mappings, "AAAA;EACE");
+  assert.ok(withMap.sourceMap.sources[0].startsWith("data:;charset=utf-8,"));
+  assert.equal(withMap.sourceMap.sourcesContent, undefined);
+
+  const withSources = grass.compileString("a {\n  b: c;\n}\n", {
+    sourceMap: true,
+    sourceMapIncludeSources: true,
+  });
+  assert.deepEqual(withSources.sourceMap.sourcesContent, ["a {\n  b: c;\n}\n"]);
+}
+
 console.log("smoke ok");

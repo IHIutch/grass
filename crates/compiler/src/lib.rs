@@ -478,8 +478,7 @@ mod wasm_fs {
                 .canonicalize(&path.to_string_lossy())
                 .map(PathBuf::from)
                 .map_err(|e| {
-                    Error::new(
-                        ErrorKind::Other,
+                    Error::other(
                         e.as_string()
                             .unwrap_or_else(|| "canonicalize error".to_string()),
                     )
@@ -506,18 +505,41 @@ mod wasm_fs {
     }
 }
 
+/// Builds the `{css, sourceMap}` object returned to JS by `compile_js`/
+/// `compile_file_js` when source maps are wired up. `sourceMap` is a real
+/// parsed JS object (via `JSON.parse`, over the same JSON text the CLI and
+/// napi surfaces build), not a string — matching the shape those surfaces
+/// use, and never has a `file` key (that field is CLI-only).
+#[cfg(feature = "wasm-exports")]
+fn wasm_compile_result(css: String, map: Option<SourceMapData>, include_sources: bool) -> JsValue {
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(&obj, &JsValue::from_str("css"), &JsValue::from_str(&css)).unwrap();
+
+    let source_map = match map {
+        Some(map) => js_sys::JSON::parse(&map.to_json(None, include_sources))
+            .unwrap_or(JsValue::UNDEFINED),
+        None => JsValue::UNDEFINED,
+    };
+    js_sys::Reflect::set(&obj, &JsValue::from_str("sourceMap"), &source_map).unwrap();
+
+    obj.into()
+}
+
 #[cfg(feature = "wasm-exports")]
 #[wasm_bindgen(js_name = compile)]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_js(
     input: String,
     load_paths: Vec<String>,
     style: &str,
     quiet: bool,
+    source_map: bool,
+    source_map_include_sources: bool,
     fs_callbacks: wasm_fs::JsFsCallbacks,
-) -> std::result::Result<String, String> {
+) -> std::result::Result<JsValue, String> {
     let js_fs = wasm_fs::JsFs::new(fs_callbacks);
 
-    let mut options = Options::default().fs(&js_fs).quiet(quiet);
+    let mut options = Options::default().fs(&js_fs).quiet(quiet).source_map(source_map);
 
     if style == "compressed" {
         options = options.style(OutputStyle::Compressed);
@@ -527,21 +549,25 @@ pub fn compile_js(
         options = options.load_path(lp);
     }
 
-    from_string(input, &options).map_err(|e| e.to_string())
+    let (css, map) = from_string_with_source_map(input, &options).map_err(|e| e.to_string())?;
+    Ok(wasm_compile_result(css, map, source_map_include_sources))
 }
 
 #[cfg(feature = "wasm-exports")]
 #[wasm_bindgen(js_name = compile_file)]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_file_js(
     path: String,
     load_paths: Vec<String>,
     style: &str,
     quiet: bool,
+    source_map: bool,
+    source_map_include_sources: bool,
     fs_callbacks: wasm_fs::JsFsCallbacks,
-) -> std::result::Result<String, String> {
+) -> std::result::Result<JsValue, String> {
     let js_fs = wasm_fs::JsFs::new(fs_callbacks);
 
-    let mut options = Options::default().fs(&js_fs).quiet(quiet);
+    let mut options = Options::default().fs(&js_fs).quiet(quiet).source_map(source_map);
 
     if style == "compressed" {
         options = options.style(OutputStyle::Compressed);
@@ -551,5 +577,6 @@ pub fn compile_file_js(
         options = options.load_path(lp);
     }
 
-    from_path(&path, &options).map_err(|e| e.to_string())
+    let (css, map) = from_path_with_source_map(&path, &options).map_err(|e| e.to_string())?;
+    Ok(wasm_compile_result(css, map, source_map_include_sources))
 }
