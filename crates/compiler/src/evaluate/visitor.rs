@@ -213,11 +213,16 @@ pub struct Visitor<'a> {
     pub(crate) warnings_emitted: FxHashSet<Span>,
     // avoid emitting duplicate deprecation warnings for the same deprecation + span. This
     // matters in practice: a deprecation site inside a function/mixin body can be evaluated
-    // many times (e.g. once per @each iteration), and dart-sass's own `_warn` dedupes on
-    // (message, span) so a single call site only ever warns once. We key on span alone since
-    // (unlike dart-sass, which builds messages from unevaluated AST text) our message text is
-    // built from evaluated operands and can vary call to call — see todo #130 design record.
+    // many times (e.g. once per @each iteration). This is the fast-path check in
+    // `emit_deprecation` — first-time call sites stop here without ever building a message.
     pub(crate) deprecation_warnings_emitted: FxHashSet<(Deprecation, Span)>,
+    // Second-level dedup, matching dart-sass's `_warningsEmitted` key of (message, span):
+    // a call site already recorded above that's revisited with a DIFFERENT message (e.g.
+    // bogus-combinators' interpolated selector text, or the same source line evaluated with
+    // different operands across loop iterations) must still warn again. Only consulted once
+    // a (deprecation, span) pair has already fired once, so the common one-shot case above
+    // never pays for this.
+    pub(crate) deprecation_messages_emitted: FxHashSet<(Span, String)>,
     pub(crate) media_queries: Option<Vec<MediaQuery>>,
     pub(crate) media_query_sources: Option<FxIndexSet<MediaQuery>>,
     pub(crate) extender: ExtensionStore,
@@ -315,6 +320,7 @@ impl<'a> Visitor<'a> {
             flags,
             warnings_emitted: FxHashSet::default(),
             deprecation_warnings_emitted: FxHashSet::default(),
+            deprecation_messages_emitted: FxHashSet::default(),
             media_queries: None,
             media_query_sources: None,
             env: Environment::new(),
@@ -3099,12 +3105,36 @@ impl<'a> Visitor<'a> {
         // Mirrors dart-sass's `_warningsEmitted` dedup, which runs before fatal/silence
         // handling: a given call site only ever triggers once, even if evaluated repeatedly
         // (e.g. inside a function called from a loop).
+        //
+        // dart's actual dedup key is (message, span), not (deprecation, span): a
+        // message that varies by evaluated content at a fixed span (e.g.
+        // bogus-combinators' interpolated selector text, or the same source line
+        // hit with different values across loop iterations) must still warn once
+        // per distinct message, not collapse to whichever text arrived first. We
+        // approximate this without paying for a message build on every call by
+        // only doing the extra (span, message) check on REVISITS: the first time
+        // a (deprecation, span) pair is seen, this behaves exactly as before
+        // (message stays unbuilt until the fatal/silence/future gates pass), so
+        // the common case — the vast majority of call sites fire exactly once —
+        // is unaffected. Only already-repeated call sites (loops) pay for a
+        // message build on each further visit, since only they can even trigger
+        // dart's message-varies-at-fixed-span case.
+        let mut message = Some(message);
+        let mut prebuilt_message = None;
+
         if !self.deprecation_warnings_emitted.insert((deprecation, span)) {
-            return Ok(());
+            let msg = (message.take().unwrap())()?;
+            if !self.deprecation_messages_emitted.insert((span, msg.clone())) {
+                return Ok(());
+            }
+            prebuilt_message = Some(msg);
         }
 
         if self.options.fatal_deprecations.contains(&deprecation) {
-            let message = message()?;
+            let message = match prebuilt_message.take() {
+                Some(m) => m,
+                None => (message.take().unwrap())()?,
+            };
             return Err((
                 format!(
                     "{message}\n\nThis is only an error because you've set the {} \
@@ -3125,7 +3155,17 @@ impl<'a> Visitor<'a> {
             return Ok(());
         }
 
-        let message = message()?;
+        let message = match prebuilt_message {
+            Some(m) => m,
+            None => {
+                // First-ever visit to this (deprecation, span): record the
+                // message now so a later revisit with the SAME text dedupes
+                // against it (see the revisit branch above).
+                let m = (message.take().unwrap())()?;
+                self.deprecation_messages_emitted.insert((span, m.clone()));
+                m
+            }
+        };
         let loc = self.map.look_up_span(span);
         self.options
             .logger
@@ -3863,6 +3903,63 @@ impl<'a> Visitor<'a> {
             None => Value::Dimension(number.clone())
                 .to_css_string(span, false)
                 .unwrap_or_else(|_| format!("{}{}", number.num.0, number.unit)),
+        }
+    }
+
+    /// Best-effort AST-based reconstruction of dart-sass's `recommendation()`
+    /// text for the slash-div warning (dart builds this from the original,
+    /// unevaluated expression's `toString()`, so e.g. `12 / $n` recommends
+    /// `math.div(12, $n)` rather than substituting `$n`'s current value).
+    /// Covers the common shapes explicitly (Number, Variable, Paren, nested
+    /// `/`); returns `None` for anything else so the caller falls back to the
+    /// evaluated value's text.
+    fn div_operand_source_text(expr: &AstExpr<'static>, span: Span) -> Option<String> {
+        match expr {
+            AstExpr::Number { n, unit } => Some(
+                Value::Dimension(SassNumber {
+                    num: *n,
+                    unit: unit.clone(),
+                    as_slash: None,
+                })
+                .to_css_string(span, false)
+                .unwrap_or_else(|_| format!("{}{}", n.0, unit)),
+            ),
+            AstExpr::Variable { name, namespace } => {
+                let ns = namespace
+                    .map(|ns| format!("{}.", ns.node))
+                    .unwrap_or_default();
+                Some(format!("{ns}${}", name.node))
+            }
+            // dart-sass's `ParenthesizedExpression() => expression.expression.toString()`
+            // reconstructs from the INNER expression's plain syntax, dropping the
+            // parens — critically, this does NOT recurse through the math.div
+            // conversion below: a parenthesized nested division prints as literal
+            // `a / b`, not `math.div(a, b)` (verified: `(12 / $n) / 2` recommends
+            // `math.div(12 / $n, 2)` in dart, not `math.div(math.div(12, $n), 2)`).
+            AstExpr::Paren(inner) => Self::div_operand_plain_text(inner, span),
+            AstExpr::BinaryOp(binop) if binop.op == BinaryOp::Div => Some(format!(
+                "math.div({}, {})",
+                Self::div_operand_source_text(&binop.lhs, span)?,
+                Self::div_operand_source_text(&binop.rhs, span)?
+            )),
+            _ => None,
+        }
+    }
+
+    /// Plain (non-`math.div`-converted) reconstruction used for the content of
+    /// a `Paren` inside `div_operand_source_text` — see its doc comment.
+    fn div_operand_plain_text(expr: &AstExpr<'static>, span: Span) -> Option<String> {
+        match expr {
+            AstExpr::Number { .. } | AstExpr::Variable { .. } => {
+                Self::div_operand_source_text(expr, span)
+            }
+            AstExpr::Paren(inner) => Self::div_operand_plain_text(inner, span),
+            AstExpr::BinaryOp(binop) if binop.op == BinaryOp::Div => Some(format!(
+                "{} / {}",
+                Self::div_operand_plain_text(&binop.lhs, span)?,
+                Self::div_operand_plain_text(&binop.rhs, span)?
+            )),
+            _ => None,
         }
     }
 
@@ -5292,16 +5389,25 @@ impl<'a> Visitor<'a> {
                         span,
                     );
                 } else if left_is_number && right_is_number {
-                    // NOTE: dart-sass builds this recommendation from the
-                    // original (unevaluated) expression AST, so e.g. `12 /
-                    // $n` recommends `math.div(12, $n)`. We only have the
-                    // evaluated operands here, so this instead prints their
-                    // values (matches dart-sass exactly for literal
-                    // operands like `(1/2)`, diverges for variables/nested
-                    // expressions — see todo #130 design record).
+                    // dart-sass builds this recommendation from the original
+                    // (unevaluated) expression AST, so e.g. `12 / $n`
+                    // recommends `math.div(12, $n)` rather than substituting
+                    // $n's current value. `div_operand_source_text` covers
+                    // the common shapes (Number, Variable, Paren, nested `/`)
+                    // structurally, without evaluating; anything else falls
+                    // back to the evaluated value's text (dart-exact for
+                    // literal operands like `(1/2)`, diverges for e.g.
+                    // function-call operands — narrower than dart's general
+                    // AST `toString()`, see todo #159).
                     self.emit_deprecation(Deprecation::SlashDiv, span, || {
-                        let left_text = left.to_css_string(span, false)?;
-                        let right_text = right.to_css_string(span, false)?;
+                        let left_text = match Self::div_operand_source_text(lhs, span) {
+                            Some(t) => t,
+                            None => left.to_css_string(span, false)?,
+                        };
+                        let right_text = match Self::div_operand_source_text(rhs, span) {
+                            Some(t) => t,
+                            None => right.to_css_string(span, false)?,
+                        };
                         Ok(format!(
                             "Using / for division outside of calc() is deprecated and will be \
                              removed in Dart Sass 2.0.0.\n\nRecommendation: math.div({left_text}, \

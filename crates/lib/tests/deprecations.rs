@@ -375,14 +375,54 @@ fn slash_div_fatal() {
 }
 
 #[test]
+fn slash_div_recommendation_uses_ast_text_for_variable_operand() {
+    // #159.2: dart-sass builds the recommendation from the original,
+    // unevaluated expression text, so `12 / $n` recommends `math.div(12,
+    // $n)` rather than substituting $n's value. Verified against npx
+    // sass@1.97.3 (identical message text and span).
+    let input = "$n: 4;\na {\n  b: 12 / $n;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Recommendation: math.div(12, $n) or calc(12 / $n)"));
+}
+
+#[test]
+fn slash_div_recommendation_nested_division_in_parens() {
+    // A parenthesized nested division reconstructs as plain `a / b` text
+    // (dart's `ParenthesizedExpression() => expression.expression.toString()`
+    // short-circuits before the math.div-conversion arm), not
+    // `math.div(a, b)`. Verified against npx sass@1.97.3: the outer
+    // recommendation is `math.div(12 / $n, 2)`, not
+    // `math.div(math.div(12, $n), 2)`.
+    let input = "$n: 4;\na {\n  b: (12 / $n) / 2;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {:?}", warnings);
+    assert!(warnings[0].contains("Recommendation: math.div(12, $n)"));
+    assert!(warnings[1].contains("Recommendation: math.div(12 / $n, 2)"));
+}
+
+#[test]
 fn slash_div_dedupes_repeated_call_site() {
     // The same division, evaluated many times via a loop, should only warn
-    // once per call site (matches dart-sass's per-(message, span) dedup).
+    // once per call site (matches dart-sass's per-(message, span) dedup) —
+    // this relies on the AST-text recommendation (#159.2): dart's message is
+    // built from unevaluated expression text ("math.div(12, $n)"), which
+    // stays constant across iterations even though $n's value changes, so
+    // it collapses via the (message, span) dedup key (#184). Verified
+    // byte-identical (message text and span) against npx sass@1.97.3.
     let input = "@each $n in 1, 2, 3, 4, 5 {\n  .a-#{$n} { b: 12 / $n; }\n}";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert_eq!(logger.warning_messages().len(), 1);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1, "expected 1 warning, got {:?}", warnings);
+    assert!(warnings[0].contains("math.div(12, $n)"));
 }
 
 #[test]
@@ -711,20 +751,17 @@ fn bogus_combinators_warns_for_bogus_extender() {
 
 #[test]
 fn bogus_combinators_dedupes_repeated_call_site() {
-    // NOTE: dart-sass's own dedup key is `(message, span)` (evaluate.dart's
-    // `_warningsEmitted`), so it does NOT dedupe here (the selector text —
-    // and thus the message — differs each iteration: ".c-1", ".c-2", ...) —
-    // dart shows 3 warnings for this input. grass's `emit_deprecation`
-    // dedups by `(Deprecation, Span)` only (a pre-existing choice from the
-    // elseif/import/slash-div tranche, where the message text never varies
-    // by loop iteration for those IDs), so it collapses to 1 here. Fixing
-    // this would mean changing the shared dedup key for every deprecation,
-    // out of scope for this tranche — documented as a known divergence.
+    // dart-sass's own dedup key is `(message, span)` (evaluate.dart's
+    // `_warningsEmitted`), so it does NOT dedupe here — the selector text (and
+    // thus the message) differs each iteration: ".c-1", ".c-2", ".c-3" — dart
+    // shows 3 warnings for this input, verified against npx sass@1.97.3
+    // --verbose. grass's `emit_deprecation` now dedups on (message, span) too
+    // (#184), matching this.
     let input = "@each $n in 1, 2, 3 {\n  + .c-#{$n} {\n    d: e;\n  }\n}\n";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert_eq!(logger.warning_messages().len(), 1);
+    assert_eq!(logger.warning_messages().len(), 3);
 }
 
 #[test]
