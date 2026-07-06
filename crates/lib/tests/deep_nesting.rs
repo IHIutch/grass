@@ -8,10 +8,19 @@
 // per level (see MAX_PARSER_RECURSION_DEPTH and MAX_CALLABLE_RECURSION_DEPTH
 // in the compiler crate for the full measurements):
 //
-// - Parser recursion (nested blocks/parens/brackets) is cheap enough that
-//   MAX_PARSER_RECURSION_DEPTH (128) survives comfortably on cargo test's
-//   own default thread stack (~2 MiB in debug builds) — those tests below
-//   run with no special stack handling.
+// - Parser recursion (nested blocks/parens/brackets) grows the stack on
+//   demand via `stacker::maybe_grow` (todo #148) when the default-on
+//   `stacker` feature is enabled. This let MAX_PARSER_RECURSION_DEPTH double
+//   (128 -> 256) — NOT the ~40x originally hoped for, because evaluating
+//   plain nested style rules is a *second*, separate recursion in
+//   evaluate/visitor.rs with no guard and no stack growth at all (only
+//   *callable* function/mixin/content-block recursion is guarded there, via
+//   MAX_CALLABLE_RECURSION_DEPTH). That unguarded evaluator recursion is now
+//   the binding constraint on the full parse+evaluate+serialize pipeline —
+//   see MAX_PARSER_RECURSION_DEPTH's doc comment for the measured crash
+//   boundaries and the todo #148 follow-up this implies. With the feature
+//   off (wasm32, where `stacker` isn't supported), the limit drops back to
+//   128.
 // - Evaluator callable recursion (function/mixin/content-block calls) is
 //   expensive enough that MAX_CALLABLE_RECURSION_DEPTH (110) — sized to
 //   support dart-sass-compatible bounded recursion like `sum(100)` — only
@@ -19,11 +28,19 @@
 //   default. Those tests explicitly spawn an 8 MiB-stack thread (verified
 //   safe for both directions: refuses unbounded recursion cleanly, and lets
 //   sum(100) complete) so `cargo test` itself doesn't crash in debug mode.
+//   This chokepoint is out of scope for todo #148 (owned separately).
+//
+// The plain-nesting tests near MAX_PARSER_RECURSION_DEPTH below use the same
+// spawned-8-MiB-stack pattern, for the same reason: cargo test's own debug
+// default thread (2 MiB) is close enough to the *evaluator's* unguarded
+// crash boundary (measured ~270 levels) that tests near the 256 limit could
+// otherwise flake in debug builds.
 
 #[test]
 fn deeply_nested_rules_error_cleanly() {
     let input = format!("{}b:c;{}", "a{".repeat(50_000), "}".repeat(50_000));
-    assert!(grass::from_string(input, &grass::Options::default()).is_err());
+    let err = grass::from_string(input, &grass::Options::default()).unwrap_err();
+    assert!(err.to_string().contains("Too much nesting."));
 }
 
 #[test]
@@ -51,6 +68,35 @@ fn reasonable_nesting_depth_still_compiles() {
 fn huge_hrx_scale_nesting_still_compiles() {
     let input = format!("{}b:c;{}", "a{".repeat(59), "}".repeat(59));
     assert!(grass::from_string(input, &grass::Options::default()).is_ok());
+}
+
+/// 200 levels sits comfortably within MAX_PARSER_RECURSION_DEPTH (256) and
+/// was verified byte-identical to `npx sass@1.97.3 --style=compressed`
+/// output (todo #148). Note this is well *under* dart-sass's own ~450-500
+/// level crash boundary — see MAX_PARSER_RECURSION_DEPTH's doc comment for
+/// why grass's real ceiling is currently lower than dart-sass's.
+#[test]
+fn nesting_200_levels_matches_dart_sass() {
+    let input = format!("{}b:c;{}", "a{".repeat(200), "}".repeat(200));
+    assert!(is_ok_on_8mib_stack(input));
+}
+
+/// Just under MAX_PARSER_RECURSION_DEPTH (256) must still compile...
+#[test]
+fn nesting_at_parser_recursion_limit_boundary_still_compiles() {
+    let input = format!("{}b:c;{}", "a{".repeat(250), "}".repeat(250));
+    assert!(is_ok_on_8mib_stack(input));
+}
+
+/// ...while comfortably beyond it must still error cleanly (not crash). The
+/// parser guard rejects this before recursing anywhere near the evaluator's
+/// own unguarded crash boundary, so this is safe to call directly (no
+/// spawned big-stack thread needed) even in debug builds.
+#[test]
+fn nesting_beyond_parser_recursion_limit_errors_cleanly() {
+    let input = format!("{}b:c;{}", "a{".repeat(300), "}".repeat(300));
+    let err = grass::from_string(input, &grass::Options::default()).unwrap_err();
+    assert!(err.to_string().contains("Too much nesting."));
 }
 
 fn is_ok_on_8mib_stack(input: String) -> bool {

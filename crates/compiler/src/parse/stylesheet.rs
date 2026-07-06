@@ -39,6 +39,54 @@ static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// stack-overflows on this machine around 450-500 levels of brace nesting,
 /// so matching or exceeding dart-sass's own ceiling was never in tension
 /// with this value.
+///
+/// With the default-on `stacker` feature (todo #148), `with_recursion_guard`
+/// grows the *parser's own* stack on demand (see `crate::stack::maybe_grow`)
+/// instead of relying on a fixed small stack. This constant could in
+/// principle go much higher on parsing cost alone — but it does NOT, because
+/// **evaluation of plain nested style rules is a second, separate recursion
+/// with no guard and no stack growth at all** (`Visitor::visit_stmt` /
+/// `visit_children` in evaluate/visitor.rs recurse per nesting level with
+/// nothing analogous to `MAX_CALLABLE_RECURSION_DEPTH`, which only guards
+/// *callable* — function/mixin/content-block — invocation, not plain block
+/// nesting). Once this parser guard stops being the binding constraint, that
+/// unguarded evaluator recursion becomes the real ceiling for the full
+/// `grass::from_string` pipeline (parse + evaluate + serialize), and it is
+/// out of scope to fix here (evaluate/** is a separate chokepoint, tracked
+/// as a follow-up — see solo todo #148's closing comment).
+///
+/// Measured unguarded full-pipeline (not parser-only) crash boundaries for
+/// plain nested rules (`a{a{a{...}}}`, no user callables) with this parser
+/// guard's stack growth already active:
+///
+///   - release-napi profile, 1 MiB stack (napi's real worker-thread size,
+///     the actual napi deployment ceiling): survives 370, crashes at 380.
+///   - debug build, 2 MiB stack (cargo test's own default thread stack, not
+///     a deployment target — see `MAX_CALLABLE_RECURSION_DEPTH`'s doc
+///     comment for why this project treats debug+2 MiB as cargo-test-only):
+///     survives 260, crashes at 270.
+///
+/// 256 is sized against the real release+1 MiB deployment ceiling (370
+/// confirmed safe, 380 crash — about 32% margin), matching this project's
+/// convention of treating release+1 MiB as binding and debug+2 MiB as a
+/// test-environment-only concern. It is exactly double the pre-#148 value
+/// (128), NOT the ~40x originally hoped for in todo #148 — the unguarded
+/// evaluator recursion above is why. Tests exercising nesting depths near
+/// this limit must spawn an explicit larger-stack thread (see
+/// `is_ok_on_8mib_stack` in deep_nesting.rs) so they don't crash on cargo
+/// test's own debug+2 MiB thread, exactly as the existing callable-recursion
+/// tests already do.
+///
+/// Notably, 256 is well *below* dart-sass 1.97.3's own ~450-500 level
+/// tolerance — matching or exceeding dart-sass's ceiling at the *parser*
+/// layer was achieved, but is currently bottlenecked by the evaluator gap
+/// above for the full compile pipeline. When the feature is off (the wasm32
+/// build, where `stacker` isn't supported), parser stack growth never
+/// happens either, so the limit must stay at the smaller value measured
+/// safe for parsing alone.
+#[cfg(feature = "stacker")]
+pub(crate) const MAX_PARSER_RECURSION_DEPTH: usize = 256;
+#[cfg(not(feature = "stacker"))]
 pub(crate) const MAX_PARSER_RECURSION_DEPTH: usize = 128;
 
 use codemap::{Span, Spanned};
@@ -94,7 +142,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         self.recursion_depth().set(depth + 1);
-        let result = f(self);
+        let result = crate::stack::maybe_grow(256 * 1024, 1024 * 1024, || f(self));
         self.recursion_depth().set(depth);
         result
     }
