@@ -13,6 +13,37 @@ test!(
     "a {\n  color: 1.00000000009;\n}\n",
     "a {\n  color: 1.0000000001;\n}\n"
 );
+// Plan 051 (todo #192, root cause from Plan 046's todo #189 report): dart-sass's
+// `_writeRounded` (serialize.dart:1237-1314) rounds half-up on the shortest-
+// round-trip STRING's 11th fractional digit, not on the double's exact binary
+// expansion -- so a carry can ripple all the way into the integer part (dart's
+// own comment gives exactly this shape). `format!("{:.10}", num)` rounds the
+// exact binary value instead and would print `9.9999999999` here, one part in
+// 1e-10 short of the carry. Verified against `npx sass@1.97.3 --stdin`.
+test!(
+    precision_carry_ripples_into_integer_part,
+    "a {\n  color: 9.99999999995;\n}\n",
+    "a {\n  color: 10;\n}\n"
+);
+test!(
+    precision_carry_ripples_into_integer_part_negative,
+    "a {\n  color: -9.99999999995;\n}\n",
+    "a {\n  color: -10;\n}\n"
+);
+// Carry ripples through the single leading "0" digit rather than adding a
+// new integer digit -- a distinct code path in the digit-array algorithm
+// (the loop's carry terminates at `digits[0]` itself, rather than passing
+// through it as in the case above).
+test!(
+    precision_carry_ripples_through_leading_zero,
+    "a {\n  color: 0.99999999995;\n}\n",
+    "a {\n  color: 1;\n}\n"
+);
+test!(
+    precision_carry_ripples_through_leading_zero_negative,
+    "a {\n  color: -0.99999999995;\n}\n",
+    "a {\n  color: -1;\n}\n"
+);
 test!(
     many_nines_becomes_one,
     "a {\n  color: 0.9999999999999999;\n}\n",

@@ -163,6 +163,71 @@ struct MappingState {
     dst_col: usize,
 }
 
+/// Transcription of dart-sass's `_writeRounded` (`lib/src/visitor/serialize.dart:1237-1314`).
+///
+/// `short` is ryu's shortest-round-trip decimal string for a non-negative
+/// number, with `dot_pos` its decimal point index and more than 10 digits
+/// after it. Rather than rounding the double's exact binary expansion (as
+/// `format!("{:.10}", num)` does), dart rounds half-up on the *string's*
+/// 11th fractional digit, with carry propagation that can ripple all the
+/// way into the integer part (dart's own example: "9.99999999995" -> "10").
+/// These two approaches diverge whenever the shortest-round-trip string's
+/// 11th digit disagrees with the true value's 11th digit — an inherent
+/// property of "shortest disambiguating decimal" vs. "true expansion", not
+/// a bug in either rounding algorithm.
+fn round_shortest_string_to_precision(short: &str, dot_pos: usize) -> String {
+    let int_part = &short[..dot_pos];
+    let frac_part = &short.as_bytes()[dot_pos + 1..];
+
+    // digits[0] is a dedicated extra slot to absorb a carry that ripples
+    // all the way through the integer part (e.g. "9.99..." -> "10...").
+    let mut digits = Vec::with_capacity(1 + int_part.len() + 10);
+    digits.push(0u8);
+    digits.extend(int_part.bytes().map(|b| b - b'0'));
+    let first_fractional_digit = digits.len();
+    digits.extend(frac_part[..10].iter().map(|b| b - b'0'));
+
+    let mut digits_index = digits.len();
+    if frac_part[10] >= b'5' {
+        loop {
+            digits[digits_index - 1] += 1;
+            if digits[digits_index - 1] != 10 {
+                break;
+            }
+            // `digits[0]` starts at 0, so incrementing it can never
+            // overflow to 10 — this loop always terminates with
+            // `digits_index >= 1`.
+            digits_index -= 1;
+        }
+    }
+
+    // Positions the carry rippled past hold a stale, invalid "10" — they
+    // fall before `digits_index` and are skipped below, except any that
+    // lie before the decimal point, which must be zeroed so they print
+    // correctly (e.g. the "0" in "10").
+    while digits_index < first_fractional_digit {
+        digits[digits_index] = 0;
+        digits_index += 1;
+    }
+    // Trim trailing zero fractional digits produced by rounding.
+    while digits_index > first_fractional_digit && digits[digits_index - 1] == 0 {
+        digits_index -= 1;
+    }
+
+    let start_index = usize::from(digits[0] == 0);
+    let mut out = String::with_capacity(digits.len());
+    for &d in &digits[start_index..first_fractional_digit] {
+        out.push((b'0' + d) as char);
+    }
+    if digits_index > first_fractional_digit {
+        out.push('.');
+        for &d in &digits[first_fractional_digit..digits_index] {
+            out.push((b'0' + d) as char);
+        }
+    }
+    out
+}
+
 impl<'a> Serializer<'a> {
     pub fn new(options: &'a Options<'a>, map: &'a CodeMap, inspect: bool, span: Span) -> Self {
         Self {
@@ -1196,8 +1261,8 @@ impl<'a> Serializer<'a> {
                 if short_decimals <= 10 {
                     short.trim_end_matches('0').trim_end_matches('.')
                 } else {
-                    fixed = format!("{:.10}", num);
-                    fixed.trim_end_matches('0').trim_end_matches('.')
+                    fixed = round_shortest_string_to_precision(short, dot_pos);
+                    fixed.as_str()
                 }
             } else {
                 // No decimal point — integer

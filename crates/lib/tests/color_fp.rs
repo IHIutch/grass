@@ -57,3 +57,60 @@ test!(
     "a {b: hwb(210 20% 30%);}",
     "a {\n  b: hsl(210, 55.5555555556%, 45%);\n}\n"
 );
+
+// Plan 051 (todo #192, root cause from Plan 046's todo #189 report): these 8
+// tests were blocked purely by `write_float`'s rounding-algorithm mismatch
+// (see number.rs's `precision_carry_ripples_*` tests for the mechanism), not
+// by anything in the color conversion pipeline -- Plan 046 traced this
+// family's arithmetic as bit-identical to dart-sass at every stage up to
+// serialization. Expectations are the checked-in sass-spec fixtures, listed
+// alongside each test.
+//
+// core_functions/color/to_space/prophoto_rgb/hsl.hrx::out_of_range/near
+test!(
+    prophoto_rgb_to_hsl_out_of_range_near,
+    "@use \"sass:color\";\na {b: color.to-space(color(prophoto-rgb -1 0.4 2), hsl)}",
+    "a {\n  b: hsl(199.2935266227, 2154.1559841675%, 8.1167706475%);\n}\n"
+);
+// core_functions/color/to_space/prophoto_rgb/hwb.hrx::out_of_range/near
+test!(
+    prophoto_rgb_to_hwb_out_of_range_near,
+    "@use \"sass:color\";\na {b: color.to-space(color(prophoto-rgb -1 0.4 2), hwb)}",
+    "a {\n  b: hsl(199.2935266227, 2154.1559841675%, 8.1167706475%);\n}\n"
+);
+// core_functions/color/to_space/prophoto_rgb/rgb.hrx::out_of_range/near
+test!(
+    prophoto_rgb_to_rgb_out_of_range_near,
+    "@use \"sass:color\";\na {b: color.to-space(color(prophoto-rgb -1 0.4 2), rgb)}",
+    "a {\n  b: hsl(199.2935266227, 2154.1559841675%, 8.1167706475%);\n}\n"
+);
+// core_functions/color/to_space/hsl/prophoto_rgb.hrx::out_of_range/far
+test!(
+    hsl_to_prophoto_rgb_out_of_range_far,
+    "@use \"sass:color\";\na {b: color.to-space(hsl(20deg 999999% 50%), prophoto-rgb)}",
+    "a {\n  b: color(prophoto-rgb 45494.0440115899 5344.0720850434 -73058.7852099565);\n}\n"
+);
+// core_functions/color/to_space/rec2020/display_p3.hrx::out_of_range/far
+test!(
+    rec2020_to_display_p3_out_of_range_far,
+    "@use \"sass:color\";\na {b: color.to-space(color(rec2020 -999999 0 0), display-p3)}",
+    "a {\n  b: color(display-p3 -392808.6781006625 111415.2873247036 -30092.3347141782);\n}\n"
+);
+// core_functions/color/to_space/srgb/display_p3.hrx::out_of_range/far
+test!(
+    srgb_to_display_p3_out_of_range_far,
+    "@use \"sass:color\";\na {b: color.to-space(color(srgb -999999 0 0), display-p3)}",
+    "a {\n  b: color(display-p3 -921788.227771966 -241977.733146743 -183469.5263235596);\n}\n"
+);
+// core_functions/color/to_space/xyz_d50/hwb.hrx::out_of_range/far
+test!(
+    xyz_d50_to_hwb_out_of_range_far,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), hwb)}",
+    "a {\n  b: hsl(329.431996419, 420.4439814741%, -10316.9080915763%);\n}\n"
+);
+// core_functions/color/to_space/display_p3_linear/lab.hrx::out_of_range/far
+test!(
+    display_p3_linear_to_lab_out_of_range_far,
+    "@use \"sass:color\";\na {b: color.to-space(color(display-p3-linear -999999 0 0), lab)}",
+    "a {\n  b: color-mix(in lab, color(xyz -486570.4620772619 -228974.3350951829 0.0000001214) 100%, black);\n}\n"
+);
