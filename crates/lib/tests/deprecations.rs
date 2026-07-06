@@ -122,21 +122,6 @@ fn new_global_warns_when_nested() {
 }
 
 #[test]
-fn new_global_nested_recommendation_preserves_underscore_spelling() {
-    // dart-sass's recommendation uses node.originalName (pre-normalization
-    // spelling) — grass slices the raw source text to match, rather than
-    // the underscore-to-hyphen-normalized identifier. Verified against npx
-    // sass@1.97.3.
-    let input = "a {\n  $new_var: 2 !global;\n  b: $new_var;\n}\n";
-    let logger = TestLogger::default();
-    let options = grass::Options::default().logger(&logger);
-    grass::from_string(input.to_string(), &options).expect(input);
-    let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("Recommendation: add `$new_var: null` at the stylesheet root."));
-}
-
-#[test]
 fn new_global_does_not_warn_for_existing_global() {
     let input = "$g: 1;\na {\n  $g: 2 !global;\n  b: $g;\n}\n";
     let logger = TestLogger::default();

@@ -41,7 +41,6 @@ static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub(crate) const MAX_PARSER_RECURSION_DEPTH: usize = 128;
 
 use codemap::{Span, Spanned};
-use compact_str::CompactString;
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -3117,18 +3116,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     ) -> SassResult<AstVariableDecl<'a>> {
         let start = start.unwrap_or_else(|| self.toks().cursor());
 
-        // `parse_variable_name` normalizes underscores to hyphens internally
-        // (there's no separate un-normalized string to reuse), so slice the
-        // raw source text directly to preserve the original spelling for
-        // `maybe_warn_new_global`'s dart-exact `originalName` recommendation
-        // (Plan 038's raw-text-slicing technique, e.g. Lexer::raw_text_range).
-        let name_start = self.toks().cursor();
         let name = self.parse_variable_name()?;
-        let name_end = self.toks().cursor();
-        let original_name = {
-            let raw = self.toks().raw_text_range(name_start, name_end);
-            CompactString::from(raw.strip_prefix('$').unwrap_or(&raw))
-        };
 
         if namespace.is_some() {
             Self::assert_public(&name, self.toks_mut().span_from(start))?;
@@ -3213,7 +3201,6 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let declaration = AstVariableDecl {
             namespace,
             name: Identifier::from(name),
-            original_name,
             value,
             is_guarded,
             is_global,

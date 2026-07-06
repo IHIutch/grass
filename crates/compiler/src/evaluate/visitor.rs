@@ -904,13 +904,7 @@ impl<'a> Visitor<'a> {
             }
         }
 
-        self.maybe_warn_new_global(
-            decl.name,
-            &decl.original_name,
-            decl.namespace,
-            decl.is_global,
-            decl.span,
-        )?;
+        self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
 
         let value = self.visit_expr_ref(&decl.value)?;
         let value = self.without_slash(value, decl.span)?;
@@ -3194,14 +3188,13 @@ impl<'a> Visitor<'a> {
     /// redundant) or nested (where the recommendation is to pre-declare the
     /// variable at the root instead).
     ///
-    /// `original_name` is the variable's pre-normalization spelling (dart's
-    /// `node.originalName`, e.g. `new_var` for `$new_var`), used in the
-    /// nested-case recommendation so it echoes the name as written rather
-    /// than the underscore-to-hyphen-normalized `name`.
+    /// Note: unlike dart-sass's `node.originalName`, this uses the
+    /// normalized (underscore-to-hyphen) identifier in the nested-case
+    /// recommendation text, since grass doesn't retain the pre-normalization
+    /// spelling on `AstVariableDecl`.
     fn maybe_warn_new_global(
         &mut self,
         name: Identifier,
-        original_name: &str,
         namespace: Option<Spanned<Identifier>>,
         is_global: bool,
         span: Span,
@@ -3221,8 +3214,7 @@ impl<'a> Visitor<'a> {
             } else {
                 format!(
                     "As of Dart Sass 2.0.0, !global assignments won't be able to declare new \
-                     variables.\n\nRecommendation: add `${original_name}: null` at the \
-                     stylesheet root."
+                     variables.\n\nRecommendation: add `${name}: null` at the stylesheet root."
                 )
             })
         })
@@ -3790,13 +3782,7 @@ impl<'a> Visitor<'a> {
             }
         }
 
-        self.maybe_warn_new_global(
-            decl.name,
-            &decl.original_name,
-            decl.namespace,
-            decl.is_global,
-            decl.span,
-        )?;
+        self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
 
         let decl_span = decl.span;
         let value = self.visit_expr(decl.value)?;

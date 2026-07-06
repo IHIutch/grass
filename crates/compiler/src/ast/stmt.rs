@@ -1,6 +1,5 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
-use compact_str::CompactString;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use codemap::{Span, Spanned};
@@ -115,12 +114,6 @@ pub struct AstWhile<'a> {
 pub struct AstVariableDecl<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
-    /// The variable name as written, before underscore-to-hyphen
-    /// normalization (e.g. `$new_var` stays `new_var` here even though
-    /// `name` normalizes it to `new-var`). Used by `maybe_warn_new_global`'s
-    /// nested-case recommendation text, matching dart-sass's
-    /// `node.originalName`.
-    pub original_name: CompactString,
     pub value: AstExpr<'a>,
     pub is_guarded: bool,
     pub is_global: bool,
