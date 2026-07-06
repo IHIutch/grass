@@ -202,9 +202,8 @@ fn cli() -> Command {
                 .long("fatal-deprecation")
                 .help(
                     "Deprecations to treat as errors. Repeatable and/or comma-separated. \
-                     (A Sass version, per dart-sass's syntax, is accepted but has no \
-                     effect: grass does not yet track which version introduced each \
-                     deprecation.)",
+                     You may also pass a Sass version to include any behavior deprecated \
+                     in or before it.",
                 )
                 .action(ArgAction::Append)
                 .value_delimiter(',')
@@ -263,21 +262,36 @@ fn cli() -> Command {
 //   --fatal-deprecation additionally accepts a Dart Sass version (e.g.
 //   `1.23.0`) and fatalizes every deprecation introduced at or before it
 //   (lib/src/executable/options.dart:576-608, via `Deprecation.forVersion`).
-//   grass's `Deprecation` enum does not track per-variant introduction
-//   versions, so a version-shaped string is accepted (to avoid erroring on
-//   valid dart-sass syntax) but is currently a no-op; only ID-based fatal
-//   deprecations take effect. This is the escape hatch called out in Plan
-//   044/todo #186.
+//   The boundary is inclusive (verified: `--fatal-deprecation=1.33.0`
+//   fatalizes `slash-div`, introduced in exactly 1.33.0; `1.32.9` does not).
+//   Malformed versions (wrong part count, e.g. `1.2` or `1.2.3.4`) are
+//   rejected the same as any unrecognized ID (`Invalid deprecation "…".`,
+//   exit 64 in dart-sass) — verified via npx.
 fn looks_like_version(s: &str) -> bool {
     let core = s.split(['-', '+']).next().unwrap_or(s);
     let parts: Vec<&str> = core.split('.').collect();
     parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Parses the `major.minor.patch` core of a version string already
+/// confirmed by `looks_like_version` to have the right shape. Any
+/// `-prerelease`/`+build` suffix is ignored (dart-sass's `Deprecation`
+/// table has no variant introduced with such a suffix, so this can't affect
+/// the range-expansion boundary).
+fn parse_version_core(s: &str) -> Option<(u16, u16, u16)> {
+    let core = s.split(['-', '+']).next().unwrap_or(s);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
+}
+
 /// Parses a repeatable/comma-separated `--*-deprecation` flag's values into
 /// `Deprecation`s, exiting with dart-sass's "Invalid deprecation" message on
-/// an unrecognized ID (see `looks_like_version` for the one exception, used
-/// only for `--fatal-deprecation`).
+/// an unrecognized ID. For `--fatal-deprecation` (`allow_version`), a
+/// version-shaped value expands to every deprecation introduced at or before
+/// it (dart-sass's `Deprecation.forVersion`).
 fn parse_deprecations(
     matches: &clap::ArgMatches,
     arg_id: &str,
@@ -291,7 +305,12 @@ fn parse_deprecations(
     for id in values {
         if let Some(deprecation) = Deprecation::from_id(id) {
             deprecations.push(deprecation);
-        } else if !(allow_version && looks_like_version(id)) {
+        } else if allow_version && looks_like_version(id) {
+            // `looks_like_version` already confirmed the 3-part numeric
+            // shape, so this parse cannot fail.
+            let version = parse_version_core(id).expect("validated by looks_like_version");
+            deprecations.extend(Deprecation::for_version(version));
+        } else {
             eprintln!("Invalid deprecation \"{id}\".");
             std::process::exit(1);
         }

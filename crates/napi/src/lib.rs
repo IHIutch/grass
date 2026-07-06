@@ -19,6 +19,18 @@ pub struct CompileOptions {
     pub silence_deprecations: Option<Vec<String>>,
     /// Deprecation IDs to treat as fatal errors, per the Sass JS API's
     /// `fatalDeprecations` option (string-ID form only).
+    ///
+    /// The real JS API additionally accepts `Version` instances here for
+    /// range-expansion (`Deprecation.forVersion`); that form is not
+    /// implemented (would require a `Version` napi struct + a union member
+    /// type, a bigger change than this string-ID surface). Probed via
+    /// `sass.compileString` (JS API, not CLI): passing a version-shaped
+    /// *string* here is not a hard error — the real API only warns
+    /// (`WARNING: Invalid deprecation "1.33.0".`) and continues, treating it
+    /// like any other unrecognized ID. This napi binding currently hard-errors
+    /// on any unrecognized string (see `resolve_deprecation_ids`), which is a
+    /// pre-existing divergence from Plan 044/#186, not something this pass
+    /// (#188, version-range fatalization) changes.
     pub fatal_deprecations: Option<Vec<String>>,
     /// Deprecation IDs to opt into early, per the Sass JS API's
     /// `futureDeprecations` option.

@@ -268,13 +268,13 @@ fn future_deprecation_flag_is_accepted() {
 
 // Ground truth verified with dart-sass 1.97.3:
 //   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --fatal-deprecation=1.23.0 --style=expanded
-//   -> exit 0, warning still printed (1.23.0 predates slash-div's introduction,
-//      so the version-range expansion doesn't include it)
-// grass does not implement the version -> deprecation-set expansion (no
-// per-variant introduction-version metadata), so any version-shaped string is
-// accepted but always a no-op -- this only confirms it doesn't hard-error.
+//   -> exit 0, warning still printed (1.23.0 predates slash-div's introduction
+//      in 1.33.0, so the version-range expansion doesn't include it)
+// grass's `Deprecation::for_version` mirrors dart's `Deprecation.forVersion`
+// (introduced_in <= version) -- 1.23.0 only reaches up through
+// color-module-compat, so slash-div (1.33.0) stays a plain warning.
 #[test]
-fn fatal_deprecation_version_form_is_accepted_but_a_no_op() {
+fn fatal_deprecation_version_range_excludes_later_id() {
     let output = run_with_stdin(
         &["--stdin", "--fatal-deprecation=1.23.0"],
         "$a: 1;\nb { c: $a/2; }",
@@ -282,6 +282,48 @@ fn fatal_deprecation_version_form_is_accepted_but_a_no_op() {
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("slash-div"), "stderr: {stderr}");
+}
+
+// Ground truth verified with dart-sass 1.97.3 (boundary probe for #188):
+//   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --fatal-deprecation=1.33.0 --style=expanded
+//   -> exit 65, fatal error (slash-div's introduced_in, 1.33.0, is included:
+//      the range is INCLUSIVE of the given version)
+//   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --fatal-deprecation=1.32.9 --style=expanded
+//   -> exit 0, plain warning (1.32.9 < 1.33.0, so slash-div is excluded)
+#[test]
+fn fatal_deprecation_version_range_boundary_is_inclusive() {
+    let at_boundary = run_with_stdin(
+        &["--stdin", "--fatal-deprecation=1.33.0"],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert_eq!(at_boundary.status.code(), Some(1));
+    let stderr = String::from_utf8(at_boundary.stderr).unwrap();
+    assert!(stderr.contains("slash-div"), "stderr: {stderr}");
+
+    let below_boundary = run_with_stdin(
+        &["--stdin", "--fatal-deprecation=1.32.9"],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert!(below_boundary.status.success());
+}
+
+// Ground truth verified with dart-sass 1.97.3 (probe for #188):
+//   printf 'a{b:c}' | npx sass@1.97.3 --stdin --fatal-deprecation=1.2 --style=expanded
+//   -> "Invalid deprecation "1.2"." + usage text, exit 64 (same for "1.2.3.4")
+// A version-shaped string with the wrong number of parts is not treated as a
+// version at all -- it's rejected the same as any other unrecognized ID.
+#[test]
+fn fatal_deprecation_malformed_version_is_an_invalid_id() {
+    for flag in ["--fatal-deprecation=1.2", "--fatal-deprecation=1.2.3.4"] {
+        let output = run_with_stdin(&["--stdin", flag], "a { b: c }");
+        assert_eq!(output.status.code(), Some(1), "flag: {flag}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let expected_id = flag.split('=').nth(1).unwrap();
+        assert!(
+            stderr.contains(&format!("Invalid deprecation \"{expected_id}\".")),
+            "flag: {flag}, stderr: {stderr}"
+        );
+    }
 }
 
 // dart-sass's `--fatal-deprecation` wins over `--silence-deprecation` for the

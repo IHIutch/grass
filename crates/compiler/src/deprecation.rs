@@ -122,6 +122,75 @@ impl Deprecation {
         })
     }
 
+    /// All seeded variants, for iterating the full deprecation set (e.g. to
+    /// expand a `--fatal-deprecation=<version>` range).
+    const ALL: &'static [Self] = &[
+        Self::SlashDiv,
+        Self::Elseif,
+        Self::NewGlobal,
+        Self::Import,
+        Self::GlobalBuiltin,
+        Self::StrictUnary,
+        Self::IfFunction,
+        Self::BogusCombinators,
+        Self::ColorFunctions,
+        Self::CallString,
+        Self::MozDocument,
+        Self::FeatureExists,
+        Self::ColorModuleCompat,
+        Self::WithPrivate,
+        Self::MisplacedRest,
+        Self::AbsPercent,
+        Self::FunctionUnits,
+        Self::DuplicateVarFlags,
+    ];
+
+    /// The Dart Sass version this deprecation was first introduced in, as a
+    /// `(major, minor, patch)` tuple.
+    ///
+    /// Transcribed from dart-sass's `lib/src/deprecation.dart` (the
+    /// `deprecatedIn` field of each enum value). Used to implement
+    /// `--fatal-deprecation`'s version-range form (`Deprecation.forVersion`).
+    #[must_use]
+    pub const fn introduced_in(self) -> (u16, u16, u16) {
+        match self {
+            Self::CallString => (0, 0, 0),
+            Self::Elseif => (1, 3, 2),
+            Self::MozDocument => (1, 7, 2),
+            Self::NewGlobal => (1, 17, 2),
+            Self::ColorModuleCompat => (1, 23, 0),
+            Self::SlashDiv => (1, 33, 0),
+            Self::BogusCombinators => (1, 54, 0),
+            Self::StrictUnary => (1, 55, 0),
+            Self::FunctionUnits => (1, 56, 0),
+            Self::DuplicateVarFlags => (1, 62, 0),
+            Self::AbsPercent => (1, 65, 0),
+            Self::FeatureExists => (1, 78, 0),
+            Self::ColorFunctions => (1, 79, 0),
+            Self::Import | Self::GlobalBuiltin => (1, 80, 0),
+            Self::MisplacedRest => (1, 91, 0),
+            Self::WithPrivate => (1, 92, 0),
+            Self::IfFunction => (1, 95, 0),
+        }
+    }
+
+    /// Returns every deprecation introduced at or before `version`, mirroring
+    /// dart-sass's `Deprecation.forVersion` (which drives
+    /// `--fatal-deprecation=<version>`'s range-expansion form).
+    ///
+    /// The boundary is inclusive: a deprecation introduced in exactly
+    /// `version` is included (verified via `npx sass@1.97.3
+    /// --fatal-deprecation=1.33.0` fatalizing `slash-div`, which is
+    /// `introduced_in (1, 33, 0)`).
+    #[must_use]
+    pub fn for_version(version: (u16, u16, u16)) -> Vec<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|d| d.introduced_in() <= version)
+            .collect()
+    }
+
     /// Whether this deprecation is not yet active by default and must be
     /// explicitly opted into (dart-sass's `futureDeprecations`).
     #[must_use]
