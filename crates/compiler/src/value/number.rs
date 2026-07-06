@@ -187,22 +187,39 @@ impl Number {
 
         debug_assert!(from.comparable(to), "from: {:?}, to: {:?}", from, to);
 
-        // For complex units, multiply conversion factors for each pair
+        // For complex units, multiply conversion factors for each pair. Units are
+        // matched by comparability rather than position, since compound units are
+        // unordered bags (e.g. `1px*em` and `1em*px` are the same unit in dart-sass).
         if let (Unit::Complex(_), Unit::Complex(_)) = (from, to) {
             let (from_numer, from_denom) = from.clone().numer_and_denom();
             let (to_numer, to_denom) = to.clone().numer_and_denom();
             let mut factor = 1.0_f64;
-            for (f, t) in from_numer.iter().zip(&to_numer) {
-                if f != t {
-                    factor *= UNIT_CONVERSION_TABLE[t][f];
+
+            let mut remaining_numer = from_numer;
+            for t in &to_numer {
+                let idx = remaining_numer
+                    .iter()
+                    .position(|f| f.comparable(t))
+                    .expect("complex units must have comparable numerators");
+                let f = remaining_numer.remove(idx);
+                if &f != t {
+                    factor *= UNIT_CONVERSION_TABLE[t][&f];
                 }
             }
+
             // Denominator conversion is inverted
-            for (f, t) in from_denom.iter().zip(&to_denom) {
-                if f != t {
-                    factor /= UNIT_CONVERSION_TABLE[t][f];
+            let mut remaining_denom = from_denom;
+            for t in &to_denom {
+                let idx = remaining_denom
+                    .iter()
+                    .position(|f| f.comparable(t))
+                    .expect("complex units must have comparable denominators");
+                let f = remaining_denom.remove(idx);
+                if &f != t {
+                    factor /= UNIT_CONVERSION_TABLE[t][&f];
                 }
             }
+
             return Number(self.0 * factor);
         }
 

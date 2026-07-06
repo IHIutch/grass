@@ -109,6 +109,30 @@ pub struct ComplexUnit {
     pub denom: Vec<Unit>,
 }
 
+/// Determines whether `a` and `b` contain the same multiset of comparable
+/// units, independent of order.
+///
+/// dart-sass canonicalizes and sorts compound-unit lists before comparing
+/// them, so e.g. `1px*em` and `1em*px` are comparable/equal even though
+/// their numerator units appear in different orders.
+fn unit_lists_comparable(a: &[Unit], b: &[Unit]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let mut remaining: Vec<&Unit> = b.iter().collect();
+    for u1 in a {
+        match remaining.iter().position(|u2| u1.comparable(u2)) {
+            Some(idx) => {
+                remaining.remove(idx);
+            }
+            None => return false,
+        }
+    }
+
+    true
+}
+
 pub(crate) fn are_any_convertible(units1: &[Unit], units2: &[Unit]) -> bool {
     for unit1 in units1 {
         for unit2 in units2 {
@@ -168,11 +192,8 @@ impl Unit {
             return true;
         }
         if let (Unit::Complex(a), Unit::Complex(b)) = (self, other) {
-            if a.numer.len() != b.numer.len() || a.denom.len() != b.denom.len() {
-                return false;
-            }
-            return a.numer.iter().zip(&b.numer).all(|(u1, u2)| u1.comparable(u2))
-                && a.denom.iter().zip(&b.denom).all(|(u1, u2)| u1.comparable(u2));
+            return unit_lists_comparable(&a.numer, &b.numer)
+                && unit_lists_comparable(&a.denom, &b.denom);
         }
         match self.kind() {
             UnitKind::FontRelative | UnitKind::ViewportRelative | UnitKind::Other => self == other,

@@ -411,3 +411,47 @@ test_unit_addition!(dpcm, dppx, "38.7952755906");
 test_unit_addition!(dppx, dpi, "1.0104166667");
 test_unit_addition!(dppx, dpcm, "1.0264583333");
 test_unit_addition!(dppx, dppx, "2");
+
+// Compound-unit comparability must be order-independent (dart-sass verified,
+// todo #176): `1px*em` and `1em*px` are the same compound unit regardless of
+// which order the numerator units were multiplied in.
+test!(
+    compound_unit_equal_reordered_numerator,
+    "a {\n  color: (1px * 1em) == (1em * 1px);\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_add_reordered_numerator,
+    "a {\n  color: (2px * 1em) + (1em * 1px);\n}\n",
+    "a {\n  color: calc(3px * 1em);\n}\n"
+);
+test!(
+    compound_unit_greater_than_reordered_numerator,
+    "a {\n  color: (2px * 1em) > (1em * 1px);\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_equal_reordered_three_way_numerator,
+    "a {\n  color: (1px * 1em * 1deg) == (1deg * 1em * 1px);\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_equal_reordered_denominator,
+    "a {\n  color: (1 / (1px * 1em * 1deg)) == (1 / (1deg * 1px * 1em));\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_reordered_numerator_with_conversion,
+    "a {\n  color: (2in * 1deg) / 1s + (1deg * 2cm) / 1s;\n}\n",
+    "a {\n  color: calc(2.7874015748in * 1deg / 1s);\n}\n"
+);
+test!(
+    compound_unit_font_relative_units_still_not_comparable_when_reordered,
+    "a {\n  color: comparable((1px * 1em), (1px * 1rem));\n}\n",
+    "a {\n  color: false;\n}\n"
+);
+test!(
+    compound_unit_mismatched_length_still_not_comparable,
+    "a {\n  color: comparable((1px * 1em), (1px * 1em * 1deg));\n}\n",
+    "a {\n  color: false;\n}\n"
+);
