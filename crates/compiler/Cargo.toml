@@ -38,12 +38,19 @@ rustc-hash = "2"
 compact_str = "0.8"
 ryu = "1"
 bumpalo = { version = "3", features = ["collections"] }
+stacker = { version = "0.1", optional = true }
 
 [features]
-default = ["random", "custom-builtin-fns"]
+default = ["random", "custom-builtin-fns", "stacker"]
 # Option (enabled by default): enable the builtin functions `random([$limit])` and `unique-id()`
 random = ["rand"]
 # Option: expose JavaScript-friendly WebAssembly exports
 wasm-exports = ["wasm-bindgen"]
 # Option: expose internals necessary to implement custom builtin functions
 custom-builtin-fns = []
+# Option (enabled by default): grow the stack on demand at recursive parse
+# chokepoints instead of relying on a fixed depth limit sized to the
+# smallest stack we run on. `stacker` doesn't support wasm32, so this is
+# forced off there (see crates/lib/Cargo.toml, which depends on this crate
+# with default-features = false).
+stacker = ["dep:stacker"]

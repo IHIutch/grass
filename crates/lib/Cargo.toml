@@ -51,11 +51,17 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [features]
 # todo: no commandline by default
-default = ["commandline", "random"]
+default = ["commandline", "random", "stacker"]
 # Option (enabled by default): build a binary using clap
 commandline = ["clap", "mimalloc"]
 random = ["grass_compiler/random"]
 wasm-exports = ["grass_compiler/wasm-exports", "wasm-bindgen"]
+# Option (enabled by default): grow the stack on demand at recursive parse
+# chokepoints instead of a small fixed depth limit. Not supported on wasm32;
+# the wasm build (crates/lib/pkg-publish, built with --no-default-features)
+# omits this feature and falls back to a lower fixed limit — see
+# grass_compiler's `stacker` feature and crate::stack::maybe_grow.
+stacker = ["grass_compiler/stacker"]
 # Option: include the proc macro `include_sass!`
 macro = ["include_sass"]
 nightly = ["include_sass/nightly"]
