@@ -58,4 +58,42 @@ assert.throws(() =>
   }),
 );
 
+// sourceMap option (todo #162): absent by default, matching the real `sass`
+// npm package's `compileString(..., {})` result having no `sourceMap` key.
+{
+  const plain = binding.compileString("a {\n  b: c;\n}\n", null);
+  assert.equal(plain.sourceMap, undefined);
+}
+
+// sourceMap: true returns a real object (not a JSON string), shaped like the
+// real Sass JS API's result: {version, sourceRoot, sources, names,
+// mappings}, sources[0] a data: URL (no url option given), no `file` key.
+{
+  const r = binding.compileString("a {\n  b: c;\n}\n", { sourceMap: true });
+  assert.equal(typeof r.sourceMap, "object");
+  assert.equal(r.sourceMap.version, 3);
+  assert.equal(r.sourceMap.sourceRoot, "");
+  assert.deepEqual(r.sourceMap.names, []);
+  assert.equal(r.sourceMap.mappings, "AAAA;EACE");
+  assert.equal(r.sourceMap.file, undefined);
+  assert.equal(r.sourceMap.sources.length, 1);
+  assert(r.sourceMap.sources[0].startsWith("data:;charset=utf-8,"));
+  assert.equal(r.sourceMap.sourcesContent, undefined);
+}
+
+// sourceMapIncludeSources adds sourcesContent.
+{
+  const r = binding.compileString("a {\n  b: c;\n}\n", {
+    sourceMap: true,
+    sourceMapIncludeSources: true,
+  });
+  assert.deepEqual(r.sourceMap.sourcesContent, ["a {\n  b: c;\n}\n"]);
+}
+
+// compileStringAsync mirrors the sync API for sourceMap.
+{
+  const r = await binding.compileStringAsync("a {\n  b: c;\n}\n", { sourceMap: true });
+  assert.equal(r.sourceMap.mappings, "AAAA;EACE");
+}
+
 console.log("ok");

@@ -11,9 +11,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 grass_compiler = { path = "../compiler", features = ["random"] }
-napi = { version = "2", features = ["napi4"] }
+napi = { version = "2", features = ["napi4", "serde-json"] }
 napi-derive = "2"
 mimalloc = { version = "0.1", default-features = false }
+serde_json = "1"
 
 [build-dependencies]
 napi-build = "2"

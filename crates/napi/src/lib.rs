@@ -5,7 +5,10 @@ use napi::bindgen_prelude::*;
 use napi::Task;
 use napi_derive::napi;
 
-use grass_compiler::{from_path, from_string_with_file_name, Deprecation, Options, OutputStyle};
+use grass_compiler::{
+    from_path_with_source_map, from_string_with_source_map, Deprecation, Options, OutputStyle,
+    SourceMapData,
+};
 
 #[napi(object)]
 pub struct CompileOptions {
@@ -33,11 +36,36 @@ pub struct CompileOptions {
     /// Deprecation IDs to opt into early, per the Sass JS API's
     /// `futureDeprecations` option.
     pub future_deprecations: Option<Vec<String>>,
+    /// Whether to generate a source map, per the Sass JS API's `sourceMap`
+    /// option. When `false`/omitted (the default), `CompileResult.sourceMap`
+    /// is absent, matching `sass.compile(..., {})`'s result having no
+    /// `sourceMap` key at all (verified via the real `sass` npm package).
+    pub source_map: Option<bool>,
+    /// Whether to embed the verbatim source text in the generated map's
+    /// `sourcesContent`, per the Sass JS API's `sourceMapIncludeSources`
+    /// option. Has no effect unless `sourceMap` is also `true`.
+    pub source_map_include_sources: Option<bool>,
 }
 
 #[napi(object)]
 pub struct CompileResult {
     pub css: String,
+    /// Present only when `CompileOptions.sourceMap` was `true`. Shaped like
+    /// the real Sass JS API's `sourceMap` result (`{version, sourceRoot,
+    /// sources, names, mappings}`, optionally `sourcesContent` — verified
+    /// via `sass.compileString(..., {sourceMap: true})`, whose result never
+    /// has a `file` key; that field is CLI-only).
+    pub source_map: Option<serde_json::Value>,
+}
+
+/// Builds the JS-API-shaped `sourceMap` result value: `None` when maps
+/// weren't requested at all, `Some` otherwise (never a `file` key, per the
+/// JS API contract — see `CompileResult::source_map`'s doc comment).
+fn source_map_result(map: Option<SourceMapData>, include_sources: bool) -> Option<serde_json::Value> {
+    map.map(|m| {
+        serde_json::from_str(&m.to_json(None, include_sources))
+            .expect("grass-generated source map JSON must always be valid")
+    })
 }
 
 // `AssertUnwindSafe`/`UnwindSafe` bounds below are sound: these closures only
@@ -118,6 +146,10 @@ fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>>
                 options = options.future_deprecation(deprecation);
             }
         }
+
+        if let Some(source_map) = opts.source_map {
+            options = options.source_map(source_map);
+        }
     }
 
     Ok(options)
@@ -126,12 +158,19 @@ fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>>
 #[napi]
 pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<CompileResult> {
     catch(|| {
+        let include_sources = options
+            .as_ref()
+            .and_then(|o| o.source_map_include_sources)
+            .unwrap_or(false);
         let opts = build_options(options)?;
 
-        let css =
-            from_path(&path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let (css, map) = from_path_with_source_map(&path, &opts)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-        Ok(CompileResult { css })
+        Ok(CompileResult {
+            css,
+            source_map: source_map_result(map, include_sources),
+        })
     })
 }
 
@@ -141,65 +180,92 @@ pub fn compile_string(
     options: Option<CompileOptions>,
 ) -> napi::Result<CompileResult> {
     catch(|| {
+        let include_sources = options
+            .as_ref()
+            .and_then(|o| o.source_map_include_sources)
+            .unwrap_or(false);
         let opts = build_options(options)?;
 
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let css = from_string_with_file_name(source, cwd.join("stdin"), &opts)
+        // `from_string_with_source_map` produces a `data:` URL `sources`
+        // entry (matching `compileString` without a `url` option — see
+        // docs/design/source-maps.md), unlike the plain `from_string*`
+        // family, which uses a synthetic path purely for error messages.
+        let (css, map) = from_string_with_source_map(source, &opts)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-        Ok(CompileResult { css })
+        Ok(CompileResult {
+            css,
+            source_map: source_map_result(map, include_sources),
+        })
     })
 }
 
 pub struct CompileTask {
     path: String,
     options: Option<CompileOptions>,
+    /// Read once at task-construction time, since `compute()` consumes
+    /// `options` via `take()` before `resolve()` runs.
+    include_sources: bool,
 }
 
 impl Task for CompileTask {
-    type Output = String;
+    type Output = (String, Option<SourceMapData>);
     type JsValue = CompileResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let path = &self.path;
         let opts = build_options(self.options.take())?;
         catch(std::panic::AssertUnwindSafe(|| {
-            from_path(path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
+            from_path_with_source_map(path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
         }))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
-        Ok(CompileResult { css: output })
+        let (css, map) = output;
+        Ok(CompileResult {
+            css,
+            source_map: source_map_result(map, self.include_sources),
+        })
     }
 }
 
 pub struct CompileStringTask {
     source: String,
     options: Option<CompileOptions>,
+    /// Read once at task-construction time, since `compute()` consumes
+    /// `options` via `take()` before `resolve()` runs.
+    include_sources: bool,
 }
 
 impl Task for CompileStringTask {
-    type Output = String;
+    type Output = (String, Option<SourceMapData>);
     type JsValue = CompileResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let opts = build_options(self.options.take())?;
-        let cwd = std::env::current_dir().unwrap_or_default();
         let source = self.source.clone();
         catch(std::panic::AssertUnwindSafe(|| {
-            from_string_with_file_name(source, cwd.join("stdin"), &opts)
+            from_string_with_source_map(source, &opts)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         }))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
-        Ok(CompileResult { css: output })
+        let (css, map) = output;
+        Ok(CompileResult {
+            css,
+            source_map: source_map_result(map, self.include_sources),
+        })
     }
 }
 
 #[napi(ts_return_type = "Promise<CompileResult>")]
 pub fn compile_async(path: String, options: Option<CompileOptions>) -> AsyncTask<CompileTask> {
-    AsyncTask::new(CompileTask { path, options })
+    let include_sources = options
+        .as_ref()
+        .and_then(|o| o.source_map_include_sources)
+        .unwrap_or(false);
+    AsyncTask::new(CompileTask { path, options, include_sources })
 }
 
 #[napi(ts_return_type = "Promise<CompileResult>")]
@@ -207,7 +273,11 @@ pub fn compile_string_async(
     source: String,
     options: Option<CompileOptions>,
 ) -> AsyncTask<CompileStringTask> {
-    AsyncTask::new(CompileStringTask { source, options })
+    let include_sources = options
+        .as_ref()
+        .and_then(|o| o.source_map_include_sources)
+        .unwrap_or(false);
+    AsyncTask::new(CompileStringTask { source, options, include_sources })
 }
 
 #[cfg(test)]
@@ -223,6 +293,8 @@ mod tests {
             silence_deprecations: None,
             fatal_deprecations: None,
             future_deprecations: None,
+            source_map: None,
+            source_map_include_sources: None,
         }
     }
 
@@ -318,12 +390,75 @@ mod tests {
         let mut task = CompileStringTask {
             source: "a { b: c }".to_owned(),
             options: None,
+            include_sources: false,
         };
         assert!(task.compute().is_ok());
         let mut bad = CompileStringTask {
             source: "a {".to_owned(),
             options: None,
+            include_sources: false,
         };
         assert!(bad.compute().is_err());
+    }
+
+    #[test]
+    fn compile_string_source_map_absent_by_default() {
+        let res = compile_string("a { b: c }".to_owned(), None).unwrap();
+        assert!(res.source_map.is_none());
+    }
+
+    #[test]
+    fn compile_string_source_map_shape_matches_js_api() {
+        // Verified against `sass.compileString('a { b: c; }', {sourceMap:
+        // true})`: result keys are exactly `{css, sourceMap, loadedUrls}`,
+        // and `sourceMap` is `{version, sourceRoot, sources, names,
+        // mappings}` with sources[0] a `data:` URL (no `url` option given)
+        // and NO `file` key (unlike the CLI's written .map file).
+        let opts = CompileOptions {
+            source_map: Some(true),
+            ..base_opts()
+        };
+        let res = compile_string("a {\n  b: c;\n}\n".to_owned(), Some(opts)).unwrap();
+        let map = res.source_map.expect("source_map must be Some when requested");
+
+        assert_eq!(map["version"], 3);
+        assert_eq!(map["sourceRoot"], "");
+        assert_eq!(map["names"], serde_json::json!([]));
+        assert_eq!(map["mappings"], "AAAA;EACE");
+        assert!(map.get("file").is_none(), "JS API shape must omit file, got: {map}");
+        let sources = map["sources"].as_array().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert!(
+            sources[0].as_str().unwrap().starts_with("data:;charset=utf-8,"),
+            "got: {map}"
+        );
+        assert!(map.get("sourcesContent").is_none());
+    }
+
+    #[test]
+    fn compile_string_source_map_include_sources_adds_sources_content() {
+        let opts = CompileOptions {
+            source_map: Some(true),
+            source_map_include_sources: Some(true),
+            ..base_opts()
+        };
+        let res = compile_string("a {\n  b: c;\n}\n".to_owned(), Some(opts)).unwrap();
+        let map = res.source_map.unwrap();
+        assert_eq!(map["sourcesContent"], serde_json::json!(["a {\n  b: c;\n}\n"]));
+    }
+
+    #[test]
+    fn compile_string_async_source_map_matches_sync() {
+        let opts = CompileOptions {
+            source_map: Some(true),
+            ..base_opts()
+        };
+        let mut task = CompileStringTask {
+            source: "a {\n  b: c;\n}\n".to_owned(),
+            options: Some(opts),
+            include_sources: false,
+        };
+        let output = task.compute().unwrap();
+        assert!(output.1.is_some());
     }
 }

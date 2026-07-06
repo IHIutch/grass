@@ -34,9 +34,30 @@ export interface CompileOptions {
    * `futureDeprecations` option.
    */
   futureDeprecations?: Array<string>
+  /**
+   * Whether to generate a source map, per the Sass JS API's `sourceMap`
+   * option. When `false`/omitted (the default), `CompileResult.sourceMap`
+   * is absent, matching `sass.compile(..., {})`'s result having no
+   * `sourceMap` key at all (verified via the real `sass` npm package).
+   */
+  sourceMap?: boolean
+  /**
+   * Whether to embed the verbatim source text in the generated map's
+   * `sourcesContent`, per the Sass JS API's `sourceMapIncludeSources`
+   * option. Has no effect unless `sourceMap` is also `true`.
+   */
+  sourceMapIncludeSources?: boolean
 }
 export interface CompileResult {
   css: string
+  /**
+   * Present only when `CompileOptions.sourceMap` was `true`. Shaped like
+   * the real Sass JS API's `sourceMap` result (`{version, sourceRoot,
+   * sources, names, mappings}`, optionally `sourcesContent` — verified
+   * via `sass.compileString(..., {sourceMap: true})`, whose result never
+   * has a `file` key; that field is CLI-only).
+   */
+  sourceMap?: any
 }
 export declare function compile(path: string, options?: CompileOptions | undefined | null): CompileResult
 export declare function compileString(source: string, options?: CompileOptions | undefined | null): CompileResult
