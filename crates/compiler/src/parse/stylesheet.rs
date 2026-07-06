@@ -541,7 +541,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
 
         self.set_consume_newlines(was_consuming_newlines);
-        let list = self.parse_expression(None, None, None)?.node;
+        let list = self.parse_expression(None, None, None)?;
+        let list_span = list.span;
+        let list = list.node;
 
         let body = self.with_children(child)?.node;
 
@@ -551,6 +553,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(AstStmt::Each(Box::new(AstEach {
             variables,
             list,
+            list_span,
             body: self.alloc_stmts(body),
         })))
     }

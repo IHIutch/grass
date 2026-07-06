@@ -386,6 +386,23 @@ fn slash_div_dedupes_repeated_call_site() {
 }
 
 #[test]
+fn slash_div_warns_per_distinct_variable_decl() {
+    // Before #159's span plumbing, `without_slash` used a shared placeholder
+    // span for every consumption site, so distinct slash-tagged variable
+    // assignments collapsed into a single warning via the (Deprecation, Span)
+    // dedup key. Each `without_slash` call site should now carry the
+    // assignment's own span, so two distinct decls warn separately.
+    let input = "$b: 16 / 12;\n$c: 18 / 14;\nx {\n  y: $b;\n  z: $c;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {:?}", warnings);
+    assert!(warnings[0].contains("math.div(16, 12)"));
+    assert!(warnings[1].contains("math.div(18, 14)"));
+}
+
+#[test]
 fn no_warning_inside_calc() {
     let input = "a { b: calc(1 / 2) }";
     let logger = TestLogger::default();

@@ -775,9 +775,10 @@ impl<'a> Visitor<'a> {
     }
 
     fn visit_return_rule(&mut self, ret: AstReturn<'static>) -> SassResult<Option<Value>> {
+        let span = ret.span;
         let val = self.visit_expr(ret.val)?;
 
-        Ok(Some(self.without_slash(val)?))
+        Ok(Some(self.without_slash(val, span)?))
     }
 
     pub(crate) fn visit_stmt_arc(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
@@ -793,7 +794,7 @@ impl<'a> Visitor<'a> {
             AstStmt::VariableDecl(decl) => self.visit_variable_decl_ref(decl),
             AstStmt::Return(ret) => {
                 let val = self.visit_expr_ref(&ret.val)?;
-                Ok(Some(self.without_slash(val)?))
+                Ok(Some(self.without_slash(val, ret.span)?))
             }
             AstStmt::Style(style) => self.visit_style_ref(style),
             AstStmt::If(if_stmt) => self.visit_if_stmt_ref(if_stmt),
@@ -900,7 +901,7 @@ impl<'a> Visitor<'a> {
         self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
 
         let value = self.visit_expr_ref(&decl.value)?;
-        let value = self.without_slash(value)?;
+        let value = self.without_slash(value, decl.span)?;
 
         self.env.insert_var(
             name,
@@ -1143,7 +1144,7 @@ impl<'a> Visitor<'a> {
             }
 
             let value = self.visit_expr_ref(&variable.expr.node)?;
-            let value = self.without_slash(value)?;
+            let value = self.without_slash(value, variable.expr.span)?;
 
             new_values.insert(
                 variable.name.node,
@@ -1955,7 +1956,7 @@ impl<'a> Visitor<'a> {
 
             for var in use_rule.configuration {
                 let value = self.visit_expr(var.expr.node)?;
-                let value = self.without_slash(value)?;
+                let value = self.without_slash(value, var.expr.span)?;
                 values.insert(
                     var.name.node,
                     ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span)),
@@ -3553,7 +3554,7 @@ impl<'a> Visitor<'a> {
 
         'outer: for val in list {
             if each_stmt.variables.len() == 1 {
-                let val = self.without_slash(val)?;
+                let val = self.without_slash(val, each_stmt.list_span)?;
                 self.env
                     .scopes_mut()
                     .insert_var_last(each_stmt.variables[0], val);
@@ -3563,7 +3564,7 @@ impl<'a> Visitor<'a> {
                         .into_iter()
                         .chain(std::iter::once(Value::Null).cycle()),
                 ) {
-                    let val = self.without_slash(val)?;
+                    let val = self.without_slash(val, each_stmt.list_span)?;
                     self.env.scopes_mut().insert_var_last(var, val);
                 }
             }
@@ -3736,8 +3737,9 @@ impl<'a> Visitor<'a> {
 
         self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
 
+        let decl_span = decl.span;
         let value = self.visit_expr(decl.value)?;
-        let value = self.without_slash(value)?;
+        let value = self.without_slash(value, decl_span)?;
 
         self.env.insert_var(
             name,
@@ -3864,10 +3866,9 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn without_slash(&mut self, v: Value) -> SassResult<Value> {
+    fn without_slash(&mut self, v: Value, span: Span) -> SassResult<Value> {
         if let Value::Dimension(number) = &v {
             if number.as_slash.is_some() {
-                let span = self.empty_span;
                 self.emit_deprecation(Deprecation::SlashDiv, span, || {
                     Ok(format!(
                         "Using / for division is deprecated and will be removed in Dart Sass \
@@ -3880,6 +3881,25 @@ impl<'a> Visitor<'a> {
         }
 
         Ok(v.without_slash())
+    }
+
+    /// Best-effort span for an expression, for `without_slash` call sites that
+    /// only have a bare (already-parsed) sub-expression to work from rather
+    /// than dart-sass's full AST-node provenance tracking. Falls back to the
+    /// caller's own nearby span when the variant carries none directly.
+    fn expr_span(expr: &AstExpr<'static>, fallback: Span) -> Span {
+        match expr {
+            AstExpr::BinaryOp(binop) => binop.span,
+            AstExpr::String(_, span)
+            | AstExpr::UnaryOp(.., span) => *span,
+            AstExpr::FunctionCall(func) => func.span,
+            AstExpr::InterpolatedFunction(func) => func.span,
+            AstExpr::CalculationWithFallback(calc) => calc.span,
+            AstExpr::Calculation(calc) => calc.span,
+            AstExpr::CssIf(css_if) => css_if.span,
+            AstExpr::Variable { name, .. } => name.span,
+            _ => fallback,
+        }
     }
 
     fn eval_maybe_args(
@@ -3902,14 +3922,16 @@ impl<'a> Visitor<'a> {
 
         for expr in &arguments.positional {
             let val = self.visit_expr_ref(expr)?;
-            positional.push(self.without_slash(val)?);
+            let arg_span = Self::expr_span(expr, span);
+            positional.push(self.without_slash(val, arg_span)?);
         }
 
         let mut named = BTreeMap::new();
 
         for (key, expr) in &arguments.named {
             let val = self.visit_expr_ref(expr)?;
-            named.insert(*key, self.without_slash(val)?);
+            let arg_span = Self::expr_span(expr, span);
+            named.insert(*key, self.without_slash(val, arg_span)?);
         }
 
         if arguments.rest.is_none() {
@@ -3922,31 +3944,33 @@ impl<'a> Visitor<'a> {
             });
         }
 
-        let rest = self.visit_expr_ref(arguments.rest.as_ref().unwrap())?;
+        let rest_expr = arguments.rest.as_ref().unwrap();
+        let rest_span = Self::expr_span(rest_expr, span);
+        let rest = self.visit_expr_ref(rest_expr)?;
 
         let mut separator = ListSeparator::Undecided;
 
         match rest {
-            Value::Map(rest) => self.add_rest_map(&mut named, rest)?,
+            Value::Map(rest) => self.add_rest_map(&mut named, rest, rest_span)?,
             Value::List(elems, list_separator, _) => {
                 for e in Rc::unwrap_or_clone(elems) {
-                    positional.push(self.without_slash(e)?);
+                    positional.push(self.without_slash(e, rest_span)?);
                 }
                 separator = list_separator;
             }
             Value::ArgList(arglist) => {
                 // todo: superfluous clone
                 for (&key, value) in arglist.keywords() {
-                    named.insert(key, self.without_slash(value.clone())?);
+                    named.insert(key, self.without_slash(value.clone(), rest_span)?);
                 }
 
                 for e in arglist.elems {
-                    positional.push(self.without_slash(e)?);
+                    positional.push(self.without_slash(e, rest_span)?);
                 }
                 separator = arglist.separator;
             }
             _ => {
-                positional.push(self.without_slash(rest)?);
+                positional.push(self.without_slash(rest, rest_span)?);
             }
         }
 
@@ -3960,9 +3984,12 @@ impl<'a> Visitor<'a> {
             });
         }
 
-        match self.visit_expr_ref(arguments.keyword_rest.as_ref().unwrap())? {
+        let keyword_rest_expr = arguments.keyword_rest.as_ref().unwrap();
+        let keyword_rest_span = Self::expr_span(keyword_rest_expr, span);
+
+        match self.visit_expr_ref(keyword_rest_expr)? {
             Value::Map(keyword_rest) => {
-                self.add_rest_map(&mut named, keyword_rest)?;
+                self.add_rest_map(&mut named, keyword_rest, keyword_rest_span)?;
 
                 Ok(ArgumentResult {
                     positional,
@@ -3987,11 +4014,12 @@ impl<'a> Visitor<'a> {
         &mut self,
         named: &mut BTreeMap<Identifier, Value>,
         rest: SassMap,
+        span: Span,
     ) -> SassResult<()> {
         for (key, val) in rest {
             match key.node {
                 Value::String(text, ..) => {
-                    let val = self.without_slash(val)?;
+                    let val = self.without_slash(val, span)?;
                     named.insert(Identifier::from(text.as_str()), val);
                 }
                 _ => {
@@ -4077,8 +4105,10 @@ impl<'a> Visitor<'a> {
                     let name = argument.name;
                     let value = evaluated.named.remove(&argument.name).map_or_else(
                         || {
-                            let v = visitor.visit_expr_ref(argument.default.as_ref().unwrap())?;
-                            visitor.without_slash(v)
+                            let default = argument.default.as_ref().unwrap();
+                            let v = visitor.visit_expr_ref(default)?;
+                            let default_span = Self::expr_span(default, span);
+                            visitor.without_slash(v, default_span)
                         },
                         SassResult::Ok,
                     )?;
@@ -4180,7 +4210,7 @@ impl<'a> Visitor<'a> {
             SassFunction::Builtin(func, _name) => {
                 let evaluated = self.eval_maybe_args(arguments, span)?;
                 let val = func.0(evaluated, self)?;
-                self.without_slash(val)
+                self.without_slash(val, span)
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
                 .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
@@ -4791,7 +4821,7 @@ impl<'a> Visitor<'a> {
             } else {
                 args.get_err(2, "if-false")?
             };
-            return self.without_slash(value);
+            return self.without_slash(value, span);
         }
 
         if_arguments().verify(if_expr.0.positional.len(), &if_expr.0.named, if_expr.0.span)?;
@@ -4826,13 +4856,15 @@ impl<'a> Visitor<'a> {
             named.get(&Identifier::from("if_false")).unwrap()
         };
 
-        let value = if self.visit_expr_ref(condition)?.is_truthy() {
-            self.visit_expr_ref(if_true)?
+        let chosen = if self.visit_expr_ref(condition)?.is_truthy() {
+            if_true
         } else {
-            self.visit_expr_ref(if_false)?
+            if_false
         };
+        let value = self.visit_expr_ref(chosen)?;
 
-        self.without_slash(value)
+        let chosen_span = Self::expr_span(chosen, if_expr.0.span);
+        self.without_slash(value, chosen_span)
     }
 
     fn visit_css_if(&mut self, css_if: &CssIfExpression<'static>) -> SassResult<Value> {
@@ -4846,7 +4878,8 @@ impl<'a> Visitor<'a> {
             match self.eval_if_condition(&clause.condition)? {
                 ConditionResult::True => {
                     let value = self.visit_expr_ref(&clause.value)?;
-                    return self.without_slash(value);
+                    let value_span = Self::expr_span(&clause.value, css_if.span);
+                    return self.without_slash(value, value_span);
                 }
                 ConditionResult::False => continue,
                 ConditionResult::Css(remaining) => {

@@ -58,7 +58,6 @@ pub struct AstFor<'a> {
 #[derive(Debug, Clone)]
 pub struct AstReturn<'a> {
     pub val: AstExpr<'a>,
-    #[allow(unused)]
     pub span: Span,
 }
 
@@ -88,6 +87,10 @@ impl<'a> AstStyle<'a> {
 pub struct AstEach<'a> {
     pub variables: Vec<Identifier>,
     pub list: AstExpr<'a>,
+    /// Span of `list`, kept alongside it since `AstExpr` doesn't carry its own
+    /// span — needed so `without_slash` warnings for each assigned element
+    /// point at the list expression, matching dart's `_expressionNode(node.list)`.
+    pub list_span: Span,
     pub body: &'a [AstStmt<'a>],
 }
 
