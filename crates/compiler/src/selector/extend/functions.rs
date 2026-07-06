@@ -21,54 +21,39 @@ pub(crate) fn unify_complex(
 
     let mut unified_base: Option<CompoundSelector> = None;
     let mut trailing_combinator: Option<Combinator> = None;
+    let mut complexes_without_bases: Vec<Vec<ComplexSelectorComponent>> =
+        Vec::with_capacity(complexes.len());
 
-    for complex in &complexes {
-        let base = complex.last()?;
-
+    for mut complex in complexes {
         // Handle trailing combinators: strip them and track separately.
         // In dart-sass, each component carries its own combinators, but in grass
         // they're separate list elements. So [Compound(.e), Combinator(>)] has
         // the combinator as the last element.
-        let base_compound = match base {
+        let base_compound = match complex.pop()? {
             ComplexSelectorComponent::Compound(c) => c,
-            ComplexSelectorComponent::Combinator(c) => {
-                // Last element is a combinator — look for the compound before it
-                if let Some(new_trailing) = Some(*c) {
-                    if let Some(existing) = trailing_combinator {
-                        if existing != new_trailing {
-                            return None;
-                        }
-                    } else {
-                        trailing_combinator = Some(new_trailing);
+            ComplexSelectorComponent::Combinator(new_trailing) => {
+                if let Some(existing) = trailing_combinator {
+                    if existing != new_trailing {
+                        return None;
                     }
+                } else {
+                    trailing_combinator = Some(new_trailing);
                 }
-                // The compound is the second-to-last element
-                match complex.get(complex.len().wrapping_sub(2)) {
+                // The compound is the element before the combinator we just popped
+                match complex.pop() {
                     Some(ComplexSelectorComponent::Compound(c)) => c,
                     _ => return None,
                 }
             }
         };
 
-        if let Some(existing) = unified_base {
-            unified_base = Some(existing.unify(base_compound.clone())?);
-        } else {
-            unified_base = Some(base_compound.clone());
-        }
-    }
+        unified_base = Some(match unified_base {
+            Some(existing) => existing.unify(base_compound)?,
+            None => base_compound,
+        });
 
-    let mut complexes_without_bases: Vec<Vec<ComplexSelectorComponent>> = complexes
-        .into_iter()
-        .map(|mut complex| {
-            // Pop trailing combinator if present
-            if let Some(ComplexSelectorComponent::Combinator(_)) = complex.last() {
-                complex.pop();
-            }
-            // Pop the base compound
-            complex.pop();
-            complex
-        })
-        .collect();
+        complexes_without_bases.push(complex);
+    }
 
     let mut base_components = vec![ComplexSelectorComponent::Compound(unified_base?)];
     if let Some(combinator) = trailing_combinator {
@@ -119,17 +104,33 @@ pub(crate) fn weave(
         };
 
         if complex.is_empty() {
-            for prefix in &mut prefixes {
+            let last = prefixes.len().saturating_sub(1);
+            for (i, prefix) in prefixes.iter_mut().enumerate() {
+                if i == last {
+                    continue;
+                }
                 prefix.push(target.clone());
+            }
+            if let Some(prefix) = prefixes.last_mut() {
+                prefix.push(target);
             }
             continue;
         }
 
+        // `complex` is moved into `parents` below; every prefix but the last
+        // needs its own copy, so only the final iteration can move it outright.
         let parents: Vec<ComplexSelectorComponent> = complex;
+        let last_prefix = prefixes.len().saturating_sub(1);
+        let mut parents = Some(parents);
         let mut new_prefixes: Vec<Vec<ComplexSelectorComponent>> = Vec::new();
 
-        for prefix in prefixes {
-            if let Some(parent_prefixes) = weave_parents(prefix, parents.clone()) {
+        for (i, prefix) in prefixes.into_iter().enumerate() {
+            let these_parents = if i == last_prefix {
+                parents.take().unwrap()
+            } else {
+                parents.clone().unwrap()
+            };
+            if let Some(parent_prefixes) = weave_parents(prefix, these_parents) {
                 for mut parent_prefix in parent_prefixes {
                     parent_prefix.push(target.clone());
                     new_prefixes.push(parent_prefix);
@@ -217,7 +218,7 @@ fn weave_parents(
                 return None;
             }
 
-            unified.first().cloned()
+            unified.into_iter().next()
         }),
     );
 
@@ -708,7 +709,7 @@ fn chunks<T: Clone>(
         (false, true) => vec![chunk_one],
         (false, false) => {
             let mut l1 = chunk_one.clone();
-            l1.append(&mut chunk_two.clone());
+            l1.extend(chunk_two.iter().cloned());
 
             let mut l2 = chunk_two;
             l2.append(&mut chunk_one);
