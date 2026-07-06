@@ -121,10 +121,44 @@ test!(
     "a {\n  color: inspect((((a))));\n}\n",
     "a {\n  color: a;\n}\n"
 );
+// npx-verified against dart-sass 1.97.3: complex-unit numbers render wrapped
+// in `calc(...)` under `inspect`/`meta.inspect`/`@debug`, same as normal CSS
+// property-value serialization — dart's `visitNumber` does not special-case
+// inspect mode for this. A single unit (no complex units) is unaffected.
 test!(
     inspect_mul_units,
     "a {\n  color: inspect(1em * 1px);\n}\n",
-    "a {\n  color: 1em*px;\n}\n"
+    "a {\n  color: calc(1em * 1px);\n}\n"
+);
+test!(
+    inspect_single_unit_not_wrapped,
+    "a {\n  color: inspect(1px);\n}\n",
+    "a {\n  color: 1px;\n}\n"
+);
+test!(
+    inspect_mul_three_units,
+    "a {\n  color: inspect(1px * 1em * 1s);\n}\n",
+    "a {\n  color: calc(1px * 1em * 1s);\n}\n"
+);
+test!(
+    inspect_div_units_denominator_only,
+    "@use \"sass:math\";\na {\n  color: inspect(math.div(1, 1s));\n}\n",
+    "a {\n  color: calc(1 / 1s);\n}\n"
+);
+test!(
+    inspect_div_units_numerator_and_denominator,
+    "@use \"sass:math\";\na {\n  color: inspect(math.div(1px, 1s));\n}\n",
+    "a {\n  color: calc(1px / 1s);\n}\n"
+);
+test!(
+    inspect_div_units_multiple_denominators,
+    "@use \"sass:math\";\na {\n  color: inspect(math.div(1px, 1s * 1s));\n}\n",
+    "a {\n  color: calc(1px / 1s / 1s);\n}\n"
+);
+test!(
+    inspect_mul_and_div_units,
+    "@use \"sass:math\";\na {\n  color: inspect(math.div(1px * 1em, 1s));\n}\n",
+    "a {\n  color: calc(1px * 1em / 1s);\n}\n"
 );
 test!(
     inspect_map_with_map_key_and_value,

@@ -196,10 +196,12 @@ test!(
     "a {\n  color: ((1in*1in) / 1cm);\n}\n",
     "a {\n  color: 2.54in;\n}\n"
 );
+// npx-verified against dart-sass 1.97.3: complex-unit numbers render wrapped
+// in calc(...) under inspect(), same as normal CSS serialization (todo #193).
 test!(
     add_complex_div_units,
     "a {\n  color: inspect((1em / 1em) + (1px / 1em));\n}\n",
-    "a {\n  color: 2px/em;\n}\n"
+    "a {\n  color: calc(2px / 1em);\n}\n"
 );
 test!(
     complex_units_with_same_denom_and_comparable_numer_are_comparable,

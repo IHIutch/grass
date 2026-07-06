@@ -1141,8 +1141,13 @@ impl<'a> Serializer<'a> {
             }
         }
 
-        if !self.inspect && is_complex {
-            // Wrap finite complex-unit numbers in calc()
+        if is_complex {
+            // Wrap finite complex-unit numbers in calc() — dart-sass's
+            // `visitNumber` does this unconditionally, in both inspect
+            // (`@debug`/`meta.inspect`) and normal CSS-value serialization;
+            // it does not special-case `_inspect` for this branch (verified
+            // against dart-sass 1.97.3 via npx: `@debug 1px * 1em` and
+            // `meta.inspect(1px * 1em)` both print `calc(1px * 1em)`).
             let (numer, denom) = number.unit.clone().numer_and_denom();
             if self.in_calculation {
                 self.write_float(number.num.0);

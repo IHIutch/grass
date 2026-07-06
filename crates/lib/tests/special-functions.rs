@@ -45,7 +45,10 @@ error!(
 error!(
     calc_complex_unit,
     "a {\n  color: calc(1% + 1px * 2px);\n}\n",
-    "Error: Number 2px*px isn't compatible with CSS calculations."
+    // npx-verified against dart-sass 1.97.3: the error message's number
+    // formatting uses inspect-style serialization, which wraps complex-unit
+    // numbers in calc(...) (see crates/compiler/src/serializer.rs, todo #193).
+    "Error: Number calc(2px * 1px) isn't compatible with CSS calculations."
 );
 error!(
     calc_nested_parens,
