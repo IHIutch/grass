@@ -98,6 +98,46 @@ use super::{
 /// measured margin, short of 2x) and 9 above the 101 `sum(100)` needs.
 const MAX_CALLABLE_RECURSION_DEPTH: usize = 110;
 
+/// Guards against stack overflow from plain style-rule nesting (`a { b { c {
+/// ... } } }`), independent of `MAX_CALLABLE_RECURSION_DEPTH` above (which
+/// only guards function/mixin/content-block invocation). `visit_ruleset`
+/// recurses through `with_parent` -> `visit_stmt` for every nested `RuleSet`
+/// child with no bound of its own — see solo todo #196, filed because todo
+/// #148 wrapped the *parser's* recursion guard in `crate::stack::maybe_grow`
+/// and raised `MAX_PARSER_RECURSION_DEPTH`, but the full `grass::from_string`
+/// pipeline (parse + evaluate + serialize) then crashed with a genuine,
+/// unguarded stack overflow during evaluation at depths well below the new
+/// parser limit, because this chokepoint was never protected.
+///
+/// Measured unguarded full-pipeline crash boundaries for `a{a{a{...}}}`-shaped
+/// input (todo #196, with the parser's own stack growth already active):
+///
+///   - release-napi profile, 1 MiB stack (napi's real worker-thread size, the
+///     actual napi deployment ceiling): survives 370, crashes at 380.
+///   - debug build, 2 MiB stack (cargo test's own default thread stack):
+///     survives 260, crashes at 270.
+///
+/// This constant's chokepoint (`visit_ruleset`) is wrapped in the same
+/// `crate::stack::maybe_grow` helper todo #148 added for the parser, which
+/// moves the crash boundary out dramatically (measured, todo #196, both
+/// limits temporarily raised to isolate this chokepoint): confirmed safe
+/// (no crash, sub-second) at depth 1500 on release-napi/1 MiB and at depth
+/// 1024 on debug/2 MiB — both far past the old ~380/~270 unguarded crash
+/// points above. A stack overflow reappears somewhere between depth 12,000
+/// (confirmed safe, though ~46s — compile time, not stack safety, is the
+/// practical limit that far out) and depth 15,000 (crashes) on
+/// release-napi/1 MiB; that reappearance was not root-caused (time-boxed —
+/// it's far outside any depth a real stylesheet would use, and may be an
+/// entirely different unguarded recursion, e.g. recursive `Drop` of the
+/// nested AST/CssTree, not this chokepoint).
+///
+/// 1024 is chosen with over 10x margin under the reappeared ~12-15k crash
+/// zone — well past this project's usual ~30% convention, because the
+/// guarded boundary is so much higher than the unguarded one that matching
+/// dart-sass 1.97.3's own ~450-500 level tolerance (with headroom, not bare
+/// parity) was the real binding choice, not the crash point.
+const MAX_STYLE_RULE_RECURSION_DEPTH: usize = 1024;
+
 /// Result of evaluating an if() condition.
 /// Sass atoms evaluate to True/False; CSS atoms remain as CSS.
 enum ConditionResult {
@@ -300,6 +340,12 @@ pub struct Visitor<'a> {
     /// function that calls itself with no terminating `@if`); see
     /// `run_user_defined_callable`.
     recursion_depth: usize,
+    /// Nesting depth of plain style-rule bodies (`a { b { c { ... } } }`).
+    /// This is a *separate* recursion source from `recursion_depth` above —
+    /// callable invocation and style-rule nesting can each contribute depth
+    /// independently (a mixin body that nests style rules pays into both) —
+    /// see `MAX_STYLE_RULE_RECURSION_DEPTH` and solo todo #196.
+    style_rule_recursion_depth: usize,
 }
 
 #[allow(dead_code)]
@@ -363,6 +409,7 @@ impl<'a> Visitor<'a> {
             canonicalize_cache: FxHashMap::default(),
             dir_listing_cache: RefCell::new(FxHashMap::default()),
             recursion_depth: 0,
+            style_rule_recursion_depth: 0,
         }
     }
 
@@ -5498,6 +5545,20 @@ impl<'a> Visitor<'a> {
     }
 
     pub(crate) fn visit_ruleset(&mut self, ruleset: AstRuleSet<'static>) -> SassResult<Option<Value>> {
+        if self.style_rule_recursion_depth >= MAX_STYLE_RULE_RECURSION_DEPTH {
+            return Err(("Too much nesting.", ruleset.span).into());
+        }
+
+        self.style_rule_recursion_depth += 1;
+        let result = crate::stack::maybe_grow(256 * 1024, 1024 * 1024, || {
+            self.visit_ruleset_inner(ruleset)
+        });
+        self.style_rule_recursion_depth -= 1;
+
+        result
+    }
+
+    fn visit_ruleset_inner(&mut self, ruleset: AstRuleSet<'static>) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
                 "Style rules may not be used within nested declarations.",
