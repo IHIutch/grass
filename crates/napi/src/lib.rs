@@ -27,10 +27,8 @@ pub struct CompileOptions {
     /// `sass.compileString` (JS API, not CLI): passing a version-shaped
     /// *string* here is not a hard error — the real API only warns
     /// (`WARNING: Invalid deprecation "1.33.0".`) and continues, treating it
-    /// like any other unrecognized ID. This napi binding currently hard-errors
-    /// on any unrecognized string (see `resolve_deprecation_ids`), which is a
-    /// pre-existing divergence from Plan 044/#186, not something this pass
-    /// (#188, version-range fatalization) changes.
+    /// like any other unrecognized ID (see `resolve_deprecation_ids`, which
+    /// matches this warn-and-continue behavior since #191).
     pub fatal_deprecations: Option<Vec<String>>,
     /// Deprecation IDs to opt into early, per the Sass JS API's
     /// `futureDeprecations` option.
@@ -60,14 +58,21 @@ fn catch<T>(f: impl FnOnce() -> napi::Result<T> + std::panic::UnwindSafe) -> nap
 }
 
 /// Resolves a `silenceDeprecations`/`fatalDeprecations`/`futureDeprecations`
-/// array of string IDs, per the Sass JS API. Mirrors the CLI's behavior
-/// (crates/lib/src/main.rs): an unrecognized ID is a hard error rather than a
-/// silent no-op.
-fn resolve_deprecation_ids(ids: &[String]) -> napi::Result<Vec<Deprecation>> {
+/// array of string IDs, per the Sass JS API. Unlike the CLI
+/// (crates/lib/src/main.rs, which hard-errors), the real JS API prints
+/// `WARNING: Invalid deprecation "<id>".` to stderr for an unrecognized ID
+/// and continues compiling, simply ignoring that ID (verified against the
+/// real `sass` npm package, 1.97.3, via `compileString`). This binding
+/// matches that: unrecognized IDs are dropped with a matching warning rather
+/// than failing the compile.
+fn resolve_deprecation_ids(ids: &[String]) -> Vec<Deprecation> {
     ids.iter()
-        .map(|id| {
-            Deprecation::from_id(id)
-                .ok_or_else(|| napi::Error::from_reason(format!("Invalid deprecation \"{id}\".")))
+        .filter_map(|id| {
+            let resolved = Deprecation::from_id(id);
+            if resolved.is_none() {
+                eprintln!("WARNING: Invalid deprecation \"{id}\".");
+            }
+            resolved
         })
         .collect()
 }
@@ -97,19 +102,19 @@ fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>>
         }
 
         if let Some(ref ids) = opts.silence_deprecations {
-            for deprecation in resolve_deprecation_ids(ids)? {
+            for deprecation in resolve_deprecation_ids(ids) {
                 options = options.silence_deprecation(deprecation);
             }
         }
 
         if let Some(ref ids) = opts.fatal_deprecations {
-            for deprecation in resolve_deprecation_ids(ids)? {
+            for deprecation in resolve_deprecation_ids(ids) {
                 options = options.fatal_deprecation(deprecation);
             }
         }
 
         if let Some(ref ids) = opts.future_deprecations {
-            for deprecation in resolve_deprecation_ids(ids)? {
+            for deprecation in resolve_deprecation_ids(ids) {
                 options = options.future_deprecation(deprecation);
             }
         }
@@ -263,12 +268,43 @@ mod tests {
     }
 
     #[test]
-    fn compile_string_unknown_deprecation_id_is_err() {
+    fn compile_string_unknown_deprecation_id_warns_and_continues() {
+        // Matches the real `sass` JS API (verified via `compileString` against
+        // the npm package, 1.97.3): an unrecognized deprecation ID is not a
+        // hard error, it's ignored with a `WARNING: Invalid deprecation "…".`
+        // printed to stderr (not observable from a Rust unit test, but the
+        // compile itself must still succeed).
+        for field in ["silence_deprecations", "fatal_deprecations", "future_deprecations"] {
+            let opts = match field {
+                "silence_deprecations" => CompileOptions {
+                    silence_deprecations: Some(vec!["bogus-id".to_owned()]),
+                    ..base_opts()
+                },
+                "fatal_deprecations" => CompileOptions {
+                    fatal_deprecations: Some(vec!["bogus-id".to_owned()]),
+                    ..base_opts()
+                },
+                _ => CompileOptions {
+                    future_deprecations: Some(vec!["bogus-id".to_owned()]),
+                    ..base_opts()
+                },
+            };
+            let res = compile_string("a { b: c }".to_owned(), Some(opts));
+            assert!(res.is_ok(), "field {field} unexpectedly errored");
+            assert_eq!(res.unwrap().css, "a {\n  b: c;\n}\n");
+        }
+    }
+
+    #[test]
+    fn compile_string_unknown_deprecation_id_alongside_valid_one() {
+        // A bogus ID mixed with a real one: the real one still takes effect
+        // (verified against dart-sass: `fatalDeprecations: ["slash-div",
+        // "bogus-id"]` both warns AND fatalizes on `slash-div`).
         let opts = CompileOptions {
-            silence_deprecations: Some(vec!["bogus-id".to_owned()]),
+            fatal_deprecations: Some(vec!["slash-div".to_owned(), "bogus-id".to_owned()]),
             ..base_opts()
         };
-        let res = compile_string("a { b: c }".to_owned(), Some(opts));
+        let res = compile_string("$a: 1;\nb { c: $a/2; }".to_owned(), Some(opts));
         assert!(res.is_err());
     }
 

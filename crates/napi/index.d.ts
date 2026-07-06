@@ -17,6 +17,16 @@ export interface CompileOptions {
   /**
    * Deprecation IDs to treat as fatal errors, per the Sass JS API's
    * `fatalDeprecations` option (string-ID form only).
+   *
+   * The real JS API additionally accepts `Version` instances here for
+   * range-expansion (`Deprecation.forVersion`); that form is not
+   * implemented (would require a `Version` napi struct + a union member
+   * type, a bigger change than this string-ID surface). Probed via
+   * `sass.compileString` (JS API, not CLI): passing a version-shaped
+   * *string* here is not a hard error — the real API only warns
+   * (`WARNING: Invalid deprecation "1.33.0".`) and continues, treating it
+   * like any other unrecognized ID (see `resolve_deprecation_ids`, which
+   * matches this warn-and-continue behavior since #191).
    */
   fatalDeprecations?: Array<string>
   /**

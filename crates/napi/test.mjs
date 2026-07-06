@@ -34,8 +34,28 @@ assert.equal(
 assert.throws(() =>
   binding.compileString(slashDivSource, { fatalDeprecations: ["slash-div"] }),
 );
+
+// Unknown deprecation IDs warn-and-continue (matches the real `sass` JS API:
+// prints `WARNING: Invalid deprecation "…".` to stderr, does not throw) —
+// verified against `sass@1.97.3`'s `compileString`, unlike the CLI, which
+// hard-errors on the same input.
+assert.equal(
+  binding.compileString("a { b: c }", { silenceDeprecations: ["bogus-id"] }).css,
+  "a {\n  b: c;\n}\n",
+);
+assert.equal(
+  binding.compileString("a { b: c }", { fatalDeprecations: ["bogus-id"] }).css,
+  "a {\n  b: c;\n}\n",
+);
+assert.equal(
+  binding.compileString("a { b: c }", { futureDeprecations: ["bogus-id"] }).css,
+  "a {\n  b: c;\n}\n",
+);
+// A bogus ID mixed with a real one: the real one still takes effect.
 assert.throws(() =>
-  binding.compileString("a { b: c }", { silenceDeprecations: ["bogus-id"] }),
+  binding.compileString(slashDivSource, {
+    fatalDeprecations: ["slash-div", "bogus-id"],
+  }),
 );
 
 console.log("ok");
