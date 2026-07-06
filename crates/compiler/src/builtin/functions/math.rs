@@ -135,6 +135,21 @@ pub(crate) fn random(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     }
 
     let limit = limit.assert_number_with_name("limit", args.span())?;
+
+    if limit.unit != Unit::None {
+        let span = args.span();
+        let unit = limit.unit.clone();
+        let limit_text = serialize_number(&limit, visitor.options, span)?;
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(format!(
+                "math.random() will no longer ignore $limit units ({limit_text}) in a future \
+                 release.\n\nRecommendation: math.random(math.div($limit, 1{unit})) * \
+                 1{unit}\n\nTo preserve current behavior: math.random(math.div($limit, \
+                 1{unit}))\n\nMore info: https://sass-lang.com/d/function-units"
+            ))
+        })?;
+    }
+
     let limit_int = limit.assert_int_with_name("limit", args.span())?;
     let limit = limit.num;
 

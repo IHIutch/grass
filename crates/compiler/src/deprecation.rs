@@ -53,6 +53,12 @@ pub enum Deprecation {
     /// Calling the global `abs()` function with a percentage argument
     /// outside of `calc()`.
     AbsPercent,
+    /// Passing an invalid unit (or missing a required one) to a built-in
+    /// function argument, e.g. `list.nth($list, 1px)` or `math.random(1px)`.
+    FunctionUnits,
+    /// Writing `!default` or `!global` more than once for the same variable
+    /// declaration.
+    DuplicateVarFlags,
 }
 
 impl Deprecation {
@@ -77,6 +83,8 @@ impl Deprecation {
             Self::WithPrivate => "with-private",
             Self::MisplacedRest => "misplaced-rest",
             Self::AbsPercent => "abs-percent",
+            Self::FunctionUnits => "function-units",
+            Self::DuplicateVarFlags => "duplicate-var-flags",
         }
     }
 
@@ -132,7 +140,9 @@ impl Deprecation {
             | Self::ColorModuleCompat
             | Self::WithPrivate
             | Self::MisplacedRest
-            | Self::AbsPercent => false,
+            | Self::AbsPercent
+            | Self::FunctionUnits
+            | Self::DuplicateVarFlags => false,
         }
     }
 }

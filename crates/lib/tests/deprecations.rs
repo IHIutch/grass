@@ -1480,3 +1480,128 @@ fn color_module_compat_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert_eq!(&[] as &[String], logger.warning_messages().as_slice());
 }
+
+#[test]
+fn duplicate_var_flags_warns_for_repeated_default() {
+    // Verified byte-identical (message text and span) against npx sass@1.97.3.
+    let input = "$a: 1 !default !default;\na {\n  b: $a;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [duplicate-var-flags]: !default should only be written once for \
+         each variable.\nThis will be an error in Dart Sass 2.0.0."
+    ));
+}
+
+#[test]
+fn duplicate_var_flags_warns_for_repeated_global() {
+    // Verified byte-identical (message text and span) against npx sass@1.97.3.
+    let input = "$a: 1 !global !global;\na {\n  b: $a;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(
+        warnings.iter().filter(|w| w.contains("[duplicate-var-flags]")).count(),
+        1
+    );
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [duplicate-var-flags]: !global should only be written once for \
+         each variable.\nThis will be an error in Dart Sass 2.0.0."
+    )));
+}
+
+#[test]
+fn duplicate_var_flags_does_not_warn_for_single_flag() {
+    let input = "$a: 1 !default;\na {\n  b: $a;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[duplicate-var-flags]")));
+}
+
+#[test]
+fn duplicate_var_flags_silenced() {
+    let input = "$a: 1 !default !default;\na {\n  b: $a;\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::DuplicateVarFlags);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[duplicate-var-flags]")));
+}
+
+#[test]
+fn function_units_warns_for_list_nth_with_unit() {
+    // Verified byte-identical (message text and span) against npx sass@1.97.3.
+    let input = "@use \"sass:list\";\na {\n  b: list.nth(1px 2px 3px, 1px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 1px;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [function-units]: $n: Passing a number with unit px is \
+         deprecated.\n\nTo preserve current behavior: calc($n / 1px)"
+    ));
+}
+
+#[test]
+fn function_units_warns_for_list_set_nth_with_unit() {
+    let input = "@use \"sass:list\";\na {\n  b: list.set-nth(1px 2px 3px, 1px, 5px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("DEPRECATION WARNING [function-units]: $n:"));
+}
+
+#[test]
+fn function_units_does_not_warn_for_unitless_index() {
+    let input = "@use \"sass:list\";\na {\n  b: list.nth(1px 2px 3px, 1);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_math_random_with_unit() {
+    // Verified byte-identical (message text and span) against npx sass@1.97.3.
+    let input = "@use \"sass:math\";\na {\n  b: math.random(5px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [function-units]: math.random() will no longer ignore $limit \
+         units (5px) in a future release.\n\nRecommendation: math.random(math.div($limit, \
+         1px)) * 1px\n\nTo preserve current behavior: math.random(math.div($limit, 1px))"
+    ));
+}
+
+#[test]
+fn function_units_does_not_warn_for_unitless_random_limit() {
+    let input = "@use \"sass:math\";\na {\n  b: math.random(5);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_silenced() {
+    let input = "@use \"sass:list\";\na {\n  b: list.nth(1px 2px 3px, 1px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default()
+        .logger(&logger)
+        .silence_deprecation(Deprecation::FunctionUnits);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}

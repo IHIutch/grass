@@ -58,6 +58,20 @@ pub(crate) fn color_channel_getter_message(is_global: bool, name: &str, space: &
     )
 }
 
+/// Builds the `function-units` deprecation message for a built-in function
+/// argument that was passed a number with an invalid (or missing) unit,
+/// e.g. `list.nth($list, 1px)`. `name` is the parameter name (without `$`),
+/// `unit` is the unit actually passed. Mirrors dart-sass's `unitSuggestion`
+/// for the single-unit case (no denominator units), which always wraps the
+/// suggestion in `calc(...)` since it has a numerator unit — verified
+/// against npx sass@1.97.3 (`list.nth($l, 1px)` → `calc($n / 1px)`).
+pub(crate) fn function_units_message(name: &str, unit: &Unit) -> String {
+    format!(
+        "${name}: Passing a number with unit {unit} is deprecated.\n\nTo preserve current \
+         behavior: calc(${name} / 1{unit})\n\nMore info: https://sass-lang.com/d/function-units"
+    )
+}
+
 /// The legacy HSL/alpha channels `_suggestScaleAndAdjust` operates over —
 /// bundles the channel's dart-source name, its bounds, and the unit its
 /// `color.adjust(...)` suggestion is serialized with (`%` for lightness/

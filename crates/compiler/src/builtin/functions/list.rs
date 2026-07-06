@@ -15,6 +15,14 @@ pub(crate) fn nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         .get_err(1, "n")?
         .assert_number_with_name("n", args.span())?;
 
+    if index.unit != Unit::None {
+        let unit = index.unit.clone();
+        let span = args.span();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_units_message("n", &unit))
+        })?;
+    }
+
     if index.num.is_zero() {
         return Err(("$n: List index may not be 0.", args.span()).into());
     }
@@ -81,6 +89,14 @@ pub(crate) fn set_nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     let index = args
         .get_err(1, "n")?
         .assert_number_with_name("n", args.span())?;
+
+    if index.unit != Unit::None {
+        let unit = index.unit.clone();
+        let span = args.span();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_units_message("n", &unit))
+        })?;
+    }
 
     if index.num.is_zero() {
         return Err(("$n: List index may not be 0.", args.span()).into());

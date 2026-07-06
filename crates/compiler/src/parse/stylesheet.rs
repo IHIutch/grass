@@ -3143,12 +3143,27 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let mut is_guarded = false;
         let mut is_global = false;
 
-        while self.scan_char('!') {
+        loop {
             let flag_start = self.toks().cursor();
+            if !self.scan_char('!') {
+                break;
+            }
             let flag = self.parse_identifier(false, false)?;
 
             match flag.as_str() {
-                "default" => is_guarded = true,
+                "default" => {
+                    if is_guarded {
+                        let span = self.toks_mut().span_from(flag_start);
+                        self.parse_time_warnings_mut().push((
+                            Deprecation::DuplicateVarFlags,
+                            span,
+                            "!default should only be written once for each variable.\nThis \
+                             will be an error in Dart Sass 2.0.0."
+                                .to_string(),
+                        ));
+                    }
+                    is_guarded = true;
+                }
                 "global" => {
                     if namespace.is_some() {
                         return Err((
@@ -3156,6 +3171,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                             self.toks_mut().span_from(flag_start),
                         )
                             .into());
+                    }
+
+                    if is_global {
+                        let span = self.toks_mut().span_from(flag_start);
+                        self.parse_time_warnings_mut().push((
+                            Deprecation::DuplicateVarFlags,
+                            span,
+                            "!global should only be written once for each variable.\nThis \
+                             will be an error in Dart Sass 2.0.0."
+                                .to_string(),
+                        ));
                     }
 
                     is_global = true;
