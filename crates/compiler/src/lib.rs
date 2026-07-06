@@ -73,7 +73,7 @@ pub use crate::deprecation::Deprecation;
 pub use crate::error::{
     PublicSassErrorKind as ErrorKind, SassError as Error, SassResult as Result,
 };
-pub use crate::fs::{Fs, NullFs, StdFs};
+pub use crate::fs::{DirListing, Fs, NullFs, StdFs};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
 pub use crate::{builtin::Builtin, evaluate::Visitor};

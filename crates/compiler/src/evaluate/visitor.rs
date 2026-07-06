@@ -290,6 +290,12 @@ pub struct Visitor<'a> {
     import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
+    /// Cache of directory listings, used to batch existence probes for many
+    /// import candidates sharing the same parent directory into a single
+    /// directory read. Wrapped in `RefCell` so it can be populated from the
+    /// `&self`-only candidate-resolution helpers. `None` means the directory
+    /// couldn't be listed (or the embedder's `Fs` doesn't support batching).
+    dir_listing_cache: RefCell<FxHashMap<PathBuf, Option<Rc<crate::fs::DirListing>>>>,
     /// Nesting depth of user-defined function/mixin/content-block invocations.
     /// Guards against stack overflow from unbounded recursion (e.g. a
     /// function that calls itself with no terminating `@if`); see
@@ -356,6 +362,7 @@ impl<'a> Visitor<'a> {
             files_seen: FxHashSet::default(),
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
+            dir_listing_cache: RefCell::new(FxHashMap::default()),
             recursion_depth: 0,
         }
     }
@@ -373,6 +380,53 @@ impl<'a> Visitor<'a> {
         self.canonicalize_cache
             .insert(path.to_path_buf(), result.clone());
         result
+    }
+
+    /// Cached directory listing, used to batch existence probes for many
+    /// import candidates in the same directory into a single directory read.
+    /// Works from `&self` (via `RefCell`) so it can be used inside the
+    /// `&self`-only candidate-resolution helpers in `find_import_uncached`.
+    fn dir_listing(&self, dir: &Path) -> Option<Rc<crate::fs::DirListing>> {
+        if let Some(cached) = self.dir_listing_cache.borrow().get(dir) {
+            return cached.clone();
+        }
+        let listing = self.options.fs.dir_listing(dir).map(Rc::new);
+        self.dir_listing_cache
+            .borrow_mut()
+            .insert(dir.to_path_buf(), listing.clone());
+        listing
+    }
+
+    /// Like `self.options.fs.is_file(path)`, but consults the cached
+    /// directory listing first to avoid a filesystem call when existence (or
+    /// absence) can be proven from an already-read directory listing. Falls
+    /// back to a direct `is_file` call whenever the listing is unavailable or
+    /// ambiguous (symlinks, case-only variants) — see `DirListing::probe_is_file`.
+    fn is_file_fast(&self, path: &Path) -> bool {
+        let (dir, name) = match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) => (dir, name),
+            _ => return self.options.fs.is_file(path),
+        };
+        match self.dir_listing(dir) {
+            Some(listing) => listing
+                .probe_is_file(name)
+                .unwrap_or_else(|| self.options.fs.is_file(path)),
+            None => self.options.fs.is_file(path),
+        }
+    }
+
+    /// Like `is_file_fast`, but for directories.
+    fn is_dir_fast(&self, path: &Path) -> bool {
+        let (dir, name) = match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) => (dir, name),
+            _ => return self.options.fs.is_dir(path),
+        };
+        match self.dir_listing(dir) {
+            Some(listing) => listing
+                .probe_is_dir(name)
+                .unwrap_or_else(|| self.options.fs.is_dir(path)),
+            None => self.options.fs.is_dir(path),
+        }
     }
 
     pub(crate) fn visit_stylesheet(&mut self, style_sheet: &StyleSheet<'static>) -> SassResult<()> {
@@ -2173,7 +2227,7 @@ impl<'a> Visitor<'a> {
             |candidates: &[PathBuf], context_dir: &Path, span: Span| -> SassResult<Option<PathBuf>> {
                 let existing: Vec<&PathBuf> = candidates
                     .iter()
-                    .filter(|p| self.options.fs.is_file(p))
+                    .filter(|p| self.is_file_fast(p))
                     .collect();
 
                 if existing.len() > 1 {
@@ -2248,7 +2302,7 @@ impl<'a> Visitor<'a> {
         }
 
         // Also check index files
-        if self.options.fs.is_dir(&path_buf) {
+        if self.is_dir_fast(&path_buf) {
             if let Some(found) =
                 resolve_with_conflicts(&path_buf.join("index"), for_import, context_dir, span)?
             {
@@ -2266,7 +2320,7 @@ impl<'a> Visitor<'a> {
                 return Ok(Some(found));
             }
 
-            if self.options.fs.is_dir(&lp_buf) {
+            if self.is_dir_fast(&lp_buf) {
                 if let Some(found) = resolve_with_conflicts(
                     &lp_buf.join("index"),
                     for_import,
