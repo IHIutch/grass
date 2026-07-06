@@ -25,14 +25,22 @@ fn option_on_emits_valid_v3_json() {
         .expect("from_string_with_source_map should succeed");
 
     let map = map.expect("map must be Some when source_map option is on");
+    let map = map.to_json(None, false);
 
     // Hand-parse the handful of top-level fields rather than pulling in a
     // JSON dependency for a single test file.
     assert!(map.starts_with('{') && map.ends_with('}'));
     assert!(map.contains("\"version\":3"));
-    assert!(map.contains("\"sources\":[\"stdin\"]"));
+    // `from_string_with_source_map` has no real input path, so — matching
+    // the JS API's `compileString` without a `url` option — the sole
+    // `sources` entry is a `data:` URL of the input, not a literal "stdin".
+    assert!(
+        map.contains("\"sources\":[\"data:;charset=utf-8,"),
+        "got: {map}"
+    );
     assert!(map.contains("\"names\":[]"));
     assert!(!map.contains("\"mappings\":\"\""), "mappings must be non-empty");
+    assert!(!map.contains("\"file\""), "file key must be omitted, got: {map}");
 }
 
 #[test]
@@ -54,6 +62,7 @@ fn first_mapping_matches_hand_computed_dart_sass_output() {
     let (_css, map) = grass::from_string_with_source_map(INPUT.to_string(), &options)
         .expect("from_string_with_source_map should succeed");
     let map = map.expect("map must be Some when source_map option is on");
+    let map = map.to_json(None, false);
 
     assert!(
         map.contains("\"mappings\":\"AAAA;EACE\""),

@@ -156,6 +156,11 @@ struct MappingState {
     /// Deduplicated, first-appearance-ordered source file names; indexed by
     /// `RawMapping::src_file_idx`.
     sources: Vec<String>,
+    /// Verbatim source text for each entry in `sources`, same indexing.
+    /// Always collected alongside `sources` (only paid for when the option
+    /// is on at all) so `--embed-sources` needs no separate collection
+    /// pass; `to_json`'s `embed_sources` flag decides whether it's emitted.
+    sources_content: Vec<String>,
     /// Byte offset into `buffer` already scanned for generated line/column
     /// tracking; `record_mapping` only rescans `buffer[scan_pos..]`.
     scan_pos: usize,
@@ -1959,6 +1964,7 @@ impl<'a> Serializer<'a> {
             Some(idx) => idx,
             None => {
                 state.sources.push(loc.file.name().to_owned());
+                state.sources_content.push(loc.file.source().to_owned());
                 state.sources.len() - 1
             }
         };
@@ -1972,12 +1978,16 @@ impl<'a> Serializer<'a> {
         });
     }
 
-    /// Take the mappings and source list collected via `record_mapping`.
-    /// Empty when `mapping_state` was `None` (option off).
-    pub(crate) fn take_mappings(&mut self) -> (Vec<crate::source_map::RawMapping>, Vec<String>) {
+    /// Take the mappings, source names, and source contents collected via
+    /// `record_mapping`. All empty when `mapping_state` was `None` (option
+    /// off).
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn take_mappings(
+        &mut self,
+    ) -> (Vec<crate::source_map::RawMapping>, Vec<String>, Vec<String>) {
         match self.mapping_state.take() {
-            Some(state) => (state.mappings, state.sources),
-            None => (Vec::new(), Vec::new()),
+            Some(state) => (state.mappings, state.sources, state.sources_content),
+            None => (Vec::new(), Vec::new(), Vec::new()),
         }
     }
 

@@ -1,7 +1,8 @@
-//! Minimal Source Map v3 encoder used by the `from_string_with_source_map`
-//! prototype (Plan 013 design spike). Hand-rolled rather than pulling in a
-//! dependency: the VLQ alphabet is ~70 lines total and this repo is
-//! deliberately dep-skeptical (see `Cargo.toml`).
+//! Source Map v3 encoder used by the `from_string_with_source_map` /
+//! `from_path_with_source_map` prototype (Plan 013 design spike, wired up in
+//! Plan 062). Hand-rolled rather than pulling in a dependency: the VLQ
+//! alphabet is ~70 lines total and this repo is deliberately dep-skeptical
+//! (see `Cargo.toml`).
 
 const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -42,37 +43,120 @@ fn encode_vlq(value: i64, out: &mut String) {
     }
 }
 
-/// Build a Source Map v3 JSON document from collected mappings.
-///
-/// `mappings` must already be sorted by `(dst_line, dst_col)`; `sources` is
-/// the deduplicated, first-appearance-ordered list of source file names that
-/// `src_file_idx` indexes into. `output_file` is the `file` field (the name
-/// of the generated CSS; may be empty).
-pub(crate) fn build_source_map_json(
-    mappings: &[RawMapping],
-    sources: &[String],
-    output_file: &str,
-) -> String {
-    let mappings_str = encode_mappings(mappings);
+/// A built Source Map v3 document, prior to any CLI-level `sources` URL
+/// rewriting (`--source-map-urls=absolute`) or `file`/`sourcesContent`
+/// decoration. `sources` and `sources_content` are `pub` and index-parallel
+/// (same length, same order) so a downstream crate (the CLI) can rewrite
+/// `sources` in place — e.g. to absolute `file://` URLs, or a path relative
+/// to the output `.map` file's directory — without needing any accessor
+/// beyond direct field access.
+#[derive(Debug, Clone)]
+pub struct SourceMapData {
+    /// Deduplicated, first-appearance-ordered source file names/URLs.
+    pub sources: Vec<String>,
+    /// Verbatim source text, parallel to `sources`. Only emitted as the
+    /// JSON `sourcesContent` field when `to_json`'s `embed_sources` is true.
+    pub sources_content: Vec<String>,
+    /// Pre-encoded VLQ `mappings` string. Computed once at construction time
+    /// since it depends only on the numeric fields of each `RawMapping`
+    /// (line/column/file-index deltas), never on the string contents of
+    /// `sources`, so rewriting `sources` afterward cannot invalidate it.
+    encoded_mappings: String,
+}
 
-    let mut sources_json = String::from("[");
-    for (idx, source) in sources.iter().enumerate() {
-        if idx > 0 {
-            sources_json.push(',');
+impl SourceMapData {
+    pub(crate) fn new(
+        mappings: &[RawMapping],
+        sources: Vec<String>,
+        sources_content: Vec<String>,
+    ) -> Self {
+        Self {
+            sources,
+            sources_content,
+            encoded_mappings: encode_mappings(mappings),
         }
-        sources_json.push('"');
-        json_escape_into(source, &mut sources_json);
-        sources_json.push('"');
     }
-    sources_json.push(']');
 
-    let mut file_json = String::from("\"");
-    json_escape_into(output_file, &mut file_json);
-    file_json.push('"');
+    /// Serialize to a Source Map v3 JSON document.
+    ///
+    /// `file` is the CLI's output-file-name field; pass `None` to omit it
+    /// entirely, matching the JS API's `sourceMap` object (which never has a
+    /// `file` key — confirmed via `sass.compileString(..., {sourceMap:
+    /// true})`). `embed_sources` toggles whether `sourcesContent` is
+    /// emitted (`--embed-sources` / the JS API's `sourceMapIncludeSources`).
+    #[must_use]
+    pub fn to_json(&self, file: Option<&str>, embed_sources: bool) -> String {
+        let mut sources_json = String::from("[");
+        for (idx, source) in self.sources.iter().enumerate() {
+            if idx > 0 {
+                sources_json.push(',');
+            }
+            sources_json.push('"');
+            json_escape_into(source, &mut sources_json);
+            sources_json.push('"');
+        }
+        sources_json.push(']');
 
-    format!(
-        "{{\"version\":3,\"sourceRoot\":\"\",\"sources\":{sources_json},\"names\":[],\"mappings\":\"{mappings_str}\",\"file\":{file_json}}}"
-    )
+        let mut out = format!(
+            "{{\"version\":3,\"sourceRoot\":\"\",\"sources\":{sources_json},\"names\":[],\"mappings\":\"{}\"",
+            self.encoded_mappings
+        );
+
+        if let Some(file) = file {
+            out.push_str(",\"file\":\"");
+            json_escape_into(file, &mut out);
+            out.push('"');
+        }
+
+        if embed_sources {
+            out.push_str(",\"sourcesContent\":[");
+            for (idx, content) in self.sources_content.iter().enumerate() {
+                if idx > 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                json_escape_into(content, &mut out);
+                out.push('"');
+            }
+            out.push(']');
+        }
+
+        out.push('}');
+        out
+    }
+}
+
+/// Percent-encode `input` the way JavaScript's `encodeURI` does (verified
+/// byte-for-byte against `sass.compileString(..., {sourceMap: true})`'s
+/// `data:` URL sources entry for stdin-style input, including a fixture
+/// with `"`, `%`, `<`, `>`, `` ` ``, and other punctuation). Unlike
+/// `encodeURIComponent`, this preserves URI-reserved characters
+/// (`;,/?:@&=+$#`) and the unreserved set (`A-Za-z0-9-_.!~*'()`) unescaped;
+/// everything else (including space, `{`, `}`, and all non-ASCII bytes) is
+/// percent-encoded.
+pub(crate) fn encode_uri(input: &str) -> String {
+    const UNESCAPED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'();,/?:@&=+$#";
+
+    const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if UNESCAPED.contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX_DIGITS[(byte >> 4) as usize] as char);
+            out.push(HEX_DIGITS[(byte & 0xF) as usize] as char);
+        }
+    }
+    out
+}
+
+/// Builds the `data:` URL dart-sass uses as the `sources` entry for
+/// string-only input with no real file path (stdin, or the JS API's
+/// `compileString` without a `url` option).
+pub(crate) fn stdin_data_url(input: &str) -> String {
+    format!("data:;charset=utf-8,{}", encode_uri(input))
 }
 
 fn json_escape_into(input: &str, out: &mut String) {
@@ -80,7 +164,13 @@ fn json_escape_into(input: &str, out: &mut String) {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
-            _ => out.push(c),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
         }
     }
 }
@@ -169,5 +259,61 @@ mod tests {
         let mut out = String::new();
         encode_vlq(-2, &mut out);
         assert_eq!(out, "F");
+    }
+
+    #[test]
+    fn encode_uri_matches_dart_sass_stdin_data_url() {
+        // `echo 'a { b: c; }' | sass --stdin` (dart-sass 1.97.3, verified via
+        // the JS API `compileString('a { b: c; }\n', {sourceMap: true})`)
+        // produces this exact `sources` entry.
+        assert_eq!(
+            stdin_data_url("a { b: c; }\n"),
+            "data:;charset=utf-8,a%20%7B%20b:%20c;%20%7D%0A"
+        );
+    }
+
+    #[test]
+    fn encode_uri_preserves_reserved_punctuation() {
+        // Verified against `encodeURI` in Node, itself verified byte-for-byte
+        // against dart-sass's data: URL for a fixture containing this exact
+        // punctuation mix (see docs/design/source-maps.md probe notes).
+        let src = "/* \"x\" %b <c> = hi?/\\|^`~@!$&()*+,;:='\t */\na{b:c}";
+        assert_eq!(
+            encode_uri(src),
+            "/*%20%22x%22%20%25b%20%3Cc%3E%20=%20hi?/%5C%7C%5E%60~@!$&()*+,;:='%09%20*/%0Aa%7Bb:c%7D"
+        );
+    }
+
+    #[test]
+    fn json_escape_escapes_control_characters() {
+        let mut out = String::new();
+        json_escape_into("a\nb\tc\rd", &mut out);
+        assert_eq!(out, "a\\nb\\tc\\rd");
+    }
+
+    #[test]
+    fn to_json_omits_file_when_none() {
+        let data = SourceMapData::new(&[], vec!["stdin".to_owned()], vec![String::new()]);
+        let json = data.to_json(None, false);
+        assert!(!json.contains("\"file\""), "got: {json}");
+    }
+
+    #[test]
+    fn to_json_includes_file_when_given() {
+        let data = SourceMapData::new(&[], vec!["stdin".to_owned()], vec![String::new()]);
+        let json = data.to_json(Some("out.css"), false);
+        assert!(json.contains("\"file\":\"out.css\""), "got: {json}");
+    }
+
+    #[test]
+    fn to_json_embeds_sources_content_only_when_requested() {
+        let data = SourceMapData::new(
+            &[],
+            vec!["in.scss".to_owned()],
+            vec!["a { b: c; }".to_owned()],
+        );
+        assert!(!data.to_json(None, false).contains("sourcesContent"));
+        let embedded = data.to_json(None, true);
+        assert!(embedded.contains("\"sourcesContent\":[\"a { b: c; }\"]"));
     }
 }

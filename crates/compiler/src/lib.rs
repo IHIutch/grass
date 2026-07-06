@@ -76,6 +76,7 @@ pub use crate::error::{
 pub use crate::fs::{DirListing, Fs, NullFs, StdFs};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
+pub use crate::source_map::SourceMapData;
 pub use crate::{builtin::Builtin, evaluate::Visitor};
 pub(crate) use crate::{context_flags::ContextFlags, lexer::Token};
 use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
@@ -179,42 +180,87 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     file_name: P,
     options: &Options,
 ) -> Result<String> {
-    let (css, _mappings, _sources) = compile_impl(input, file_name, options)?;
+    let (css, _mappings, _sources, _sources_content) = compile_impl(input, file_name, options)?;
     Ok(css)
 }
 
-/// Compile CSS from a string, additionally returning a Source Map v3 JSON
-/// document when [`Options::source_map`] is enabled.
+/// Compile CSS from a string, additionally returning a [`SourceMapData`]
+/// when [`Options::source_map`] is enabled.
 ///
-/// This is a Plan 013 design-spike prototype: only top-level style
-/// declarations and selectors produce mappings. The second tuple element is
-/// `None` whenever `options.source_map()` was not set to `true`, in which
-/// case this function's CSS output is byte-identical to [`from_string`].
+/// Only top-level style declarations and selectors produce mappings (see
+/// `docs/design/source-maps.md`). The second tuple element is `None`
+/// whenever `options.source_map()` was not set to `true`, in which case
+/// this function's CSS output is byte-identical to [`from_string`].
 ///
-/// Not yet wired into the CLI, napi, or WASM surfaces — see
-/// `docs/design/source-maps.md` for the full design and deferred work.
+/// This has no real input path, so — matching the JS API's
+/// `compileString` without a `url` option — the sole `sources` entry is a
+/// `data:` URL of `input` itself, rather than a literal `"stdin"` string.
+/// Any additional files pulled in via `@use`/`@import` are recorded under
+/// their real (resolved) paths.
 pub fn from_string_with_source_map<S: Into<String>>(
     input: S,
     options: &Options,
-) -> Result<(String, Option<String>)> {
-    let (css, mappings, sources) = compile_impl(input.into(), "stdin", options)?;
-
-    let map_json = if options.source_map {
-        Some(crate::source_map::build_source_map_json(
-            &mappings, &sources, "",
-        ))
+) -> Result<(String, Option<SourceMapData>)> {
+    let input = input.into();
+    // Only clone the input when a map was actually requested — this is the
+    // one extra cost `from_string` callers must never pay, so it's gated on
+    // the same flag that already gates all other source-map bookkeeping.
+    let input_for_data_url = if options.source_map {
+        Some(input.clone())
     } else {
         None
     };
 
-    Ok((css, map_json))
+    let (css, mappings, mut sources, sources_content) =
+        compile_impl(input, "stdin", options)?;
+
+    let map = if options.source_map {
+        if let Some(idx) = sources.iter().position(|name| name == "stdin") {
+            sources[idx] = crate::source_map::stdin_data_url(
+                input_for_data_url.as_deref().unwrap_or_default(),
+            );
+        }
+        Some(SourceMapData::new(&mappings, sources, sources_content))
+    } else {
+        None
+    };
+
+    Ok((css, map))
 }
 
+/// Compile CSS from a path, additionally returning a [`SourceMapData`] when
+/// [`Options::source_map`] is enabled. See [`from_string_with_source_map`]
+/// for the general contract; unlike that function, `sources` entries here
+/// are real file paths (as given, and as resolved by any `@use`/`@import`),
+/// never `data:` URLs.
+#[inline]
+pub fn from_path_with_source_map<P: AsRef<Path>>(
+    p: P,
+    options: &Options,
+) -> Result<(String, Option<SourceMapData>)> {
+    let input = String::from_utf8(options.fs.read(p.as_ref())?)?;
+    let (css, mappings, sources, sources_content) = compile_impl(input, p, options)?;
+
+    let map = if options.source_map {
+        Some(SourceMapData::new(&mappings, sources, sources_content))
+    } else {
+        None
+    };
+
+    Ok((css, map))
+}
+
+#[allow(clippy::type_complexity)]
 fn compile_impl<P: AsRef<Path>>(
     input: String,
     file_name: P,
     options: &Options,
-) -> Result<(String, Vec<crate::source_map::RawMapping>, Vec<String>)> {
+) -> Result<(
+    String,
+    Vec<crate::source_map::RawMapping>,
+    Vec<String>,
+    Vec<String>,
+)> {
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
@@ -313,10 +359,10 @@ fn compile_impl<P: AsRef<Path>>(
         prev_requires_semicolon = requires_semicolon;
     }
 
-    let (mappings, sources) = serializer.take_mappings();
+    let (mappings, sources, sources_content) = serializer.take_mappings();
     let css = serializer.finish(prev_requires_semicolon);
 
-    Ok((css, mappings, sources))
+    Ok((css, mappings, sources, sources_content))
 }
 
 /// Compile CSS from a path
