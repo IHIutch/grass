@@ -1,4 +1,7 @@
-use crate::{builtin::builtin_imports::*, color::space::ColorSpace, value::conversion_factor};
+use crate::{
+    builtin::builtin_imports::*, color::space::ColorSpace, serializer::inspect_number,
+    value::conversion_factor,
+};
 
 use super::GlobalFunctionMap;
 
@@ -18,14 +21,38 @@ pub(crate) enum ParsedChannels {
     SlashList(Vec<Value>),
 }
 
-pub(crate) fn angle_value(num: Value, name: &str, span: Span) -> SassResult<Number> {
+/// Transcribes dart-sass's `_angleValue` (`lib/src/functions/color.dart`):
+/// asserts that `num` is a number and returns its value in degrees. Unitless
+/// numbers are used as-is (dart's `UnitlessSassNumber.compatibleWithUnit`
+/// always returns true, so they never warn); deg/grad/rad/turn are converted;
+/// anything else (including complex units) is deprecated — dart still uses
+/// the raw, unconverted value in that case (`return angle.value`).
+pub(crate) fn angle_value(
+    num: Value,
+    name: &str,
+    span: Span,
+    visitor: &mut Visitor,
+) -> SassResult<Number> {
     let angle = num.assert_number_with_name(name, span)?;
 
-    if angle.has_compatible_units(&Unit::Deg) {
-        let factor = conversion_factor(&angle.unit, &Unit::Deg).unwrap();
+    if angle.unit == Unit::None {
+        return Ok(angle.num);
+    }
 
+    if let Some(factor) = conversion_factor(&angle.unit, &Unit::Deg) {
         return Ok(angle.num * Number(factor));
     }
+
+    let unit = angle.unit.clone();
+    let value_display = inspect_number(&angle, visitor.options, span)?;
+    visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+        Ok(function_unit_other_than_message(
+            name,
+            "deg",
+            &value_display,
+            &unit,
+        ))
+    })?;
 
     Ok(angle.num)
 }

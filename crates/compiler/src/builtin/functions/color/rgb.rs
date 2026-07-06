@@ -574,13 +574,42 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         .get_err(1, "color2")?
         .assert_color_with_name("color2", span)?;
 
-    let weight = match args.default_arg(
+    // dart-sass's default is `50%` (not unitless), so an omitted `$weight`
+    // never trips the legacy `_checkPercent` warning below.
+    let weight_arg = args.default_arg(
         2,
         "weight",
-        Value::Dimension(SassNumber::new_unitless(50.0)),
-    ) {
+        Value::Dimension(SassNumber {
+            num: Number(50.0),
+            unit: Unit::Percent,
+            as_slash: None,
+        }),
+    );
+
+    // Parse $method parameter
+    let method = args.get(3, "method");
+
+    let method_value = match method {
+        None => None,
+        Some(v) => match v.node {
+            Value::Null => None,
+            other => Some(other),
+        },
+    };
+
+    let weight = match weight_arg {
         Value::Dimension(mut num) => {
             num.assert_bounds("weight", 0.0, 100.0, span)?;
+            // dart-sass's `_checkPercent(weight, "weight")`: only applies to the
+            // legacy (no `$method`) mix path — the `$method` path uses
+            // `valueInRangeWithUnit` instead and never warns here.
+            if method_value.is_none() && num.unit != Unit::Percent {
+                let value_display = inspect_number(&num, visitor.options, span)?;
+                let unit = num.unit.clone();
+                visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                    Ok(function_percent_message("weight", &value_display, &unit))
+                })?;
+            }
             num.num /= Number(100.0);
             num.num
         }
@@ -594,17 +623,6 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             )
                 .into())
         }
-    };
-
-    // Parse $method parameter
-    let method = args.get(3, "method");
-
-    let method_value = match method {
-        None => None,
-        Some(v) => match v.node {
-            Value::Null => None,
-            other => Some(other),
-        },
     };
 
     match method_value {

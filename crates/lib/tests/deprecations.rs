@@ -1605,3 +1605,169 @@ fn function_units_silenced() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
 }
+
+#[test]
+fn function_units_warns_for_mix_legacy_weight_without_percent() {
+    // Verified byte-identical (message text and span) against npx sass@1.97.3;
+    // matches the Bootstrap 5.0.2 `mix($fg, $bg, opacity($fg) * 100)` call site.
+    let input = "a {\n  b: mix(red, blue, 40);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.iter().filter(|w| w.contains("[function-units]")).count(), 1);
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $weight: Passing a number without unit % \
+         (40) is deprecated.\n\nTo preserve current behavior: $weight * 1%"
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_mix_default_weight() {
+    // dart-sass's default is `50%`, not unitless — an omitted $weight must not warn.
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.mix(red, blue));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_does_not_warn_for_mix_percent_weight() {
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.mix(red, blue, 40%));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_invert_legacy_weight_without_percent() {
+    // Verified byte-identical against npx sass@1.97.3.
+    let input = "a {\n  b: invert(red, 40);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $weight: Passing a number without unit % \
+         (40) is deprecated."
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_invert_with_space() {
+    // dart-sass's `_checkPercent` for invert's $weight only applies to the
+    // legacy (no $space) path.
+    let input =
+        "@use \"sass:color\";\na {\n  b: inspect(color.invert($color: red, $weight: 40, \
+         $space: hsl));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_hsl_saturation_and_lightness_without_percent() {
+    // Verified byte-identical against npx sass@1.97.3.
+    let input = "a {\n  b: hsl(200 50 50);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.iter().filter(|w| w.contains("[function-units]")).count(), 2);
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $saturation: Passing a number without unit % \
+         (50) is deprecated."
+    )));
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $lightness: Passing a number without unit % \
+         (50) is deprecated."
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_hsl_with_percent() {
+    let input = "a {\n  b: hsl(200, 50%, 50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_hue_with_non_deg_unit() {
+    // Verified byte-identical (message text and span) against npx sass@1.97.3;
+    // covers adjust-hue()'s $degrees, hsl()'s $hue, and hwb()'s $hue, which all
+    // share `color::angle_value`.
+    let input = "a {\n  b: hsl(200px, 50%, 50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $hue: Passing a unit other than deg (200px) \
+         is deprecated.\n\nTo preserve current behavior: calc($hue / 1px)\n\nSee \
+         https://sass-lang.com/d/function-units"
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_unitless_hue() {
+    let input = "a {\n  b: hsl(200, 50%, 50%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_color_change_alpha_with_non_percent_unit() {
+    // Verified byte-identical against npx sass@1.97.3.
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.change(red, $alpha: 0.5px));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $alpha: Passing a unit other than % (0.5px) \
+         is deprecated.\n\nTo preserve current behavior: calc($alpha / 1px)\n\nSee \
+         https://sass-lang.com/d/function-units"
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_color_change_alpha_percent_or_unitless() {
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.change(red, $alpha: 50%));\n  c: \
+         inspect(color.change(red, $alpha: 0.5));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_color_adjust_alpha_with_any_unit() {
+    // dart-sass's `_adjustChannel` warns for ANY unit on $alpha, including `%`
+    // (unlike change(), which only warns for non-% units). Verified
+    // byte-identical against npx sass@1.97.3.
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.adjust(red, $alpha: 0.1%));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $alpha: Passing a number with unit % is \
+         deprecated.\n\nTo preserve current behavior: calc($alpha / 1%)"
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_color_adjust_unitless_alpha() {
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.adjust(red, $alpha: 0.1));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}

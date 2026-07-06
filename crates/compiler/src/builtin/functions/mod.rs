@@ -58,17 +58,79 @@ pub(crate) fn color_channel_getter_message(is_global: bool, name: &str, space: &
     )
 }
 
+/// Transcribes dart-sass's `SassNumber.unitSuggestion` (`lib/src/value/number.dart`):
+/// a suggested Sass snippet for converting a variable named `$name` containing
+/// `unit`'s numerator/denominator units into a number with the given
+/// `expected_unit` (or unitless, if `expected_unit` is `None`). Wraps the
+/// result in `calc(...)` whenever the source has at least one numerator unit
+/// (matching dart's `numeratorUnits.isEmpty` check) — this is why a bare
+/// `$name * 1%` (unitless source, percent-expected) is NOT calc-wrapped but
+/// `calc($name / 1px * 1%)` (a numerator-bearing source) is.
+fn unit_suggestion(name: &str, unit: &Unit, expected_unit: Option<&str>) -> String {
+    let (numer, denom) = unit.clone().numer_and_denom();
+
+    let mut result = format!("${name}");
+    for d in &denom {
+        result.push_str(&format!(" * 1{d}"));
+    }
+    for n in &numer {
+        result.push_str(&format!(" / 1{n}"));
+    }
+    if let Some(u) = expected_unit {
+        result.push_str(&format!(" * 1{u}"));
+    }
+
+    if numer.is_empty() {
+        result
+    } else {
+        format!("calc({result})")
+    }
+}
+
 /// Builds the `function-units` deprecation message for a built-in function
 /// argument that was passed a number with an invalid (or missing) unit,
 /// e.g. `list.nth($list, 1px)`. `name` is the parameter name (without `$`),
-/// `unit` is the unit actually passed. Mirrors dart-sass's `unitSuggestion`
-/// for the single-unit case (no denominator units), which always wraps the
-/// suggestion in `calc(...)` since it has a numerator unit — verified
-/// against npx sass@1.97.3 (`list.nth($l, 1px)` → `calc($n / 1px)`).
+/// `unit` is the unit actually passed. Also covers dart's `_adjustChannel`
+/// alpha-unit check (`color.adjust($c, $alpha: ...)` for any color space),
+/// which uses this exact same message template. Verified against npx
+/// sass@1.97.3 (`list.nth($l, 1px)` → `calc($n / 1px)`).
 pub(crate) fn function_units_message(name: &str, unit: &Unit) -> String {
     format!(
         "${name}: Passing a number with unit {unit} is deprecated.\n\nTo preserve current \
-         behavior: calc(${name} / 1{unit})\n\nMore info: https://sass-lang.com/d/function-units"
+         behavior: {}\n\nMore info: https://sass-lang.com/d/function-units",
+        unit_suggestion(name, unit, None)
+    )
+}
+
+/// Builds dart-sass's `_angleValue`/legacy-`color.change()`-alpha deprecation
+/// message family: "Passing a unit other than `expected_unit` (`value_display`)
+/// is deprecated", ending in "See" (not "More info:") — distinct wording from
+/// [`function_units_message`]/[`function_percent_message`], verified against
+/// npx sass@1.97.3 for both call sites (`adjust-hue`'s hue arg,
+/// `color.change()`'s legacy `$alpha`).
+pub(crate) fn function_unit_other_than_message(
+    name: &str,
+    expected_unit: &str,
+    value_display: &str,
+    unit: &Unit,
+) -> String {
+    format!(
+        "${name}: Passing a unit other than {expected_unit} ({value_display}) is \
+         deprecated.\n\nTo preserve current behavior: {}\n\nSee \
+         https://sass-lang.com/d/function-units",
+        unit_suggestion(name, unit, None)
+    )
+}
+
+/// Builds dart-sass's `_checkPercent` deprecation message: "Passing a number
+/// without unit % (`value_display`) is deprecated", ending in "More info:".
+/// Used by `mix()`/`invert()`'s legacy `$weight` and the `hsl()` constructor's
+/// `$saturation`/`$lightness`. Verified against npx sass@1.97.3.
+pub(crate) fn function_percent_message(name: &str, value_display: &str, unit: &Unit) -> String {
+    format!(
+        "${name}: Passing a number without unit % ({value_display}) is deprecated.\n\nTo \
+         preserve current behavior: {}\n\nMore info: https://sass-lang.com/d/function-units",
+        unit_suggestion(name, unit, Some("%"))
     )
 }
 

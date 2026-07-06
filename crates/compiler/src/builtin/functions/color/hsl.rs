@@ -1,4 +1,8 @@
-use crate::{builtin::builtin_imports::*, serializer::serialize_number, value::SassNumber};
+use crate::{
+    builtin::builtin_imports::*,
+    serializer::{inspect_number, serialize_number},
+    value::SassNumber,
+};
 use crate::color::space::ColorSpace;
 
 use super::{
@@ -45,9 +49,28 @@ fn hsl_3_args(
         ));
     }
 
-    let hue = angle_value(hue, "hue", span)?;
+    let hue = angle_value(hue, "hue", span, visitor)?;
+
     let saturation = saturation.assert_number_with_name("saturation", span)?;
+    if saturation.unit != Unit::Percent {
+        // dart-sass's `_checkPercent(channel1, 'saturation')` in `_colorFromChannels`.
+        let value_display = inspect_number(&saturation, visitor.options, span)?;
+        let unit = saturation.unit.clone();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_percent_message("saturation", &value_display, &unit))
+        })?;
+    }
+
     let lightness = lightness.assert_number_with_name("lightness", span)?;
+    if lightness.unit != Unit::Percent {
+        // dart-sass's `_checkPercent(channel2, 'lightness')` in `_colorFromChannels`.
+        let value_display = inspect_number(&lightness, visitor.options, span)?;
+        let unit = lightness.unit.clone();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_percent_message("lightness", &value_display, &unit))
+        })?;
+    }
+
     let alpha = percentage_or_unitless(
         &alpha.assert_number_with_name("alpha", span)?,
         1.0,
@@ -283,7 +306,7 @@ pub(crate) fn adjust_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         ).into());
     }
 
-    let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span())?;
+    let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span(), visitor)?;
 
     let span = args.span();
     let suggested_value = SassNumber {
@@ -669,6 +692,8 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     args.max_args(3)?;
     let span = args.span();
 
+    let target_space = parse_space_arg(&mut args, 2, span)?;
+
     let weight = args
         .get(1, "weight")
         .map::<SassResult<_>, _>(|weight| {
@@ -676,13 +701,21 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 
             weight.assert_bounds("weight", 0.0, 100.0, span)?;
 
+            // dart-sass's `_checkPercent(weightNumber, "weight")`: only applies
+            // to the legacy (no `$space`) invert path.
+            if target_space.is_none() && weight.unit != Unit::Percent {
+                let value_display = inspect_number(&weight, visitor.options, span)?;
+                let unit = weight.unit.clone();
+                visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                    Ok(function_percent_message("weight", &value_display, &unit))
+                })?;
+            }
+
             weight.num /= Number(100.0);
 
             Ok(weight.num)
         })
         .transpose()?;
-
-    let target_space = parse_space_arg(&mut args, 2, span)?;
 
     match args.get_err(0, "color")? {
         Value::Color(c) => {

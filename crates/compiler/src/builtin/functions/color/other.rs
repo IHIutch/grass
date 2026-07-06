@@ -1,6 +1,7 @@
 use crate::{
     builtin::{builtin_imports::*, color::angle_value},
     color::{space::ColorSpace, ColorFormat},
+    serializer::inspect_number,
     utils::to_sentence,
 };
 
@@ -404,7 +405,8 @@ fn update_components(
     let check_num = |num: Spanned<Value>,
                      name: &str,
                      assert_percent: bool,
-                     _check_percent: bool|
+                     check_percent: bool,
+                     visitor: &mut Visitor|
      -> SassResult<Number> {
         let span = num.span;
         let mut num = num.node.assert_number_with_name(name, span)?;
@@ -419,6 +421,15 @@ fn update_components(
         } else if assert_percent {
             // HWB whiteness/blackness require % unit
             num.assert_unit(&Unit::Percent, name, span)?;
+        } else if check_percent && num.unit != Unit::Percent {
+            // dart-sass's `_checkPercent`: HSL saturation/lightness for change()/
+            // adjust() warn (rather than error) on a non-% unit, matching the
+            // legacy behavior where these channels are stored unitless 0-100.
+            let value_display = inspect_number(&num, visitor.options, span)?;
+            let unit = num.unit.clone();
+            visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                Ok(function_percent_message(name, &value_display, &unit))
+            })?;
         }
         // For Change and Adjust, no bounds checking — out-of-range values are allowed.
         // Saturation/lightness/whiteness/blackness are stored 0-100 (like dart-sass),
@@ -430,7 +441,8 @@ fn update_components(
     let get_arg = |args: &mut ArgumentResult,
                    name: &str,
                    assert_percent: bool,
-                   check_percent: bool|
+                   check_percent: bool,
+                   visitor: &mut Visitor|
      -> SassResult<ChannelArg> {
         Ok(match args.get(usize::MAX, name) {
             Some(v) => {
@@ -442,15 +454,43 @@ fn update_components(
                         }
                     }
                 }
-                Some(Some(check_num(v, name, assert_percent, check_percent)?))
+                Some(Some(check_num(v, name, assert_percent, check_percent, visitor)?))
             }
             None => None,
         })
     };
 
-    let red = get_arg(&mut args, "red", false, false)?;
-    let green = get_arg(&mut args, "green", false, false)?;
-    let blue = get_arg(&mut args, "blue", false, false)?;
+    let red = get_arg(&mut args, "red", false, false, visitor)?;
+    let green = get_arg(&mut args, "green", false, false, visitor)?;
+    let blue = get_arg(&mut args, "blue", false, false, visitor)?;
+
+    // Transcribes dart-sass's `_changeColor` legacy `$alpha` handling: unitless
+    // and `%` are both accepted without warning (`%` is scaled to 0-1); any
+    // other unit is deprecated (`function-units`) but the raw numeric value is
+    // still used (dart's `alphaArg.valueInRange(0, 1, "alpha")`).
+    let check_change_alpha = |value: Value, span: Span, visitor: &mut Visitor| -> SassResult<Number> {
+        let num = value.assert_number_with_name("alpha", span)?;
+        let min = 0.0;
+        if num.unit == Unit::Percent {
+            num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
+            Ok(num.num / Number(100.0))
+        } else {
+            num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
+            if num.unit != Unit::None {
+                let value_display = inspect_number(&num, visitor.options, span)?;
+                let unit = num.unit.clone();
+                visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                    Ok(function_unit_other_than_message(
+                        "alpha",
+                        "%",
+                        &value_display,
+                        &unit,
+                    ))
+                })?;
+            }
+            Ok(num.num)
+        }
+    };
 
     // Alpha has bounds checking even for change/adjust (unlike channels)
     // Also supports `none` for Change
@@ -461,26 +501,10 @@ fn update_components(
                 if s == "none" {
                     Some(None)
                 } else {
-                    let num = v.node.assert_number_with_name("alpha", span)?;
-                    let min = 0.0;
-                    if num.unit == Unit::Percent {
-                        num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
-                        Some(Some(num.num / Number(100.0)))
-                    } else {
-                        num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
-                        Some(Some(num.num))
-                    }
+                    Some(Some(check_change_alpha(v.node, span, visitor)?))
                 }
             } else {
-                let num = v.node.assert_number_with_name("alpha", span)?;
-                let min = 0.0;
-                if num.unit == Unit::Percent {
-                    num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
-                    Some(Some(num.num / Number(100.0)))
-                } else {
-                    num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
-                    Some(Some(num.num))
-                }
+                Some(Some(check_change_alpha(v.node, span, visitor)?))
             }
         } else {
             let num = v.node.assert_number_with_name("alpha", span)?;
@@ -489,8 +513,17 @@ fn update_components(
                 num.assert_bounds("alpha", -100.0, 100.0, span)?;
                 Some(Some(num.num / Number(100.0)))
             } else {
-                // Adjust: no bounds check on the argument itself; the result is clamped.
-                // Percent unit is stripped (deprecated but accepted).
+                // Adjust: no bounds check on the argument itself; the result is
+                // clamped. Transcribes dart-sass's `_adjustChannel`: ANY unit
+                // (including `%`, unlike change()'s alpha) is deprecated here —
+                // the value is used as-is (not scaled), matching
+                // `adjustmentArg = SassNumber(adjustmentArg.value)`.
+                if num.unit != Unit::None {
+                    let unit = num.unit.clone();
+                    visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                        Ok(function_units_message("alpha", &unit))
+                    })?;
+                }
                 Some(Some(num.num))
             }
         }
@@ -507,22 +540,22 @@ fn update_components(
                 if s == "none" {
                     Some(None)
                 } else {
-                    Some(Some(angle_value(v.node, "hue", v.span)?))
+                    Some(Some(angle_value(v.node, "hue", v.span, visitor)?))
                 }
             } else {
-                Some(Some(angle_value(v.node, "hue", v.span)?))
+                Some(Some(angle_value(v.node, "hue", v.span, visitor)?))
             }
         } else {
-            Some(Some(angle_value(v.node, "hue", v.span)?))
+            Some(Some(angle_value(v.node, "hue", v.span, visitor)?))
         }
     } else {
         None
     };
 
-    let saturation = get_arg(&mut args, "saturation", false, true)?;
-    let lightness = get_arg(&mut args, "lightness", false, true)?;
-    let whiteness = get_arg(&mut args, "whiteness", true, true)?;
-    let blackness = get_arg(&mut args, "blackness", true, true)?;
+    let saturation = get_arg(&mut args, "saturation", false, true, visitor)?;
+    let lightness = get_arg(&mut args, "lightness", false, true, visitor)?;
+    let whiteness = get_arg(&mut args, "whiteness", true, true, visitor)?;
+    let blackness = get_arg(&mut args, "blackness", true, true, visitor)?;
 
     if !args.named.is_empty() {
         let argument_word = if args.named.len() == 1 {

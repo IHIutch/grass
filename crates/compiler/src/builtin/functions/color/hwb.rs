@@ -79,7 +79,7 @@ fn hwb_inner(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
         return Ok(Value::String(result.into(), QuoteKind::None));
     }
 
-    let hue = angle_value(hue_val, "hue", span)?;
+    let hue = angle_value(hue_val, "hue", span, visitor)?;
 
     let whiteness = whiteness_val.assert_number_with_name("whiteness", span)?;
     whiteness.assert_unit(&Unit::Percent, "whiteness", span)?;
