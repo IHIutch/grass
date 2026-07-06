@@ -417,7 +417,7 @@ fn inner_rgb(
                     }
                     let args = ArgumentResult {
                         positional: list,
-                        named: BTreeMap::new(),
+                        named: FxIndexMap::default(),
                         separator: ListSeparator::Comma,
                         span,
                         touched: FxHashSet::default(),

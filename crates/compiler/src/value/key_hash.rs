@@ -258,12 +258,12 @@ fn hash_unit_shape(unit: &Unit, hasher: &mut FxHasher) {
 mod tests {
     use super::*;
     use crate::{
-        common::{Brackets, ListSeparator, QuoteKind},
+        common::{Brackets, FxIndexMap, ListSeparator, QuoteKind},
         value::{ArgList, Number, SassMap},
     };
     use codemap::{CodeMap, Spanned};
     use compact_str::CompactString;
-    use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+    use std::{cell::Cell, rc::Rc};
 
     fn span() -> codemap::Span {
         let mut codemap = CodeMap::new();
@@ -479,7 +479,7 @@ mod tests {
         let arglist = Value::ArgList(ArgList::new(
             vec![dim(1, Unit::None), dim(2, Unit::None)],
             Rc::new(Cell::new(false)),
-            BTreeMap::new(),
+            FxIndexMap::default(),
             ListSeparator::Comma,
         ));
         // Brackets::None: an ArgList is never bracketed, and Value::eq (fixed
@@ -502,7 +502,7 @@ mod tests {
         let arglist = Value::ArgList(ArgList::new(
             vec![],
             Rc::new(Cell::new(false)),
-            BTreeMap::new(),
+            FxIndexMap::default(),
             ListSeparator::Comma,
         ));
         let empty_map = Value::Map(SassMap::new());

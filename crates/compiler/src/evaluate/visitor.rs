@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
     ffi::OsStr,
     fmt,
     iter::FromIterator,
@@ -26,7 +25,7 @@ use crate::{
         },
         GLOBAL_FUNCTIONS,
     },
-    common::{unvendor, BinaryOp, Identifier, ListSeparator, QuoteKind, UnaryOp},
+    common::{unvendor, BinaryOp, FxIndexMap, Identifier, ListSeparator, QuoteKind, UnaryOp},
     error::{SassError, SassResult},
     interner::InternedString,
     lexer::Lexer,
@@ -4084,7 +4083,7 @@ impl<'a> Visitor<'a> {
             positional.push(self.without_slash(val, arg_span)?);
         }
 
-        let mut named = BTreeMap::new();
+        let mut named = FxIndexMap::default();
 
         for (key, expr) in &arguments.named {
             let val = self.visit_expr_ref(expr)?;
@@ -4170,7 +4169,7 @@ impl<'a> Visitor<'a> {
 
     fn add_rest_map(
         &mut self,
-        named: &mut BTreeMap<Identifier, Value>,
+        named: &mut FxIndexMap<Identifier, Value>,
         rest: SassMap,
         span: Span,
     ) -> SassResult<()> {
@@ -4261,7 +4260,7 @@ impl<'a> Visitor<'a> {
 
                 for argument in additional_declared_args {
                     let name = argument.name;
-                    let value = evaluated.named.remove(&argument.name).map_or_else(
+                    let value = evaluated.named.shift_remove(&argument.name).map_or_else(
                         || {
                             let default = argument.default.as_ref().unwrap();
                             let v = visitor.visit_expr_ref(default)?;

@@ -1,9 +1,9 @@
-use std::{cell::Cell, collections::BTreeMap, path::Path};
+use std::{cell::Cell, path::Path};
 
 use codemap::{Span, Spanned};
 
 use crate::{
-    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind,
+    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::{FxIndexMap, QuoteKind},
     deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token,
 };
 
@@ -254,7 +254,7 @@ impl<'a> CssParser<'a> {
                 name: identifier,
                 arguments: ArgumentInvocation {
                     positional: arguments,
-                    named: BTreeMap::new(),
+                    named: FxIndexMap::default(),
                     rest: None,
                     keyword_rest: None,
                     span: self.toks.span_from(before_args),

@@ -163,10 +163,10 @@ pub(crate) fn map_remove(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
     // Accept $key as a named argument (dart-sass compatibility)
     let mut extra_keys: Vec<Spanned<Value>> = Vec::new();
-    if let Some(key_val) = args.named.remove(&Identifier::from("key")) {
+    if let Some(key_val) = args.named.shift_remove(&Identifier::from("key")) {
         extra_keys.push(Spanned { node: key_val, span });
     }
-    if let Some(keys_val) = args.named.remove(&Identifier::from("keys")) {
+    if let Some(keys_val) = args.named.shift_remove(&Identifier::from("keys")) {
         extra_keys.push(Spanned { node: keys_val, span });
     }
 

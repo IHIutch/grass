@@ -26,7 +26,7 @@ mod builtin_imports {
     pub(crate) use crate::{
         ast::{Argument, ArgumentDeclaration, ArgumentResult, MaybeEvaledArguments},
         color::Color,
-        common::{BinaryOp, Brackets, Identifier, ListSeparator, QuoteKind},
+        common::{BinaryOp, Brackets, FxIndexMap, Identifier, ListSeparator, QuoteKind},
         deprecation::Deprecation,
         error::SassResult,
         evaluate::Visitor,
@@ -35,5 +35,5 @@ mod builtin_imports {
         Options,
     };
 
-    pub(crate) use std::{cmp::Ordering, collections::BTreeMap, rc::Rc};
+    pub(crate) use std::{cmp::Ordering, rc::Rc};
 }

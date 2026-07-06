@@ -1,14 +1,10 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    iter::Iterator,
-    mem,
-};
+use std::{iter::Iterator, mem};
 
 use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
 
 use crate::{
-    common::{Identifier, ListSeparator},
+    common::{FxIndexMap, Identifier, ListSeparator},
     error::SassResult,
     utils::to_sentence,
     value::Value,
@@ -39,7 +35,7 @@ impl<'a> ArgumentDeclaration<'a> {
     pub fn verify<T>(
         &self,
         num_positional: usize,
-        names: &BTreeMap<Identifier, T>,
+        names: &FxIndexMap<Identifier, T>,
         span: Span,
     ) -> SassResult<()> {
         let mut named_used = 0;
@@ -91,18 +87,15 @@ impl<'a> ArgumentDeclaration<'a> {
         }
 
         if named_used < names.len() {
-            let mut unknown_names = names.keys().copied().collect::<BTreeSet<_>>();
+            // Dart-sass's `namedArguments` is a `LinkedHashMap`, so unknown-name
+            // enumeration reports call-site (insertion) order, not sorted order.
+            let mut unknown_names = names.keys().copied().collect::<Vec<_>>();
 
-            for arg in &self.args {
-                unknown_names.remove(&arg.name);
-            }
+            unknown_names.retain(|name| !self.args.iter().any(|arg| &arg.name == name));
 
             if unknown_names.len() == 1 {
                 return Err((
-                    format!(
-                        "No argument named ${}.",
-                        unknown_names.iter().next().unwrap()
-                    ),
+                    format!("No argument named ${}.", unknown_names[0]),
                     span,
                 )
                     .into());
@@ -133,7 +126,7 @@ impl<'a> ArgumentDeclaration<'a> {
 #[derive(Debug, Clone)]
 pub struct ArgumentInvocation<'a> {
     pub(crate) positional: Vec<AstExpr<'a>>,
-    pub(crate) named: BTreeMap<Identifier, AstExpr<'a>>,
+    pub(crate) named: FxIndexMap<Identifier, AstExpr<'a>>,
     pub(crate) rest: Option<AstExpr<'a>>,
     pub(crate) keyword_rest: Option<AstExpr<'a>>,
     pub(crate) span: Span,
@@ -143,7 +136,7 @@ impl<'a> ArgumentInvocation<'a> {
     pub fn empty(span: Span) -> Self {
         Self {
             positional: Vec::new(),
-            named: BTreeMap::new(),
+            named: FxIndexMap::default(),
             rest: None,
             keyword_rest: None,
             span,
@@ -173,7 +166,7 @@ pub(crate) enum MaybeEvaledArguments<'b, 'a> {
 #[derive(Debug, Clone)]
 pub struct ArgumentResult {
     pub(crate) positional: Vec<Value>,
-    pub(crate) named: BTreeMap<Identifier, Value>,
+    pub(crate) named: FxIndexMap<Identifier, Value>,
     pub(crate) separator: ListSeparator,
     pub(crate) span: Span,
     // todo: hack
@@ -185,7 +178,7 @@ impl ArgumentResult {
     ///
     /// Removes the argument
     pub fn get_named<T: Into<Identifier>>(&mut self, val: T) -> Option<Spanned<Value>> {
-        self.named.remove(&val.into()).map(|n| Spanned {
+        self.named.shift_remove(&val.into()).map(|n| Spanned {
             node: n,
             span: self.span,
         })
