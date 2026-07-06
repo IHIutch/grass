@@ -80,6 +80,38 @@ impl Deprecation {
         }
     }
 
+    /// Look up a deprecation by its kebab-case ID, as accepted by the
+    /// `--silence-deprecation` / `--fatal-deprecation` / `--future-deprecation`
+    /// CLI flags and the `silenceDeprecations` / `fatalDeprecations` /
+    /// `futureDeprecations` JS API options.
+    ///
+    /// Mirrors dart-sass's `Deprecation.fromId`; returns `None` for unknown
+    /// IDs (including version strings, which dart-sass's CLI accepts only
+    /// for `--fatal-deprecation` via a separate code path this does not
+    /// implement).
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "slash-div" => Self::SlashDiv,
+            "elseif" => Self::Elseif,
+            "new-global" => Self::NewGlobal,
+            "import" => Self::Import,
+            "global-builtin" => Self::GlobalBuiltin,
+            "strict-unary" => Self::StrictUnary,
+            "if-function" => Self::IfFunction,
+            "bogus-combinators" => Self::BogusCombinators,
+            "color-functions" => Self::ColorFunctions,
+            "call-string" => Self::CallString,
+            "moz-document" => Self::MozDocument,
+            "feature-exists" => Self::FeatureExists,
+            "color-module-compat" => Self::ColorModuleCompat,
+            "with-private" => Self::WithPrivate,
+            "misplaced-rest" => Self::MisplacedRest,
+            "abs-percent" => Self::AbsPercent,
+            _ => return None,
+        })
+    }
+
     /// Whether this deprecation is not yet active by default and must be
     /// explicitly opted into (dart-sass's `futureDeprecations`).
     #[must_use]

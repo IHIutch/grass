@@ -8,6 +8,22 @@ export interface CompileOptions {
   loadPaths?: Array<string>
   quiet?: boolean
   charset?: boolean
+  /**
+   * Deprecation IDs to silence, per the Sass JS API's `silenceDeprecations`
+   * option (string-ID form only; dart-sass's `Version` object form for
+   * `fatalDeprecations` is not implemented here).
+   */
+  silenceDeprecations?: Array<string>
+  /**
+   * Deprecation IDs to treat as fatal errors, per the Sass JS API's
+   * `fatalDeprecations` option (string-ID form only).
+   */
+  fatalDeprecations?: Array<string>
+  /**
+   * Deprecation IDs to opt into early, per the Sass JS API's
+   * `futureDeprecations` option.
+   */
+  futureDeprecations?: Array<string>
 }
 export interface CompileResult {
   css: string

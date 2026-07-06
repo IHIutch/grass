@@ -10,7 +10,7 @@ use std::{
 
 use clap::{builder::PossibleValue, value_parser, Arg, ArgAction, Command, ValueEnum};
 
-use grass::{from_path, from_string, Options, OutputStyle};
+use grass::{from_path, from_string, Deprecation, Options, OutputStyle};
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum Style {
@@ -198,6 +198,38 @@ fn cli() -> Command {
                 .help("Don't print warnings."),
         )
         .arg(
+            Arg::new("FATAL_DEPRECATION")
+                .long("fatal-deprecation")
+                .help(
+                    "Deprecations to treat as errors. Repeatable and/or comma-separated. \
+                     (A Sass version, per dart-sass's syntax, is accepted but has no \
+                     effect: grass does not yet track which version introduced each \
+                     deprecation.)",
+                )
+                .action(ArgAction::Append)
+                .value_delimiter(',')
+                .num_args(1)
+                .value_parser(value_parser!(String)),
+        )
+        .arg(
+            Arg::new("SILENCE_DEPRECATION")
+                .long("silence-deprecation")
+                .help("Deprecations to ignore. Repeatable and/or comma-separated.")
+                .action(ArgAction::Append)
+                .value_delimiter(',')
+                .num_args(1)
+                .value_parser(value_parser!(String)),
+        )
+        .arg(
+            Arg::new("FUTURE_DEPRECATION")
+                .long("future-deprecation")
+                .help("Opt in to a deprecation early. Repeatable and/or comma-separated.")
+                .action(ArgAction::Append)
+                .value_delimiter(',')
+                .num_args(1)
+                .value_parser(value_parser!(String)),
+        )
+        .arg(
             Arg::new("INPUT")
                 .value_parser(value_parser!(String))
                 .required_unless_present("STDIN")
@@ -217,6 +249,56 @@ fn cli() -> Command {
         )
 }
 
+// Ground truth verified with dart-sass 1.97.3 (npx sass@1.97.3):
+//   --silence-deprecation/--fatal-deprecation/--future-deprecation are all
+//   `addMultiOption`s, so both `--flag=a,b` and repeated `--flag=a --flag=b`
+//   work and compose.
+//   An unrecognized ID is a hard failure before compilation begins:
+//     echo "a{b:c}" | npx sass --stdin --silence-deprecation=bogus-id
+//     -> "Invalid deprecation "bogus-id"." + usage text, exit 64
+//   grass follows its own existing convention of exit 1 for CLI-level
+//   failures (see `error_exit_code` in tests/cli.rs) rather than dart's 64,
+//   but matches the "hard failure, no compilation" behavior and message text.
+//
+//   --fatal-deprecation additionally accepts a Dart Sass version (e.g.
+//   `1.23.0`) and fatalizes every deprecation introduced at or before it
+//   (lib/src/executable/options.dart:576-608, via `Deprecation.forVersion`).
+//   grass's `Deprecation` enum does not track per-variant introduction
+//   versions, so a version-shaped string is accepted (to avoid erroring on
+//   valid dart-sass syntax) but is currently a no-op; only ID-based fatal
+//   deprecations take effect. This is the escape hatch called out in Plan
+//   044/todo #186.
+fn looks_like_version(s: &str) -> bool {
+    let core = s.split(['-', '+']).next().unwrap_or(s);
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Parses a repeatable/comma-separated `--*-deprecation` flag's values into
+/// `Deprecation`s, exiting with dart-sass's "Invalid deprecation" message on
+/// an unrecognized ID (see `looks_like_version` for the one exception, used
+/// only for `--fatal-deprecation`).
+fn parse_deprecations(
+    matches: &clap::ArgMatches,
+    arg_id: &str,
+    allow_version: bool,
+) -> Vec<Deprecation> {
+    let Some(values) = matches.get_many::<String>(arg_id) else {
+        return Vec::new();
+    };
+
+    let mut deprecations = Vec::new();
+    for id in values {
+        if let Some(deprecation) = Deprecation::from_id(id) {
+            deprecations.push(deprecation);
+        } else if !(allow_version && looks_like_version(id)) {
+            eprintln!("Invalid deprecation \"{id}\".");
+            std::process::exit(1);
+        }
+    }
+    deprecations
+}
+
 fn main() -> std::io::Result<()> {
     let matches = cli().get_matches();
 
@@ -229,12 +311,24 @@ fn main() -> std::io::Result<()> {
         Style::Compressed => OutputStyle::Compressed,
     };
 
-    let options = &Options::default()
+    let mut options = Options::default()
         .load_paths(&load_paths)
         .style(style)
         .quiet(matches.get_flag("QUIET"))
         .unicode_error_messages(!matches.get_flag("NO_UNICODE"))
         .allows_charset(!matches.get_flag("NO_CHARSET"));
+
+    for deprecation in parse_deprecations(&matches, "SILENCE_DEPRECATION", false) {
+        options = options.silence_deprecation(deprecation);
+    }
+    for deprecation in parse_deprecations(&matches, "FATAL_DEPRECATION", true) {
+        options = options.fatal_deprecation(deprecation);
+    }
+    for deprecation in parse_deprecations(&matches, "FUTURE_DEPRECATION", false) {
+        options = options.future_deprecation(deprecation);
+    }
+
+    let options = &options;
 
     let (mut stdout_write, mut file_write);
     let buf_out: &mut dyn Write = if let Some(path) = matches.get_one::<String>("OUTPUT") {

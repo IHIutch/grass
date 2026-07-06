@@ -25,4 +25,17 @@ const r = await binding.compileStringAsync("a { b: c }", null);
 assert.equal(r.css, "a {\n  b: c;\n}\n");
 await assert.rejects(binding.compileStringAsync("a { b: ", null));
 
+// silenceDeprecations / fatalDeprecations option mapping
+const slashDivSource = "$a: 1;\nb { c: $a/2; }";
+assert.equal(
+  binding.compileString(slashDivSource, { silenceDeprecations: ["slash-div"] }).css,
+  "b {\n  c: 0.5;\n}\n",
+);
+assert.throws(() =>
+  binding.compileString(slashDivSource, { fatalDeprecations: ["slash-div"] }),
+);
+assert.throws(() =>
+  binding.compileString("a { b: c }", { silenceDeprecations: ["bogus-id"] }),
+);
+
 console.log("ok");

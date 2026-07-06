@@ -126,3 +126,146 @@ fn input_file_missing() {
     assert_eq!(output.status.code(), Some(1));
     assert!(!output.stderr.is_empty());
 }
+
+// Ground truth verified with dart-sass 1.97.3:
+//   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --style=expanded
+//   -> stderr contains "DEPRECATION WARNING [slash-div]: Using / for division..."
+#[test]
+fn deprecation_warning_by_default() {
+    let output = run_with_stdin(&["--stdin"], "$a: 1;\nb { c: $a/2; }");
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("slash-div"), "stderr: {stderr}");
+}
+
+// Ground truth verified with dart-sass 1.97.3:
+//   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --silence-deprecation=slash-div --style=expanded
+//   -> compiles cleanly, no warning on stderr, exit 0
+#[test]
+fn silence_deprecation_removes_warning() {
+    let output = run_with_stdin(
+        &["--stdin", "--silence-deprecation=slash-div"],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!stderr.contains("slash-div"), "stderr: {stderr}");
+    assert_eq!(output.stdout, b"b {\n  c: 0.5;\n}\n");
+}
+
+// Comma-separated and repeated-flag forms both compose, matching dart-sass's
+// `addMultiOption` behavior (verified via npx sass@1.97.3).
+#[test]
+fn silence_deprecation_comma_and_repeat_forms() {
+    let comma = run_with_stdin(
+        &["--stdin", "--silence-deprecation=slash-div,import"],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert!(comma.status.success());
+    assert!(!String::from_utf8(comma.stderr).unwrap().contains("slash-div"));
+
+    let repeated = run_with_stdin(
+        &[
+            "--stdin",
+            "--silence-deprecation=slash-div",
+            "--silence-deprecation=import",
+        ],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert!(repeated.status.success());
+    assert!(!String::from_utf8(repeated.stderr)
+        .unwrap()
+        .contains("slash-div"));
+}
+
+// Ground truth verified with dart-sass 1.97.3:
+//   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --fatal-deprecation=slash-div --style=expanded
+//   -> exit 65, stderr "Error: Using / for division outside of calc() is
+//      deprecated..." + "This is only an error because you've set the
+//      slash-div deprecation to be fatal.", empty stdout
+// grass exits 1 (its own convention for CLI-level compile failures; see
+// `error_exit_code` above) rather than dart's 65.
+#[test]
+fn fatal_deprecation_turns_warning_into_error() {
+    let output = run_with_stdin(
+        &["--stdin", "--fatal-deprecation=slash-div"],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("slash-div"), "stderr: {stderr}");
+}
+
+// Ground truth verified with dart-sass 1.97.3:
+//   echo "a{b:c}" | npx sass@1.97.3 --stdin --silence-deprecation=bogus-id --style=expanded
+//   -> "Invalid deprecation "bogus-id"." + usage text, exit 64, empty stdout
+// grass exits 1 (see `error_exit_code`) but matches the "hard failure before
+// compilation, with the same message text" behavior.
+#[test]
+fn unknown_deprecation_id_is_a_hard_failure() {
+    for flag in [
+        "--silence-deprecation=bogus-id",
+        "--fatal-deprecation=bogus-id",
+        "--future-deprecation=bogus-id",
+    ] {
+        let output = run_with_stdin(&["--stdin", flag], "a { b: c }");
+        assert_eq!(output.status.code(), Some(1), "flag: {flag}");
+        assert!(output.stdout.is_empty(), "flag: {flag}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("Invalid deprecation \"bogus-id\"."),
+            "flag: {flag}, stderr: {stderr}"
+        );
+    }
+}
+
+// `--future-deprecation` accepts a known ID without erroring, even though no
+// currently-seeded deprecation is future-gated (`Deprecation::is_future` is
+// `false` for all 16 IDs), so this only exercises flag acceptance.
+#[test]
+fn future_deprecation_flag_is_accepted() {
+    let output = run_with_stdin(
+        &["--stdin", "--future-deprecation=slash-div"],
+        "a { b: c }",
+    );
+    assert!(output.status.success());
+}
+
+// Ground truth verified with dart-sass 1.97.3:
+//   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --fatal-deprecation=1.23.0 --style=expanded
+//   -> exit 0, warning still printed (1.23.0 predates slash-div's introduction,
+//      so the version-range expansion doesn't include it)
+// grass does not implement the version -> deprecation-set expansion (no
+// per-variant introduction-version metadata), so any version-shaped string is
+// accepted but always a no-op -- this only confirms it doesn't hard-error.
+#[test]
+fn fatal_deprecation_version_form_is_accepted_but_a_no_op() {
+    let output = run_with_stdin(
+        &["--stdin", "--fatal-deprecation=1.23.0"],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("slash-div"), "stderr: {stderr}");
+}
+
+// dart-sass's `--fatal-deprecation` wins over `--silence-deprecation` for the
+// same ID (verified via npx sass@1.97.3: emits a
+// "WARNING: Ignoring setting to silence ... since it has also been made
+// fatal." notice, then still errors). grass's evaluator already checks
+// `fatal_deprecations` before `silence_deprecations`
+// (crates/compiler/src/evaluate/visitor.rs) -- this test only confirms the
+// CLI wiring doesn't disturb that precedence.
+#[test]
+fn fatal_wins_over_silence_for_same_id() {
+    let output = run_with_stdin(
+        &[
+            "--stdin",
+            "--fatal-deprecation=slash-div",
+            "--silence-deprecation=slash-div",
+        ],
+        "$a: 1;\nb { c: $a/2; }",
+    );
+    assert_eq!(output.status.code(), Some(1));
+}

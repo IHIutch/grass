@@ -5,7 +5,7 @@ use napi::bindgen_prelude::*;
 use napi::Task;
 use napi_derive::napi;
 
-use grass_compiler::{from_path, from_string_with_file_name, Options, OutputStyle};
+use grass_compiler::{from_path, from_string_with_file_name, Deprecation, Options, OutputStyle};
 
 #[napi(object)]
 pub struct CompileOptions {
@@ -13,6 +13,16 @@ pub struct CompileOptions {
     pub load_paths: Option<Vec<String>>,
     pub quiet: Option<bool>,
     pub charset: Option<bool>,
+    /// Deprecation IDs to silence, per the Sass JS API's `silenceDeprecations`
+    /// option (string-ID form only; dart-sass's `Version` object form for
+    /// `fatalDeprecations` is not implemented here).
+    pub silence_deprecations: Option<Vec<String>>,
+    /// Deprecation IDs to treat as fatal errors, per the Sass JS API's
+    /// `fatalDeprecations` option (string-ID form only).
+    pub fatal_deprecations: Option<Vec<String>>,
+    /// Deprecation IDs to opt into early, per the Sass JS API's
+    /// `futureDeprecations` option.
+    pub future_deprecations: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -37,7 +47,20 @@ fn catch<T>(f: impl FnOnce() -> napi::Result<T> + std::panic::UnwindSafe) -> nap
     }
 }
 
-fn build_options(opts: Option<CompileOptions>) -> Options<'static> {
+/// Resolves a `silenceDeprecations`/`fatalDeprecations`/`futureDeprecations`
+/// array of string IDs, per the Sass JS API. Mirrors the CLI's behavior
+/// (crates/lib/src/main.rs): an unrecognized ID is a hard error rather than a
+/// silent no-op.
+fn resolve_deprecation_ids(ids: &[String]) -> napi::Result<Vec<Deprecation>> {
+    ids.iter()
+        .map(|id| {
+            Deprecation::from_id(id)
+                .ok_or_else(|| napi::Error::from_reason(format!("Invalid deprecation \"{id}\".")))
+        })
+        .collect()
+}
+
+fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>> {
     let mut options = Options::default();
 
     if let Some(opts) = opts {
@@ -60,15 +83,33 @@ fn build_options(opts: Option<CompileOptions>) -> Options<'static> {
         if let Some(charset) = opts.charset {
             options = options.allows_charset(charset);
         }
+
+        if let Some(ref ids) = opts.silence_deprecations {
+            for deprecation in resolve_deprecation_ids(ids)? {
+                options = options.silence_deprecation(deprecation);
+            }
+        }
+
+        if let Some(ref ids) = opts.fatal_deprecations {
+            for deprecation in resolve_deprecation_ids(ids)? {
+                options = options.fatal_deprecation(deprecation);
+            }
+        }
+
+        if let Some(ref ids) = opts.future_deprecations {
+            for deprecation in resolve_deprecation_ids(ids)? {
+                options = options.future_deprecation(deprecation);
+            }
+        }
     }
 
-    options
+    Ok(options)
 }
 
 #[napi]
 pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<CompileResult> {
     catch(|| {
-        let opts = build_options(options);
+        let opts = build_options(options)?;
 
         let css =
             from_path(&path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -83,7 +124,7 @@ pub fn compile_string(
     options: Option<CompileOptions>,
 ) -> napi::Result<CompileResult> {
     catch(|| {
-        let opts = build_options(options);
+        let opts = build_options(options)?;
 
         let cwd = std::env::current_dir().unwrap_or_default();
         let css = from_string_with_file_name(source, cwd.join("stdin"), &opts)
@@ -104,7 +145,7 @@ impl Task for CompileTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let path = &self.path;
-        let opts = build_options(self.options.take());
+        let opts = build_options(self.options.take())?;
         catch(std::panic::AssertUnwindSafe(|| {
             from_path(path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
         }))
@@ -125,7 +166,7 @@ impl Task for CompileStringTask {
     type JsValue = CompileResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let opts = build_options(self.options.take());
+        let opts = build_options(self.options.take())?;
         let cwd = std::env::current_dir().unwrap_or_default();
         let source = self.source.clone();
         catch(std::panic::AssertUnwindSafe(|| {
@@ -156,6 +197,18 @@ pub fn compile_string_async(
 mod tests {
     use super::*;
 
+    fn base_opts() -> CompileOptions {
+        CompileOptions {
+            style: None,
+            load_paths: None,
+            quiet: None,
+            charset: None,
+            silence_deprecations: None,
+            fatal_deprecations: None,
+            future_deprecations: None,
+        }
+    }
+
     #[test]
     fn compile_string_produces_css() {
         let res = compile_string("a { b: c }".to_owned(), None).unwrap();
@@ -166,12 +219,45 @@ mod tests {
     fn compile_string_compressed_style() {
         let opts = CompileOptions {
             style: Some("compressed".to_owned()),
-            load_paths: None,
-            quiet: None,
-            charset: None,
+            ..base_opts()
         };
         let res = compile_string("a { b: c }".to_owned(), Some(opts)).unwrap();
         assert_eq!(res.css, "a{b:c}");
+    }
+
+    #[test]
+    fn compile_string_silence_deprecations_removes_warning() {
+        let source = "$a: 1;\nb { c: $a/2; }".to_owned();
+
+        let with_warning = compile_string(source.clone(), None).unwrap();
+        assert_eq!(with_warning.css, "b {\n  c: 0.5;\n}\n");
+
+        let opts = CompileOptions {
+            silence_deprecations: Some(vec!["slash-div".to_owned()]),
+            ..base_opts()
+        };
+        let res = compile_string(source, Some(opts)).unwrap();
+        assert_eq!(res.css, "b {\n  c: 0.5;\n}\n");
+    }
+
+    #[test]
+    fn compile_string_fatal_deprecations_errors() {
+        let opts = CompileOptions {
+            fatal_deprecations: Some(vec!["slash-div".to_owned()]),
+            ..base_opts()
+        };
+        let res = compile_string("$a: 1;\nb { c: $a/2; }".to_owned(), Some(opts));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn compile_string_unknown_deprecation_id_is_err() {
+        let opts = CompileOptions {
+            silence_deprecations: Some(vec!["bogus-id".to_owned()]),
+            ..base_opts()
+        };
+        let res = compile_string("a { b: c }".to_owned(), Some(opts));
+        assert!(res.is_err());
     }
 
     #[test]
