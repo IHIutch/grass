@@ -114,15 +114,21 @@ pub struct BinaryOpExpr<'a> {
     pub span: Span,
 }
 
+/// Arena-boxed to keep `AstExpr` within its size guard — `args: Vec<Self>` made
+/// this the largest inline variant even before a span field was needed.
+#[derive(Debug, Clone)]
+pub struct CalculationExpr<'a> {
+    pub name: CalculationName,
+    pub args: Vec<AstExpr<'a>>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub enum AstExpr<'a> {
     BinaryOp(&'a BinaryOpExpr<'a>),
     True,
     False,
-    Calculation {
-        name: CalculationName,
-        args: Vec<Self>,
-    },
+    Calculation(&'a CalculationExpr<'a>),
     CalculationWithFallback(&'a CalculationWithFallbackExpr<'a>),
     Color(Rc<Color>),
     CssIf(&'a CssIfExpression<'a>),
@@ -243,7 +249,7 @@ impl<'a> AstExpr<'a> {
     pub fn is_slash_operand(&self) -> bool {
         match self {
             Self::Number { .. } => true,
-            Self::Calculation { name, .. } => *name == CalculationName::Calc,
+            Self::Calculation(calc) => calc.name == CalculationName::Calc,
             Self::BinaryOp(binop) => binop.allows_slash,
             _ => false,
         }

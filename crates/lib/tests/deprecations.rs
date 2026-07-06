@@ -1109,6 +1109,21 @@ fn abs_does_not_warn_for_module_form() {
 }
 
 #[test]
+fn abs_percent_warns_once_per_distinct_call_site() {
+    // AstExpr::Calculation now carries its own span (#187), so two `abs(-X%)`
+    // calls at different source locations no longer collapse into one
+    // warning via the (Deprecation, Span) dedup key.
+    let input = "a {\n  b: abs(-50%);\n}\nc {\n  d: abs(-25%);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {:?}", warnings);
+    assert!(warnings[0].contains("math.abs(-50%)"));
+    assert!(warnings[1].contains("math.abs(-25%)"));
+}
+
+#[test]
 fn abs_percent_silenced() {
     let input = "a {\n  b: abs(-50%);\n}\n";
     let logger = TestLogger::default();

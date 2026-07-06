@@ -4451,8 +4451,8 @@ impl<'a> Visitor<'a> {
             AstExpr::UnaryOp(op, inner, span) => self.visit_unary_op(*op, inner, *span)?,
             AstExpr::List(list) => self.visit_list_expr(list)?,
             AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text, *quote)?,
-            AstExpr::Calculation { name, args } => {
-                self.visit_calculation_expr(*name, args, self.empty_span)?
+            AstExpr::Calculation(calc) => {
+                self.visit_calculation_expr(calc.name, &calc.args, calc.span)?
             }
             AstExpr::CalculationWithFallback(node) => self.visit_calculation_with_fallback(node)?,
             AstExpr::CssIf(css_if) => self.visit_css_if(css_if)?,
@@ -4540,7 +4540,7 @@ impl<'a> Visitor<'a> {
                 )?
             }
             AstExpr::Number { .. }
-            | AstExpr::Calculation { .. }
+            | AstExpr::Calculation(..)
             | AstExpr::CalculationWithFallback(..)
             | AstExpr::Variable { .. }
             | AstExpr::CssIf(..)

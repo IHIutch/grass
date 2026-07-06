@@ -2297,6 +2297,22 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         Self::try_parse_calculation_inner(parser, name, start, false)
     }
 
+    /// Builds a `Spanned<AstExpr::Calculation>`, arena-boxing the payload (per
+    /// Plan 024's pattern) so the span field doesn't push `AstExpr` past its
+    /// size guard. The span is computed once and shared between the outer
+    /// `Spanned` wrapper and the inner node, so it survives being unwrapped
+    /// into a bare `AstExpr` (e.g. inside `CalculationWithFallbackExpr` or as
+    /// a nested arg) instead of collapsing to `self.empty_span` at eval time.
+    fn make_calculation(
+        parser: &mut P,
+        name: CalculationName,
+        args: Vec<AstExpr<'a>>,
+        start: usize,
+    ) -> Spanned<AstExpr<'a>> {
+        let span = parser.toks_mut().span_from(start);
+        AstExpr::Calculation(parser.arena().alloc(CalculationExpr { name, args, span })).span(span)
+    }
+
     fn try_parse_calculation_inner(
         parser: &mut P,
         name: &str,
@@ -2323,11 +2339,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 // interpolation makes structured parsing impossible.
                 let before_args = parser.toks().cursor();
                 match ValueParser::parse_calculation_arguments_inner(parser, Some(1), start, true) {
-                    Ok(args) => AstExpr::Calculation {
-                        name: CalculationName::Calc,
-                        args,
-                    }
-                    .span(parser.toks_mut().span_from(start)),
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Calc, args, start),
                     Err(e) => {
                         parser.toks_mut().set_cursor(before_args);
                         if Self::scan_for_dynamic_calc_content(parser) {
@@ -2351,32 +2363,25 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     }
                 };
 
-                AstExpr::Calculation {
-                    name: if name == "min" {
+                Self::make_calculation(
+                    parser,
+                    if name == "min" {
                         CalculationName::Min
                     } else {
                         CalculationName::Max
                     },
                     args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                    start,
+                )
             }
             "clamp" => {
                 let args = ValueParser::parse_calculation_arguments(parser, Some(3), start)?;
-                AstExpr::Calculation {
-                    name: CalculationName::Clamp,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, CalculationName::Clamp, args, start)
             }
             "abs" => {
                 let before_args = parser.toks().cursor();
                 match ValueParser::parse_calculation_arguments_inner(parser, Some(1), start, true) {
-                    Ok(args) => AstExpr::Calculation {
-                        name: CalculationName::Abs,
-                        args,
-                    }
-                    .span(parser.toks_mut().span_from(start)),
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Abs, args, start),
                     Err(..) => {
                         parser.toks_mut().set_cursor(before_args);
                         return Ok(None);
@@ -2397,11 +2402,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     _ => unreachable!(),
                 };
                 let args = ValueParser::parse_calculation_arguments(parser, Some(1), start)?;
-                AstExpr::Calculation {
-                    name: calc_name,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, calc_name, args, start)
             }
             "atan2" | "mod" | "rem" => {
                 let calc_name = match name {
@@ -2411,52 +2412,28 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     _ => unreachable!(),
                 };
                 let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                AstExpr::Calculation {
-                    name: calc_name,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, calc_name, args, start)
             }
             "pow" => {
                 let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                AstExpr::Calculation {
-                    name: CalculationName::Pow,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, CalculationName::Pow, args, start)
             }
             "log" => {
                 let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                AstExpr::Calculation {
-                    name: CalculationName::Log,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, CalculationName::Log, args, start)
             }
             "hypot" => {
                 let args = ValueParser::parse_calculation_arguments(parser, None, start)?;
-                AstExpr::Calculation {
-                    name: CalculationName::Hypot,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, CalculationName::Hypot, args, start)
             }
             "calc-size" => {
                 let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                AstExpr::Calculation {
-                    name: CalculationName::CalcSize,
-                    args,
-                }
-                .span(parser.toks_mut().span_from(start))
+                Self::make_calculation(parser, CalculationName::CalcSize, args, start)
             }
             "round" => {
                 let before_args = parser.toks().cursor();
                 match ValueParser::parse_calculation_arguments_inner(parser, Some(3), start, true) {
-                    Ok(args) => AstExpr::Calculation {
-                        name: CalculationName::Round,
-                        args,
-                    }
-                    .span(parser.toks_mut().span_from(start)),
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Round, args, start),
                     Err(..) => {
                         parser.toks_mut().set_cursor(before_args);
                         return Ok(None);
