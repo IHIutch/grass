@@ -178,6 +178,40 @@ fn silence_deprecation_comma_and_repeat_forms() {
         .contains("slash-div"));
 }
 
+// Deprecation::from_id needs an arm for every seeded ID, including the two
+// most recently seeded (function-units, duplicate-var-flags) — without one,
+// `--silence-deprecation` hits the "Invalid deprecation" hard-failure path
+// (see `unknown_deprecation_id_is_a_hard_failure` below) instead of actually
+// silencing the warning.
+//
+// Ground truth verified with dart-sass 1.97.3:
+//   printf '@use "sass:list";\na { b: list.nth(1px 2px 3px, 1px); }' | \
+//     npx sass@1.97.3 --stdin --silence-deprecation=function-units --style=expanded
+//   -> "a {\n  b: 1px;\n}\n", exit 0, no warning
+//   printf '$a: 1 !default !default;\na { b: $a; }' | \
+//     npx sass@1.97.3 --stdin --silence-deprecation=duplicate-var-flags --style=expanded
+//   -> "a {\n  b: 1;\n}\n", exit 0, no warning
+#[test]
+fn silence_deprecation_accepts_function_units_and_duplicate_var_flags() {
+    let function_units = run_with_stdin(
+        &["--stdin", "--silence-deprecation=function-units"],
+        "@use \"sass:list\";\na { b: list.nth(1px 2px 3px, 1px); }",
+    );
+    assert!(function_units.status.success());
+    let stderr = String::from_utf8(function_units.stderr).unwrap();
+    assert!(!stderr.contains("function-units"), "stderr: {stderr}");
+    assert_eq!(function_units.stdout, b"a {\n  b: 1px;\n}\n");
+
+    let duplicate_var_flags = run_with_stdin(
+        &["--stdin", "--silence-deprecation=duplicate-var-flags"],
+        "$a: 1 !default !default;\na { b: $a; }",
+    );
+    assert!(duplicate_var_flags.status.success());
+    let stderr = String::from_utf8(duplicate_var_flags.stderr).unwrap();
+    assert!(!stderr.contains("duplicate-var-flags"), "stderr: {stderr}");
+    assert_eq!(duplicate_var_flags.stdout, b"a {\n  b: 1;\n}\n");
+}
+
 // Ground truth verified with dart-sass 1.97.3:
 //   printf '$a: 1;\nb { c: $a/2; }' | npx sass@1.97.3 --stdin --fatal-deprecation=slash-div --style=expanded
 //   -> exit 65, stderr "Error: Using / for division outside of calc() is

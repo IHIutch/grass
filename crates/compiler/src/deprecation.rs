@@ -116,6 +116,8 @@ impl Deprecation {
             "with-private" => Self::WithPrivate,
             "misplaced-rest" => Self::MisplacedRest,
             "abs-percent" => Self::AbsPercent,
+            "function-units" => Self::FunctionUnits,
+            "duplicate-var-flags" => Self::DuplicateVarFlags,
             _ => return None,
         })
     }
