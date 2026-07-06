@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use codemap::Span;
 
 use crate::{common::unvendor, error::SassResult, lexer::Lexer, parse::BaseParser, Token};
@@ -163,9 +165,9 @@ impl SelectorParser {
                 | Some(Token { kind: '&', .. })
                 | Some(Token { kind: '*', .. })
                 | Some(Token { kind: '|', .. }) => {
-                    components.push(ComplexSelectorComponent::Compound(
+                    components.push(ComplexSelectorComponent::Compound(Rc::new(
                         self.parse_compound_selector()?,
-                    ));
+                    )));
                     if !self.plain_css {
                         if let Some(Token { kind: '&', .. }) = self.toks.peek() {
                             return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());
@@ -177,9 +179,9 @@ impl SelectorParser {
                         self.trailing_newline = ws_had_newline;
                         break;
                     }
-                    components.push(ComplexSelectorComponent::Compound(
+                    components.push(ComplexSelectorComponent::Compound(Rc::new(
                         self.parse_compound_selector()?,
-                    ));
+                    )));
                     if !self.plain_css {
                         if let Some(Token { kind: '&', .. }) = self.toks.peek() {
                             return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());

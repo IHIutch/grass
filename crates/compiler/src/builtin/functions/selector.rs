@@ -45,11 +45,13 @@ pub(crate) fn simple_selectors(
     };
 
     Ok(Value::List(
-        Rc::new(compound
-            .components
-            .into_iter()
-            .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))
-            .collect()),
+        Rc::new(
+            Rc::unwrap_or_clone(compound)
+                .components
+                .into_iter()
+                .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))
+                .collect(),
+        ),
         ListSeparator::Comma,
         Brackets::None,
     ))
@@ -120,24 +122,25 @@ pub(crate) fn selector_append(args: ArgumentResult, visitor: &mut Visitor) -> Sa
                     .map(|complex| -> SassResult<ComplexSelector> {
                         let compound = complex.components.first();
                         if let Some(ComplexSelectorComponent::Compound(compound)) = compound {
-                            let mut components = vec![match compound.clone().prepend_parent() {
-                                Some(v) => ComplexSelectorComponent::Compound(v),
-                                None => {
-                                    return Err((
-                                        format!(
-                                            "Can't append {} to {}.",
-                                            complex,
-                                            serialize_selector_list(
-                                                &parent.0,
-                                                visitor.options,
-                                                span
-                                            )
-                                        ),
-                                        span,
-                                    )
-                                        .into())
-                                }
-                            }];
+                            let mut components =
+                                vec![match (**compound).clone().prepend_parent() {
+                                    Some(v) => ComplexSelectorComponent::Compound(Rc::new(v)),
+                                    None => {
+                                        return Err((
+                                            format!(
+                                                "Can't append {} to {}.",
+                                                complex,
+                                                serialize_selector_list(
+                                                    &parent.0,
+                                                    visitor.options,
+                                                    span
+                                                )
+                                            ),
+                                            span,
+                                        )
+                                            .into())
+                                    }
+                                }];
                             components.extend(complex.components.into_iter().skip(1));
                             Ok(ComplexSelector::new(components, false))
                         } else {

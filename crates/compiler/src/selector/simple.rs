@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Write},
     hash::{Hash, Hasher},
+    rc::Rc,
 };
 
 use codemap::Span;
@@ -636,7 +637,8 @@ impl Pseudo {
                     .any(move |complex1| {
                         let mut components: Vec<ComplexSelectorComponent> =
                             parents.map(<[_]>::to_vec).unwrap_or_default();
-                        components.push(ComplexSelectorComponent::Compound(compound.clone()));
+                        components
+                            .push(ComplexSelectorComponent::Compound(Rc::new(compound.clone())));
                         complex1.is_super_selector(&ComplexSelector::new_transient(components, false))
                     })
             }

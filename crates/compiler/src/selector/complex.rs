@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Display, Write},
     hash::{BuildHasher, Hash, Hasher},
+    rc::Rc,
 };
 
 use codemap::Span;
@@ -467,10 +468,16 @@ impl Display for Combinator {
     }
 }
 
+/// The `Compound` variant is `Rc`-wrapped so that weave/extend's pervasive
+/// per-prefix and per-parent cloning of component chains (see
+/// `selector/extend/functions.rs`) is a refcount bump instead of a deep
+/// clone of the `CompoundSelector` (and its `Vec<SimpleSelector>`). `Rc<T>`'s
+/// `PartialEq`/`Eq`/`Hash` impls compare/hash through to `T`'s content, not
+/// the pointer, so equality and hashing semantics are unchanged.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum ComplexSelectorComponent {
     Combinator(Combinator),
-    Compound(CompoundSelector),
+    Compound(Rc<CompoundSelector>),
 }
 
 impl ComplexSelectorComponent {
@@ -495,14 +502,14 @@ impl ComplexSelectorComponent {
         parent: SelectorList,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         match self {
-            Self::Compound(c) => c.resolve_parent_selectors(span, parent),
+            Self::Compound(c) => Rc::unwrap_or_clone(c).resolve_parent_selectors(span, parent),
             Self::Combinator(..) => todo!(),
         }
     }
 
     pub fn as_compound(&self) -> &CompoundSelector {
         match self {
-            Self::Compound(c) => c,
+            Self::Compound(c) => c.as_ref(),
             Self::Combinator(..) => unreachable!(),
         }
     }

@@ -663,18 +663,22 @@ impl ExtensionStore {
                 // modified, but we don't have to do any unification.
                 first = false;
 
-                vec![vec![ComplexSelectorComponent::Compound(CompoundSelector {
-                    components: path
-                        .iter()
-                        .flat_map(|state| {
-                            debug_assert!(state.extender.components.len() == 1);
-                            match state.extender.components.last() {
-                                Some(ComplexSelectorComponent::Compound(c)) => c.components.clone(),
-                                Some(..) | None => unreachable!(),
-                            }
-                        })
-                        .collect(),
-                })]]
+                vec![vec![ComplexSelectorComponent::Compound(Rc::new(
+                    CompoundSelector {
+                        components: path
+                            .iter()
+                            .flat_map(|state| {
+                                debug_assert!(state.extender.components.len() == 1);
+                                match state.extender.components.last() {
+                                    Some(ComplexSelectorComponent::Compound(c)) => {
+                                        c.components.clone()
+                                    }
+                                    Some(..) | None => unreachable!(),
+                                }
+                            })
+                            .collect(),
+                    },
+                ))]]
             } else {
                 let mut to_unify: VecDeque<Vec<ComplexSelectorComponent>> = VecDeque::new();
                 let mut originals: Vec<SimpleSelector> = Vec::new();
@@ -692,11 +696,11 @@ impl ExtensionStore {
                     }
                 }
                 if !originals.is_empty() {
-                    to_unify.push_front(vec![ComplexSelectorComponent::Compound(
+                    to_unify.push_front(vec![ComplexSelectorComponent::Compound(Rc::new(
                         CompoundSelector {
                             components: originals,
                         },
-                    )]);
+                    ))]);
                 }
 
                 match unify_complex(Vec::from(to_unify)) {
@@ -941,9 +945,11 @@ impl ExtensionStore {
         let specificity = Some(*self.source_specificity.get(&simple).unwrap_or(&0_i32));
         Extension::one_off(
             ComplexSelector::new(
-                vec![ComplexSelectorComponent::Compound(CompoundSelector {
-                    components: vec![simple],
-                })],
+                vec![ComplexSelectorComponent::Compound(Rc::new(
+                    CompoundSelector {
+                        components: vec![simple],
+                    },
+                ))],
                 false,
             ),
             specificity,
@@ -960,7 +966,10 @@ impl ExtensionStore {
         };
         let specificity = Some(self.source_specificity_for(&compound));
         Extension::one_off(
-            ComplexSelector::new(vec![ComplexSelectorComponent::Compound(compound)], false),
+            ComplexSelector::new(
+                vec![ComplexSelectorComponent::Compound(Rc::new(compound))],
+                false,
+            ),
             specificity,
             true,
             self.span,
@@ -1090,7 +1099,7 @@ impl ExtensionStore {
             self.media_contexts
                 .insert(extended_selector.clone(), media_query_context);
         }
-        self.register_selector(selector, &extended_selector);
+        self.register_selector(&selector, &extended_selector);
         Ok(extended_selector)
     }
 
@@ -1113,21 +1122,21 @@ impl ExtensionStore {
             list = self.extend_list(list, None, None)?;
             selector.set_inner(list.clone());
         }
-        self.register_selector(list, selector);
+        self.register_selector(&list, selector);
         Ok(())
     }
 
     /// Registers the `SimpleSelector`s in `list` to point to `selector` in
     /// `self.selectors`.
-    fn register_selector(&mut self, list: SelectorList, selector: &ExtendedSelector) {
-        for complex in list.components {
-            for component in complex.components {
+    fn register_selector(&mut self, list: &SelectorList, selector: &ExtendedSelector) {
+        for complex in &list.components {
+            for component in &complex.components {
                 if let ComplexSelectorComponent::Compound(component) = component {
-                    for simple in component.components {
+                    for simple in &component.components {
                         // PERF: we compute the hash twice, which isn't great, but we avoid a superfluous
                         // clone in cases where we have already seen a simple selector (common in
                         // scenarios in which there is a lot of nesting)
-                        if let Some(entry) = self.selectors.get_mut(&simple) {
+                        if let Some(entry) = self.selectors.get_mut(simple) {
                             entry.insert(selector.clone());
                         } else {
                             self.selectors
@@ -1141,7 +1150,7 @@ impl ExtensionStore {
                             ..
                         }) = simple
                         {
-                            self.register_selector(*simple_selector, selector);
+                            self.register_selector(simple_selector, selector);
                         }
                     }
                 }
@@ -1380,7 +1389,7 @@ impl ExtensionStore {
                 continue;
             }
             selector.set_inner(new_value.clone());
-            self.register_selector(new_value, &selector);
+            self.register_selector(&new_value, &selector);
         }
         Ok(())
     }

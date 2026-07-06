@@ -1,4 +1,7 @@
-use std::fmt::{self, Write};
+use std::{
+    fmt::{self, Write},
+    rc::Rc,
+};
 
 use codemap::Span;
 
@@ -216,9 +219,9 @@ impl CompoundSelector {
             }
         } else {
             return Ok(Some(vec![ComplexSelector::new(
-                vec![ComplexSelectorComponent::Compound(CompoundSelector {
+                vec![ComplexSelectorComponent::Compound(Rc::new(CompoundSelector {
                     components: resolved_members,
-                })],
+                }))],
                 false,
             )]));
         }
@@ -241,7 +244,7 @@ impl CompoundSelector {
                             .into());
                     };
 
-                    let mut components = last.components;
+                    let mut components = Rc::unwrap_or_clone(last).components;
 
                     if let Some(SimpleSelector::Parent(Some(suffix))) = self.components.first() {
                         let mut end = components.pop().unwrap();
@@ -256,7 +259,7 @@ impl CompoundSelector {
                     complex.components.pop();
 
                     let mut components = complex.components;
-                    components.push(ComplexSelectorComponent::Compound(last));
+                    components.push(ComplexSelectorComponent::Compound(Rc::new(last)));
 
                     Ok(ComplexSelector::new(components, complex.line_break))
                 })
@@ -268,12 +271,12 @@ impl CompoundSelector {
     /// both `compound1` and `compound2`.
     ///
     /// If no such selector can be produced, returns `None`.
-    pub fn unify(self, other: Self) -> Option<Self> {
-        let mut result = self.components;
+    pub fn unify(&self, other: &Self) -> Option<Self> {
+        let mut result = self.components.clone();
         let mut pseudo_result: Vec<SimpleSelector> = Vec::new();
         let mut pseudo_element_found = false;
 
-        for simple in other.components {
+        for simple in other.components.iter().cloned() {
             if pseudo_element_found && matches!(simple, SimpleSelector::Pseudo(..)) {
                 // Once we've seen a pseudo-element, subsequent pseudo selectors
                 // go into a separate list to preserve their position after the
