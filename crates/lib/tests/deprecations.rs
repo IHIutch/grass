@@ -1771,3 +1771,65 @@ fn function_units_does_not_warn_for_color_adjust_unitless_alpha() {
     grass::from_string(input.to_string(), &options).expect(input);
     assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
 }
+
+#[test]
+fn function_units_warns_for_color_adjust_alpha_with_any_unit_modern_space() {
+    // Modern (non-legacy) color spaces go through a separate code path
+    // (`update_modern`) from legacy colors; dart-sass's `_adjustChannel` alpha
+    // check applies uniformly to both. Verified byte-identical against npx
+    // sass@1.97.3 for both `%` and a non-percent unit.
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.adjust(oklch(50% 0.1 200), \
+                 $alpha: 10%));\n  c: inspect(color.adjust(oklch(50% 0.1 200), $alpha: 0.1px));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.iter().filter(|w| w.contains("[function-units]")).count(), 2);
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $alpha: Passing a number with unit % is \
+         deprecated.\n\nTo preserve current behavior: calc($alpha / 1%)"
+    )));
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [function-units]: $alpha: Passing a number with unit px is \
+         deprecated.\n\nTo preserve current behavior: calc($alpha / 1px)"
+    )));
+}
+
+#[test]
+fn function_units_does_not_warn_for_color_adjust_unitless_alpha_modern_space() {
+    let input =
+        "@use \"sass:color\";\na {\n  b: inspect(color.adjust(oklch(50% 0.1 200), $alpha: 0.1));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}
+
+#[test]
+fn function_units_warns_for_color_change_alpha_with_non_percent_unit_modern_space() {
+    // Verified byte-identical against npx sass@1.97.3 (errors after warning,
+    // matching the pre-existing legacy-path behavior for out-of-range $alpha
+    // with a non-% unit; see todo #196 for the warn/error ordering mismatch
+    // vs. dart-sass, which is out of scope here).
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.change(oklch(50% 0.1 200), \
+                 $alpha: 2px));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let result = grass::from_string(input.to_string(), &options);
+    assert!(result.is_err());
+}
+
+#[test]
+fn color_change_alpha_percent_scales_for_modern_space() {
+    // Real correctness bug (todo #194 item 2): update_modern previously used
+    // the raw numeric value for $alpha regardless of unit, so `$alpha: 50%`
+    // set alpha to 50 (clamped to 1) instead of 0.5. Verified against npx
+    // sass@1.97.3: `color.change(oklch(50% 0.1 200), $alpha: 50%)` ==
+    // `oklch(50% 0.1 200deg / 0.5)`.
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.change(oklch(50% 0.1 200), \
+                 $alpha: 50%));\n  c: inspect(color.change(lab(50% 20 20), $alpha: 25%));\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    grass::from_string(input.to_string(), &options).expect(input);
+    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+}

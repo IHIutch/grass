@@ -973,6 +973,20 @@ test!(
     "@use \"sass:color\";\na {\n  b: color.adjust(oklch(90% 0.2 30), $lightness: 20%);\n}\n",
     "a {\n  b: oklch(100% 0.2 30deg);\n}\n"
 );
+// todo #194 item 2: `update_modern` previously used the raw numeric value for
+// `$alpha` regardless of unit, so `$alpha: 50%` set alpha to 50 (clamped to 1)
+// instead of scaling to 0.5, unlike dart-sass's `_changeColor`. Verified
+// byte-identical against npx sass@1.97.3.
+test!(
+    change_modern_space_alpha_percent,
+    "@use \"sass:color\";\na {\n  b: color.change(oklch(50% 0.1 200), $alpha: 50%);\n}\n",
+    "a {\n  b: oklch(50% 0.1 200deg / 0.5);\n}\n"
+);
+test!(
+    change_lab_alpha_percent,
+    "@use \"sass:color\";\na {\n  b: color.change(lab(50% 20 20), $alpha: 25%);\n}\n",
+    "a {\n  b: lab(50% 20 20 / 0.25);\n}\n"
+);
 // Note: dart-sass outputs oklch(50% 0.8 30deg) directly, but grass uses
 // color-mix() serialization for out-of-range perceptual values (separate issue)
 test!(

@@ -108,6 +108,52 @@ fn parse_modern_channel(
     }
 }
 
+/// Extracts and validates the `$alpha` argument for `color.change()`.
+/// Transcribes dart-sass's unified `_changeColor` alpha handling (the same
+/// code path is used for both legacy and modern color spaces): unitless and
+/// `%` are both accepted without warning (`%` is scaled to 0-1, bounds
+/// 0-100); any other unit is deprecated (`function-units`, via
+/// `function_unit_other_than_message`) but the raw numeric value is still
+/// used (bounds 0-1), matching dart's `alphaArg.valueInRange(0, 1, "alpha")`.
+fn check_change_alpha(value: Value, span: Span, visitor: &mut Visitor) -> SassResult<Number> {
+    let num = value.assert_number_with_name("alpha", span)?;
+    if num.unit == Unit::Percent {
+        num.assert_bounds("alpha", 0.0, 100.0, span)?;
+        Ok(num.num / Number(100.0))
+    } else {
+        num.assert_bounds_with_unit("alpha", 0.0, 1.0, &Unit::None, span)?;
+        if num.unit != Unit::None {
+            let value_display = inspect_number(&num, visitor.options, span)?;
+            let unit = num.unit.clone();
+            visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                Ok(function_unit_other_than_message(
+                    "alpha",
+                    "%",
+                    &value_display,
+                    &unit,
+                ))
+            })?;
+        }
+        Ok(num.num)
+    }
+}
+
+/// Emits the `function-units` deprecation for `color.adjust()`'s `$alpha`
+/// argument when it carries ANY unit (including `%`, unlike `change()`'s
+/// `$alpha`). Transcribes dart-sass's `_adjustChannel` alpha-unit check,
+/// which applies uniformly to legacy and modern color spaces — the raw
+/// numeric value is used either way (never scaled), matching
+/// `adjustmentArg = SassNumber(adjustmentArg.value)`.
+fn check_adjust_alpha(num: &SassNumber, span: Span, visitor: &mut Visitor) -> SassResult<()> {
+    if num.unit != Unit::None {
+        let unit = num.unit.clone();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_units_message("alpha", &unit))
+        })?;
+    }
+    Ok(())
+}
+
 /// Handle adjust/scale/change for a modern (non-legacy) working space.
 fn update_modern(
     color: &Rc<Color>,
@@ -116,6 +162,7 @@ fn update_modern(
     convert_back: bool,
     update: UpdateComponents,
     span: Span,
+    visitor: &mut Visitor,
 ) -> SassResult<Value> {
     let channel_defs = working_space.channels();
 
@@ -165,13 +212,19 @@ fn update_modern(
 
     // Extract alpha
     let alpha_adjustment = if let Some(v) = args.get(usize::MAX, "alpha") {
-        let num = v.node.assert_number_with_name("alpha", span)?;
-        if update == UpdateComponents::Scale {
-            num.assert_unit(&Unit::Percent, "alpha", span)?;
-            num.assert_bounds("alpha", -100.0, 100.0, span)?;
-            Some(num.num.0 / 100.0)
-        } else {
-            Some(num.num.0)
+        match update {
+            UpdateComponents::Scale => {
+                let num = v.node.assert_number_with_name("alpha", span)?;
+                num.assert_unit(&Unit::Percent, "alpha", span)?;
+                num.assert_bounds("alpha", -100.0, 100.0, span)?;
+                Some(num.num.0 / 100.0)
+            }
+            UpdateComponents::Change => Some(check_change_alpha(v.node, span, visitor)?.0),
+            UpdateComponents::Adjust => {
+                let num = v.node.assert_number_with_name("alpha", span)?;
+                check_adjust_alpha(&num, span, visitor)?;
+                Some(num.num.0)
+            }
         }
     } else {
         None
@@ -388,12 +441,20 @@ fn update_components(
             )
         })?;
 
-        return update_modern(&color, &mut args, working_space, true, update, span);
+        return update_modern(&color, &mut args, working_space, true, update, span, visitor);
     }
 
     // No $space parameter - check if color is in a modern space
     if !color.color_space().is_legacy() {
-        return update_modern(&color, &mut args, color.color_space(), false, update, span);
+        return update_modern(
+            &color,
+            &mut args,
+            color.color_space(),
+            false,
+            update,
+            span,
+            visitor,
+        );
     }
 
     // Legacy path: existing behavior for RGB/HSL/HWB colors
@@ -464,34 +525,6 @@ fn update_components(
     let green = get_arg(&mut args, "green", false, false, visitor)?;
     let blue = get_arg(&mut args, "blue", false, false, visitor)?;
 
-    // Transcribes dart-sass's `_changeColor` legacy `$alpha` handling: unitless
-    // and `%` are both accepted without warning (`%` is scaled to 0-1); any
-    // other unit is deprecated (`function-units`) but the raw numeric value is
-    // still used (dart's `alphaArg.valueInRange(0, 1, "alpha")`).
-    let check_change_alpha = |value: Value, span: Span, visitor: &mut Visitor| -> SassResult<Number> {
-        let num = value.assert_number_with_name("alpha", span)?;
-        let min = 0.0;
-        if num.unit == Unit::Percent {
-            num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
-            Ok(num.num / Number(100.0))
-        } else {
-            num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
-            if num.unit != Unit::None {
-                let value_display = inspect_number(&num, visitor.options, span)?;
-                let unit = num.unit.clone();
-                visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
-                    Ok(function_unit_other_than_message(
-                        "alpha",
-                        "%",
-                        &value_display,
-                        &unit,
-                    ))
-                })?;
-            }
-            Ok(num.num)
-        }
-    };
-
     // Alpha has bounds checking even for change/adjust (unlike channels)
     // Also supports `none` for Change
     let alpha: ChannelArg = if let Some(v) = args.get(usize::MAX, "alpha") {
@@ -514,16 +547,8 @@ fn update_components(
                 Some(Some(num.num / Number(100.0)))
             } else {
                 // Adjust: no bounds check on the argument itself; the result is
-                // clamped. Transcribes dart-sass's `_adjustChannel`: ANY unit
-                // (including `%`, unlike change()'s alpha) is deprecated here —
-                // the value is used as-is (not scaled), matching
-                // `adjustmentArg = SassNumber(adjustmentArg.value)`.
-                if num.unit != Unit::None {
-                    let unit = num.unit.clone();
-                    visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
-                        Ok(function_units_message("alpha", &unit))
-                    })?;
-                }
+                // clamped.
+                check_adjust_alpha(&num, span, visitor)?;
                 Some(Some(num.num))
             }
         }
