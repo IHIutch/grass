@@ -258,7 +258,7 @@ fn hash_unit_shape(unit: &Unit, hasher: &mut FxHasher) {
 mod tests {
     use super::*;
     use crate::{
-        common::{Brackets, FxIndexMap, ListSeparator, QuoteKind},
+        common::{Brackets, SmallOrderedMap, ListSeparator, QuoteKind},
         value::{ArgList, Number, SassMap},
     };
     use codemap::{CodeMap, Spanned};
@@ -479,7 +479,7 @@ mod tests {
         let arglist = Value::ArgList(ArgList::new(
             vec![dim(1, Unit::None), dim(2, Unit::None)],
             Rc::new(Cell::new(false)),
-            FxIndexMap::default(),
+            SmallOrderedMap::default(),
             ListSeparator::Comma,
         ));
         // Brackets::None: an ArgList is never bracketed, and Value::eq (fixed
@@ -502,7 +502,7 @@ mod tests {
         let arglist = Value::ArgList(ArgList::new(
             vec![],
             Rc::new(Cell::new(false)),
-            FxIndexMap::default(),
+            SmallOrderedMap::default(),
             ListSeparator::Comma,
         ));
         let empty_map = Value::Map(SassMap::new());

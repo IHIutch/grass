@@ -115,7 +115,7 @@ fn inner_hsl(
                 }
                 let args = ArgumentResult {
                     positional: list,
-                    named: FxIndexMap::default(),
+                    named: SmallOrderedMap::default(),
                     separator: ListSeparator::Comma,
                     span: args.span(),
                     touched: FxHashSet::default(),

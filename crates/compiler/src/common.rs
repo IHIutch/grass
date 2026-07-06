@@ -16,17 +16,17 @@ use crate::interner::InternedString;
 /// so `contains_key`/`get`/`insert` staying O(n) is a non-issue at these
 /// sizes.
 #[derive(Debug, Clone)]
-pub struct FxIndexMap<K, V> {
+pub struct SmallOrderedMap<K, V> {
     entries: Vec<(K, V)>,
 }
 
-impl<K, V> Default for FxIndexMap<K, V> {
+impl<K, V> Default for SmallOrderedMap<K, V> {
     fn default() -> Self {
         Self { entries: Vec::new() }
     }
 }
 
-impl<K: PartialEq + Copy, V> FxIndexMap<K, V> {
+impl<K: PartialEq + Copy, V> SmallOrderedMap<K, V> {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -70,7 +70,7 @@ impl<K: PartialEq + Copy, V> FxIndexMap<K, V> {
     }
 }
 
-impl<'a, K, V> IntoIterator for &'a FxIndexMap<K, V> {
+impl<'a, K, V> IntoIterator for &'a SmallOrderedMap<K, V> {
     type Item = (&'a K, &'a V);
     type IntoIter = std::iter::Map<std::slice::Iter<'a, (K, V)>, fn(&'a (K, V)) -> (&'a K, &'a V)>;
 
@@ -79,7 +79,7 @@ impl<'a, K, V> IntoIterator for &'a FxIndexMap<K, V> {
     }
 }
 
-impl<K, V> IntoIterator for FxIndexMap<K, V> {
+impl<K, V> IntoIterator for SmallOrderedMap<K, V> {
     type Item = (K, V);
     type IntoIter = std::vec::IntoIter<(K, V)>;
 

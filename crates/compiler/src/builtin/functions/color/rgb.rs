@@ -417,7 +417,7 @@ fn inner_rgb(
                     }
                     let args = ArgumentResult {
                         positional: list,
-                        named: FxIndexMap::default(),
+                        named: SmallOrderedMap::default(),
                         separator: ListSeparator::Comma,
                         span,
                         touched: FxHashSet::default(),

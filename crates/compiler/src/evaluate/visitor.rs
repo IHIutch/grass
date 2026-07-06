@@ -25,7 +25,7 @@ use crate::{
         },
         GLOBAL_FUNCTIONS,
     },
-    common::{unvendor, BinaryOp, FxIndexMap, Identifier, ListSeparator, QuoteKind, UnaryOp},
+    common::{unvendor, BinaryOp, SmallOrderedMap, Identifier, ListSeparator, QuoteKind, UnaryOp},
     error::{SassError, SassResult},
     interner::InternedString,
     lexer::Lexer,
@@ -4083,7 +4083,7 @@ impl<'a> Visitor<'a> {
             positional.push(self.without_slash(val, || Self::expr_span(expr, span))?);
         }
 
-        let mut named = FxIndexMap::default();
+        let mut named = SmallOrderedMap::default();
 
         for (key, expr) in &arguments.named {
             let val = self.visit_expr_ref(expr)?;
@@ -4173,7 +4173,7 @@ impl<'a> Visitor<'a> {
 
     fn add_rest_map(
         &mut self,
-        named: &mut FxIndexMap<Identifier, Value>,
+        named: &mut SmallOrderedMap<Identifier, Value>,
         rest: SassMap,
         span: impl Fn() -> Span,
     ) -> SassResult<()> {

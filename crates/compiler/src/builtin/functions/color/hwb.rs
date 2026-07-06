@@ -121,7 +121,7 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                 }
                 let args = ArgumentResult {
                     positional: list,
-                    named: FxIndexMap::default(),
+                    named: SmallOrderedMap::default(),
                     separator: ListSeparator::Comma,
                     span,
                     touched: FxHashSet::default(),

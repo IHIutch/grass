@@ -26,7 +26,7 @@ mod builtin_imports {
     pub(crate) use crate::{
         ast::{Argument, ArgumentDeclaration, ArgumentResult, MaybeEvaledArguments},
         color::Color,
-        common::{BinaryOp, Brackets, FxIndexMap, Identifier, ListSeparator, QuoteKind},
+        common::{BinaryOp, Brackets, SmallOrderedMap, Identifier, ListSeparator, QuoteKind},
         deprecation::Deprecation,
         error::SassResult,
         evaluate::Visitor,

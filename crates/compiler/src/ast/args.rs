@@ -4,7 +4,7 @@ use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
 
 use crate::{
-    common::{FxIndexMap, Identifier, ListSeparator},
+    common::{SmallOrderedMap, Identifier, ListSeparator},
     error::SassResult,
     utils::to_sentence,
     value::Value,
@@ -35,7 +35,7 @@ impl<'a> ArgumentDeclaration<'a> {
     pub fn verify<T>(
         &self,
         num_positional: usize,
-        names: &FxIndexMap<Identifier, T>,
+        names: &SmallOrderedMap<Identifier, T>,
         span: Span,
     ) -> SassResult<()> {
         let mut named_used = 0;
@@ -126,7 +126,7 @@ impl<'a> ArgumentDeclaration<'a> {
 #[derive(Debug, Clone)]
 pub struct ArgumentInvocation<'a> {
     pub(crate) positional: Vec<AstExpr<'a>>,
-    pub(crate) named: FxIndexMap<Identifier, AstExpr<'a>>,
+    pub(crate) named: SmallOrderedMap<Identifier, AstExpr<'a>>,
     pub(crate) rest: Option<AstExpr<'a>>,
     pub(crate) keyword_rest: Option<AstExpr<'a>>,
     pub(crate) span: Span,
@@ -136,7 +136,7 @@ impl<'a> ArgumentInvocation<'a> {
     pub fn empty(span: Span) -> Self {
         Self {
             positional: Vec::new(),
-            named: FxIndexMap::default(),
+            named: SmallOrderedMap::default(),
             rest: None,
             keyword_rest: None,
             span,
@@ -166,7 +166,7 @@ pub(crate) enum MaybeEvaledArguments<'b, 'a> {
 #[derive(Debug, Clone)]
 pub struct ArgumentResult {
     pub(crate) positional: Vec<Value>,
-    pub(crate) named: FxIndexMap<Identifier, Value>,
+    pub(crate) named: SmallOrderedMap<Identifier, Value>,
     pub(crate) separator: ListSeparator,
     pub(crate) span: Span,
     // todo: hack

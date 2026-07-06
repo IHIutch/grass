@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::common::FxIndexMap;
+use crate::common::SmallOrderedMap;
 
 static MIXIN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2692,7 +2692,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
 
         let mut positional = Vec::new();
-        let mut named = FxIndexMap::default();
+        let mut named = SmallOrderedMap::default();
 
         let mut rest: Option<AstExpr<'a>> = None;
         let mut keyword_rest: Option<AstExpr<'a>> = None;
