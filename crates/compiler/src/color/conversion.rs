@@ -479,8 +479,14 @@ fn rec2020_decode(c: f64) -> f64 {
 // ---- Non-linear color space conversions ----
 
 /// Convert HSL to sRGB [0,1].
-/// h in [0,360], s and l in [0,1].
+/// h in [0,360], s and l in [0,100] (dart-sass's internal HSL storage scale).
 pub fn hsl_to_srgb(h: f64, s: f64, l: f64) -> [f64; 3] {
+    // s and l arrive already-100-scaled (dart's internal HSL storage); scale
+    // down once here, matching dart's HslColorSpace.convert doing the same
+    // division at the point of converting toward sRGB.
+    let s = s / 100.0;
+    let l = l / 100.0;
+
     let h = h % 360.0;
     let scaled_hue = h / 360.0;
 
@@ -518,10 +524,11 @@ fn hue_to_channel(m1: f64, m2: f64, mut hue: f64) -> f64 {
 }
 
 /// Convert sRGB to HSL.
-/// Returns (hue, saturation, lightness). Handles out-of-gamut inputs
-/// where values may be outside [0,1].
+/// Returns (hue [0,360], saturation [0,100], lightness [0,100]) -- matching
+/// dart-sass's internal HSL storage scale. Handles out-of-gamut inputs where
+/// values may be outside [0,1].
 ///
-/// Matches dart-sass's algorithm: saturation = (max - lightness) / min(lightness, 1 - lightness).
+/// Matches dart-sass's algorithm: saturation = 100 * (max - lightness) / min(lightness, 1 - lightness).
 /// Hue is set to 0 when saturation is fuzzy-zero (< 1e-11).
 pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     // NaN propagation: if any channel is NaN, all HSL components depend on it
@@ -533,23 +540,25 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
 
     let min = r.min(g.min(b));
     let max = r.max(g.max(b));
+    // `lightness` here is the raw 0-1 fraction; it's scaled by 100 only at
+    // the return points below, matching dart's `lightness * 100`.
     let lightness = (min + max) / 2.0;
 
     if max == min {
-        return [0.0, 0.0, lightness];
+        return [0.0, 0.0, lightness * 100.0];
     }
 
     let delta = max - min;
 
     // dart-sass formula: saturation = 100 * (max - lightness) / min(lightness, 1 - lightness)
-    // computed with the *100 applied to the numerator BEFORE dividing (operation
-    // order load-bearing for bit-exactness), then rescaled back to a 0-1 fraction
-    // to preserve this function's return contract.
+    // -- the *100 is applied to the numerator BEFORE dividing (operation order
+    // load-bearing for bit-exactness), and the result is dart's already-100-scaled
+    // internal storage value (no further scaling).
     // Guard against division by zero when lightness is exactly 0 or 1.
     let mut saturation = if lightness == 0.0 || lightness == 1.0 {
         0.0
     } else {
-        (100.0 * (max - lightness) / lightness.min(1.0 - lightness)) / 100.0
+        100.0 * (max - lightness) / lightness.min(1.0 - lightness)
     };
 
     let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
@@ -570,21 +579,24 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     // When saturation is effectively zero (fuzzy), set hue to 0.
     // This catches near-achromatic colors from conversion roundtrips.
     if saturation.abs() < 1e-11 {
-        return [0.0, 0.0, lightness];
+        return [0.0, 0.0, lightness * 100.0];
     }
 
     if hue < 0.0 {
         hue += 360.0;
     }
 
-    [hue % 360.0, saturation, lightness]
+    [hue % 360.0, saturation, lightness * 100.0]
 }
 
 /// Convert HWB to sRGB [0,1].
-/// h in [0,360], w and b in [0,1].
+/// h in [0,360], w and b in [0,100] (dart-sass's internal HWB storage scale).
 pub fn hwb_to_srgb(h: f64, w: f64, b: f64) -> [f64; 3] {
-    let mut white = w;
-    let mut black = b;
+    // w and b arrive already-100-scaled; scale down once here, matching
+    // dart's HwbColorSpace.convert doing the same division at the point of
+    // converting toward sRGB.
+    let mut white = w / 100.0;
+    let mut black = b / 100.0;
     let sum = white + black;
     if sum > 1.0 {
         white /= sum;
@@ -602,7 +614,8 @@ pub fn hwb_to_srgb(h: f64, w: f64, b: f64) -> [f64; 3] {
 }
 
 /// Convert sRGB [0,1] to HWB.
-/// Returns (hue [0,360], whiteness [0,1], blackness [0,1]).
+/// Returns (hue [0,360], whiteness [0,100], blackness [0,100]) -- matching
+/// dart-sass's internal HWB storage scale.
 ///
 /// Unlike HSL, HWB uses the raw hue without saturation-based correction.
 /// When saturation is negative (out-of-gamut), HSL rotates hue by 180° and
@@ -621,11 +634,11 @@ pub fn srgb_to_hwb(r: f64, g: f64, b: f64) -> [f64; 3] {
         raw_hue(r, g, b, max, max - min)
     };
 
-    // dart-sass formula: blackness = 100 - max * 100 (scale max BEFORE subtracting
-    // from 100 — operation order load-bearing), rescaled back to a 0-1 fraction to
-    // preserve this function's return contract. Whiteness (min * 100 in dart) needs
-    // no such reordering: it's a single multiply, unaffected by association.
-    [hue, min, (100.0 - max * 100.0) / 100.0]
+    // dart-sass formula: whiteness = min * 100, blackness = 100 - max * 100
+    // (scale max BEFORE subtracting from 100 — operation order load-bearing).
+    // Both are dart's already-100-scaled internal storage values (no further
+    // scaling needed).
+    [hue, min * 100.0, 100.0 - max * 100.0]
 }
 
 /// Compute the raw hue from sRGB values, without saturation-based correction.
@@ -1447,7 +1460,7 @@ mod tests {
     fn rgb_to_hsl_roundtrip() {
         // Pure red
         let hsl = srgb_to_hsl(1.0, 0.0, 0.0);
-        assert_approx(hsl, [0.0, 1.0, 0.5], 1e-10);
+        assert_approx(hsl, [0.0, 100.0, 50.0], 1e-10);
 
         let rgb = hsl_to_srgb(hsl[0], hsl[1], hsl[2]);
         assert_approx(rgb, [1.0, 0.0, 0.0], 1e-10);

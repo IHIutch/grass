@@ -190,8 +190,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
             let unit = if channels[i].is_polar {
                 Unit::Deg
             } else if is_legacy_pct {
-                // Internal storage is [0, 1], display as [0%, 100%]
-                val *= Number(100.0);
+                // Internal storage is already [0, 100], matching display
                 Unit::Percent
             } else if is_modern_lightness {
                 // Modern spaces: lightness returns as percentage

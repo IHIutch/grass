@@ -403,7 +403,6 @@ fn update_components(
 
     let check_num = |num: Spanned<Value>,
                      name: &str,
-                     mut max: f64,
                      assert_percent: bool,
                      _check_percent: bool|
      -> SassResult<Number> {
@@ -411,27 +410,25 @@ fn update_components(
         let mut num = num.node.assert_number_with_name(name, span)?;
 
         if update == UpdateComponents::Scale {
-            max = 100.0;
             // Scale always requires percentage and bounds checking
             num.assert_unit(&Unit::Percent, name, span)?;
-            num.assert_bounds(name, -max, max, span)?;
+            num.assert_bounds(name, -100.0, 100.0, span)?;
+            // Scale's formula needs a pure fraction of the remaining range,
+            // regardless of the channel's native storage scale.
+            num.num /= Number(100.0);
         } else if assert_percent {
             // HWB whiteness/blackness require % unit
             num.assert_unit(&Unit::Percent, name, span)?;
         }
-        // For Change and Adjust, no bounds checking — out-of-range values are allowed
-
-        // todo: hack to check if rgb channel
-        if max == 100.0 {
-            num.num /= Number(100.0);
-        }
+        // For Change and Adjust, no bounds checking — out-of-range values are allowed.
+        // Saturation/lightness/whiteness/blackness are stored 0-100 (like dart-sass),
+        // so no rescaling is needed here.
 
         Ok(num.num)
     };
 
     let get_arg = |args: &mut ArgumentResult,
                    name: &str,
-                   max: f64,
                    assert_percent: bool,
                    check_percent: bool|
      -> SassResult<ChannelArg> {
@@ -445,15 +442,15 @@ fn update_components(
                         }
                     }
                 }
-                Some(Some(check_num(v, name, max, assert_percent, check_percent)?))
+                Some(Some(check_num(v, name, assert_percent, check_percent)?))
             }
             None => None,
         })
     };
 
-    let red = get_arg(&mut args, "red", 255.0, false, false)?;
-    let green = get_arg(&mut args, "green", 255.0, false, false)?;
-    let blue = get_arg(&mut args, "blue", 255.0, false, false)?;
+    let red = get_arg(&mut args, "red", false, false)?;
+    let green = get_arg(&mut args, "green", false, false)?;
+    let blue = get_arg(&mut args, "blue", false, false)?;
 
     // Alpha has bounds checking even for change/adjust (unlike channels)
     // Also supports `none` for Change
@@ -522,10 +519,10 @@ fn update_components(
         None
     };
 
-    let saturation = get_arg(&mut args, "saturation", 100.0, false, true)?;
-    let lightness = get_arg(&mut args, "lightness", 100.0, false, true)?;
-    let whiteness = get_arg(&mut args, "whiteness", 100.0, true, true)?;
-    let blackness = get_arg(&mut args, "blackness", 100.0, true, true)?;
+    let saturation = get_arg(&mut args, "saturation", false, true)?;
+    let lightness = get_arg(&mut args, "lightness", false, true)?;
+    let whiteness = get_arg(&mut args, "whiteness", true, true)?;
+    let blackness = get_arg(&mut args, "blackness", true, true)?;
 
     if !args.named.is_empty() {
         let argument_word = if args.named.len() == 1 {
@@ -712,8 +709,8 @@ fn update_components(
                 }
             }
         };
-        let new_w = apply_update(raw_w, &whiteness, 1.0, update);
-        let new_b = apply_update(raw_b, &blackness, 1.0, update);
+        let new_w = apply_update(raw_w, &whiteness, 100.0, update);
+        let new_b = apply_update(raw_b, &blackness, 100.0, update);
         let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
@@ -742,7 +739,7 @@ fn update_components(
                 }
             }
         };
-        let mut new_sat = apply_update(hsl_ch[1], &saturation, 1.0, update);
+        let mut new_sat = apply_update(hsl_ch[1], &saturation, 100.0, update);
         let mut new_hue = new_hue;
         // For Adjust, clamp saturation to ≥0. For Change, reflect (negate + rotate hue 180°).
         if let Some(s) = new_sat {
@@ -757,7 +754,7 @@ fn update_components(
                 }
             }
         }
-        let new_light = apply_update(hsl_ch[2], &lightness, 1.0, update);
+        let new_light = apply_update(hsl_ch[2], &lightness, 100.0, update);
         let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hsla's clamping of out-of-range values

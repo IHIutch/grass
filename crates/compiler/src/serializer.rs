@@ -597,8 +597,8 @@ impl<'a> Serializer<'a> {
             let raw = color.raw_channels();
             (
                 raw[0].unwrap_or(0.0),
-                raw[1].unwrap_or(0.0) * 100.0,
-                raw[2].unwrap_or(0.0) * 100.0,
+                raw[1].unwrap_or(0.0),
+                raw[2].unwrap_or(0.0),
             )
         } else if color.color_space() == ColorSpace::Hwb {
             let raw = color.raw_channels();
@@ -608,7 +608,7 @@ impl<'a> Serializer<'a> {
                 raw[2].unwrap_or(0.0),
             );
             let hsl = crate::color::conversion::srgb_to_hsl(srgb[0], srgb[1], srgb[2]);
-            (hsl[0], hsl[1] * 100.0, hsl[2] * 100.0)
+            (hsl[0], hsl[1], hsl[2])
         } else {
             (color.hue().0, color.saturation().0, color.lightness().0)
         };
@@ -659,8 +659,8 @@ impl<'a> Serializer<'a> {
                             self.write_float(val);
                             self.buffer.extend_from_slice(b"deg");
                         } else {
-                            // saturation, lightness (stored as [0,1], display as %)
-                            self.write_float(val * 100.0);
+                            // saturation, lightness (stored as [0,100], matching display)
+                            self.write_float(val);
                             self.buffer.push(b'%');
                         }
                     }
@@ -670,8 +670,8 @@ impl<'a> Serializer<'a> {
                             self.write_float(val);
                             self.buffer.extend_from_slice(b"deg");
                         } else {
-                            // whiteness, blackness (stored as [0,1], display as %)
-                            self.write_float(val * 100.0);
+                            // whiteness, blackness (stored as [0,100], matching display)
+                            self.write_float(val);
                             self.buffer.push(b'%');
                         }
                     }

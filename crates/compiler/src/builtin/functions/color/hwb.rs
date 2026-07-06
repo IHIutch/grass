@@ -22,7 +22,7 @@ pub(crate) fn blackness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     }
 
     Ok(Value::Dimension(SassNumber {
-        num: color.blackness() * 100,
+        num: color.blackness(),
         unit: Unit::Percent,
         as_slash: None,
     }))
@@ -43,7 +43,7 @@ pub(crate) fn whiteness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     }
 
     Ok(Value::Dimension(SassNumber {
-        num: color.whiteness() * 100,
+        num: color.whiteness(),
         unit: Unit::Percent,
         as_slash: None,
     }))

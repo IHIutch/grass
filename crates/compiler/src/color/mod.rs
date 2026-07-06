@@ -3,8 +3,9 @@
 //! Colors are stored in their native color space with three channels and an alpha.
 //! Legacy spaces (RGB, HSL, HWB) use their traditional channel ranges:
 //! - RGB: red/green/blue in [0, 255]
-//! - HSL: hue in [0, 360], saturation/lightness in [0, 1]
-//! - HWB: hue in [0, 360], whiteness/blackness in [0, 1]
+//! - HSL: hue in [0, 360], saturation/lightness in [0, 100] (matches dart-sass's
+//!   internal storage, which is already 100-scaled)
+//! - HWB: hue in [0, 360], whiteness/blackness in [0, 100] (same as above)
 //!
 //! Modern spaces store channels in their natural ranges per CSS Color Level 4.
 //!
@@ -149,7 +150,7 @@ impl Color {
     }
 
     /// Get the HSL channel values (hue, saturation, lightness).
-    /// Returns (hue 0-360, saturation 0-1, lightness 0-1).
+    /// Returns (hue 0-360, saturation 0-100, lightness 0-100).
     fn to_hsl_channels(&self) -> [f64; 3] {
         match self.space {
             ColorSpace::Hsl => [
@@ -249,7 +250,7 @@ impl Color {
     }
 
     /// Create RGBA representation from HSLA values.
-    /// hue in degrees, saturation and lightness in [0, 1].
+    /// hue in degrees, saturation and lightness in [0, 100].
     pub fn from_hsla(hue: Number, saturation: Number, lightness: Number, alpha: Number) -> Self {
         let hue = hue % Number(360.0);
         // NaN saturation → 0 (dart-sass behavior), clamp finite to non-negative
@@ -292,14 +293,14 @@ impl Color {
 
     pub fn from_hwb(hue: Number, white: Number, black: Number, alpha: Number) -> Color {
         let h = hue.rem_euclid(360.0);
-        let mut w = white.0 / 100.0;
-        let mut b = black.0 / 100.0;
+        let mut w = white.0;
+        let mut b = black.0;
 
-        // When whiteness + blackness > 1, normalize proportionally (CSS Color 4 spec)
+        // When whiteness + blackness > 100, normalize proportionally (CSS Color 4 spec)
         let sum = w + b;
-        if sum > 1.0 {
-            w /= sum;
-            b /= sum;
+        if sum > 100.0 {
+            w = w * 100.0 / sum;
+            b = b * 100.0 / sum;
         }
 
         // NaN alpha clamps to 0, per CSS spec
@@ -527,7 +528,7 @@ impl Color {
     /// Calculate saturation (0-100%)
     pub fn saturation(&self) -> Number {
         if self.space == ColorSpace::Hsl {
-            return Number(self.channels[1].unwrap_or(0.0)) * Number(100.0);
+            return Number(self.channels[1].unwrap_or(0.0));
         }
 
         let rgb = self.to_rgb_channels();
@@ -558,7 +559,7 @@ impl Color {
     /// Calculate lightness (0-100%)
     pub fn lightness(&self) -> Number {
         if self.space == ColorSpace::Hsl {
-            return Number(self.channels[2].unwrap_or(0.0)) * Number(100.0);
+            return Number(self.channels[2].unwrap_or(0.0));
         }
 
         let rgb = self.to_rgb_channels();
@@ -617,7 +618,12 @@ impl Color {
 
         hue *= Number(60.0);
 
-        (hue % Number(360.0), saturation, lightness, self.alpha())
+        (
+            hue % Number(360.0),
+            saturation * Number(100.0),
+            lightness * Number(100.0),
+            self.alpha(),
+        )
     }
 
     /// If this color was created from an HSL function call, preserve that format.
@@ -637,28 +643,28 @@ impl Color {
 
     pub fn lighten(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue, saturation, (luminance + amount).clamp(0.0, 1.0), alpha);
+        let mut c = Color::from_hsla(hue, saturation, (luminance + amount).clamp(0.0, 100.0), alpha);
         c.format = self.hsl_format_if_preserved();
         c
     }
 
     pub fn darken(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue, saturation, (luminance - amount).clamp(0.0, 1.0), alpha);
+        let mut c = Color::from_hsla(hue, saturation, (luminance - amount).clamp(0.0, 100.0), alpha);
         c.format = self.hsl_format_if_preserved();
         c
     }
 
     pub fn saturate(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue, (saturation + amount).clamp(0.0, 1.0), luminance, alpha);
+        let mut c = Color::from_hsla(hue, (saturation + amount).clamp(0.0, 100.0), luminance, alpha);
         c.format = self.hsl_format_if_preserved();
         c
     }
 
     pub fn desaturate(&self, amount: Number) -> Self {
         let (hue, saturation, luminance, alpha) = self.as_hsla();
-        let mut c = Color::from_hsla(hue, (saturation - amount).clamp(0.0, 1.0), luminance, alpha);
+        let mut c = Color::from_hsla(hue, (saturation - amount).clamp(0.0, 100.0), luminance, alpha);
         c.format = self.hsl_format_if_preserved();
         c
     }
@@ -919,7 +925,7 @@ impl Color {
             Number(self.channels[1].unwrap_or(0.0))
         } else {
             let rgb = self.to_rgb_channels_raw();
-            Number(rgb[0].min(rgb[1]).min(rgb[2])) / Number(255.0)
+            (Number(rgb[0].min(rgb[1]).min(rgb[2])) / Number(255.0)) * Number(100.0)
         }
     }
 
@@ -929,7 +935,7 @@ impl Color {
             Number(self.channels[2].unwrap_or(0.0))
         } else {
             let rgb = self.to_rgb_channels_raw();
-            Number(1.0) - (Number(rgb[0].max(rgb[1]).max(rgb[2])) / Number(255.0))
+            (Number(1.0) - (Number(rgb[0].max(rgb[1]).max(rgb[2])) / Number(255.0))) * Number(100.0)
         }
     }
 }
@@ -1246,10 +1252,10 @@ impl Color {
             ColorSpace::Hsl => {
                 index == 0 && matches!(self.channels[1], Some(v) if fuzzy_is_zero(v))
             }
-            // HWB: hue (index 0) is powerless when whiteness + blackness >= 1
+            // HWB: hue (index 0) is powerless when whiteness + blackness >= 100
             ColorSpace::Hwb => {
                 index == 0 && match (self.channels[1], self.channels[2]) {
-                    (Some(w), Some(b)) => w + b >= 1.0,
+                    (Some(w), Some(b)) => w + b >= 100.0,
                     _ => false,
                 }
             }

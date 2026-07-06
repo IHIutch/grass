@@ -58,8 +58,8 @@ fn hsl_3_args(
 
     Ok(Value::Color(Rc::new(Color::from_hsla_fn(
         Number(hue.rem_euclid(360.0)),
-        saturation.num / Number(100.0),
-        lightness.num / Number(100.0),
+        saturation.num,
+        lightness.num,
         Number(alpha),
     ))))
 }
@@ -316,7 +316,7 @@ fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value>
         ).into());
     }
 
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
         .assert_number_with_name("amount", span)?;
 
@@ -335,8 +335,6 @@ fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value>
         ))
     })?;
 
-    amount.num /= Number(100.0);
-
     Ok(Value::Color(Rc::new(color.lighten(amount.num))))
 }
 
@@ -354,7 +352,7 @@ fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> 
         ).into());
     }
 
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
         .assert_number_with_name("amount", span)?;
 
@@ -372,8 +370,6 @@ fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> 
             "darken() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
         ))
     })?;
-
-    amount.num /= Number(100.0);
 
     Ok(Value::Color(Rc::new(color.darken(amount.num))))
 }
@@ -407,7 +403,7 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
     })?;
 
     let span = args.span();
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
         .assert_number_with_name("amount", span)?;
 
@@ -435,8 +431,6 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         ))
     })?;
 
-    amount.num /= Number(100.0);
-
     Ok(Value::Color(Rc::new(color.saturate(amount.num))))
 }
 
@@ -454,7 +448,7 @@ fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
         ).into());
     }
 
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
         .assert_number_with_name("amount", span)?;
 
@@ -472,8 +466,6 @@ fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
             "desaturate() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
         ))
     })?;
-
-    amount.num /= Number(100.0);
 
     Ok(Value::Color(Rc::new(color.desaturate(amount.num))))
 }
