@@ -145,6 +145,38 @@ impl Deprecation {
             | Self::DuplicateVarFlags => false,
         }
     }
+
+    /// Whether this deprecation's message text can vary across repeated
+    /// visits to the same (deprecation, span) call site (e.g. a mixin or
+    /// function called many times in a loop) — built from EVALUATED content
+    /// (a color's current channel value, an argument's runtime unit/value,
+    /// an interpolated selector, a call()'d string) rather than purely
+    /// static per-call-site metadata (a function/module name, a suggestion
+    /// derived from unevaluated source text, which is fixed once a span is
+    /// fixed).
+    ///
+    /// `emit_deprecation` only pays for the extra (span, message) check this
+    /// requires when this is `true` — most deprecations' message can't
+    /// possibly differ between repeat visits to the same span, so they keep
+    /// the cheap (Deprecation, Span)-only fast path (confirmed via profiling:
+    /// treating every deprecation as message-varying regressed Bootstrap
+    /// ~5% instructions retired, entirely attributable to GlobalBuiltin —
+    /// called from inside color-manipulation mixins many times each with an
+    /// identical message).
+    #[must_use]
+    pub(crate) const fn message_may_vary_per_visit(self) -> bool {
+        matches!(
+            self,
+            Self::SlashDiv
+                | Self::BogusCombinators
+                | Self::ColorFunctions
+                | Self::CallString
+                | Self::ColorModuleCompat
+                | Self::AbsPercent
+                | Self::FunctionUnits
+                | Self::WithPrivate
+        )
+    }
 }
 
 impl fmt::Display for Deprecation {

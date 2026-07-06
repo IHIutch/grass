@@ -3118,17 +3118,24 @@ impl<'a> Visitor<'a> {
         // hit with different values across loop iterations) must still warn once
         // per distinct message, not collapse to whichever text arrived first. We
         // approximate this without paying for a message build on every call by
-        // only doing the extra (span, message) check on REVISITS: the first time
-        // a (deprecation, span) pair is seen, this behaves exactly as before
-        // (message stays unbuilt until the fatal/silence/future gates pass), so
-        // the common case — the vast majority of call sites fire exactly once —
-        // is unaffected. Only already-repeated call sites (loops) pay for a
-        // message build on each further visit, since only they can even trigger
-        // dart's message-varies-at-fixed-span case.
+        // only doing the extra (span, message) check on REVISITS to a deprecation
+        // whose message can actually vary per visit
+        // (`Deprecation::message_may_vary_per_visit`) — profiling found that
+        // checking this unconditionally on every revisit regressed Bootstrap
+        // ~5% (GlobalBuiltin, called repeatedly from inside color-manipulation
+        // mixins with an always-identical message, paying for a message build
+        // + clone + hashset insert on every one of those revisits for no
+        // behavioral difference). The first time a (deprecation, span) pair is
+        // seen, this behaves exactly as before (message stays unbuilt until the
+        // fatal/silence/future gates pass) regardless of the deprecation type.
         let mut message = Some(message);
         let mut prebuilt_message = None;
 
         if !self.deprecation_warnings_emitted.insert((deprecation, span)) {
+            if !deprecation.message_may_vary_per_visit() {
+                return Ok(());
+            }
+
             let msg = (message.take().unwrap())()?;
             if !self.deprecation_messages_emitted.insert((span, msg.clone())) {
                 return Ok(());
