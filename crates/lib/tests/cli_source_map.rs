@@ -1,0 +1,278 @@
+//! End-to-end CLI tests for source-map generation (todo #162). Ground truth
+//! for every assertion here was captured by running the equivalent
+//! `npx sass@1.97.3` invocation against the same fixture and comparing the
+//! `.map` JSON / trailer comment byte-for-byte (see docs/design/source-maps.md
+//! and the todo #162 comment thread for the exact commands run) — the
+//! expected strings below are copied from that output, not derived from
+//! grass's own implementation.
+
+use std::process::Command;
+
+const INPUT: &str = "a {\n  b: c;\n}\n";
+
+fn grass_cmd() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_grass"))
+}
+
+// Ground truth: `cd <tmp> && npx sass@1.97.3 in.scss out.css`
+//   -> out.css.map: {"version":3,"sourceRoot":"","sources":["in.scss"],
+//      "names":[],"mappings":"AAAA;EACE","file":"out.css"}
+//   -> out.css trailer: "...}\n\n/*# sourceMappingURL=out.css.map */\n"
+#[test]
+fn default_file_output_writes_relative_map_matching_dart_sass() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let css = std::fs::read(tmp.path().join("out.css")).unwrap();
+    assert_eq!(
+        css,
+        b"a {\n  b: c;\n}\n\n/*# sourceMappingURL=out.css.map */\n".to_vec()
+    );
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert_eq!(
+        map,
+        "{\"version\":3,\"sourceRoot\":\"\",\"sources\":[\"in.scss\"],\"names\":[],\"mappings\":\"AAAA;EACE\",\"file\":\"out.css\"}"
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 src/in.scss build/out.css` (run from a
+// directory containing both `src/` and `build/`) -> sources: ["../src/in.scss"]
+#[test]
+fn nested_output_dir_computes_dot_dot_relative_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("build")).unwrap();
+    std::fs::write(tmp.path().join("src/in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["src/in.scss", "build/out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("build/out.css.map")).unwrap();
+    assert!(
+        map.contains("\"sources\":[\"../src/in.scss\"]"),
+        "got: {map}"
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 --source-map-urls=absolute in.scss out.css`
+// -> sources: ["file:///<absolute path>/in.scss"]
+#[test]
+fn absolute_urls_produce_file_url() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--source-map-urls=absolute", "in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    let canonical = std::fs::canonicalize(tmp.path().join("in.scss")).unwrap();
+    let expected_source = format!("\"sources\":[\"file://{}\"]", canonical.to_string_lossy());
+    assert!(map.contains(&expected_source), "got: {map}\nwant substring: {expected_source}");
+}
+
+// Ground truth: `npx sass@1.97.3 --embed-source-map in.scss out.css` -> no
+// out.css.map file written; trailer is a `data:application/json` URL of the
+// same JSON shape, still including "file":"out.css".
+#[test]
+fn embed_source_map_writes_no_map_file_and_embeds_data_url() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--embed-source-map", "in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    assert!(!tmp.path().join("out.css.map").exists());
+
+    let css = std::fs::read_to_string(tmp.path().join("out.css")).unwrap();
+    assert!(
+        css.contains("/*# sourceMappingURL=data:application/json;charset=utf-8,"),
+        "got: {css}"
+    );
+    assert!(css.contains("%22file%22:%22out.css%22"), "got: {css}");
+}
+
+// Ground truth: `npx sass@1.97.3 --embed-sources in.scss out.css` -> map file
+// gains a "sourcesContent" array with the verbatim input text.
+#[test]
+fn embed_sources_adds_sources_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--embed-sources", "in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"sourcesContent\":[\"a {\\n  b: c;\\n}\\n\"]"),
+        "got: {map}"
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 --no-source-map in.scss out.css` -> no map
+// file, no trailer.
+#[test]
+fn no_source_map_disables_everything() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--no-source-map", "in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    assert!(!tmp.path().join("out.css.map").exists());
+    let css = std::fs::read_to_string(tmp.path().join("out.css")).unwrap();
+    assert_eq!(css, INPUT);
+}
+
+// Ground truth: `npx sass@1.97.3 in.scss` (no output arg, i.e. stdout) with
+// no source-map flags at all -> plain CSS on stdout, no trailer, no error —
+// dart-sass's default is source maps ON, but only when there's a file to
+// write one to.
+#[test]
+fn stdout_default_produces_no_trailer() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, INPUT.as_bytes());
+}
+
+// Ground truth: `npx sass@1.97.3 --no-source-map --embed-source-map in.scss
+// out.css` -> exit 64, stderr "--embed-source-map isn't allowed with
+// --no-source-map.\n\n<usage>". grass uses its own exit-1 CLI-error
+// convention (see error_exit_code in cli.rs) rather than dart's 64, but the
+// message text itself is copied verbatim.
+#[test]
+fn no_source_map_conflicts_with_embed_source_map() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--no-source-map", "--embed-source-map", "in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .starts_with("--embed-source-map isn't allowed with --no-source-map."),
+        "got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 --source-map-urls=relative in.scss` (no
+// output arg) -> exit 64, stderr "--source-map-urls=relative isn't allowed
+// when printing to stdout.\n\n<usage>".
+#[test]
+fn relative_urls_conflict_with_stdout() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--source-map-urls=relative", "in.scss"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .starts_with("--source-map-urls=relative isn't allowed when printing to stdout."),
+        "got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 --embed-source-map in.scss` (no output arg)
+// -> works (unlike --source-map-urls/--embed-sources alone), falling back to
+// an absolute file:// URL since there's no output directory for a relative
+// path, and omitting the "file" key entirely.
+#[test]
+fn embed_source_map_alone_works_on_stdout_with_absolute_fallback() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--embed-source-map", "in.scss"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sourceMappingURL=data:application/json;charset=utf-8,"),
+        "got: {stdout}"
+    );
+    assert!(stdout.contains("file:"), "expected an absolute file: URL, got: {stdout}");
+    assert!(!stdout.contains("%22file%22"), "file key must be omitted, got: {stdout}");
+}
+
+// `--stdin` with no OUTPUT arg (stdout) must remain byte-identical to plain
+// stdin compilation (see `stdin_expanded` in cli.rs) now that stdin goes
+// through `from_string_with_source_map` internally — the source-map wiring
+// must not perturb the plain-stdin path at all.
+//
+// Note: `--stdin <file>` (an OUTPUT positional alongside --stdin) is not
+// covered here — clap currently binds a single trailing positional to INPUT
+// rather than OUTPUT even when --stdin is set, a pre-existing ambiguity
+// unrelated to source maps (filed as follow-up work; see todo #162's closing
+// comment). `from_string_with_source_map`'s data:-URL-sources behavior is
+// covered directly at the library level in tests/source_maps.rs instead.
+#[test]
+fn stdin_without_output_arg_is_unaffected() {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let tmp = tempfile::tempdir().unwrap();
+
+    let mut child = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"a { b: c; }\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"a {\n  b: c;\n}\n".to_vec());
+}

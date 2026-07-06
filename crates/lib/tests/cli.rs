@@ -89,9 +89,17 @@ fn output_file() {
         .expect("failed to spawn grass");
     assert!(baseline.status.success());
 
+    // Source maps default to on for file output but off for stdout (matching
+    // dart-sass — see cli_source_map.rs), so --no-source-map here keeps this
+    // test's comparison isolated to "does writing to a file produce the same
+    // CSS as stdout", not source-map behavior.
     let out_path = dir.path().join("out.css");
     let output = grass_cmd()
-        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert!(output.status.success());

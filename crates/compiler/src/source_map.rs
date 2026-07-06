@@ -134,7 +134,7 @@ impl SourceMapData {
 /// (`;,/?:@&=+$#`) and the unreserved set (`A-Za-z0-9-_.!~*'()`) unescaped;
 /// everything else (including space, `{`, `}`, and all non-ASCII bytes) is
 /// percent-encoded.
-pub(crate) fn encode_uri(input: &str) -> String {
+pub fn encode_uri(input: &str) -> String {
     const UNESCAPED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'();,/?:@&=+$#";
 
     const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";

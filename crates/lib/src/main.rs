@@ -5,12 +5,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::{
     fs::OpenOptions,
     io::{stdin, stdout, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
-use clap::{builder::PossibleValue, value_parser, Arg, ArgAction, Command, ValueEnum};
+use clap::{builder::PossibleValue, parser::ValueSource, value_parser, Arg, ArgAction, Command, ValueEnum};
 
-use grass::{from_path, from_string, Deprecation, Options, OutputStyle};
+use grass::{from_path_with_source_map, from_string_with_source_map, Deprecation, Options, OutputStyle, SourceMapData};
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum Style {
@@ -116,14 +116,13 @@ fn cli() -> Command {
         // Source maps
         .arg(
             Arg::new("NO_SOURCE_MAP")
+                .action(ArgAction::SetTrue)
                 .long("no-source-map")
-                .hide(true)
-                .help("Whether to generate source maps."),
+                .help("Whether to generate source maps. Defaults to on when writing to a file."),
         )
         .arg(
             Arg::new("SOURCE_MAP_URLS")
                 .long("source-map-urls")
-                .hide(true)
                 .help("How to link from source maps to source files.")
                 .default_value("relative")
                 .ignore_case(true)
@@ -132,14 +131,14 @@ fn cli() -> Command {
         )
         .arg(
             Arg::new("EMBED_SOURCES")
+                .action(ArgAction::SetTrue)
                 .long("embed-sources")
-                .hide(true)
                 .help("Embed source file contents in source maps."),
         )
         .arg(
             Arg::new("EMBED_SOURCE_MAP")
+                .action(ArgAction::SetTrue)
                 .long("embed-source-map")
-                .hide(true)
                 .help("Embed source map contents in CSS."),
         )
         // Other
@@ -318,6 +317,129 @@ fn parse_deprecations(
     deprecations
 }
 
+/// Resolves `raw` (as given on the command line, relative or absolute) to an
+/// absolute, symlink-resolved path, for use in source-map `sources` URL
+/// construction. Falls back to the un-canonicalized absolute join if
+/// `canonicalize` fails (broken symlink, file since removed, etc.) rather
+/// than erroring — a source-map URL that's merely un-resolved is much
+/// better than aborting a successful compile over it.
+fn absolute_source_path(raw: &str, cwd: &Path) -> PathBuf {
+    let p = Path::new(raw);
+    let joined = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    std::fs::canonicalize(&joined).unwrap_or(joined)
+}
+
+/// Computes a `/`-joined relative path from directory `base_dir` to file
+/// `target`, matching dart-sass's `--source-map-urls=relative` (the
+/// default) convention: no leading `./`, `..` segments for each directory
+/// level that must be climbed. Both arguments must already be absolute
+/// (see `absolute_source_path`) so a plain component-wise comparison finds
+/// the common prefix correctly.
+fn relative_source_url(base_dir: &Path, target: &Path) -> String {
+    let base_components: Vec<_> = base_dir.components().collect();
+    let target_components: Vec<_> = target.components().collect();
+
+    let common = base_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..base_components.len() {
+        parts.push("..".to_owned());
+    }
+    for comp in &target_components[common..] {
+        parts.push(comp.as_os_str().to_string_lossy().into_owned());
+    }
+
+    parts.join("/")
+}
+
+/// Builds an absolute `file://` URL for `target`, percent-encoding it the
+/// same way dart-sass does (verified via `sass --source-map-urls=absolute`
+/// against a path containing a space).
+fn absolute_source_url(target: &Path) -> String {
+    format!("file://{}", grass_compiler::encode_uri(&target.to_string_lossy()))
+}
+
+/// Rewrites every non-`data:` entry in `map.sources` to either an absolute
+/// `file://` URL or a path relative to `output_dir`, per `--source-map-urls`.
+/// `output_dir` is `None` only when writing to stdout with
+/// `--embed-source-map` (the one case dart-sass allows without an output
+/// file) — relative URLs are impossible there, so absolute is used
+/// regardless of `urls`, matching the observed fallback behavior.
+fn rewrite_source_map_sources(map: &mut SourceMapData, urls: &SourceMapUrls, output_dir: Option<&Path>, cwd: &Path) {
+    for source in map.sources.iter_mut() {
+        // stdin's `data:` URL sources entry (built by
+        // `from_string_with_source_map`) is never rewritten — there is no
+        // real path behind it.
+        if source.starts_with("data:") {
+            continue;
+        }
+
+        let absolute = absolute_source_path(source, cwd);
+
+        *source = match (urls, output_dir) {
+            (SourceMapUrls::Relative, Some(dir)) => relative_source_url(dir, &absolute),
+            _ => absolute_source_url(&absolute),
+        };
+    }
+}
+
+/// Validates the four source-map CLI flags against dart-sass's own
+/// constraints (message text and behavior verified via `npx sass@1.97.3`;
+/// see docs/design/source-maps.md). Exits the process on a violation.
+/// Returns whether a source map should actually be generated
+/// (`Options::source_map`) — `false` whenever `--no-source-map` was passed,
+/// or output is going to stdout without `--embed-source-map` (matching
+/// dart-sass's silent default-off behavior for that case; no error).
+fn validate_source_map_flags(matches: &clap::ArgMatches, writing_to_stdout: bool) -> bool {
+    let no_source_map = matches.get_flag("NO_SOURCE_MAP");
+    let embed_source_map = matches.get_flag("EMBED_SOURCE_MAP");
+    let embed_sources = matches.get_flag("EMBED_SOURCES");
+    let urls_explicit = matches.value_source("SOURCE_MAP_URLS") == Some(ValueSource::CommandLine);
+    let urls = matches.get_one::<SourceMapUrls>("SOURCE_MAP_URLS").unwrap();
+
+    if no_source_map {
+        if embed_source_map {
+            eprintln!("--embed-source-map isn't allowed with --no-source-map.");
+            std::process::exit(1);
+        }
+        if embed_sources {
+            eprintln!("--embed-sources isn't allowed with --no-source-map.");
+            std::process::exit(1);
+        }
+        if urls_explicit {
+            eprintln!("--source-map-urls isn't allowed with --no-source-map.");
+            std::process::exit(1);
+        }
+        return false;
+    }
+
+    if writing_to_stdout {
+        if urls_explicit && *urls == SourceMapUrls::Relative {
+            eprintln!("--source-map-urls=relative isn't allowed when printing to stdout.");
+            std::process::exit(1);
+        }
+        if !embed_source_map {
+            if urls_explicit {
+                eprintln!("When printing to stdout, --source-map-urls requires --embed-source-map.");
+                std::process::exit(1);
+            }
+            if embed_sources {
+                eprintln!("When printing to stdout, --embed-sources requires --embed-source-map.");
+                std::process::exit(1);
+            }
+            // dart-sass's default: no map at all when printing to stdout
+            // without explicitly forcing one via --embed-source-map.
+            return false;
+        }
+    }
+
+    true
+}
+
 fn main() -> std::io::Result<()> {
     let matches = cli().get_matches();
 
@@ -330,12 +452,21 @@ fn main() -> std::io::Result<()> {
         Style::Compressed => OutputStyle::Compressed,
     };
 
+    let output_arg = matches.get_one::<String>("OUTPUT");
+    let writing_to_stdout = output_arg.is_none();
+
+    let generate_source_map = validate_source_map_flags(&matches, writing_to_stdout);
+    let embed_source_map = matches.get_flag("EMBED_SOURCE_MAP");
+    let embed_sources = matches.get_flag("EMBED_SOURCES");
+    let source_map_urls = matches.get_one::<SourceMapUrls>("SOURCE_MAP_URLS").unwrap().clone();
+
     let mut options = Options::default()
         .load_paths(&load_paths)
         .style(style)
         .quiet(matches.get_flag("QUIET"))
         .unicode_error_messages(!matches.get_flag("NO_UNICODE"))
-        .allows_charset(!matches.get_flag("NO_CHARSET"));
+        .allows_charset(!matches.get_flag("NO_CHARSET"))
+        .source_map(generate_source_map);
 
     for deprecation in parse_deprecations(&matches, "SILENCE_DEPRECATION", false) {
         options = options.silence_deprecation(deprecation);
@@ -350,7 +481,7 @@ fn main() -> std::io::Result<()> {
     let options = &options;
 
     let (mut stdout_write, mut file_write);
-    let buf_out: &mut dyn Write = if let Some(path) = matches.get_one::<String>("OUTPUT") {
+    let buf_out: &mut dyn Write = if let Some(path) = output_arg {
         file_write = OpenOptions::new()
             .create(true)
             .write(true)
@@ -362,10 +493,10 @@ fn main() -> std::io::Result<()> {
         &mut stdout_write
     };
 
-    let css = if let Some(name) = matches.get_one::<String>("INPUT") {
-        from_path(name, options)
+    let (css, map) = if let Some(name) = matches.get_one::<String>("INPUT") {
+        from_path_with_source_map(name, options)
     } else if matches.get_flag("STDIN") {
-        from_string(
+        from_string_with_source_map(
             {
                 let mut buffer = String::new();
                 stdin().read_to_string(&mut buffer)?;
@@ -390,6 +521,41 @@ fn main() -> std::io::Result<()> {
     if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
         bytes.push(b'\n');
     }
+
+    if let Some(mut map) = map {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        // Present (`Some`) exactly when `output_arg` is: `generate_source_map`
+        // only allows a stdout target when `--embed-source-map` was passed,
+        // and dart-sass omits both `file` and the ability to use relative
+        // URLs in that one case (see `validate_source_map_flags`).
+        let output_path = output_arg.map(|p| absolute_source_path(p, &cwd));
+        let output_dir = output_path.as_deref().and_then(Path::parent);
+
+        rewrite_source_map_sources(&mut map, &source_map_urls, output_dir, &cwd);
+
+        let file_key = output_arg
+            .and_then(|p| Path::new(p).file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        let json = map.to_json(file_key.as_deref(), embed_sources);
+
+        if embed_source_map {
+            bytes.extend_from_slice(b"\n/*# sourceMappingURL=data:application/json;charset=utf-8,");
+            bytes.extend_from_slice(grass_compiler::encode_uri(&json).as_bytes());
+            bytes.extend_from_slice(b" */\n");
+        } else {
+            // `generate_source_map` guarantees `output_arg` is `Some` here:
+            // stdout output only reaches this branch via --embed-source-map.
+            let output_path = output_path.expect("non-stdout output guaranteed by validate_source_map_flags");
+            let map_file_name = format!("{}.map", output_path.file_name().unwrap_or_default().to_string_lossy());
+            let map_path = output_path.with_file_name(&map_file_name);
+            std::fs::write(&map_path, json)?;
+
+            bytes.extend_from_slice(b"\n/*# sourceMappingURL=");
+            bytes.extend_from_slice(map_file_name.as_bytes());
+            bytes.extend_from_slice(b" */\n");
+        }
+    }
+
     buf_out.write_all(&bytes)?;
     Ok(())
 }

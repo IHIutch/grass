@@ -76,7 +76,7 @@ pub use crate::error::{
 pub use crate::fs::{DirListing, Fs, NullFs, StdFs};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
-pub use crate::source_map::SourceMapData;
+pub use crate::source_map::{encode_uri, SourceMapData};
 pub use crate::{builtin::Builtin, evaluate::Visitor};
 pub(crate) use crate::{context_flags::ContextFlags, lexer::Token};
 use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
