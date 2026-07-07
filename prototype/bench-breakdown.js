@@ -184,7 +184,7 @@ function benchWorkload(key) {
     },
   };
   fsCallCount = 0;
-  rawWasmCompile(source, loadPaths, "expanded", true, countingFs);
+  rawWasmCompile(source, loadPaths, "expanded", true, false, false, countingFs);
   const totalFsCalls = fsCallCount;
 
   // 4. Measure fs call overhead in isolation (statSync on nonexistent paths,
