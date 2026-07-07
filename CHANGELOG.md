@@ -1,11 +1,52 @@
-<!-- UPCOMING:
-
-- error when `@extend` is used across `@media` boundaries
-- more robust support for NaN in builtin functions
-
-- support unquoted imports in the indented/SASS syntax
-
+<!--
+Versioning note: `grass` (crates.io), the native Node.js binding (`ihiutch-grass-napi` on npm), and
+the WASM/native npm package (`ihiutch-grass` on npm) version independently of one another. This
+file tracks user-visible changes to the `grass` crate and CLI; napi/npm-specific additions are
+called out explicitly where relevant.
 -->
+
+# Unreleased
+
+## Source maps
+
+- implement Source Map v3 generation end-to-end: CLI (`--no-source-map`, `--source-map-urls`,
+  `--embed-sources`, `--embed-source-map`), library (`from_string_with_source_map`,
+  `from_path_with_source_map`, `Options::source_map`, `SourceMapData`), the napi binding
+  (`CompileOptions.sourceMap`/`sourceMapIncludeSources`, `CompileResult.sourceMap`), and the
+  WASM/npm package (same options plumbed through `pkg-publish`)
+- map standalone and trailing (`after-}`) comments, in addition to declarations and selectors
+- emit UTF-16 code-unit columns in mappings, matching dart-sass/JS source map conventions
+
+## Deprecation warnings
+
+- implement dart-sass's full deprecation system (18 tracked IDs, e.g. `slash-div`, `import`,
+  `global-builtin`, `color-functions`, `if-function`, `function-units`)
+- add CLI flags `--silence-deprecation`, `--fatal-deprecation`, and `--future-deprecation`
+  (repeatable and/or comma-separated); `--fatal-deprecation` additionally accepts a dart-sass
+  version to fatalize every deprecation introduced at or before it
+- add matching napi `CompileOptions` fields (`silenceDeprecations`, `fatalDeprecations`,
+  `futureDeprecations`); `fatalDeprecations` also accepts `{major, minor, patch}` version objects
+- unknown deprecation IDs passed to the napi binding now warn and continue, matching the real Sass
+  JS API, instead of hard-erroring
+
+## Fixes
+
+- fix keyword-argument ordering to match dart-sass's insertion order (was previously unordered in
+  some cases)
+- fix compound-unit comparability (e.g. `1px*em` and `1em*px` were incorrectly treated as
+  incompatible) to match dart-sass's order-independent unit matching
+- fix `meta.inspect()` to wrap compound-unit numbers in `calc()`, matching dart-sass
+- fix modern-color-space (`oklch`, `oklab`, `lab`, etc.) `$alpha` handling in
+  `color.change`/`color.adjust`: percentage scaling, `$alpha: none`, and warning ordering now
+  match dart-sass
+- fix the CLI's `-o`/output-file handling to no longer truncate a previously-written good output
+  file when a subsequent compile fails
+
+## Other
+
+- raise the maximum style-rule nesting depth from 128 to 1024, matching dart-sass more closely
+- improve compile performance: the release CLI's USWDS benchmark has dropped from ~271ms to
+  ~205ms since the `0.13.4` release
 
 # 0.13.4
 
