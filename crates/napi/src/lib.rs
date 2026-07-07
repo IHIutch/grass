@@ -10,6 +10,26 @@ use grass_compiler::{
     SourceMapData,
 };
 
+/// A Dart Sass compiler version, per the Sass JS API's `Version` class
+/// (`major`/`minor`/`patch`, e.g. `new sass.Version(1, 95, 0)`).
+///
+/// Only meaningful in `CompileOptions.fatal_deprecations` — the real JS API's
+/// `silenceDeprecations`/`futureDeprecations` accept `DeprecationOrId` only,
+/// never `Version` (verified against the real `sass` npm package's type
+/// declarations, `types/options.d.ts`: `fatalDeprecations?: (DeprecationOrId
+/// | Version)[]` vs. `silenceDeprecations?: DeprecationOrId[]`).
+///
+/// This is a plain `#[napi(object)]`, so it also structurally accepts any
+/// `{major, minor, patch}`-shaped plain object, not just a constructed
+/// `Version` instance — property access can't distinguish the two, and the
+/// real API's semantics don't depend on it being a `Version` per se.
+#[napi(object)]
+pub struct DeprecationVersion {
+    pub major: u16,
+    pub minor: u16,
+    pub patch: u16,
+}
+
 #[napi(object)]
 pub struct CompileOptions {
     pub style: Option<String>,
@@ -17,22 +37,24 @@ pub struct CompileOptions {
     pub quiet: Option<bool>,
     pub charset: Option<bool>,
     /// Deprecation IDs to silence, per the Sass JS API's `silenceDeprecations`
-    /// option (string-ID form only; dart-sass's `Version` object form for
-    /// `fatalDeprecations` is not implemented here).
+    /// option (string-ID form only — the real API never accepts `Version`
+    /// here, see `DeprecationVersion`'s doc comment).
     pub silence_deprecations: Option<Vec<String>>,
-    /// Deprecation IDs to treat as fatal errors, per the Sass JS API's
-    /// `fatalDeprecations` option (string-ID form only).
+    /// Deprecations to treat as fatal errors, per the Sass JS API's
+    /// `fatalDeprecations` option. Each entry is either a string ID (e.g.
+    /// `"slash-div"`) or a `{major, minor, patch}` version, which fatalizes
+    /// every deprecation introduced at or before that version (dart-sass's
+    /// `Deprecation.forVersion`; mirrors `--fatal-deprecation=<version>`'s
+    /// range-expansion form in `crates/lib/src/main.rs`). The boundary is
+    /// inclusive, verified against the real `sass` npm package (1.97.3):
+    /// `Version(1, 95, 0)` fatalizes `if-function`, introduced in exactly
+    /// 1.95.0; `Version(1, 94, 9)` does not.
     ///
-    /// The real JS API additionally accepts `Version` instances here for
-    /// range-expansion (`Deprecation.forVersion`); that form is not
-    /// implemented (would require a `Version` napi struct + a union member
-    /// type, a bigger change than this string-ID surface). Probed via
-    /// `sass.compileString` (JS API, not CLI): passing a version-shaped
-    /// *string* here is not a hard error — the real API only warns
-    /// (`WARNING: Invalid deprecation "1.33.0".`) and continues, treating it
-    /// like any other unrecognized ID (see `resolve_deprecation_ids`, which
-    /// matches this warn-and-continue behavior since #191).
-    pub fatal_deprecations: Option<Vec<String>>,
+    /// A version-shaped *string* here (e.g. `"1.95.0"`) is NOT parsed as a
+    /// version — verified against the real API, which warns
+    /// (`WARNING: Invalid deprecation "1.95.0".`) and continues, same as any
+    /// other unrecognized ID.
+    pub fatal_deprecations: Option<Vec<Either<String, DeprecationVersion>>>,
     /// Deprecation IDs to opt into early, per the Sass JS API's
     /// `futureDeprecations` option.
     pub future_deprecations: Option<Vec<String>>,
@@ -105,6 +127,32 @@ fn resolve_deprecation_ids(ids: &[String]) -> Vec<Deprecation> {
         .collect()
 }
 
+/// Resolves a `fatalDeprecations` array, which — unlike
+/// `silenceDeprecations`/`futureDeprecations` — accepts `Version` entries
+/// alongside string IDs (see `DeprecationVersion`'s doc comment). A `Version`
+/// entry expands to every deprecation introduced at or before it, mirroring
+/// `crates/lib/src/main.rs`'s `--fatal-deprecation=<version>` handling; a
+/// string entry goes through the same warn-and-continue lookup as
+/// `resolve_deprecation_ids`.
+fn resolve_fatal_deprecations(entries: &[Either<String, DeprecationVersion>]) -> Vec<Deprecation> {
+    let mut resolved = Vec::new();
+    for entry in entries {
+        match entry {
+            Either::A(id) => {
+                if let Some(deprecation) = Deprecation::from_id(id) {
+                    resolved.push(deprecation);
+                } else {
+                    eprintln!("WARNING: Invalid deprecation \"{id}\".");
+                }
+            }
+            Either::B(version) => {
+                resolved.extend(Deprecation::for_version((version.major, version.minor, version.patch)));
+            }
+        }
+    }
+    resolved
+}
+
 fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>> {
     let mut options = Options::default();
 
@@ -135,8 +183,8 @@ fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>>
             }
         }
 
-        if let Some(ref ids) = opts.fatal_deprecations {
-            for deprecation in resolve_deprecation_ids(ids) {
+        if let Some(ref entries) = opts.fatal_deprecations {
+            for deprecation in resolve_fatal_deprecations(entries) {
                 options = options.fatal_deprecation(deprecation);
             }
         }
@@ -332,10 +380,48 @@ mod tests {
     #[test]
     fn compile_string_fatal_deprecations_errors() {
         let opts = CompileOptions {
-            fatal_deprecations: Some(vec!["slash-div".to_owned()]),
+            fatal_deprecations: Some(vec![Either::A("slash-div".to_owned())]),
             ..base_opts()
         };
         let res = compile_string("$a: 1;\nb { c: $a/2; }".to_owned(), Some(opts));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn compile_string_fatal_deprecations_version_expands_range() {
+        // if-function was introduced in exactly Dart Sass 1.95.0 (verified
+        // against the real `sass` npm package, 1.97.3: `fatalDeprecations:
+        // [new sass.Version(1, 95, 0)]` fatalizes it, `Version(1, 94, 9)`
+        // does not).
+        let source = "a { b: if(true, 1, 2) }".to_owned();
+
+        let below = CompileOptions {
+            fatal_deprecations: Some(vec![Either::B(DeprecationVersion { major: 1, minor: 94, patch: 9 })]),
+            ..base_opts()
+        };
+        assert!(compile_string(source.clone(), Some(below)).is_ok());
+
+        let at_boundary = CompileOptions {
+            fatal_deprecations: Some(vec![Either::B(DeprecationVersion { major: 1, minor: 95, patch: 0 })]),
+            ..base_opts()
+        };
+        assert!(compile_string(source, Some(at_boundary)).is_err());
+    }
+
+    #[test]
+    fn compile_string_fatal_deprecations_mixed_string_and_version() {
+        // A bogus string ID and a Version entry in the same array: the bogus
+        // ID warns-and-continues (no effect) while the Version still expands
+        // to fatalize `if-function` (introduced 1.95.0, included in the
+        // 1.95.0 range) — verified against the real `sass` npm package.
+        let opts = CompileOptions {
+            fatal_deprecations: Some(vec![
+                Either::A("bogus-id".to_owned()),
+                Either::B(DeprecationVersion { major: 1, minor: 95, patch: 0 }),
+            ]),
+            ..base_opts()
+        };
+        let res = compile_string("a { b: if(true, 1, 2) }".to_owned(), Some(opts));
         assert!(res.is_err());
     }
 
@@ -353,7 +439,7 @@ mod tests {
                     ..base_opts()
                 },
                 "fatal_deprecations" => CompileOptions {
-                    fatal_deprecations: Some(vec!["bogus-id".to_owned()]),
+                    fatal_deprecations: Some(vec![Either::A("bogus-id".to_owned())]),
                     ..base_opts()
                 },
                 _ => CompileOptions {
@@ -373,7 +459,7 @@ mod tests {
         // (verified against dart-sass: `fatalDeprecations: ["slash-div",
         // "bogus-id"]` both warns AND fatalizes on `slash-div`).
         let opts = CompileOptions {
-            fatal_deprecations: Some(vec!["slash-div".to_owned(), "bogus-id".to_owned()]),
+            fatal_deprecations: Some(vec![Either::A("slash-div".to_owned()), Either::A("bogus-id".to_owned())]),
             ..base_opts()
         };
         let res = compile_string("$a: 1;\nb { c: $a/2; }".to_owned(), Some(opts));

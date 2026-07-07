@@ -58,6 +58,31 @@ assert.throws(() =>
   }),
 );
 
+// fatalDeprecations accepts {major, minor, patch} version objects, expanding
+// to every deprecation introduced at or before that version — verified
+// against the real `sass` npm package (1.97.3): `if-function` was
+// introduced in exactly Dart Sass 1.95.0, so `Version(1, 95, 0)` fatalizes
+// it but `Version(1, 94, 9)` does not.
+const ifFunctionSource = "a { b: if(true, 1, 2) }";
+assert.equal(
+  binding.compileString(ifFunctionSource, {
+    fatalDeprecations: [{ major: 1, minor: 94, patch: 9 }],
+  }).css,
+  "a {\n  b: 1;\n}\n",
+);
+assert.throws(() =>
+  binding.compileString(ifFunctionSource, {
+    fatalDeprecations: [{ major: 1, minor: 95, patch: 0 }],
+  }),
+);
+
+// A string ID and a version object combine in the same array.
+assert.throws(() =>
+  binding.compileString(slashDivSource, {
+    fatalDeprecations: ["bogus-id", { major: 1, minor: 95, patch: 0 }],
+  }),
+);
+
 // sourceMap option (todo #162): absent by default, matching the real `sass`
 // npm package's `compileString(..., {})` result having no `sourceMap` key.
 {
