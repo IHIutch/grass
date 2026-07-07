@@ -480,19 +480,6 @@ fn main() -> std::io::Result<()> {
 
     let options = &options;
 
-    let (mut stdout_write, mut file_write);
-    let buf_out: &mut dyn Write = if let Some(path) = output_arg {
-        file_write = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-        &mut file_write
-    } else {
-        stdout_write = stdout();
-        &mut stdout_write
-    };
-
     let (css, map) = if let Some(name) = matches.get_one::<String>("INPUT") {
         from_path_with_source_map(name, options)
     } else if matches.get_flag("STDIN") {
@@ -555,6 +542,22 @@ fn main() -> std::io::Result<()> {
             bytes.extend_from_slice(b" */\n");
         }
     }
+
+    // The output file is only opened (and truncated) here, after a successful
+    // compile -- a compile error must never destroy a previously-written good
+    // output file (dart-sass never truncates the old file on error either).
+    let (mut stdout_write, mut file_write);
+    let buf_out: &mut dyn Write = if let Some(path) = output_arg {
+        file_write = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        &mut file_write
+    } else {
+        stdout_write = stdout();
+        &mut stdout_write
+    };
 
     buf_out.write_all(&bytes)?;
     Ok(())

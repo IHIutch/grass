@@ -108,6 +108,128 @@ fn output_file() {
     assert_eq!(file_contents, baseline.stdout);
 }
 
+// Regression test for todo #216: a broken recompile must not destroy a
+// previously-written good output file.
+//
+// Ground truth probed with dart-sass 1.97.3 (npx sass@1.97.3): compiling a
+// broken stylesheet to an existing output file does NOT preserve the old
+// content byte-for-byte -- by default dart-sass overwrites it with a
+// synthesized "error CSS" stylesheet (a valid, non-empty CSS file embedding
+// the error message), and with `--no-error-css` it deletes the output file
+// outright. Neither of dart's behaviors preserves the prior good content.
+// grass has no error-css feature, so the safest, minimal fix (and the one
+// the real bug report cared about -- silent data loss) is to leave the
+// existing file completely untouched on a failed compile, which this test
+// verifies. The prior (buggy) behavior truncated the file to 0 bytes before
+// even attempting to compile.
+#[test]
+fn broken_recompile_preserves_existing_output_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+    let good = grass_cmd()
+        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(good.status.success());
+    let good_contents = std::fs::read(&out_path).unwrap();
+    assert!(!good_contents.is_empty());
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+    let broken = grass_cmd()
+        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(broken.status.code(), Some(1));
+    assert!(!broken.stderr.is_empty());
+
+    let contents_after_failure = std::fs::read(&out_path).unwrap();
+    assert_eq!(
+        contents_after_failure, good_contents,
+        "output file must be untouched by a failed recompile"
+    );
+}
+
+// Companion to `broken_recompile_preserves_existing_output_file`: the `.map`
+// sibling written alongside `-o` output must also survive a failed recompile
+// untouched (it was already only written post-success before this fix, but
+// this locks that invariant in as a regression test).
+#[test]
+fn broken_recompile_preserves_existing_map_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    let map_path = dir.path().join("out.css.map");
+
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+    let good = grass_cmd()
+        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(good.status.success());
+    assert!(map_path.exists());
+    let good_map_contents = std::fs::read(&map_path).unwrap();
+    assert!(!good_map_contents.is_empty());
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+    let broken = grass_cmd()
+        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(broken.status.code(), Some(1));
+
+    let map_contents_after_failure = std::fs::read(&map_path).unwrap();
+    assert_eq!(
+        map_contents_after_failure, good_map_contents,
+        "map file must be untouched by a failed recompile"
+    );
+}
+
+// Companion regression test: a successful recompile must still overwrite
+// both the output file and its `.map` sibling with the new content (i.e.
+// the fix for #216 doesn't accidentally make grass stop writing on success).
+#[test]
+fn successful_recompile_overwrites_output_and_map_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    let map_path = dir.path().join("out.css.map");
+
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+    let first = grass_cmd()
+        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(first.status.success());
+    let first_contents = std::fs::read(&out_path).unwrap();
+    let first_map_contents = std::fs::read(&map_path).unwrap();
+
+    std::fs::write(&in_path, "a { b: d }").unwrap();
+    let second = grass_cmd()
+        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(second.status.success());
+
+    let second_contents = std::fs::read(&out_path).unwrap();
+    let second_map_contents = std::fs::read(&map_path).unwrap();
+    assert_ne!(second_contents, first_contents);
+    assert_ne!(second_map_contents, first_map_contents);
+}
+
+// Companion regression test: a broken compile targeting stdout must have no
+// output-file side effects at all (there is no `-o` path to protect, but
+// this locks in that the stdout branch is unaffected by the reordering).
+#[test]
+fn broken_compile_to_stdout_has_no_file_side_effects() {
+    let output = run_with_stdin(&["--stdin"], "a { b: ");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!output.stderr.is_empty());
+    assert!(output.stdout.is_empty());
+}
+
 // Ground truth verified with dart-sass 1.97.3:
 //   printf 'a { b: "ü" }' | npx sass@1.97.3 --stdin --style=expanded
 //   -> starts with `@charset "UTF-8";\n`
