@@ -59,7 +59,7 @@ grass input.scss
     unknown_lints,
 )]
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use parse::{CssParser, SassParser, StylesheetParser};
 use sass_ast::StyleSheet;
@@ -259,7 +259,7 @@ fn compile_impl<P: AsRef<Path>>(
     String,
     Vec<crate::source_map::RawMapping>,
     Vec<String>,
-    Vec<String>,
+    Vec<Arc<codemap::File>>,
 )> {
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();

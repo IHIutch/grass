@@ -1,6 +1,6 @@
-use std::io::Write;
+use std::{io::Write, sync::Arc};
 
-use codemap::{CodeMap, Span};
+use codemap::{CodeMap, File, Span};
 
 use crate::{
     ast::{CssStmt, MediaQuery, SassMixin, Style, SupportsRule},
@@ -156,11 +156,12 @@ struct MappingState {
     /// Deduplicated, first-appearance-ordered source file names; indexed by
     /// `RawMapping::src_file_idx`.
     sources: Vec<String>,
-    /// Verbatim source text for each entry in `sources`, same indexing.
-    /// Always collected alongside `sources` (only paid for when the option
-    /// is on at all) so `--embed-sources` needs no separate collection
-    /// pass; `to_json`'s `embed_sources` flag decides whether it's emitted.
-    sources_content: Vec<String>,
+    /// Source file handle for each entry in `sources`, same indexing. Kept
+    /// as a cheap `Arc` clone (not `loc.file.source().to_owned()`) so a
+    /// maps-on-but-not-embedded compile — the common case — never deep-
+    /// copies file text; `SourceMapData::to_json`'s `embed_sources` flag
+    /// materializes the text lazily, only when it's actually emitted.
+    sources_content: Vec<Arc<File>>,
     /// Byte offset into `buffer` already scanned for generated line/column
     /// tracking; `record_mapping` only rescans `buffer[scan_pos..]`.
     scan_pos: usize,
@@ -1981,7 +1982,7 @@ impl<'a> Serializer<'a> {
             Some(idx) => idx,
             None => {
                 state.sources.push(loc.file.name().to_owned());
-                state.sources_content.push(loc.file.source().to_owned());
+                state.sources_content.push(Arc::clone(&loc.file));
                 state.sources.len() - 1
             }
         };
@@ -2001,7 +2002,11 @@ impl<'a> Serializer<'a> {
     #[allow(clippy::type_complexity)]
     pub(crate) fn take_mappings(
         &mut self,
-    ) -> (Vec<crate::source_map::RawMapping>, Vec<String>, Vec<String>) {
+    ) -> (
+        Vec<crate::source_map::RawMapping>,
+        Vec<String>,
+        Vec<Arc<File>>,
+    ) {
         match self.mapping_state.take() {
             Some(state) => (state.mappings, state.sources, state.sources_content),
             None => (Vec::new(), Vec::new(), Vec::new()),

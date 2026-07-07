@@ -4,6 +4,8 @@
 //! alphabet is ~70 lines total and this repo is deliberately dep-skeptical
 //! (see `Cargo.toml`).
 
+use std::sync::Arc;
+
 const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -70,9 +72,11 @@ fn encode_vlq(value: i64, out: &mut String) {
 pub struct SourceMapData {
     /// Deduplicated, first-appearance-ordered source file names/URLs.
     pub sources: Vec<String>,
-    /// Verbatim source text, parallel to `sources`. Only emitted as the
-    /// JSON `sourcesContent` field when `to_json`'s `embed_sources` is true.
-    pub sources_content: Vec<String>,
+    /// Source file handles, parallel to `sources`. Kept as cheap `Arc`
+    /// clones rather than owned text so a maps-on-but-not-embedded compile
+    /// never deep-copies file contents; `to_json` reads `.source()` (a
+    /// borrow, no clone) only when `embed_sources` is true.
+    pub sources_content: Vec<Arc<codemap::File>>,
     /// Pre-encoded VLQ `mappings` string. Computed once at construction time
     /// since it depends only on the numeric fields of each `RawMapping`
     /// (line/column/file-index deltas), never on the string contents of
@@ -84,7 +88,7 @@ impl SourceMapData {
     pub(crate) fn new(
         mappings: &[RawMapping],
         sources: Vec<String>,
-        sources_content: Vec<String>,
+        sources_content: Vec<Arc<codemap::File>>,
     ) -> Self {
         Self {
             sources,
@@ -131,7 +135,7 @@ impl SourceMapData {
                     out.push(',');
                 }
                 out.push('"');
-                json_escape_into(content, &mut out);
+                json_escape_into(content.source(), &mut out);
                 out.push('"');
             }
             out.push(']');
@@ -307,16 +311,28 @@ mod tests {
         assert_eq!(out, "a\\nb\\tc\\rd");
     }
 
+    fn test_file(name: &str, source: &str) -> Arc<codemap::File> {
+        codemap::CodeMap::new().add_file(name.to_owned(), source.to_owned())
+    }
+
     #[test]
     fn to_json_omits_file_when_none() {
-        let data = SourceMapData::new(&[], vec!["stdin".to_owned()], vec![String::new()]);
+        let data = SourceMapData::new(
+            &[],
+            vec!["stdin".to_owned()],
+            vec![test_file("stdin", "")],
+        );
         let json = data.to_json(None, false);
         assert!(!json.contains("\"file\""), "got: {json}");
     }
 
     #[test]
     fn to_json_includes_file_when_given() {
-        let data = SourceMapData::new(&[], vec!["stdin".to_owned()], vec![String::new()]);
+        let data = SourceMapData::new(
+            &[],
+            vec!["stdin".to_owned()],
+            vec![test_file("stdin", "")],
+        );
         let json = data.to_json(Some("out.css"), false);
         assert!(json.contains("\"file\":\"out.css\""), "got: {json}");
     }
@@ -326,7 +342,7 @@ mod tests {
         let data = SourceMapData::new(
             &[],
             vec!["in.scss".to_owned()],
-            vec!["a { b: c; }".to_owned()],
+            vec![test_file("in.scss", "a { b: c; }")],
         );
         assert!(!data.to_json(None, false).contains("sourcesContent"));
         let embedded = data.to_json(None, true);
