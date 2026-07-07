@@ -20,6 +20,22 @@ pub(crate) struct RawMapping {
     pub src_col: usize,
 }
 
+/// Computes `pos`'s column on line `line` of `file` in UTF-16 code units,
+/// matching the Source Map v3 spec (and dart-sass/JS tooling in general).
+/// `codemap::File::find_line_col` (used by `CodeMap::look_up_pos`) instead
+/// counts Unicode scalar values (`str::chars().count()`), which undercounts
+/// by one per supplementary-plane character (e.g. an emoji) — verified
+/// against dart-sass with a fixture where a preceding emoji shifts a same-line
+/// mapping's column by 2, not 1 (see `crates/lib/tests/cli_source_map.rs`).
+/// Built entirely from `codemap`'s public API (`File::line_span`/
+/// `File::source_slice`), so this needs no patch to the pinned dependency.
+pub(crate) fn utf16_column(file: &codemap::File, line: usize, pos: codemap::Pos) -> usize {
+    let line_span = file.line_span(line);
+    let byte_col = (pos - line_span.low()) as usize;
+    let line_text = file.source_slice(line_span);
+    line_text[..byte_col].encode_utf16().count()
+}
+
 /// Encode a single signed value as Base64 VLQ, appending to `out`.
 fn encode_vlq(value: i64, out: &mut String) {
     // Sign lives in the low bit of the first quintet; the magnitude fills the

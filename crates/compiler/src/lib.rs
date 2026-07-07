@@ -366,8 +366,28 @@ fn compile_impl<P: AsRef<Path>>(
         prev_requires_semicolon = requires_semicolon;
     }
 
-    let (mappings, sources, sources_content) = serializer.take_mappings();
+    let (mut mappings, sources, sources_content) = serializer.take_mappings();
     let css = serializer.finish(prev_requires_semicolon);
+
+    // `finish` may have prepended a `@charset "UTF-8";` line (or, in
+    // compressed mode, a BOM) for non-ASCII output — but that happens after
+    // `take_mappings` already captured line/column positions relative to the
+    // pre-prepend buffer. Shift them to match the final string dart-sass
+    // itself emits a leading empty `mappings` group in this case, confirming
+    // its dst positions are absolute over the final output (verified via
+    // `npx sass@1.97.3` on a non-ASCII fixture; see
+    // `crates/lib/tests/cli_source_map.rs`).
+    if css.starts_with("@charset \"UTF-8\";\n") {
+        for m in &mut mappings {
+            m.dst_line += 1;
+        }
+    } else if css.starts_with('\u{FEFF}') {
+        for m in &mut mappings {
+            if m.dst_line == 0 {
+                m.dst_col += 1;
+            }
+        }
+    }
 
     Ok((css, mappings, sources, sources_content))
 }

@@ -1962,12 +1962,16 @@ impl<'a> Serializer<'a> {
                 state.dst_line += 1;
                 state.dst_col = 0;
             } else if byte & 0b1100_0000 != 0b1000_0000 {
-                // Skip UTF-8 continuation bytes so multi-byte characters
-                // count as a single column, matching typical column
-                // conventions used by source map consumers for ASCII-mostly
-                // CSS. Full UTF-16-code-unit column semantics (as used by
-                // dart-sass/JS tooling) are a deferred-slice open question.
-                state.dst_col += 1;
+                // Source Map v3 columns are UTF-16 code units (verified
+                // against dart-sass: a non-BMP char like an emoji preceding a
+                // mapped token on the same line shifts dart's column by 2,
+                // not 1). A 4-byte UTF-8 lead byte is always a supplementary-
+                // plane codepoint (U+10000..U+10FFFF), which UTF-16 encodes
+                // as a surrogate pair — 2 code units. Every other lead byte
+                // (1-3 byte UTF-8 sequences) encodes a BMP codepoint — 1 code
+                // unit. This mirrors `char::len_utf16()` without decoding the
+                // full codepoint.
+                state.dst_col += if byte & 0b1111_1000 == 0b1111_0000 { 2 } else { 1 };
             }
         }
         state.scan_pos = self.buffer.len();
@@ -1987,7 +1991,7 @@ impl<'a> Serializer<'a> {
             dst_col: state.dst_col,
             src_file_idx,
             src_line: loc.position.line,
-            src_col: loc.position.column,
+            src_col: crate::source_map::utf16_column(&loc.file, loc.position.line, src_pos),
         });
     }
 

@@ -386,3 +386,69 @@ fn comment_trailing_closing_brace_is_mapped() {
     );
 }
 
+
+// ---- Slice 6 (todo #203): UTF-16 column semantics ----
+
+// Ground truth: Source Map v3 columns are UTF-16 code units. An emoji
+// (supplementary-plane, encodes as a UTF-16 surrogate pair = 2 units) placed
+// before another mapped token on the same source line shifts that token's
+// mapped column by 2, not 1 (which is what a Unicode-scalar-value count would
+// give). Verified via:
+//   a {\n  content: "\u{1F600}"; color: red;\n}\n
+// -> dart mappings ";AAAA;EACE;EAAe" (the leading `;` is the `@charset`
+// line dart-sass prepends for non-ASCII output; decodes to dst(2,2)->src
+// col17, i.e. UTF-16 units, not the 16 a scalar count would give).
+#[test]
+fn emoji_before_mapped_token_uses_utf16_column() {
+    let input = "a {\n  content: \"\u{1F600}\"; color: red;\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"mappings\":\";AAAA;EACE;EAAe\""),
+        "got: {map}"
+    );
+}
+
+// Ground truth: `Serializer::finish` prepends `@charset "UTF-8";\n` for
+// non-ASCII output *after* mappings are already collected relative to the
+// pre-prepend buffer. Every mapping's generated line must be shifted by +1
+// to stay correct -- dart-sass's own mappings for any non-ASCII fixture
+// start with a leading empty group (`;...`) for exactly this reason. This
+// is a plain-ASCII-content regression check: a non-ASCII *comment* (no
+// emoji-column interaction) still needs the whole-mappings-string line
+// shift.
+#[test]
+fn charset_prepend_shifts_all_mapping_lines() {
+    let input = "a {\n  /* \u{00e9} */\n  b: c;\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let css = std::fs::read(tmp.path().join("out.css")).unwrap();
+    assert!(
+        css.starts_with(b"@charset \"UTF-8\";\n"),
+        "expected @charset prefix, got: {}",
+        String::from_utf8_lossy(&css)
+    );
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    // First mapping group is now empty (dst line 0 = the @charset line,
+    // unmapped); the selector (line 1), comment (line 2), and declaration
+    // (line 3) mappings follow with an extra +1 line shift baked in.
+    assert!(map.contains("\"mappings\":\";AAAA;AACE;EACA\""), "got: {map}");
+}
