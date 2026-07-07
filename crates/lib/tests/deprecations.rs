@@ -1696,6 +1696,76 @@ fn function_units_does_not_warn_for_hsl_with_percent() {
     assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
 }
 
+// todo #198: `check_change_alpha` bounds-checked BEFORE emitting the
+// function-units warning, and formatted the out-of-range message without the
+// (bogus but dart-matching) unit suffix. dart-sass's `_changeColor` calls
+// `warnForDeprecation` first, then `alphaArg.valueInRange` (which uses the
+// argument's own unit in its message via `SassNumber.unitString`). Verified
+// byte-identical (warning text + error message) against npx sass@1.97.3.
+#[test]
+fn function_units_warns_before_bounds_error_for_change_alpha_out_of_range() {
+    let input = "@use \"sass:color\";\na {\n  b: color.change(rgb(10 20 30), $alpha: 2px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let result = grass::from_string(input.to_string(), &options);
+    assert_eq!(
+        result.unwrap_err().to_string().lines().next().unwrap(),
+        "Error: $alpha: Expected 2px to be within 0px and 1px."
+    );
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [function-units]: $alpha: Passing a unit other than % (2px) is \
+         deprecated.\n\nTo preserve current behavior: calc($alpha / 1px)"
+    ));
+}
+
+#[test]
+fn function_units_warns_before_bounds_error_for_change_alpha_negative_out_of_range() {
+    let input = "@use \"sass:color\";\na {\n  b: color.change(rgb(10 20 30), $alpha: -1px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let result = grass::from_string(input.to_string(), &options);
+    assert_eq!(
+        result.unwrap_err().to_string().lines().next().unwrap(),
+        "Error: $alpha: Expected -1px to be within 0px and 1px."
+    );
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
+#[test]
+fn function_units_warns_for_change_alpha_in_range_non_percent_unit() {
+    // Verified byte-identical against npx sass@1.97.3: 0.5px is in-bounds, so
+    // this only warns (no error), and the raw numeric value (0.5) is used.
+    let input = "@use \"sass:color\";\na {\n  b: color.change(rgb(10 20 30), $alpha: 0.5px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: rgba(10, 20, 30, 0.5);\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with(
+        "DEPRECATION WARNING [function-units]: $alpha: Passing a unit other than % (0.5px) is \
+         deprecated.\n\nTo preserve current behavior: calc($alpha / 1px)"
+    ));
+}
+
+#[test]
+fn function_units_warns_before_bounds_error_for_change_alpha_out_of_range_modern_space() {
+    // Same ordering/message fix applies to the modern-space path, since
+    // `update_modern` shares `check_change_alpha` with the legacy path.
+    let input =
+        "@use \"sass:color\";\na {\n  b: color.change(oklch(50% 0.1 200), $alpha: 2px);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let result = grass::from_string(input.to_string(), &options);
+    assert_eq!(
+        result.unwrap_err().to_string().lines().next().unwrap(),
+        "Error: $alpha: Expected 2px to be within 0px and 1px."
+    );
+    assert_eq!(logger.warning_messages().len(), 1);
+}
+
 #[test]
 fn function_units_warns_for_hue_with_non_deg_unit() {
     // Verified byte-identical (message text and span) against npx sass@1.97.3;

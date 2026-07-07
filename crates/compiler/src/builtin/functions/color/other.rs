@@ -121,7 +121,6 @@ fn check_change_alpha(value: Value, span: Span, visitor: &mut Visitor) -> SassRe
         num.assert_bounds("alpha", 0.0, 100.0, span)?;
         Ok(num.num / Number(100.0))
     } else {
-        num.assert_bounds_with_unit("alpha", 0.0, 1.0, &Unit::None, span)?;
         if num.unit != Unit::None {
             let value_display = inspect_number(&num, visitor.options, span)?;
             let unit = num.unit.clone();
@@ -134,6 +133,7 @@ fn check_change_alpha(value: Value, span: Span, visitor: &mut Visitor) -> SassRe
                 ))
             })?;
         }
+        num.assert_bounds_with_unit("alpha", 0.0, 1.0, &num.unit, span)?;
         Ok(num.num)
     }
 }
