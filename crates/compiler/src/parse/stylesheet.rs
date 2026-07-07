@@ -2533,8 +2533,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
                 '/' => {
                     if matches!(self.toks().peek_n(1), Some(Token { kind: '*', .. })) {
-                        let comment = self.fallible_raw_text(Self::skip_loud_comment)?;
-                        buffer.add_string(comment);
+                        self.fallible_append_raw_text(
+                            buffer.trailing_string_mut(),
+                            Self::skip_loud_comment,
+                        )?;
                     } else if silent_comments
                         && matches!(self.toks().peek_n(1), Some(Token { kind: '/', .. }))
                     {
@@ -2852,7 +2854,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut().set(ContextFlags::IS_USE_ALLOWED, false);
 
         if self.next_matches("/*") {
-            name_buffer.add_string(self.fallible_raw_text(Self::skip_loud_comment)?);
+            self.fallible_append_raw_text(name_buffer.trailing_string_mut(), Self::skip_loud_comment)?;
         }
 
         let mut mid_buffer = String::new();
@@ -3306,7 +3308,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                         Some(Token { kind: '*', .. }) => {
                             self.skip_loud_comment()?;
                             if !omit_comments {
-                                buffer.add_string(self.toks().raw_text(comment_start));
+                                buffer
+                                    .trailing_string_mut()
+                                    .extend(self.toks().raw_chars(comment_start));
                             }
                         }
                         _ => {

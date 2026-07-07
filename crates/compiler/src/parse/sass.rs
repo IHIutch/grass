@@ -328,7 +328,9 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
                     self.read_indentation()?;
                     buffer.add_char(' ');
                 } else {
-                    buffer.add_string(self.toks.raw_text(beginning_of_comment));
+                    buffer
+                        .trailing_string_mut()
+                        .extend(self.toks.raw_chars(beginning_of_comment));
                 }
             } else {
                 buffer.add_string("\n * ".to_owned());

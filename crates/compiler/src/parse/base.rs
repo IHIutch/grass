@@ -406,12 +406,12 @@ pub(crate) trait BaseParser {
                     wrote_newline = false;
                 }
                 '"' | '\'' => {
-                    buffer.push_str(&self.fallible_raw_text(Self::parse_string)?);
+                    self.fallible_append_raw_text(&mut buffer, Self::parse_string)?;
                     wrote_newline = false;
                 }
                 '/' => {
                     if matches!(self.toks().peek_n(1), Some(Token { kind: '*', .. })) {
-                        buffer.push_str(&self.fallible_raw_text(Self::skip_loud_comment)?);
+                        self.fallible_append_raw_text(&mut buffer, Self::skip_loud_comment)?;
                     } else {
                         buffer.push('/');
                         self.toks_mut().next();
@@ -580,29 +580,26 @@ pub(crate) trait BaseParser {
         Ok(None)
     }
 
-    fn raw_text<T>(&mut self, func: impl Fn(&mut Self) -> T) -> String {
-        let start = self.toks().cursor();
-        func(self);
-        self.toks().raw_text(start)
-    }
-
-    /// Like `raw_text`, but appends into a caller-supplied buffer instead of
-    /// allocating and returning a new `String`. Use this at hot call sites
-    /// that would otherwise immediately copy the returned String into
-    /// another buffer and discard it.
+    /// Appends the raw source text consumed by `func` into a caller-supplied
+    /// buffer instead of allocating and returning a new `String`. Use this
+    /// at hot call sites that would otherwise immediately copy a throwaway
+    /// `String` into another buffer and discard it.
     fn append_raw_text<T>(&mut self, buf: &mut String, func: impl Fn(&mut Self) -> T) {
         let start = self.toks().cursor();
         func(self);
         buf.extend(self.toks().raw_chars(start));
     }
 
-    fn fallible_raw_text<T>(
+    /// Like `append_raw_text`, but for a fallible `func`.
+    fn fallible_append_raw_text<T>(
         &mut self,
+        buf: &mut String,
         func: impl Fn(&mut Self) -> SassResult<T>,
-    ) -> SassResult<String> {
+    ) -> SassResult<()> {
         let start = self.toks().cursor();
         func(self)?;
-        Ok(self.toks().raw_text(start))
+        buf.extend(self.toks().raw_chars(start));
+        Ok(())
     }
 
     /// Peeks to see if the `ident` is at the current position. If it is,

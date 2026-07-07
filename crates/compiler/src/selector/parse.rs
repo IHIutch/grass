@@ -114,11 +114,18 @@ impl SelectorParser {
     }
 
     fn eat_whitespace(&mut self) -> DevouredWhitespace {
-        let text = self.raw_text(Self::whitespace);
+        let start = self.toks().cursor();
+        let _ = Self::whitespace(self);
 
-        if text.contains('\n') {
-            DevouredWhitespace::Newline
-        } else if !text.is_empty() {
+        let mut saw_any = false;
+        for c in self.toks().raw_chars(start) {
+            if c == '\n' {
+                return DevouredWhitespace::Newline;
+            }
+            saw_any = true;
+        }
+
+        if saw_any {
             DevouredWhitespace::Whitespace
         } else {
             DevouredWhitespace::None
@@ -136,7 +143,7 @@ impl SelectorParser {
         loop {
             let start = self.toks().cursor();
             self.whitespace()?;
-            let ws_had_newline = self.toks().raw_text(start).contains('\n');
+            let ws_had_newline = self.toks().raw_chars(start).any(|c| c == '\n');
 
             // todo: can we do while let Some(..) = self.toks.peek() ?
             match self.toks.peek() {

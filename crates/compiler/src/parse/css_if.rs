@@ -142,8 +142,11 @@ fn detect_css_if_syntax<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResul
         let _ = parser.parse_identifier(false, false);
 
         if parser.toks().next_char_is('(') {
-            let name = parser.toks().raw_text(ident_start);
-            let lower = name.to_ascii_lowercase();
+            let lower: String = parser
+                .toks()
+                .raw_chars(ident_start)
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
 
             // Known new-syntax functions
             if matches!(lower.as_str(), "sass" | "css" | "var" | "attr" | "if") {
