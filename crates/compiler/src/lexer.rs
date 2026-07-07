@@ -164,13 +164,16 @@ impl<'a> Iterator for TokenLexer<'a> {
 
 impl Lexer {
     pub fn new_from_file(file: &Arc<File>) -> Self {
-        let buf = TokenLexer::new(file.source().chars().peekable()).collect();
+        let source = file.source();
+        let mut buf = Vec::with_capacity(source.len());
+        buf.extend(TokenLexer::new(source.chars().peekable()));
         Self::new(buf, file.span, false)
     }
 
     pub fn new_from_string(s: &str, entire_span: Span) -> Self {
         let is_expanded = s.len() as u64 > entire_span.len();
-        let buf = TokenLexer::new(s.chars().peekable()).collect();
+        let mut buf = Vec::with_capacity(s.len());
+        buf.extend(TokenLexer::new(s.chars().peekable()));
 
         Self::new(buf, entire_span, is_expanded)
     }
