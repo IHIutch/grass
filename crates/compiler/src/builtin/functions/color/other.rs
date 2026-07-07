@@ -210,20 +210,32 @@ fn update_modern(
         }
     }
 
-    // Extract alpha
-    let alpha_adjustment = if let Some(v) = args.get(usize::MAX, "alpha") {
+    // Extract alpha.
+    // None = not provided, Some(None) = `none` keyword (only valid for Change,
+    // mirroring channel_adjustments' convention above), Some(Some(val)) = numeric.
+    let alpha_adjustment: Option<Option<f64>> = if let Some(v) = args.get(usize::MAX, "alpha") {
         match update {
             UpdateComponents::Scale => {
                 let num = v.node.assert_number_with_name("alpha", span)?;
                 num.assert_unit(&Unit::Percent, "alpha", span)?;
                 num.assert_bounds("alpha", -100.0, 100.0, span)?;
-                Some(num.num.0 / 100.0)
+                Some(Some(num.num.0 / 100.0))
             }
-            UpdateComponents::Change => Some(check_change_alpha(v.node, span, visitor)?.0),
+            UpdateComponents::Change => {
+                if let Value::String(s, QuoteKind::None) = &v.node {
+                    if s == "none" {
+                        Some(None)
+                    } else {
+                        Some(Some(check_change_alpha(v.node, span, visitor)?.0))
+                    }
+                } else {
+                    Some(Some(check_change_alpha(v.node, span, visitor)?.0))
+                }
+            }
             UpdateComponents::Adjust => {
                 let num = v.node.assert_number_with_name("alpha", span)?;
                 check_adjust_alpha(&num, span, visitor)?;
-                Some(num.num.0)
+                Some(Some(num.num.0))
             }
         }
     } else {
@@ -268,8 +280,15 @@ fn update_modern(
         }
     }
 
-    // Check for missing alpha being modified
-    if alpha_adjustment.is_some() && color_in_space.has_missing_alpha() {
+    // Check for missing alpha being modified.
+    // dart-sass's `_changeColor` never raises this for alpha — it replaces the
+    // value directly via `_isNone`/`valueInRange` with no `_missingChannelError`
+    // guard. Only `adjust()`/`scale()` guard on a missing alpha (via
+    // `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
+    if update != UpdateComponents::Change
+        && alpha_adjustment.is_some()
+        && color_in_space.has_missing_alpha()
+    {
         return Err((
             format!(
                 "$alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
@@ -353,23 +372,25 @@ fn update_modern(
     }
 
     // Apply alpha modification
-    let new_alpha = if let Some(adj) = alpha_adjustment {
-        let current = color_in_space.alpha().0;
-        Some(match update {
-            UpdateComponents::Change => adj.clamp(0.0, 1.0),
-            UpdateComponents::Adjust => (current + adj).clamp(0.0, 1.0),
-            UpdateComponents::Scale => {
-                let val = current
-                    + if adj > 0.0 {
-                        (1.0 - current) * adj
-                    } else {
-                        current * adj
-                    };
-                val.clamp(0.0, 1.0)
-            }
-        })
-    } else {
-        color_in_space.raw_alpha()
+    let new_alpha = match alpha_adjustment {
+        Some(None) => None, // `none` keyword - set alpha to missing
+        Some(Some(adj)) => {
+            let current = color_in_space.alpha().0;
+            Some(match update {
+                UpdateComponents::Change => adj.clamp(0.0, 1.0),
+                UpdateComponents::Adjust => (current + adj).clamp(0.0, 1.0),
+                UpdateComponents::Scale => {
+                    let val = current
+                        + if adj > 0.0 {
+                            (1.0 - current) * adj
+                        } else {
+                            current * adj
+                        };
+                    val.clamp(0.0, 1.0)
+                }
+            })
+        }
+        None => color_in_space.raw_alpha(),
     };
 
     let result = Color::for_space(working_space, new_channels, new_alpha, ColorFormat::Infer);

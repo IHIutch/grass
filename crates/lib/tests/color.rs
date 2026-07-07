@@ -987,6 +987,45 @@ test!(
     "@use \"sass:color\";\na {\n  b: color.change(lab(50% 20 20), $alpha: 25%);\n}\n",
     "a {\n  b: lab(50% 20 20 / 0.25);\n}\n"
 );
+// todo #199: `update_modern` never checked for the `none` keyword on `$alpha`,
+// unlike the legacy path (`update_components`'s non-modern branch), so this
+// errored with "$alpha: none is not a number." instead of setting alpha to
+// missing. Verified byte-identical against npx sass@1.97.3.
+test!(
+    change_modern_space_alpha_none,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(50% 0.1 200), $alpha: none));\n}\n",
+    "a {\n  b: oklch(50% 0.1 200deg / none);\n}\n"
+);
+test!(
+    change_lab_alpha_none,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(lab(50% 20 30), $alpha: none));\n}\n",
+    "a {\n  b: lab(50% 20 30 / none);\n}\n"
+);
+test!(
+    change_legacy_rgb_alpha_none,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(10 20 30), $alpha: none));\n}\n",
+    "a {\n  b: rgb(10 20 30 / none);\n}\n"
+);
+// dart-sass's `_changeColor` never guards on a missing alpha being modified —
+// only `adjust()`/`scale()` do (via `_adjustChannel`/`_scaleChannel`). Verified
+// against npx sass@1.97.3: neither `$alpha: none` nor a numeric `$alpha` on an
+// already-missing-alpha color errors for `change()`.
+test!(
+    change_modern_space_alpha_none_on_already_missing_alpha,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200 / none), $alpha: none));\n}\n",
+    "a {\n  b: oklch(none 0.1 200deg / none);\n}\n"
+);
+test!(
+    change_modern_space_alpha_numeric_on_already_missing_alpha,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200 / none), $alpha: 0.5));\n}\n",
+    "a {\n  b: oklch(none 0.1 200deg / 0.5);\n}\n"
+);
+// Confirms adjust()'s missing-alpha guard is unaffected by the change() fix above.
+error!(
+    adjust_modern_space_alpha_on_already_missing_alpha_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.adjust(oklch(none 0.1 200 / none), $alpha: 0.1);\n}\n",
+    "Error: $alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: oklch(none 0.1 200deg / none))."
+);
 // Note: dart-sass outputs oklch(50% 0.8 30deg) directly, but grass uses
 // color-mix() serialization for out-of-range perceptual values (separate issue)
 test!(
