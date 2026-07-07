@@ -276,3 +276,113 @@ fn stdin_without_output_arg_is_unaffected() {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(output.stdout, b"a {\n  b: c;\n}\n".to_vec());
 }
+
+// ---- Slice 5/6 follow-on (todo #203): comments and UTF-16 columns ----
+//
+// Ground truth for every test below was captured the same way as the rest of
+// this file: run the equivalent `npx sass@1.97.3` invocation and decode its
+// `mappings` VLQ string by hand (see the small Python decoder used during
+// development; not checked in — the decoded, human-readable positions are
+// transcribed into each test's comment).
+
+// Ground truth: a standalone comment on its own indented line is mapped to
+// the START of its generated line (column 0), before indentation is
+// written -- unlike declarations/selectors, which map after indentation.
+// Verified via:
+//   .a {\n  /* c1 */\n  color: red;\n  /* c2 */\n}\n
+// -> dart mappings "AAAA;AACE;EACA;AACA": dst(1,0)->src(1,2) i.e. the
+// comment text starts at source col 2 but is mapped to generated col 0.
+#[test]
+fn standalone_comment_maps_to_column_zero_before_indentation() {
+    let input = ".a {\n  /* c1 */\n  color: red;\n  /* c2 */\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"mappings\":\"AAAA;AACE;EACA;AACA\""),
+        "got: {map}"
+    );
+}
+
+// Ground truth: a comment squeezed onto the same generated line as an
+// opening `{` (dart-sass's "comment-only body renders inline" rule, and the
+// general opening-brace/declaration-trailing-comment squeeze) gets NO
+// mapping at all -- only the selector itself is mapped. Verified against
+// `.b { /* inline-body */ }` (single statement) -> mappings "AAAA" (one
+// segment only, for the selector; nothing for the comment).
+#[test]
+fn comment_only_body_on_brace_line_is_not_mapped() {
+    let input = ".b { /* inline-body */ }\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(map.contains("\"mappings\":\"AAAA\""), "got: {map}");
+}
+
+// Ground truth: a comment trailing a declaration on the same source line
+// (`color: blue; /* trailing */`) is NOT mapped -- dart emits only the
+// declaration's own segment for that generated line.
+#[test]
+fn comment_trailing_declaration_is_not_mapped() {
+    let input = ".baz {\n  color: blue; /* trailing */\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    // Only 2 segments total: the selector and the declaration -- the
+    // trailing comment contributes no third segment.
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE\""),
+        "got: {map}"
+    );
+}
+
+// Ground truth: a comment trailing a `}` on the same source line (dart-sass
+// "Sub-problem C") DOES get its own mapping, at the column right after `} `
+// -- unlike the declaration/opening-brace trailing-comment cases above.
+// Verified via:
+//   .q {\n  color: blue;\n} /* trailing after close */\n.r { color: green; }\n
+// -> dart mappings "AAAA;EACE;EACA;AACF;EAAK".
+#[test]
+fn comment_trailing_closing_brace_is_mapped() {
+    let input = ".q {\n  color: blue;\n} /* trailing after close */\n.r { color: green; }\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE;EACA;AACF;EAAK\""),
+        "got: {map}"
+    );
+}
+

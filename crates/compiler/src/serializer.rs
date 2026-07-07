@@ -1865,6 +1865,19 @@ impl<'a> Serializer<'a> {
             return Ok(());
         }
 
+        // dart-sass maps a standalone comment to column 0 of its generated
+        // line — i.e. *before* indentation is written, unlike declarations/
+        // selectors which map after (verified via npx: a nested comment's
+        // mapping targets dst col0, not the indented comment-text column).
+        // A comment squeezed inline onto an already-started line (e.g.
+        // issue_894's "comment-only body renders on one line") gets no
+        // mapping at all, matching `write_inline_comment`'s existing
+        // no-mapping convention — so only record when the buffer is
+        // genuinely at the start of a fresh output line.
+        if self.buffer.last().map_or(true, |&b| b == b'\n') {
+            self.record_mapping(span.low());
+        }
+
         self.write_indentation();
         let col = self.map.map_or(0, |m| m.look_up_pos(span.low()).position.column);
         let mut lines = comment.lines();
@@ -1991,8 +2004,21 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    /// Write a comment inline (after a semicolon or opening brace) without indentation
-    pub(crate) fn write_inline_comment(&mut self, comment: &str, span: Span) -> SassResult<()> {
+    /// Write a comment inline (after a semicolon or opening brace) without indentation.
+    ///
+    /// `after_closing_brace` distinguishes dart-sass's three "squeeze onto one
+    /// line" cases (verified via npx): a comment trailing a `}` (e.g. `} /*
+    /// c */`) DOES get its own mapping (at the column right after `} `), but
+    /// a comment trailing a declaration (`color: red; /* c */`) or one on the
+    /// same line as an opening `{` (`.x { /* c */`) does NOT — dart emits no
+    /// second segment for those. Callers pass `true` only for the
+    /// after-`}` case.
+    pub(crate) fn write_inline_comment(
+        &mut self,
+        comment: &str,
+        span: Span,
+        after_closing_brace: bool,
+    ) -> SassResult<()> {
         if self.options.is_compressed() && !comment.starts_with("/*!") {
             return Ok(());
         }
@@ -2004,6 +2030,9 @@ impl<'a> Serializer<'a> {
         }
 
         self.buffer.push(b' ');
+        if after_closing_brace {
+            self.record_mapping(span.low());
+        }
         // For inline comments, write on the same line without indentation
         let col = self.map.map_or(0, |m| m.look_up_pos(span.low()).position.column);
         let mut lines = comment.lines();
@@ -2095,7 +2124,7 @@ impl<'a> Serializer<'a> {
                         if comment_line == brace_line {
                             if let CssStmt::Comment(ref comment, span) = children[idx] {
                                 let comment = comment.clone();
-                                self.write_inline_comment(&comment, span)?;
+                                self.write_inline_comment(&comment, span, false)?;
                                 children.remove(idx);
                             }
                         }
@@ -2138,7 +2167,7 @@ impl<'a> Serializer<'a> {
                                 if comment_line == style_end_line {
                                     if let CssStmt::Comment(ref comment, span) = children[idx] {
                                         let comment = comment.clone();
-                                        self.write_inline_comment(&comment, span)?;
+                                        self.write_inline_comment(&comment, span, false)?;
                                         children.remove(idx);
                                     }
                                 }
@@ -2156,7 +2185,7 @@ impl<'a> Serializer<'a> {
                             if comment_line == brace_line {
                                 if let CssStmt::Comment(ref comment, span) = children[idx] {
                                     let comment = comment.clone();
-                                    self.write_inline_comment(&comment, span)?;
+                                    self.write_inline_comment(&comment, span, true)?;
                                     children.remove(idx);
                                 }
                             }

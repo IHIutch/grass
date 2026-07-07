@@ -336,6 +336,7 @@ fn compile_impl<P: AsRef<Path>>(
         }
 
         // Sub-problem C at top level: comment after closing `}` on same source line
+        let mut spliced_trailing_comment = false;
         if let Some(brace_line) = closing_brace_line {
             let next_visible = stmts.iter().position(|s| !s.is_invisible());
             if let Some(idx) = next_visible {
@@ -344,18 +345,24 @@ fn compile_impl<P: AsRef<Path>>(
                         if let CssStmt::Comment(ref comment, span) = stmts[idx] {
                             let comment = comment.clone();
                             serializer
-                                .write_inline_comment(&comment, span)
+                                .write_inline_comment(&comment, span, true)
                                 .map_err(|e| {
                                     raw_to_parse_error(&map, *e, options.unicode_error_messages)
                                 })?;
                             stmts.remove(idx);
+                            spliced_trailing_comment = true;
                         }
                     }
                 }
             }
         }
 
-        prev_was_group_end = is_group_end;
+        // dart-sass does not insert its usual blank-line separator before the
+        // next top-level statement when this one's closing `}` absorbed a
+        // trailing same-line comment (verified via npx: `} /* c */\n.r {...}`
+        // has no blank line, unlike a bare `}\n.r {...}`) — so don't count
+        // this as a "group end" for the next iteration's separator decision.
+        prev_was_group_end = is_group_end && !spliced_trailing_comment;
         prev_requires_semicolon = requires_semicolon;
     }
 
