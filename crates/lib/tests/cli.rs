@@ -855,3 +855,121 @@ fn watch_recovers_from_error() {
         "recovery recompile did not appear within 10s"
     );
 }
+
+// End-to-end, todo #274's critical case: a `@use`d partial containing only
+// variables (no selectors, so it never emits a CSS mapping of its own) must
+// still trigger a recompile. The partial also lives in a *sibling*
+// directory outside the entry file's own directory tree and outside any
+// `-I` load path, so this can only pass via `SourceMapData::loaded_files`
+// (`Visitor::modules`) driving the watch set -- the old directory-recursive
+// fallback (still exercised by the other watch tests, since their deps sit
+// next to the entry file) would never see this directory at all.
+#[test]
+fn watch_recompiles_on_variable_only_partial_in_sibling_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let main_dir = root.path().join("main");
+    let shared_dir = root.path().join("shared");
+    std::fs::create_dir_all(&main_dir).unwrap();
+    std::fs::create_dir_all(&shared_dir).unwrap();
+
+    let in_path = main_dir.join("in.scss");
+    let out_path = main_dir.join("out.css");
+    let vars_path = shared_dir.join("_vars.scss");
+
+    // No selector/rule at all -- purely a variable declaration, so this
+    // file contributes zero emitted CSS and would be invisible to a
+    // `sources`-based (mapping-emission-scoped) watch set.
+    std::fs::write(&vars_path, "$x: 1;\n").unwrap();
+    std::fs::write(&in_path, "@use \"../shared/vars\" as vars;\na { b: vars.$x; }\n").unwrap();
+
+    let child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+    let _guard = KillOnDrop(child);
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: 1"))
+        }),
+        "initial compile did not appear within 10s"
+    );
+
+    std::fs::write(&vars_path, "$x: 999;\n").unwrap();
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: 999"))
+        }),
+        "recompile on variable-only sibling-dir partial change did not appear within 10s"
+    );
+}
+
+// Negative counterpart to the test above: a `.scss` file that sits in a
+// directory that's neither the entry file's own directory tree, an `-I`
+// load path, nor a loaded file's directory must NOT trigger a recompile --
+// confirming the watch set is actually scoped down, not just widened.
+// Finishes by editing the real dependency to prove the watcher process is
+// still alive and responsive (so a silently-hung watcher can't masquerade
+// as "correctly ignored").
+#[test]
+fn watch_ignores_unrelated_sibling_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let main_dir = root.path().join("main");
+    let unrelated_dir = root.path().join("unrelated");
+    std::fs::create_dir_all(&main_dir).unwrap();
+    std::fs::create_dir_all(&unrelated_dir).unwrap();
+
+    let in_path = main_dir.join("in.scss");
+    let out_path = main_dir.join("out.css");
+    let noise_path = unrelated_dir.join("_noise.scss");
+
+    std::fs::write(&noise_path, "$noise: 1;\n").unwrap();
+    std::fs::write(&in_path, "a { b: c; }\n").unwrap();
+
+    let child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+    let _guard = KillOnDrop(child);
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: c"))
+        }),
+        "initial compile did not appear within 10s"
+    );
+
+    let compiled_at = std::fs::metadata(&out_path).unwrap().modified().unwrap();
+
+    std::fs::write(&noise_path, "$noise: 2;\n").unwrap();
+    std::thread::sleep(Duration::from_millis(750));
+
+    let unchanged_at = std::fs::metadata(&out_path).unwrap().modified().unwrap();
+    assert_eq!(
+        compiled_at, unchanged_at,
+        "editing an unrelated sibling directory should not have triggered a recompile"
+    );
+
+    std::fs::write(&in_path, "a { b: d; }\n").unwrap();
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: d"))
+        }),
+        "watcher appears hung: recompile on a real input change did not appear within 10s"
+    );
+}
