@@ -3,7 +3,9 @@ import assert from "assert";
 const require = createRequire(import.meta.url);
 
 // napi build --platform names the file with a platform suffix; find it.
-import { readdirSync } from "fs";
+import { readdirSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 const nodeFile = readdirSync(new URL(".", import.meta.url)).find((f) => f.endsWith(".node"));
 assert(nodeFile, "no .node binary found — run `npx napi build --platform --release` first");
 const binding = require(`./${nodeFile}`);
@@ -120,5 +122,34 @@ assert.throws(() =>
   const r = await binding.compileStringAsync("a {\n  b: c;\n}\n", { sourceMap: true });
   assert.equal(r.sourceMap.mappings, "AAAA;EACE");
 }
+
+// compile() against a real file on disk.
+{
+  const path = join(tmpdir(), `grass-napi-test-${process.pid}.scss`);
+  writeFileSync(path, "a { b: c }");
+  try {
+    assert.equal(binding.compile(path, null).css, "a {\n  b: c;\n}\n");
+  } finally {
+    rmSync(path);
+  }
+}
+
+// compile() on a missing path rejects with an error rather than throwing a
+// native panic/crash.
+{
+  const path = join(tmpdir(), `grass-napi-test-missing-${process.pid}.scss`);
+  assert.throws(() => binding.compile(path, null));
+}
+
+// Same-ID fatalDeprecations + silenceDeprecations precedence: fatal wins —
+// verified against the real `sass` npm package (1.97.3):
+// `compileString(src, {fatalDeprecations: ["slash-div"],
+// silenceDeprecations: ["slash-div"]})` still throws.
+assert.throws(() =>
+  binding.compileString(slashDivSource, {
+    fatalDeprecations: ["slash-div"],
+    silenceDeprecations: ["slash-div"],
+  }),
+);
 
 console.log("ok");

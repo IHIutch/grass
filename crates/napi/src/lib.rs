@@ -547,4 +547,54 @@ mod tests {
         let output = task.compute().unwrap();
         assert!(output.1.is_some());
     }
+
+    /// Returns a path under the OS temp dir that's unique to this test
+    /// process/thread, so parallel `cargo test` runs never collide.
+    fn unique_temp_path(name: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "grass_napi_test_{}_{}_{name}",
+            std::process::id(),
+            n
+        ))
+    }
+
+    #[test]
+    fn compile_on_real_temp_file() {
+        let path = unique_temp_path("real.scss");
+        std::fs::write(&path, "a { b: c }").unwrap();
+
+        let res = compile(path.to_string_lossy().into_owned(), None).unwrap();
+        assert_eq!(res.css, "a {\n  b: c;\n}\n");
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn compile_missing_path_is_err_not_panic() {
+        let path = unique_temp_path("does_not_exist.scss");
+        assert!(!path.exists());
+
+        let res = compile(path.to_string_lossy().into_owned(), None);
+        assert!(res.is_err());
+    }
+
+    // Mirrors `crates/lib/tests/cli.rs`'s `fatal_wins_over_silence_for_same_id`
+    // — verified against the real `sass` npm package (1.97.3):
+    // `compileString(..., {fatalDeprecations: ["slash-div"],
+    // silenceDeprecations: ["slash-div"]})` still throws (fatal wins), same
+    // as the CLI's `--fatal-deprecation=slash-div
+    // --silence-deprecation=slash-div` precedence.
+    #[test]
+    fn compile_string_fatal_wins_over_silence_for_same_id() {
+        let opts = CompileOptions {
+            fatal_deprecations: Some(vec![Either::A("slash-div".to_owned())]),
+            silence_deprecations: Some(vec!["slash-div".to_owned()]),
+            ..base_opts()
+        };
+        let res = compile_string("$a: 1;\nb { c: $a/2; }".to_owned(), Some(opts));
+        assert!(res.is_err());
+    }
 }
