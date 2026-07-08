@@ -26,7 +26,7 @@ use crate::{
         GLOBAL_FUNCTIONS,
     },
     common::{unvendor, BinaryOp, SmallOrderedMap, Identifier, ListSeparator, QuoteKind, UnaryOp},
-    error::{SassError, SassResult},
+    error::SassResult,
     interner::InternedString,
     lexer::Lexer,
     parse::{
@@ -179,46 +179,28 @@ fn unwrap_paren(cond: IfCondition<'static>) -> IfCondition<'static> {
 }
 
 pub(crate) trait UserDefinedCallable {
-    #[allow(dead_code)]
-    fn name(&self) -> Identifier;
     fn arguments(&self) -> &ArgumentDeclaration<'static>;
 }
 
 impl UserDefinedCallable for AstFunctionDecl<'static> {
-    fn name(&self) -> Identifier {
-        self.name.node
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.arguments
     }
 }
 
 impl UserDefinedCallable for Rc<AstFunctionDecl<'static>> {
-    fn name(&self) -> Identifier {
-        self.name.node
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.arguments
     }
 }
 
 impl UserDefinedCallable for AstMixin<'static> {
-    fn name(&self) -> Identifier {
-        self.name
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.args
     }
 }
 
 impl UserDefinedCallable for Rc<CallableContentBlock> {
-    fn name(&self) -> Identifier {
-        Identifier::from("@content")
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.content.args
     }
@@ -348,7 +330,6 @@ pub struct Visitor<'a> {
     style_rule_recursion_depth: usize,
 }
 
-#[allow(dead_code)]
 impl<'a> Visitor<'a> {
     pub fn new(
         path: &Path,
@@ -960,13 +941,6 @@ impl<'a> Visitor<'a> {
         }
 
         Ok(())
-    }
-
-    fn visit_return_rule(&mut self, ret: AstReturn<'static>) -> SassResult<Option<Value>> {
-        let span = ret.span;
-        let val = self.visit_expr(ret.val)?;
-
-        Ok(Some(self.without_slash(val, || span)?))
     }
 
     pub(crate) fn visit_stmt_arc(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
@@ -2636,20 +2610,6 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_debug_rule(&mut self, debug_rule: AstDebugRule<'static>) -> SassResult<Option<Value>> {
-        if self.options.quiet {
-            return Ok(None);
-        }
-
-        let message = self.visit_expr(debug_rule.value)?;
-        let message = message.inspect(debug_rule.span)?;
-
-        let loc = self.map.look_up_span(debug_rule.span);
-        self.options.logger.debug(loc, message.as_str());
-
-        Ok(None)
-    }
-
     fn visit_content_rule(&mut self, content_rule: &AstContentRule<'static>) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
@@ -2996,14 +2956,6 @@ impl<'a> Visitor<'a> {
         }
 
         Ok(None)
-    }
-
-    fn visit_error_rule(&mut self, error_rule: AstErrorRule<'static>) -> SassResult<Box<SassError>> {
-        let value = self
-            .visit_expr(error_rule.value)?
-            .inspect(error_rule.span)?;
-
-        Ok((value, error_rule.span).into())
     }
 
     fn merge_media_queries(
@@ -3510,16 +3462,6 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_warn_rule(&mut self, warn_rule: AstWarn<'static>) -> SassResult<()> {
-        if self.warnings_emitted.insert(warn_rule.span) {
-            let value = self.visit_expr(warn_rule.value)?;
-            let message = value.to_css_string(warn_rule.span, self.options.is_compressed())?;
-            self.emit_warning(&message, warn_rule.span);
-        }
-
-        Ok(())
-    }
-
     fn with_media_queries<T>(
         &mut self,
         queries: Option<Vec<MediaQuery>>,
@@ -3922,81 +3864,6 @@ impl<'a> Visitor<'a> {
 
             Ok(result)
         })
-    }
-
-    fn visit_loud_comment(&mut self, comment: AstLoudComment<'static>) -> SassResult<Option<Value>> {
-        if self.flags.in_function() {
-            return Ok(None);
-        }
-
-        let comment = CssStmt::Comment(
-            self.perform_interpolation(comment.text, false)?,
-            comment.span,
-        );
-
-        // At ROOT level during the import section, accumulate comments with
-        // pending imports so they can be interleaved correctly in the output.
-        let at_root = self.parent.is_none() || self.parent == Some(CssTree::ROOT);
-        if at_root && self.in_module_import_section {
-            self.pending_import_items.push(comment);
-        } else {
-            self.add_child_to_current_parent(comment);
-        }
-
-        Ok(None)
-    }
-
-    fn visit_variable_decl(&mut self, decl: AstVariableDecl<'static>) -> SassResult<Option<Value>> {
-        let name = Spanned {
-            node: decl.name,
-            span: decl.span,
-        };
-
-        if decl.is_guarded {
-            if decl.namespace.is_none() && self.env.at_root() {
-                let var_override = (*self.configuration).borrow_mut().remove(decl.name);
-                if !matches!(
-                    var_override,
-                    Some(ConfiguredValue {
-                        value: Value::Null,
-                        ..
-                    }) | None
-                ) {
-                    self.env.insert_var(
-                        name,
-                        None,
-                        var_override.unwrap().value,
-                        true,
-                        self.flags.in_semi_global_scope(),
-                    )?;
-                    return Ok(None);
-                }
-            }
-
-            if self.env.var_exists(decl.name, decl.namespace, decl.span)? {
-                let value = self.env.get_var(name, decl.namespace).unwrap();
-
-                if value != Value::Null {
-                    return Ok(None);
-                }
-            }
-        }
-
-        self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
-
-        let decl_span = decl.span;
-        let value = self.visit_expr(decl.value)?;
-        let value = self.without_slash(value, || decl_span)?;
-
-        self.env.insert_var(
-            name,
-            decl.namespace,
-            value,
-            decl.is_global,
-            self.flags.in_semi_global_scope(),
-        )?;
-
-        Ok(None)
     }
 
     fn interpolation_to_value(
@@ -5885,77 +5752,6 @@ impl<'a> Visitor<'a> {
         !self.flags.at_root_excluding_style_rule() && self.style_rule_ignoring_at_root.is_some()
     }
 
-    pub(crate) fn visit_style(&mut self, style: AstStyle<'static>) -> SassResult<Option<Value>> {
-        if !self.style_rule_exists()
-            && !self.flags.in_unknown_at_rule()
-            && !self.flags.in_keyframes()
-        {
-            return Err((
-                "Declarations may only be used within style rules.",
-                style.span,
-            )
-                .into());
-        }
-
-        let is_custom_property = style.is_custom_property();
-
-        if is_custom_property && self.declaration_name.is_some() {
-            return Err((
-                "Declarations whose names begin with \"--\" may not be nested.",
-                style.span,
-            )
-                .into());
-        }
-
-        let mut name = self.interpolation_to_value(style.name, false, true)?;
-
-        if let Some(declaration_name) = &self.declaration_name {
-            name = format!("{}-{}", declaration_name, name);
-        }
-
-        if let Some(value) = style
-            .value
-            .map(|s| {
-                SassResult::Ok(Spanned {
-                    node: self.visit_expr(s.node)?,
-                    span: s.span,
-                })
-            })
-            .transpose()?
-        {
-            // If the value is an empty list, preserve it, because converting it to CSS
-            // will throw an error that we want the user to see.
-            if !value.is_blank() || value.is_empty_list() || is_custom_property {
-                // todo: superfluous clones?
-                self.add_child_to_current_parent(
-                    CssStmt::Style(Style {
-                        property: InternedString::get_or_intern(&name),
-                        value: Box::new(value),
-                        declared_as_custom_property: is_custom_property,
-                        property_span: style.span,
-                    }),
-                );
-            }
-        }
-
-        let children = style.body;
-
-        if !children.is_empty() {
-            let old_declaration_name = self.declaration_name.take();
-            self.declaration_name = Some(name);
-            self.with_scope::<SassResult<()>, _>(false, true, |visitor| {
-                for stmt in children {
-                    let result = visitor.visit_stmt(stmt)?;
-                    debug_assert!(result.is_none());
-                }
-
-                Ok(())
-            })?;
-            self.declaration_name = old_declaration_name;
-        }
-
-        Ok(None)
-    }
 }
 
 #[cfg(test)]
