@@ -1026,6 +1026,109 @@ error!(
     "@use \"sass:color\";\na {\n  b: color.adjust(oklch(none 0.1 200 / none), $alpha: 0.1);\n}\n",
     "Error: $alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: oklch(none 0.1 200deg / none))."
 );
+
+// todo #223: dart-sass's unified `_changeColor` (used for both legacy and
+// modern color spaces) never guards missing/powerless CHANNELS either — only
+// `_adjustChannel`/`_scaleChannel` (adjust()/scale()) do. grass's
+// check_missing_channel (legacy) and update_modern's channel loop
+// unconditionally errored on every update kind, including Change. All values
+// below verified byte-identical against npx sass@1.97.3.
+test!(
+    change_legacy_rgb_missing_red_channel,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(none 20 30), $red: 100));\n}\n",
+    "a {\n  b: #64141e;\n}\n"
+);
+test!(
+    change_legacy_hsl_missing_hue_channel,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(none 50% 50%), $hue: 100));\n}\n",
+    "a {\n  b: hsl(100, 50%, 50%);\n}\n"
+);
+test!(
+    change_modern_oklch_missing_lightness_channel,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200), $lightness: 60%));\n}\n",
+    "a {\n  b: oklch(60% 0.1 200deg);\n}\n"
+);
+// Changing a DIFFERENT channel than the missing one: the missing channel
+// survives into the output as `none`, matching dart exactly.
+test!(
+    change_legacy_rgb_missing_channel_survives_when_other_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(none 20 30), $green: 100));\n}\n",
+    "a {\n  b: rgb(none 100 30);\n}\n"
+);
+test!(
+    change_legacy_hsl_missing_hue_survives_when_lightness_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(none 50% 50%), $lightness: 80%));\n}\n",
+    "a {\n  b: hsl(none 50% 80%);\n}\n"
+);
+test!(
+    change_modern_oklch_missing_chroma_survives_when_lightness_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(0.5 none 200), $lightness: 60%));\n}\n",
+    "a {\n  b: oklch(60% none 200deg);\n}\n"
+);
+test!(
+    change_legacy_hwb_missing_hue_survives_when_blackness_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(none 10% 10%), $blackness: 50%));\n}\n",
+    "a {\n  b: hwb(none 10% 50%);\n}\n"
+);
+// Legacy alpha: `check_missing_channel`'s alpha branch also unconditionally
+// errored for Change; now scoped to Adjust/Scale like the modern path (#199).
+test!(
+    change_legacy_rgb_missing_alpha_numeric,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(255 0 0 / none), $alpha: 0.5));\n}\n",
+    "a {\n  b: rgba(255, 0, 0, 0.5);\n}\n"
+);
+// dart-sass's `_changeColor` reads an untouched, non-`$alpha`-provided alpha
+// via `color.alpha`, which is `alphaOrNull ?? 0` — unlike
+// `_adjustChannel`/`_scaleChannel`, which read `color.alphaOrNull` and so
+// preserve a missing alpha. So `change()` on a color with a missing alpha,
+// where `$alpha` itself is not passed, coerces the untouched alpha to 0
+// rather than leaving it `none`. This is a dart-sass quirk, not a grass
+// choice — verified against npx sass@1.97.3.
+test!(
+    change_legacy_rgb_untouched_missing_alpha_defaults_to_zero,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(0 0 0 / none), $red: 10));\n}\n",
+    "a {\n  b: rgba(10, 0, 0, 0);\n}\n"
+);
+test!(
+    change_legacy_hsl_untouched_missing_alpha_defaults_to_zero,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(0 0% 0% / none), $hue: 10));\n}\n",
+    "a {\n  b: hsla(10, 0%, 0%, 0);\n}\n"
+);
+test!(
+    change_modern_oklch_untouched_missing_alpha_defaults_to_zero,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200 / none), $lightness: 60%));\n}\n",
+    "a {\n  b: oklch(60% 0.1 200deg / 0);\n}\n"
+);
+// A previously-missing HSL literal (constructed via the CSS Color 4 path
+// because it contains `none`) must still serialize as hsl() — not rgb() with
+// fractional values — once change() fills in the missing channel. Regression
+// test for a format-tag bug this fix unmasked: `hsl(none 50% 50%)` never got
+// tagged `ColorFormat::Hsl` (only literal hsl()/hsla() without `none` does,
+// via `from_hsla_fn`), so once the missing-channel guard above stopped
+// blocking this call, the result fell through to rgb() fractional output.
+test!(
+    change_legacy_hsl_missing_hue_channel_keeps_hsl_format,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(0 0% 0% / none), $hue: 10));\n}\n",
+    "a {\n  b: hsla(10, 0%, 0%, 0);\n}\n"
+);
+// Controls: adjust()/scale() must still error on a missing channel — only
+// change() gets the exemption.
+error!(
+    adjust_legacy_rgb_missing_red_channel_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.adjust(rgb(none 20 30), $red: 10);\n}\n",
+    "Error: $red: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: rgb(none 20 30))."
+);
+error!(
+    adjust_legacy_hsl_missing_hue_channel_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.adjust(hsl(none 50% 50%), $hue: 10);\n}\n",
+    "Error: $hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: hsl(none 50% 50%))."
+);
+error!(
+    scale_modern_oklch_missing_lightness_channel_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.scale(oklch(none 0.1 200), $lightness: 10%);\n}\n",
+    "Error: $lightness: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: oklch(none 0.1 200deg))."
+);
+
 // Note: dart-sass outputs oklch(50% 0.8 30deg) directly, but grass uses
 // color-mix() serialization for out-of-range perceptual values (separate issue)
 test!(
