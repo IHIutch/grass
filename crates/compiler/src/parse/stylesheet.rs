@@ -1743,15 +1743,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(condition)
     }
 
-    fn parse_supports_rule(&mut self) -> SassResult<AstStmt<'a>> {
+    fn parse_supports_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         let condition = self.parse_supports_condition()?;
         self.whitespace()?;
+        let at_rule_span = self.toks_mut().span_from(start);
         let children = self.with_children(Self::parse_statement)?;
 
         Ok(AstStmt::Supports(Box::new(AstSupportsRule {
             condition,
             body: self.alloc_stmts(children.node),
             span: children.span,
+            at_rule_span,
         })))
     }
 
@@ -2124,7 +2126,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             Some("mixin") => self.parse_mixin_rule(start),
             // todo: support -moz-document
             // Some("-moz-document") => self.parse_moz_document_rule(name),
-            Some("supports") => self.parse_supports_rule(),
+            Some("supports") => self.parse_supports_rule(start),
             Some("use") => {
                 self.flags_mut()
                     .set(ContextFlags::IS_USE_ALLOWED, was_use_allowed);

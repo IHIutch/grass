@@ -2247,6 +2247,9 @@ impl<'a> Serializer<'a> {
 
     fn write_supports_rule(&mut self, supports_rule: SupportsRule) -> SassResult<()> {
         self.write_indentation();
+        if let Some(span) = supports_rule.at_rule_span {
+            self.record_mapping(span.low());
+        }
         self.buffer.extend_from_slice(b"@supports");
 
         if !supports_rule.params.is_empty() {

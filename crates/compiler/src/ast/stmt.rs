@@ -524,6 +524,8 @@ pub struct AstSupportsRule<'a> {
     pub condition: AstSupportsCondition<'a>,
     pub body: &'a [AstStmt<'a>],
     pub span: Span,
+    /// Span of the `@supports` keyword itself, used for source-map mappings
+    pub at_rule_span: Span,
 }
 
 /// AST statement node. Large variants are boxed to keep the enum small

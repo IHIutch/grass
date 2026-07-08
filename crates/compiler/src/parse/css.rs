@@ -138,7 +138,7 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
             Some("import") => self.parse_css_import_rule(start),
             Some("media") => self.parse_media_rule(start),
             Some("-moz-document") => self.unknown_at_rule(name, start),
-            Some("supports") => self.parse_supports_rule(),
+            Some("supports") => self.parse_supports_rule(start),
             _ => self.unknown_at_rule(name, start),
         }
     }

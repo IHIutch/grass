@@ -1377,12 +1377,14 @@ impl<'a> Visitor<'a> {
                 .into());
         }
 
+        let at_rule_span = supports_rule.at_rule_span;
         let condition = self.visit_supports_condition(supports_rule.condition)?;
 
         let css_supports_rule = CssStmt::Supports(
             SupportsRule {
                 params: condition,
                 body: Vec::new(),
+                at_rule_span: Some(at_rule_span),
             },
             false,
         );

@@ -113,6 +113,7 @@ impl CssStmt {
                 SupportsRule {
                     params: supports.params.clone(),
                     body: Vec::new(),
+                    at_rule_span: supports.at_rule_span,
                 },
                 *is_group_end,
             ),
@@ -144,4 +145,6 @@ pub(crate) enum KeyframesSelector {
 pub(crate) struct SupportsRule {
     pub params: String,
     pub body: Vec<CssStmt>,
+    /// Span of the `@supports` keyword itself, used for source-map mappings
+    pub at_rule_span: Option<Span>,
 }

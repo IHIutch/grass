@@ -519,3 +519,78 @@ fn charset_prepend_shifts_all_mapping_lines() {
     // (line 3) mappings follow with an extra +1 line shift baked in.
     assert!(map.contains("\"mappings\":\";AAAA;AACE;EACA\""), "got: {map}");
 }
+
+// `@supports` at-rule mapping (todo #269, follow-up to #225 part 1).
+// `AstSupportsRule.span` is the *body* span (starts at `{`), unlike
+// Media/UnknownAtRule whose span already starts at `@` -- so this needed a
+// separate `at_rule_span` threaded from the parser's dispatch-arm `start`
+// position. Ground truth: `npx sass@1.97.3 in.scss out.css` on
+// `@supports (display: grid) {\n  a { b: c; }\n}\n` -> mappings
+// "AAAA;EACE;IAAI" (maps the `@supports` keyword to source 0:0, not the `{`
+// at 0:26).
+#[test]
+fn supports_at_rule_maps_to_keyword_not_body() {
+    let input = "@supports (display: grid) {\n  a { b: c; }\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(map.contains("\"mappings\":\"AAAA;EACE;IAAI\""), "got: {map}");
+}
+
+// Nested `@supports` -- ground truth: `npx sass@1.97.3` on
+// `@supports (display: grid) {\n  @supports (color: red) {\n    a { b: c; }\n  }\n}\n`
+// -> mappings "AAAA;EACE;IACE;MAAI" (each `@supports` keyword maps to its own
+// source line, not the `{`).
+#[test]
+fn nested_supports_at_rule_maps_to_keyword() {
+    let input =
+        "@supports (display: grid) {\n  @supports (color: red) {\n    a { b: c; }\n  }\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE;IACE;MAAI\""),
+        "got: {map}"
+    );
+}
+
+// `@supports` nested inside `@media` -- ground truth: `npx sass@1.97.3` on
+// `@media (min-width: 100px) {\n  @supports (display: grid) {\n    a { b: c; }\n  }\n}\n`
+// -> mappings "AAAA;EACE;IACE;MAAI" (both at-rule keywords map correctly
+// regardless of which at-rule kind wraps which).
+#[test]
+fn supports_inside_media_maps_both_keywords() {
+    let input =
+        "@media (min-width: 100px) {\n  @supports (display: grid) {\n    a { b: c; }\n  }\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE;IACE;MAAI\""),
+        "got: {map}"
+    );
+}
