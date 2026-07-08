@@ -235,32 +235,6 @@ pub(crate) fn suggest_scale_and_adjust(
 
 static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// A function implemented in rust that is accessible from within Sass
-///
-///
-/// #### Usage
-/// ```rust
-/// use grass_compiler::{
-///     sass_value::{ArgumentResult, SassNumber, Value},
-///     Builtin, Options, Result as SassResult, Visitor,
-/// };
-///
-/// // An example function that looks up the length of an array or map and adds 2 to it
-/// fn length(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
-///     args.max_args(1)?;
-///
-///     let len = args.get_err(0, "list")?.as_list().len();
-///
-///     Ok(Value::Dimension(SassNumber::new_unitless(len + 2)))
-/// }
-///
-/// fn main() {
-///     let options = Options::default().add_custom_fn("length", Builtin::new(length));
-///     let css = grass_compiler::from_string("a { color: length([a, b]); }", &options).unwrap();
-///
-///     assert_eq!(css, "a {\n  color: 4;\n}\n");
-/// }
-/// ```
 /// A function pointer usable as the body of a dynamically-registered
 /// [`Builtin`] (see [`BuiltinFn::Dynamic`]). `Arc` (not `Rc`) is required
 /// because `Builtin` is stored inside `GLOBAL_FUNCTIONS`, a `static
@@ -302,6 +276,32 @@ impl Clone for BuiltinFn {
     }
 }
 
+/// A function implemented in rust that is accessible from within Sass
+///
+///
+/// #### Usage
+/// ```rust
+/// use grass_compiler::{
+///     sass_value::{ArgumentResult, SassNumber, Value},
+///     Builtin, Options, Result as SassResult, Visitor,
+/// };
+///
+/// // An example function that looks up the length of an array or map and adds 2 to it
+/// fn length(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+///     args.max_args(1)?;
+///
+///     let len = args.get_err(0, "list")?.as_list().len();
+///
+///     Ok(Value::Dimension(SassNumber::new_unitless(len + 2)))
+/// }
+///
+/// fn main() {
+///     let options = Options::default().add_custom_fn("length", Builtin::new(length));
+///     let css = grass_compiler::from_string("a { color: length([a, b]); }", &options).unwrap();
+///
+///     assert_eq!(css, "a {\n  color: 4;\n}\n");
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Builtin(
     pub(crate) BuiltinFn,
