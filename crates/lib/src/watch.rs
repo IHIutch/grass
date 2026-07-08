@@ -13,37 +13,45 @@
 //! - Ctrl-C (SIGINT) is left to the default OS disposition (exit 130,
 //!   verified via npx) -- no signal handler is installed.
 //!
-//! ## Dependency tracking: directories, not precise files
+//! ## Dependency tracking: per-loaded-file directories (todo #274)
 //!
-//! dart-sass's own watcher has full access to its import graph and watches
-//! exactly the files a compile actually loaded. grass's public API doesn't
-//! expose that: `SourceMapData::sources` (the one loaded-file list
-//! reachable from crates/lib without touching crates/compiler, which is out
-//! of this feature's territory) only lists files that contributed at least
-//! one *emitted CSS mapping* -- a `@use`d partial containing only variables,
-//! mixins, or functions (an extremely common pattern, e.g. `_variables.scss`)
-//! never appears in it at all, so watching just that list would silently
-//! miss most real dependency edits. (Confirmed empirically: a `@use`d
-//! variable-only partial's edits were never observed by a `sources`-based
-//! watch set in manual testing.)
+//! `SourceMapData::loaded_files` (crates/compiler, wired up for exactly this
+//! use case on todo #274) lists every file the most recent compile actually
+//! loaded via `@use`/`@forward`/`@import` -- including `@use`d partials that
+//! contain only variables/mixins/functions and never contribute an emitted
+//! CSS mapping (unlike `SourceMapData::sources`, which is scoped to mapping
+//! emission and silently misses exactly that case; confirmed empirically
+//! during #227). `main.rs` forces `Options::source_map(true)` whenever
+//! `--watch` is passed, independent of `--source-map`, purely so this list
+//! is always populated; whether a `.map` is actually written to disk still
+//! depends only on `--source-map`.
 //!
-//! So instead, this watches, *recursively*, every directory that could
-//! plausibly contain a dependency: the entry file's own directory plus every
-//! `-I`/`--load-path` directory. Events are filtered to paths with a
-//! `.scss`/`.sass` extension before triggering a recompile -- both to cut
-//! noise (editor swap files, the `.css`/`.css.map` output this same process
-//! is writing into that same directory) and, importantly, to avoid a
-//! self-feedback loop when OUTPUT lives alongside INPUT (a very common
-//! layout): without the extension filter, this process's own writes to the
-//! `.css`/`.css.map` files would re-trigger themselves indefinitely.
+//! After every compile (initial and every recompile), the watch set is
+//! rebuilt from `loaded_files`: each loaded file's *parent directory* is
+//! watched non-recursively (watching directories rather than individual
+//! file paths survives editors' atomic-save patterns -- temp-file-then-
+//! rename replaces the original inode, which a direct per-file watch can
+//! miss). This is still directory-level, not a precise per-file diff --
+//! an unrelated `.scss`/`.sass` file that happens to sit in the *same*
+//! directory as a real dependency still triggers a recompile -- but it's
+//! scoped to only the directories of files actually loaded, rather than the
+//! entire entry-file directory tree.
 //!
-//! The tradeoff: an unrelated `.scss`/`.sass` file elsewhere in a watched
-//! directory tree (not actually `@use`d by the compile) also triggers a
-//! recompile. That's the "minimum viable parity" call made here -- precise,
-//! zero-false-positive tracking would need crates/compiler to expose its
-//! full import graph (an `Options`/`Visitor` change), which is out of this
-//! feature's territory; see the final report on todo #226/#227 for a
-//! follow-up suggestion.
+//! Every `-I`/`--load-path` directory stays watched recursively for the
+//! whole session, as a fallback for files that might *start* mattering (e.g.
+//! a new partial created to satisfy a currently-failing `@use`). And if a
+//! compile fails (or, defensively, if `loaded_files` comes back empty --
+//! `loaded_files` unavailable or partial), the entry file's own directory
+//! falls back to a recursive watch until a compile succeeds again, so a
+//! broken state still recovers regardless of which file the fix lands in.
+//!
+//! Events are filtered to paths with a `.scss`/`.sass` extension before
+//! triggering a recompile -- both to cut noise (editor swap files, the
+//! `.css`/`.css.map` output this same process is writing into that same
+//! directory) and, importantly, to avoid a self-feedback loop when OUTPUT
+//! lives alongside INPUT (a very common layout): without the extension
+//! filter, this process's own writes to the `.css`/`.css.map` files would
+//! re-trigger themselves indefinitely.
 //!
 //! Timestamps are UTC (`[YYYY-MM-DD HH:MM]`), not dart's local wall-clock
 //! time -- matching the host's local timezone would need a chrono/time-crate
@@ -52,7 +60,7 @@
 use std::{
     collections::HashSet,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc::{channel, RecvTimeoutError},
     time::Duration,
 };
@@ -72,10 +80,106 @@ pub(crate) struct WatchArgs<'a> {
     pub(crate) poll: bool,
 }
 
+/// Tracks the directories currently watched for a single `--watch` session
+/// and rebuilds that set after every compile from the compile's
+/// `loaded_files` (see the module doc comment). `-I`/`--load-path`
+/// directories are watched recursively for the whole session and never
+/// change; everything else is adjusted incrementally so a long-running
+/// session doesn't repeatedly watch/unwatch directories that didn't change
+/// between compiles.
+struct DepWatcher {
+    watcher: Box<dyn Watcher>,
+    entry_dir: Option<PathBuf>,
+    load_path_roots: HashSet<PathBuf>,
+    /// Non-recursively watched directories derived from the last compile's
+    /// `loaded_files`, excluding anything already covered by
+    /// `load_path_roots`.
+    precise_dirs: HashSet<PathBuf>,
+    /// Whether `entry_dir` currently has the failure-fallback recursive
+    /// watch installed (see the module doc comment).
+    fallback_active: bool,
+}
+
+impl DepWatcher {
+    fn new(watcher: Box<dyn Watcher>, entry_dir: Option<PathBuf>, load_paths: &[&Path], cwd: &Path) -> io::Result<Self> {
+        let mut this = Self {
+            watcher,
+            entry_dir,
+            load_path_roots: HashSet::new(),
+            precise_dirs: HashSet::new(),
+            fallback_active: false,
+        };
+
+        for load_path in load_paths {
+            this.load_path_roots
+                .insert(crate::absolute_source_path(&load_path.to_string_lossy(), cwd));
+        }
+        for root in &this.load_path_roots {
+            this.watcher.watch(root, RecursiveMode::Recursive).map_err(notify_to_io_err)?;
+        }
+
+        // No compile has run yet, so there's no `loaded_files` to be
+        // precise about -- start in fallback mode, matching the pre-#274
+        // behavior for the very first compile.
+        if let Some(dir) = &this.entry_dir {
+            this.watcher.watch(dir, RecursiveMode::Recursive).map_err(notify_to_io_err)?;
+            this.fallback_active = true;
+        }
+
+        Ok(this)
+    }
+
+    /// `loaded_files` is `Some` (even if empty) exactly when the most recent
+    /// compile succeeded and returned `SourceMapData`; `None` on a failed
+    /// compile.
+    fn update(&mut self, loaded_files: Option<Vec<PathBuf>>) {
+        let Some(files) = loaded_files.filter(|f| !f.is_empty()) else {
+            // Compile failed, or (defensively) reported no loaded files at
+            // all -- neither should leave us with less coverage than we
+            // already had, so keep whatever was watched before.
+            if let Some(dir) = self.entry_dir.clone() {
+                if !self.fallback_active && self.watcher.watch(&dir, RecursiveMode::Recursive).is_ok() {
+                    self.fallback_active = true;
+                }
+            }
+            return;
+        };
+
+        // Drop the failure-fallback watch on `entry_dir` *before* applying
+        // the precise diff below -- `entry_dir` is very likely also one of
+        // `dirs` (the entry file itself is always in `loaded_files`), and
+        // re-watching a path non-recursively while it's still registered
+        // recursively, then unwatching, would cancel the new watch instead
+        // of the stale recursive one (`notify` keys a path's watch by path,
+        // not by registration order).
+        if self.fallback_active {
+            if let Some(dir) = &self.entry_dir {
+                let _ = self.watcher.unwatch(dir);
+            }
+            self.fallback_active = false;
+        }
+
+        let dirs: HashSet<PathBuf> = files
+            .iter()
+            .filter_map(|f| f.parent())
+            .map(Path::to_path_buf)
+            .filter(|d| !self.load_path_roots.contains(d))
+            .collect();
+
+        for dir in self.precise_dirs.difference(&dirs) {
+            let _ = self.watcher.unwatch(dir);
+        }
+        for dir in dirs.difference(&self.precise_dirs) {
+            let _ = self.watcher.watch(dir, RecursiveMode::NonRecursive);
+        }
+        self.precise_dirs = dirs;
+    }
+}
+
 pub(crate) fn run(args: WatchArgs) -> io::Result<()> {
     let (tx, rx) = channel::<notify::Result<Event>>();
 
-    let mut watcher: Box<dyn Watcher> = if args.poll {
+    let watcher: Box<dyn Watcher> = if args.poll {
         Box::new(
             PollWatcher::new(
                 move |res| {
@@ -98,19 +202,14 @@ pub(crate) fn run(args: WatchArgs) -> io::Result<()> {
     };
 
     let cwd = std::env::current_dir().unwrap_or_default();
+    let entry_dir = crate::absolute_source_path(args.input, &cwd)
+        .parent()
+        .map(Path::to_path_buf);
 
-    let mut roots: HashSet<PathBuf> = HashSet::new();
-    if let Some(dir) = crate::absolute_source_path(args.input, &cwd).parent() {
-        roots.insert(dir.to_path_buf());
-    }
-    for load_path in args.load_paths {
-        roots.insert(crate::absolute_source_path(&load_path.to_string_lossy(), &cwd));
-    }
-    for root in &roots {
-        watcher.watch(root, RecursiveMode::Recursive).map_err(notify_to_io_err)?;
-    }
+    let mut dep_watcher = DepWatcher::new(watcher, entry_dir, args.load_paths, &cwd)?;
 
-    compile_and_announce(&args)?;
+    let loaded_files = compile_and_announce(&args)?;
+    dep_watcher.update(loaded_files);
     // Printed exactly once, right after the first compile attempt --
     // verified via npx sass@1.97.3 (present even when the initial compile
     // fails).
@@ -142,7 +241,8 @@ pub(crate) fn run(args: WatchArgs) -> io::Result<()> {
             continue;
         }
 
-        compile_and_announce(&args)?;
+        let loaded_files = compile_and_announce(&args)?;
+        dep_watcher.update(loaded_files);
     }
 }
 
@@ -162,8 +262,16 @@ fn event_is_relevant(evt: &notify::Result<Event>) -> bool {
         .any(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("scss") | Some("sass")))
 }
 
-fn compile_and_announce(args: &WatchArgs) -> io::Result<()> {
+/// Returns `Some(loaded_files)` when the compile succeeded and produced
+/// `SourceMapData` (guaranteed in `--watch` -- see the module doc comment),
+/// `None` on a failed compile. Consumed by `DepWatcher::update` to rebuild
+/// the watch set.
+fn compile_and_announce(args: &WatchArgs) -> io::Result<Option<Vec<PathBuf>>> {
     let compile_result = from_path_with_source_map(args.input, args.options);
+    let loaded_files = match &compile_result {
+        Ok((_, Some(map))) => Some(map.loaded_files.clone()),
+        Ok((_, None)) | Err(_) => None,
+    };
 
     if write_compile_result(compile_result, &args.write_config)? {
         println!("{} Compiled {} to {}.", timestamp::now_utc_minute(), args.input, args.output);
@@ -172,7 +280,7 @@ fn compile_and_announce(args: &WatchArgs) -> io::Result<()> {
     // `write_compile_result`; watch mode just keeps going.
 
     io::stdout().flush()?;
-    Ok(())
+    Ok(loaded_files)
 }
 
 fn notify_to_io_err(e: notify::Error) -> io::Error {

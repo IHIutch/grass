@@ -606,13 +606,18 @@ fn main() -> std::io::Result<()> {
     let source_map_urls = matches.get_one::<SourceMapUrls>("SOURCE_MAP_URLS").unwrap().clone();
     let unicode_error_messages = !matches.get_flag("NO_UNICODE");
 
+    // `--watch` always requests the underlying `SourceMapData` (regardless
+    // of whether the user passed `--source-map`) so it can read
+    // `SourceMapData::loaded_files` for precise dependency tracking -- see
+    // `watch.rs`. This is independent of whether a `.map` actually gets
+    // written to disk, which stays gated on `write_config.generate_source_map`.
     let mut options = Options::default()
         .load_paths(&load_paths)
         .style(style)
         .quiet(matches.get_flag("QUIET"))
         .unicode_error_messages(unicode_error_messages)
         .allows_charset(!matches.get_flag("NO_CHARSET"))
-        .source_map(generate_source_map);
+        .source_map(generate_source_map || watch);
 
     for deprecation in parse_deprecations(&matches, "SILENCE_DEPRECATION", false) {
         options = options.silence_deprecation(deprecation);

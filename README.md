@@ -111,11 +111,13 @@ same range-fatalization behavior as the CLI's version form.
 whenever the Sass source changes, until stopped with Ctrl-C. It requires a real input path and a
 real output file — it's rejected alongside `--stdin` or when printing to stdout.
 
-- Dependency tracking watches, recursively, the entry file's own directory plus every
-  `-I`/`--load-path` directory, filtered to `.scss`/`.sass` files. This is directory-based rather
-  than a precise import graph, so editing an unrelated `.scss`/`.sass` file elsewhere in a watched
-  directory tree also triggers a recompile, even if it isn't actually `@use`d by the compile that's
-  running. Precise per-file dependency tracking is tracked as a follow-up.
+- After every compile, dependency tracking watches the directory of each file the compile actually
+  loaded (via `@use`/`@forward`/`@import`, including variable/mixin/function-only partials that
+  never emit CSS), plus every `-I`/`--load-path` directory recursively as a fallback for files that
+  might start mattering later. This is still directory-based rather than a precise per-file diff, so
+  editing an unrelated `.scss`/`.sass` file that happens to sit in the same directory as a real
+  dependency also triggers a recompile — but unrelated directories no longer do. A failed compile
+  falls back to watching the entry file's directory recursively until a compile succeeds again.
 - `--poll` switches to a polling backend (checking for changes on an interval) instead of native
   filesystem events — useful on filesystems/environments where native watching doesn't fire (e.g.
   some network mounts or containers). Only valid together with `--watch`.
