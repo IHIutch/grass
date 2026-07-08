@@ -1842,8 +1842,16 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn write_import(&mut self, import: &str, modifiers: Option<String>) -> SassResult<()> {
+    fn write_import(
+        &mut self,
+        import: &str,
+        modifiers: Option<String>,
+        span: Option<Span>,
+    ) -> SassResult<()> {
         self.write_indentation();
+        if let Some(span) = span {
+            self.record_mapping(span.low());
+        }
         self.buffer.extend_from_slice(b"@import ");
         write!(&mut self.buffer, "{}", import)?;
 
@@ -1919,7 +1927,7 @@ impl<'a> Serializer<'a> {
 
     pub fn requires_semicolon(stmt: &CssStmt) -> bool {
         match stmt {
-            CssStmt::Style(_) | CssStmt::Import(_, _) => true,
+            CssStmt::Style(_) | CssStmt::Import(_, _, _) => true,
             CssStmt::UnknownAtRule(rule, _) => !rule.has_body,
             _ => false,
         }
@@ -2290,6 +2298,9 @@ impl<'a> Serializer<'a> {
             }
             CssStmt::Media(media_rule, ..) => {
                 self.write_indentation();
+                if let Some(span) = media_rule.at_rule_span {
+                    self.record_mapping(span.low());
+                }
                 self.buffer.extend_from_slice(b"@media ");
 
                 if let Some((last, rest)) = media_rule.query.split_last() {
@@ -2311,6 +2322,9 @@ impl<'a> Serializer<'a> {
             }
             CssStmt::UnknownAtRule(unknown_at_rule, ..) => {
                 self.write_indentation();
+                if let Some(span) = unknown_at_rule.at_rule_span {
+                    self.record_mapping(span.low());
+                }
                 self.buffer.push(b'@');
                 self.buffer
                     .extend_from_slice(unknown_at_rule.name.as_bytes());
@@ -2353,6 +2367,9 @@ impl<'a> Serializer<'a> {
             CssStmt::Comment(comment, span) => self.write_comment(&comment, span)?,
             CssStmt::KeyframesRuleSet(keyframes_rule_set) => {
                 self.write_indentation();
+                if let Some(span) = keyframes_rule_set.selector_span {
+                    self.record_mapping(span.low());
+                }
                 // todo: i bet we can do something like write_with_separator to avoid extra allocation
                 let selector = keyframes_rule_set
                     .selector
@@ -2365,7 +2382,7 @@ impl<'a> Serializer<'a> {
 
                 self.write_children(keyframes_rule_set.body, None)?;
             }
-            CssStmt::Import(import, modifier) => self.write_import(&import, modifier)?,
+            CssStmt::Import(import, modifier, span) => self.write_import(&import, modifier, span)?,
             CssStmt::Supports(supports_rule, _) => self.write_supports_rule(supports_rule)?,
         }
 

@@ -10,6 +10,8 @@ pub(crate) struct MediaRule {
     pub body: Vec<CssStmt>,
     /// Span of the query portion, used to determine the source line of the opening `{`
     pub query_span: Option<Span>,
+    /// Span of the `@media` keyword itself, used for source-map mappings
+    pub at_rule_span: Option<Span>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

@@ -2526,7 +2526,7 @@ impl<'a> Visitor<'a> {
             .map(|modifiers| self.interpolation_to_value(modifiers, false, false))
             .transpose()?;
 
-        let node = CssStmt::Import(import, modifiers);
+        let node = CssStmt::Import(import, modifiers, Some(static_import.span));
 
         if self.parent.is_some() && self.parent != Some(CssTree::ROOT) {
             self.css_tree.add_stmt(node, self.parent);
@@ -2979,6 +2979,7 @@ impl<'a> Visitor<'a> {
         };
 
         let children = media_rule.body;
+        let at_rule_span = media_rule.span;
 
         let query = merged_queries.clone().unwrap_or_else(|| queries1.clone());
 
@@ -2987,6 +2988,7 @@ impl<'a> Visitor<'a> {
                 query,
                 body: Vec::new(),
                 query_span: Some(media_rule.query_span),
+                at_rule_span: Some(at_rule_span),
             },
             false,
         );
@@ -3083,6 +3085,7 @@ impl<'a> Visitor<'a> {
                     params: value.unwrap_or_default(),
                     body: Vec::new(),
                     has_body: false,
+                    at_rule_span: Some(unknown_at_rule.span),
                 },
                 false,
             );
@@ -3103,6 +3106,7 @@ impl<'a> Visitor<'a> {
             self.flags.set(ContextFlags::IN_UNKNOWN_AT_RULE, true);
         }
 
+        let at_rule_span = unknown_at_rule.span;
         let children = unknown_at_rule.body.unwrap();
 
         let stmt = CssStmt::UnknownAtRule(
@@ -3111,6 +3115,7 @@ impl<'a> Visitor<'a> {
                 params: value.unwrap_or_default(),
                 body: Vec::new(),
                 has_body: true,
+                at_rule_span: Some(at_rule_span),
             },
             false,
         );
@@ -5592,6 +5597,7 @@ impl<'a> Visitor<'a> {
             let keyframes_ruleset = CssStmt::KeyframesRuleSet(KeyframesRuleSet {
                 selector: parsed_selector,
                 body: Vec::new(),
+                selector_span: Some(span),
             });
 
             let was_in_keyframes_rule = self.flags.in_keyframes_rule();
