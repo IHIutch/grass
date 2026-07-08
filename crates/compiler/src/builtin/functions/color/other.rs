@@ -262,21 +262,26 @@ fn update_modern(
             .into());
     }
 
-    // Check for missing/powerless channels being modified
+    // Check for missing/powerless channels being modified.
+    // dart-sass's `_changeColor` never raises this for any channel — it replaces
+    // the value directly via `_channelForChange` with no `_missingChannelError`
+    // guard. Only `adjust()`/`scale()` guard on a missing channel (via
+    // `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
     let display_color = color_in_space.with_powerless_as_missing();
     for i in 0..3 {
-        if let Some(Some(_)) = channel_adjustments[i] {
-            if color_in_space.has_missing_channel(i) || color_in_space.is_channel_powerless(i) {
-                return Err((
-                    format!(
-                        "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                        channel_defs[i].name,
-                        Value::Color(Rc::new(display_color)).inspect(span)?
-                    ),
-                    span,
-                )
-                    .into());
-            }
+        if update != UpdateComponents::Change
+            && matches!(channel_adjustments[i], Some(Some(_)))
+            && (color_in_space.has_missing_channel(i) || color_in_space.is_channel_powerless(i))
+        {
+            return Err((
+                format!(
+                    "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                    channel_defs[i].name,
+                    Value::Color(Rc::new(display_color)).inspect(span)?
+                ),
+                span,
+            )
+                .into());
         }
     }
 
@@ -390,7 +395,18 @@ fn update_modern(
                 }
             })
         }
-        None => color_in_space.raw_alpha(),
+        // dart-sass's `_changeColor` reads the untouched alpha via `color.alpha`,
+        // which defaults a missing alpha to 0 (`alphaOrNull ?? 0`) — unlike
+        // `_adjustChannel`/`_scaleChannel`, which read `color.alphaOrNull` and so
+        // preserve a missing alpha. Replicate that asymmetry: only Change
+        // coerces an untouched-but-missing alpha to 0.
+        None => {
+            if update == UpdateComponents::Change {
+                color_in_space.raw_alpha().or(Some(0.0))
+            } else {
+                color_in_space.raw_alpha()
+            }
+        }
     };
 
     let result = Color::for_space(working_space, new_channels, new_alpha, ColorFormat::Infer);
@@ -683,8 +699,12 @@ fn update_components(
         }
     }
 
-    // Check for explicitly missing channels in legacy paths (powerless check only in $space/modern path)
-    {
+    // Check for explicitly missing channels in legacy paths (powerless check only in $space/modern path).
+    // dart-sass's `_changeColor` never raises this for any channel or alpha — it
+    // replaces the value directly via `_channelForChange`/`_isNone` with no
+    // `_missingChannelError` guard. Only `adjust()`/`scale()` guard on a missing
+    // channel (via `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
+    if update != UpdateComponents::Change {
         let check_missing_channel = |color_in_space: &Color, channel_idx: usize, channel_name: &str, span: Span| -> SassResult<()> {
             if color_in_space.has_missing_channel(channel_idx) {
                 return Err((
@@ -749,7 +769,16 @@ fn update_components(
     }
 
     let original_space = color.color_space();
-    let original_format = color.format.clone();
+    // dart-sass's `_changeColor` reads the untouched alpha via `color.alpha`,
+    // which defaults a missing alpha to 0 (`alphaOrNull ?? 0`) — unlike
+    // `_adjustChannel`/`_scaleChannel`, which read `color.alphaOrNull` and so
+    // preserve a missing alpha. Replicate that asymmetry: only Change coerces
+    // an untouched-but-missing alpha to 0.
+    let alpha_current = if update == UpdateComponents::Change {
+        color.raw_alpha().or(Some(0.0))
+    } else {
+        color.raw_alpha()
+    };
     let color = if has_rgb {
         let clamp_rgb = update == UpdateComponents::Adjust;
         let in_rgb = color.to_space(ColorSpace::Rgb);
@@ -760,7 +789,7 @@ fn update_components(
             .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
         let new_b = apply_update(rgb_ch[2], &blue, 255.0, update)
             .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_a = apply_update(color.raw_alpha(), &alpha, 1.0, update)
+        let new_a = apply_update(alpha_current, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         Rc::new(Color::for_space(
             ColorSpace::Rgb,
@@ -790,7 +819,7 @@ fn update_components(
         };
         let new_w = apply_update(raw_w, &whiteness, 100.0, update);
         let new_b = apply_update(raw_b, &blackness, 100.0, update);
-        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
         let mut result = Color::for_space(
@@ -834,7 +863,7 @@ fn update_components(
             }
         }
         let new_light = apply_update(hsl_ch[2], &lightness, 100.0, update);
-        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hsla's clamping of out-of-range values
         let mut result = Color::for_space(
@@ -846,11 +875,19 @@ fn update_components(
         if original_space != ColorSpace::Hsl {
             result = result.to_space(original_space);
         } else {
-            result.format = original_format.clone();
+            // `original_format` can be `Infer` here when the input literal had a
+            // missing channel (e.g. `hsl(none 50% 50%)` goes through the CSS
+            // Color 4 constructor, not `from_hsla_fn`, so it never gets tagged
+            // `ColorFormat::Hsl`). Now that Change no longer errors on a missing
+            // channel, that Infer tag would fall through to
+            // `write_rgb_fractional` once the channel is filled in. Match
+            // `Color::to_space`'s own rule instead: any legacy-Hsl-space result
+            // always serializes as `hsl()`.
+            result.format = ColorFormat::Hsl;
         }
         Rc::new(result)
     } else if alpha.is_some() {
-        let new_alpha = apply_update(color.raw_alpha(), &alpha, 1.0, update)
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
         match new_alpha {
             Some(a) => Rc::new(color.with_alpha(Number(a))),
