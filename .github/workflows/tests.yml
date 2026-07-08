@@ -84,6 +84,39 @@ jobs:
               echo "No differences found"
           fi
 
+  napi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        working-directory: crates/napi
+        run: npm install
+
+      - name: Build native module (debug)
+        working-directory: crates/napi
+        run: npm run build-debug
+
+      - name: Test native module
+        working-directory: crates/napi
+        run: node test.mjs
+
+  # The pkg-publish WASM smoke test (see release_napi.yml's "Smoke test
+  # package before publish" step) is intentionally NOT duplicated here: a
+  # release-profile `wasm-pack build` (LTO + wasm-opt -O4 over the whole
+  # grass_compiler crate) plus a cold wasm-pack/wasm32 toolchain install
+  # realistically exceeds the "cheap in PR CI" bar this job is held to, so
+  # WASM regressions are still only caught at release-tag time.
+
   sass-spec:
     continue-on-error: true
     runs-on: ubuntu-latest
