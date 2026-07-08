@@ -504,9 +504,91 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
+    /// Breaks the `Rc<RefCell<Module>>` reference cycles inside the
+    /// `@use`/`@forward` module graph so it can actually be freed once this
+    /// `Visitor` is dropped (solo todo #272).
+    ///
+    /// The module graph holds strong `Rc` references in every direction:
+    /// `Module::Environment.upstream` points from a module to the modules it
+    /// `@use`s, while `Environment.global_modules`/`forwarded_modules`/
+    /// `modules`/`imported_modules`/`nested_forwarded_modules` point right
+    /// back out again (namespaced lookups, `@forward`, `@import` chains).
+    /// With no `Weak` references anywhere in this graph, cycles across these
+    /// fields (empirically confirmed — see #272 comment #393; no single
+    /// field is "the" back-edge, several overlap) mean the whole graph would
+    /// otherwise leak for the life of the process, measured at ~20-27 MiB
+    /// per compile (~87.5% of that walked away by this pass; the small
+    /// residual is tracked separately, not caused by these fields).
+    ///
+    /// This walks every `Module` reachable from the roots that can hold one
+    /// — the per-compile module caches on `Visitor` and the corresponding
+    /// fields on `self.env` — and clears the six back-reference fields on
+    /// each `Module::Environment` node once all of them have been visited
+    /// (nothing downstream of `finish()` reads the module graph again; only
+    /// `css_tree.finish()`/`combined_import_section` handling follows).
+    ///
+    /// `Environment.content` and `ForwardedModule`/`ShadowedModule.inner`
+    /// are deliberately left untouched: both were tested in isolation and
+    /// contribute nothing to the cycle (content is a genuine forward-owned
+    /// `@content` closure; `.inner` is the wrapper's own non-cyclic
+    /// ownership of the module it wraps/shadows) — clearing them would only
+    /// add risk (`.inner` in particular backs `Module::scope()`) for zero
+    /// measured benefit.
+    fn teardown_module_graph(&mut self) {
+        let mut visited: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
+        let mut stack: Vec<Rc<RefCell<Module>>> = Vec::new();
+
+        stack.extend(self.modules.values().cloned());
+        stack.extend(self.import_cloned_modules.values().cloned());
+        stack.extend(self.upstream_modules.iter().cloned());
+        stack.extend(self.env.modules.borrow().0.values().cloned());
+        stack.extend(self.env.global_modules.iter().cloned());
+        stack.extend(self.env.forwarded_modules.borrow().iter().cloned());
+        stack.extend(self.env.imported_modules.borrow().iter().cloned());
+        if let Some(nested) = &self.env.nested_forwarded_modules {
+            for inner in nested.borrow().iter() {
+                stack.extend(inner.borrow().iter().cloned());
+            }
+        }
+
+        while let Some(module_rc) = stack.pop() {
+            if !visited.insert(Rc::as_ptr(&module_rc)) {
+                continue;
+            }
+
+            let mut module = module_rc.borrow_mut();
+
+            match &mut *module {
+                Module::Environment { upstream, env, .. } => {
+                    stack.extend(upstream.iter().cloned());
+                    stack.extend(env.global_modules.iter().cloned());
+                    stack.extend(env.forwarded_modules.borrow().iter().cloned());
+                    stack.extend(env.modules.borrow().0.values().cloned());
+                    stack.extend(env.imported_modules.borrow().iter().cloned());
+                    if let Some(nested) = &env.nested_forwarded_modules {
+                        for inner in nested.borrow().iter() {
+                            stack.extend(inner.borrow().iter().cloned());
+                        }
+                    }
+
+                    upstream.clear();
+                    env.global_modules.clear();
+                    env.forwarded_modules.borrow_mut().clear();
+                    env.modules.borrow_mut().0.clear();
+                    env.imported_modules.borrow_mut().clear();
+                    env.nested_forwarded_modules = None;
+                }
+                Module::Forwarded(forwarded) => stack.push(Rc::clone(&forwarded.inner)),
+                Module::Shadowed(shadowed) => stack.push(Rc::clone(&shadowed.inner)),
+                Module::Builtin { .. } => {}
+            }
+        }
+    }
+
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
         self.flush_pending_imports(true);
         self.extend_modules()?;
+        self.teardown_module_graph();
         let mut finished_tree = self.css_tree.finish();
         if self.combined_import_section.is_empty() {
             Ok(finished_tree)
