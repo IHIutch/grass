@@ -10,6 +10,7 @@ node_modules/
 # generated at test-run time by include_sass_trybuild.rs (embeds an
 # absolute, machine-specific path — not meant to be checked in)
 /crates/lib/tests/trybuild/multi_file_generated.rs
+/crates/lib/tests/trybuild/multi_file_generated_relative.rs
 
 # devops
 /target
