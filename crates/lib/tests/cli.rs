@@ -108,22 +108,19 @@ fn output_file() {
     assert_eq!(file_contents, baseline.stdout);
 }
 
-// Regression test for todo #216: a broken recompile must not destroy a
-// previously-written good output file.
-//
-// Ground truth probed with dart-sass 1.97.3 (npx sass@1.97.3): compiling a
-// broken stylesheet to an existing output file does NOT preserve the old
-// content byte-for-byte -- by default dart-sass overwrites it with a
-// synthesized "error CSS" stylesheet (a valid, non-empty CSS file embedding
-// the error message), and with `--no-error-css` it deletes the output file
-// outright. Neither of dart's behaviors preserves the prior good content.
-// grass has no error-css feature, so the safest, minimal fix (and the one
-// the real bug report cared about -- silent data loss) is to leave the
-// existing file completely untouched on a failed compile, which this test
-// verifies. The prior (buggy) behavior truncated the file to 0 bytes before
-// even attempting to compile.
+// Regression test for todo #216, superseded by #226: a broken recompile
+// must never silently truncate a previously-written good output file to 0
+// bytes (the original #216 bug). #216's interim fix left the file completely
+// untouched on failure; #226 replaces that with dart-sass's actual
+// behavior (verified via npx sass@1.97.3, see error_css.rs and the probe
+// transcripts on solo todo #226): by default (`--error-css`, on when writing
+// to a file) the target is OVERWRITTEN with a synthesized "error CSS"
+// stylesheet -- a valid, non-empty CSS file embedding the error message in a
+// `body::before` rule (for live-reload UX) -- and under `--no-error-css` the
+// file is DELETED outright. Both of these are real, intentional writes/
+// deletes, not the silent-truncation bug #216 was about.
 #[test]
-fn broken_recompile_preserves_existing_output_file() {
+fn broken_recompile_overwrites_existing_output_file_with_error_css() {
     let dir = tempfile::tempdir().unwrap();
     let in_path = dir.path().join("in.scss");
     let out_path = dir.path().join("out.css");
@@ -145,17 +142,60 @@ fn broken_recompile_preserves_existing_output_file() {
     assert_eq!(broken.status.code(), Some(1));
     assert!(!broken.stderr.is_empty());
 
-    let contents_after_failure = std::fs::read(&out_path).unwrap();
-    assert_eq!(
-        contents_after_failure, good_contents,
-        "output file must be untouched by a failed recompile"
+    let contents_after_failure = std::fs::read_to_string(&out_path).unwrap();
+    assert_ne!(
+        contents_after_failure, String::from_utf8(good_contents).unwrap(),
+        "output file must be overwritten (not preserved) by a failed recompile"
+    );
+    // dart-sass's exact error-CSS template (verified via npx): a `/* ... */`
+    // comment followed by a `body::before` rule with a `content:` property
+    // embedding the error text.
+    assert!(contents_after_failure.starts_with("/* Error:"));
+    assert!(contents_after_failure.contains("body::before {"));
+    assert!(contents_after_failure.contains("content: \"Error:"));
+}
+
+// Companion: `--no-error-css` deletes the output file outright on a failed
+// recompile, rather than overwriting it with error CSS (verified via npx
+// sass@1.97.3).
+#[test]
+fn broken_recompile_deletes_output_file_under_no_error_css() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+    let good = grass_cmd()
+        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(good.status.success());
+    assert!(out_path.exists());
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+    let broken = grass_cmd()
+        .args([
+            "--no-source-map",
+            "--no-error-css",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(broken.status.code(), Some(1));
+    assert!(!broken.stderr.is_empty());
+
+    assert!(
+        !out_path.exists(),
+        "output file must be deleted by a failed recompile under --no-error-css"
     );
 }
 
-// Companion to `broken_recompile_preserves_existing_output_file`: the `.map`
-// sibling written alongside `-o` output must also survive a failed recompile
-// untouched (it was already only written post-success before this fix, but
-// this locks that invariant in as a regression test).
+// Companion to the overwrite test above: the `.map` sibling written
+// alongside `-o` output is left completely untouched by a failed recompile
+// (verified via npx sass@1.97.3 -- dart never regenerates or deletes the
+// `.map` file on error, even though it writes/removes the `.css` file
+// itself).
 #[test]
 fn broken_recompile_preserves_existing_map_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -185,6 +225,92 @@ fn broken_recompile_preserves_existing_map_file() {
         map_contents_after_failure, good_map_contents,
         "map file must be untouched by a failed recompile"
     );
+}
+
+// Companion: the `.map` sibling is also left untouched under
+// `--no-error-css`, even though the primary `.css` output is deleted
+// (verified via npx sass@1.97.3).
+#[test]
+fn broken_recompile_preserves_existing_map_file_under_no_error_css() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    let map_path = dir.path().join("out.css.map");
+
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+    let good = grass_cmd()
+        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(good.status.success());
+    assert!(map_path.exists());
+    let good_map_contents = std::fs::read(&map_path).unwrap();
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+    let broken = grass_cmd()
+        .args(["--no-error-css", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(broken.status.code(), Some(1));
+
+    assert!(!out_path.exists(), "css output must be deleted under --no-error-css");
+    let map_contents_after_failure = std::fs::read(&map_path).unwrap();
+    assert_eq!(
+        map_contents_after_failure, good_map_contents,
+        "map file must be untouched even though the css output was deleted"
+    );
+}
+
+// `--error-css` explicitly passed after an earlier `--no-error-css` wins
+// (clap's `overrides_with`, last flag wins -- matches this CLI's existing
+// convention for other `--[no-]foo` pairs).
+#[test]
+fn error_css_flag_overrides_earlier_no_error_css() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+    let good = grass_cmd()
+        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert!(good.status.success());
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+    let broken = grass_cmd()
+        .args([
+            "--no-source-map",
+            "--no-error-css",
+            "--error-css",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(broken.status.code(), Some(1));
+
+    let contents = std::fs::read_to_string(&out_path).unwrap();
+    assert!(contents.starts_with("/* Error:"), "--error-css should win: {contents}");
+}
+
+// A failed compile on a target that never previously existed still gets an
+// error-CSS file created for it by default (verified via npx sass@1.97.3).
+#[test]
+fn broken_compile_creates_error_css_for_nonexistent_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+    let broken = grass_cmd()
+        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(broken.status.code(), Some(1));
+
+    let contents = std::fs::read_to_string(&out_path).unwrap();
+    assert!(contents.starts_with("/* Error:"));
 }
 
 // Companion regression test: a successful recompile must still overwrite

@@ -2,6 +2,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod error_css;
+
 use std::{
     fs::OpenOptions,
     io::{stdin, stdout, Read, Write},
@@ -108,9 +110,20 @@ fn cli() -> Command {
                 .help("Only compile out-of-date stylesheets."),
         )
         .arg(
+            Arg::new("ERROR_CSS")
+                .long("error-css")
+                .action(ArgAction::SetTrue)
+                .overrides_with("NO_ERROR_CSS")
+                .help(
+                    "When an error occurs, emit a stylesheet describing it. \
+                     Defaults to true when compiling to a file.",
+                ),
+        )
+        .arg(
             Arg::new("NO_ERROR_CSS")
                 .long("no-error-css")
-                .hide(true)
+                .action(ArgAction::SetTrue)
+                .overrides_with("ERROR_CSS")
                 .help("When an error occurs, don't emit a stylesheet describing it."),
         )
         // Source maps
@@ -455,6 +468,11 @@ fn main() -> std::io::Result<()> {
     let output_arg = matches.get_one::<String>("OUTPUT");
     let writing_to_stdout = output_arg.is_none();
 
+    // dart-sass's `--[no-]error-css` (default true when writing to a file;
+    // irrelevant for stdout, since a failed compile never writes anything to
+    // stdout regardless -- verified via npx sass@1.97.3).
+    let error_css_enabled = !matches.get_flag("NO_ERROR_CSS");
+
     let generate_source_map = validate_source_map_flags(&matches, writing_to_stdout);
     let embed_source_map = matches.get_flag("EMBED_SOURCE_MAP");
     let embed_sources = matches.get_flag("EMBED_SOURCES");
@@ -480,7 +498,7 @@ fn main() -> std::io::Result<()> {
 
     let options = &options;
 
-    let (css, map) = if let Some(name) = matches.get_one::<String>("INPUT") {
+    let compile_result = if let Some(name) = matches.get_one::<String>("INPUT") {
         from_path_with_source_map(name, options)
     } else if matches.get_flag("STDIN") {
         from_string_with_source_map(
@@ -493,11 +511,32 @@ fn main() -> std::io::Result<()> {
         )
     } else {
         unreachable!()
-    }
-    .unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        std::process::exit(1)
-    });
+    };
+
+    // dart-sass's error-CSS behavior on a failed compile (ground truth via
+    // npx sass@1.97.3; see error_css.rs and crates/lib/tests/cli.rs): when
+    // writing to a file, by default the target is OVERWRITTEN with a
+    // synthesized valid stylesheet embedding the error (live-reload UX);
+    // under --no-error-css it is DELETED instead. A `.map` sibling written
+    // by a prior successful compile is left completely untouched either way
+    // (verified: dart never regenerates or removes it on failure). Writing
+    // to stdout has no error-CSS output at all -- stdout is empty on
+    // failure, matching grass's existing stdout-branch behavior.
+    let (css, map) = match compile_result {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{}", e);
+            if let Some(path) = output_arg {
+                if error_css_enabled {
+                    let unicode = !matches.get_flag("NO_UNICODE");
+                    std::fs::write(path, error_css::synthesize(&e.to_string(), unicode))?;
+                } else if Path::new(path).exists() {
+                    std::fs::remove_file(path)?;
+                }
+            }
+            std::process::exit(1);
+        }
+    };
 
     // dart-sass's CLI always appends a trailing newline to non-empty output
     // (compile_stylesheet.dart writes `css + "\n"` / uses `print`, which adds
@@ -543,9 +582,9 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    // The output file is only opened (and truncated) here, after a successful
-    // compile -- a compile error must never destroy a previously-written good
-    // output file (dart-sass never truncates the old file on error either).
+    // The output file is only opened (and truncated) here, after a
+    // successful compile -- a failed compile takes the error-css/delete
+    // branch above and exits before ever reaching this point.
     let (mut stdout_write, mut file_write);
     let buf_out: &mut dyn Write = if let Some(path) = output_arg {
         file_write = OpenOptions::new()
