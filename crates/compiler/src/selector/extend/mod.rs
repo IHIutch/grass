@@ -112,11 +112,6 @@ pub(crate) struct ExtensionStore {
 }
 
 impl ExtensionStore {
-    /// An `Extender` that contains no extensions and can have no extensions added.
-    // TODO: empty extender
-    #[allow(dead_code)]
-    const EMPTY: () = ();
-
     pub fn extend(
         selector: SelectorList,
         source: SelectorList,
@@ -1199,8 +1194,6 @@ impl ExtensionStore {
                 media_context: media_context_rc.clone(),
                 is_optional: extend.is_optional,
                 is_original: false,
-                left: None,
-                right: None,
             };
 
             let sources = self

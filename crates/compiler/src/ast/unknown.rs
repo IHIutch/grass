@@ -3,7 +3,6 @@ use codemap::Span;
 use crate::ast::CssStmt;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct UnknownAtRule {
     pub name: String,
     // pub super_selector: Selector,

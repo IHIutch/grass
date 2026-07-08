@@ -13,9 +13,10 @@ pub(crate) type BuiltinMixin = fn(ArgumentResult, &mut Visitor) -> SassResult<()
 pub(crate) use crate::ast::AstMixin as UserDefinedMixin;
 
 /// Runtime mixin representation. Uses `'static` lifetime for AST references
-/// because the arena outlives the entire compilation. The parser creates
-/// `AstMixin<'a>` and the visitor converts to `AstMixin<'static>` via
-/// `erase_mixin_lifetime` when storing in the scope.
+/// because the arena outlives the entire compilation: the parser creates
+/// `AstMixin<'a>`, and by the time the visitor stores it in scope the `'a`
+/// has already been erased to `'static` at the arena boundary (see
+/// `ast::erase_stylesheet_lifetime`).
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Mixin {

@@ -29,16 +29,6 @@ impl InternedString {
         STRINGS.with(|cell| Self(cell.borrow_mut().get_or_intern(s)))
     }
 
-    #[allow(dead_code)]
-    pub fn resolve(self) -> String {
-        STRINGS.with(|cell| cell.borrow().resolve(&self.0).to_owned())
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(self) -> bool {
-        self.resolve_ref() == ""
-    }
-
     /// Resolve without copying.
     ///
     /// SAFETY invariants (why the returned reference is usable):

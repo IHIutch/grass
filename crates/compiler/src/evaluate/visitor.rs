@@ -2393,6 +2393,7 @@ impl<'a> Visitor<'a> {
             InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
         }?;
         // Safety: the arena lives for the entire compilation (stored in Visitor).
+        // INVARIANT: the erased-'static StyleSheet must not outlive the Visitor's arena.
         Ok(unsafe { crate::ast::erase_stylesheet_lifetime(result) })
     }
 

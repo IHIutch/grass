@@ -222,7 +222,6 @@ pub(crate) enum Module {
         scope: ModuleScope,
         upstream: Vec<Rc<RefCell<Module>>>,
         extension_store: ExtensionStore,
-        #[allow(dead_code)]
         env: Environment,
     },
     Builtin {

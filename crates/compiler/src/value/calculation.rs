@@ -96,12 +96,6 @@ impl CalculationName {
     pub(crate) fn in_min_or_max(self) -> bool {
         self == CalculationName::Min || self == CalculationName::Max
     }
-
-    /// Whether this calculation function can be overridden by a user-defined function
-    #[allow(dead_code)]
-    pub(crate) fn is_overridable(self) -> bool {
-        !matches!(self, CalculationName::Calc | CalculationName::Clamp)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

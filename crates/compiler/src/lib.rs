@@ -164,6 +164,7 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
     // Safety: We leak the arena so that the returned StyleSheet's references remain valid.
     // This is necessary because parse_stylesheet returns a StyleSheet that outlives this function.
     // The arena memory will not be freed, which is acceptable for this API.
+    // INVARIANT: the erased-'static StyleSheet must not outlive the arena it was allocated in.
     let stylesheet = match stylesheet {
         Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
@@ -287,6 +288,7 @@ fn compile_impl<P: AsRef<Path>>(
     // Safety: the arena lives on the stack for the entire compilation.
     // The stylesheet references data in the arena, which won't be dropped
     // until after the visitor finishes and this function returns.
+    // INVARIANT: the erased-'static StyleSheet must not outlive the arena it was allocated in.
     let stylesheet = match stylesheet {
         Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),

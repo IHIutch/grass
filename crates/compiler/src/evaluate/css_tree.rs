@@ -253,41 +253,6 @@ impl CssTree {
             .map_or(0, |children| children.len())
     }
 
-    /// Move children of `from_parent` (starting at index `start`) to `to_parent`.
-    /// Used to re-parent CSS nodes that were added to ROOT during module
-    /// evaluation but need to be nested under a different parent (e.g., for
-    /// nested @import).
-    #[allow(dead_code)]
-    pub fn reparent_children(
-        &mut self,
-        from_parent: CssTreeIdx,
-        to_parent: CssTreeIdx,
-        start: usize,
-    ) {
-        let children_to_move: Vec<CssTreeIdx> = self
-            .parent_to_child
-            .get(&from_parent)
-            .map_or_else(Vec::new, |children| children[start..].to_vec());
-
-        if children_to_move.is_empty() {
-            return;
-        }
-
-        // Remove from old parent
-        if let Some(children) = self.parent_to_child.get_mut(&from_parent) {
-            children.truncate(start);
-        }
-
-        // Add to new parent and update child_to_parent + child_position
-        for child_idx in children_to_move {
-            let children = self.parent_to_child.entry(to_parent).or_default();
-            let pos = children.len();
-            children.push(child_idx);
-            self.child_to_parent.insert(child_idx, to_parent);
-            self.child_position.insert(child_idx, pos);
-        }
-    }
-
     /// Returns the CssTreeIdx values of children under `parent`, starting at
     /// index `start`. Used to identify which ROOT children were added during
     /// a module's execution.
