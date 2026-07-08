@@ -2172,8 +2172,18 @@ impl<'a> Visitor<'a> {
         for component in path.components() {
             match component {
                 Component::ParentDir => {
-                    if !result.pop() {
-                        result.push(component);
+                    match result.components().next_back() {
+                        // There's a real segment to cancel against — pop it.
+                        Some(Component::Normal(_)) => {
+                            result.pop();
+                        }
+                        // `..` above the root is a no-op; it stays clamped there
+                        // rather than growing an invalid `/../..` path.
+                        Some(Component::RootDir) | Some(Component::Prefix(_)) => {}
+                        // Nothing to cancel against yet (empty result, or the
+                        // last component is itself an unresolved `..`) — the
+                        // `..` must accumulate, not silently vanish.
+                        _ => result.push(component),
                     }
                 }
                 Component::CurDir => {}
@@ -5861,5 +5871,76 @@ impl<'a> Visitor<'a> {
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod normalize_path_tests {
+    use super::Visitor;
+    use std::path::Path;
+
+    fn normalize(s: &str) -> String {
+        Visitor::normalize_path(Path::new(s))
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn dot_and_dotdot_mixed() {
+        assert_eq!(normalize("./a/./b"), "a/b");
+    }
+
+    #[test]
+    fn dotdot_cancels_real_segment() {
+        assert_eq!(normalize("a/b/../c"), "a/c");
+    }
+
+    #[test]
+    fn trailing_dotdot_cancels_single_segment() {
+        assert_eq!(normalize("a/.."), "");
+    }
+
+    #[test]
+    fn leading_dotdot_accumulates_after_first_cancel() {
+        // The first ".." cancels "a"; the second has nothing left to cancel
+        // against and must accumulate rather than vanish.
+        assert_eq!(normalize("a/../../b"), "../b");
+    }
+
+    #[test]
+    fn bare_dotdot() {
+        assert_eq!(normalize(".."), "..");
+    }
+
+    #[test]
+    fn two_leading_dotdot_accumulate() {
+        assert_eq!(normalize("../../a/b"), "../../a/b");
+    }
+
+    #[test]
+    fn one_leading_dotdot_odd() {
+        assert_eq!(normalize("../a"), "../a");
+    }
+
+    #[test]
+    fn three_leading_dotdot_odd() {
+        assert_eq!(normalize("../../../a"), "../../../a");
+    }
+
+    #[test]
+    fn four_leading_dotdot_even() {
+        assert_eq!(normalize("../../../../a"), "../../../../a");
+    }
+
+    #[test]
+    fn absolute_path_dotdot_clamps_at_root() {
+        // ".." above the filesystem root is a no-op, not an invalid "/.."
+        assert_eq!(normalize("/../a"), "/a");
+    }
+
+    #[test]
+    fn absolute_path_multiple_dotdot_clamp_at_root() {
+        assert_eq!(normalize("/../../a/../b"), "/b");
     }
 }
