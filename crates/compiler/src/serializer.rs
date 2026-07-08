@@ -700,6 +700,29 @@ impl<'a> Serializer<'a> {
         self.buffer.push(b')');
     }
 
+    /// Writes an HWB color using the modern `hwb()` function. Only used in
+    /// inspect mode, matching dart-sass's `_writeHwb`.
+    fn write_hwb(&mut self, color: &Color) {
+        let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
+        self.buffer.extend_from_slice(b"hwb(");
+
+        let raw = color.raw_channels();
+        self.write_float(raw[0].unwrap_or(0.0));
+        self.buffer.push(b' ');
+        self.write_float(raw[1].unwrap_or(0.0));
+        self.buffer.push(b'%');
+        self.buffer.push(b' ');
+        self.write_float(raw[2].unwrap_or(0.0));
+        self.buffer.push(b'%');
+
+        if !is_opaque {
+            self.buffer.extend_from_slice(b" / ");
+            self.write_float(color.alpha().0);
+        }
+
+        self.buffer.push(b')');
+    }
+
     /// Serialize a legacy color (RGB, HSL, HWB) that has missing (none) channels.
     /// Uses modern space-separated syntax: `hsl(none 100% 50%)`, `rgb(none 100 200)`.
     fn write_legacy_with_none(&mut self, color: &Color) {
@@ -795,6 +818,14 @@ impl<'a> Serializer<'a> {
             || color.has_missing_channel(2) || color.has_missing_alpha();
         if has_missing {
             self.write_legacy_with_none(color);
+            return;
+        }
+
+        // In inspect mode, HWB-space colors always serialize via the modern
+        // `hwb()` function regardless of gamut or fractional-channel status
+        // (dart-sass's `_writeHwb`, reached only when inspecting).
+        if self.inspect && color.color_space() == ColorSpace::Hwb {
+            self.write_hwb(color);
             return;
         }
 

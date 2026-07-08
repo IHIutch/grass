@@ -889,18 +889,24 @@ fn update_components(
     } else if alpha.is_some() {
         let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
             .map(|v| v.clamp(0.0, 1.0));
-        match new_alpha {
-            Some(a) => Rc::new(color.with_alpha(Number(a))),
-            None => {
-                // Alpha set to `none` (missing) — use for_space to create color with None alpha
-                Rc::new(Color::for_space(
-                    color.color_space(),
-                    color.raw_channels(),
-                    None,
-                    color.format.clone(),
-                ))
-            }
-        }
+        // Unlike `Color::with_alpha` (used by legacy global functions, which
+        // always operate in RGB space), changing alpha through
+        // `color.change`/`color.adjust`/`color.scale` must preserve the
+        // color's own space (dart-sass's `SassColor.changeAlpha`, which
+        // always drops the format entirely). A stale `Literal` format (the
+        // original hex/named source text) can't represent the new alpha
+        // value, so it must be re-inferred; other format tags (Rgb/Hsl/Infer)
+        // don't depend on alpha and can stay as-is.
+        let format = match &color.format {
+            ColorFormat::Literal(_) => ColorFormat::Infer,
+            other => other.clone(),
+        };
+        Rc::new(Color::for_space(
+            color.color_space(),
+            color.raw_channels(),
+            new_alpha,
+            format,
+        ))
     } else {
         color
     };

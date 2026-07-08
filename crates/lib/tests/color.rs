@@ -1245,3 +1245,66 @@ test!(
     "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), oklab)}",
     "a {\n  b: color-mix(in oklab, color(xyz -955472.4660146532 28369.6809641542 -12314.0025504671) 100%, black);\n}\n"
 );
+// HWB-space colors with fractional RGB used to unconditionally serialize as
+// hsl() (todo #271). dart-sass's `_writeHwb` is reached whenever a
+// no-missing-channel HWB color is inspected, regardless of gamut/fractional
+// status — so inspect output must always preserve `hwb()`. Verified against
+// dart-sass 1.97.3.
+test!(
+    hwb_change_whiteness_serializes_as_hwb_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(50 10% 10%), $whiteness: 5%));\n}\n",
+    "a {\n  b: hwb(50 5% 10%);\n}\n"
+);
+test!(
+    hwb_change_blackness_serializes_as_hwb_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(50 10% 10%), $blackness: 30%));\n}\n",
+    "a {\n  b: hwb(50 10% 30%);\n}\n"
+);
+test!(
+    hwb_adjust_whiteness_serializes_as_hwb_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.adjust(hwb(50 10% 10%), $whiteness: 5%));\n}\n",
+    "a {\n  b: hwb(50 15% 10%);\n}\n"
+);
+test!(
+    hwb_literal_fractional_channels_via_inspect,
+    "@use \"sass:meta\";\na {\n  b: meta.inspect(hwb(50 10.5% 10.25%));\n}\n",
+    "a {\n  b: hwb(50 10.5% 10.25%);\n}\n"
+);
+test!(
+    hwb_literal_with_alpha_via_inspect,
+    "@use \"sass:meta\";\na {\n  b: meta.inspect(hwb(50 10% 10% / 0.5));\n}\n",
+    "a {\n  b: hwb(50 10% 10% / 0.5);\n}\n"
+);
+// `color.change`'s alpha-only branch used to route through `Color::with_alpha`,
+// which unconditionally converts to RGB space (correct for legacy global
+// functions, wrong for `color.change`, which must preserve the color's own
+// space per dart-sass's `SassColor.changeAlpha`).
+test!(
+    hwb_change_alpha_preserves_hwb_format,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(50 10% 10%), $alpha: 0.3));\n}\n",
+    "a {\n  b: hwb(50 10% 10% / 0.3);\n}\n"
+);
+// Controls: non-HWB legacy spaces are unaffected by the inspect-mode HWB rule.
+test!(
+    hsl_change_saturation_still_serializes_as_hsl_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(50 10% 10%), $saturation: 5%));\n}\n",
+    "a {\n  b: hsl(50, 5%, 10%);\n}\n"
+);
+test!(
+    rgb_change_red_still_serializes_as_hex,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(10, 20, 30), $red: 50));\n}\n",
+    "a {\n  b: #32141e;\n}\n"
+);
+// A literal (hex/named) color's alpha-only change must drop the stale literal
+// text, since alpha isn't part of it (was broken by an earlier attempt at
+// this fix — regression-tested here).
+test!(
+    literal_named_color_change_alpha_drops_stale_literal,
+    "@use \"sass:color\";\na {\n  b: color.change(sienna, $alpha: 0.3);\n}\n",
+    "a {\n  b: rgba(160, 82, 45, 0.3);\n}\n"
+);
+test!(
+    literal_hex_color_change_alpha_drops_stale_literal,
+    "@use \"sass:color\";\na {\n  b: color.change(#102030, $alpha: 0.325);\n}\n",
+    "a {\n  b: rgba(16, 32, 48, 0.325);\n}\n"
+);
