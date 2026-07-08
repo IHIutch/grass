@@ -594,3 +594,97 @@ fn supports_inside_media_maps_both_keywords() {
         "got: {map}"
     );
 }
+
+// `@media` at-rule mapping (todo #225 part 2, landed alongside @font-face
+// and @keyframes in Plan 074/06ac94e). `AstMediaRule`'s `at_rule_span`
+// already starts at `@`, unlike `@supports` above. Ground truth:
+// `npx sass@1.97.3 --source-map` on
+// `@media (min-width: 100px) {\n  a { b: c; }\n}\n` -> mappings
+// "AAAA;EACE;IAAI" (the `@media` keyword maps to source 0:0, not the `{`).
+#[test]
+fn media_at_rule_maps_to_keyword() {
+    let input = "@media (min-width: 100px) {\n  a { b: c; }\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(map.contains("\"mappings\":\"AAAA;EACE;IAAI\""), "got: {map}");
+}
+
+// `@font-face` at-rule mapping -- unlike `@media`/`@supports`, `@font-face`
+// has no selector/prelude, only declarations directly in its body. Ground
+// truth: `npx sass@1.97.3 --source-map` on
+// `@font-face {\n  font-family: "Foo";\n}\n` -> mappings "AAAA;EACE" (the
+// `@font-face` keyword maps to source 0:0; the declaration line maps
+// normally).
+#[test]
+fn font_face_at_rule_maps_to_keyword() {
+    let input = "@font-face {\n  font-family: \"Foo\";\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(map.contains("\"mappings\":\"AAAA;EACE\""), "got: {map}");
+}
+
+// `@keyframes` at-rule mapping, including `from`/`to` selectors. Ground
+// truth: `npx sass@1.97.3 --source-map` on
+// `@keyframes foo {\n  from { a: b; }\n  to { c: d; }\n}\n` -> mappings
+// "AAAA;EACE;IAAO;;EACP;IAAK" (the `@keyframes` keyword maps to source 0:0,
+// and each of `from`/`to` maps as its own selector line, same as a regular
+// ruleset selector).
+#[test]
+fn keyframes_at_rule_maps_from_to_selectors() {
+    let input = "@keyframes foo {\n  from { a: b; }\n  to { c: d; }\n}\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE;IAAO;;EACP;IAAK\""),
+        "got: {map}"
+    );
+}
+
+// `@import` passthrough mapping (a plain `url(...)` import that dart-sass
+// does not resolve as a partial, so it survives untranslated in the CSS
+// output). Ground truth: `npx sass@1.97.3 --source-map` on
+// `@import url(theme.css);\n` -> mappings "AAAQ" (dart maps the URL token
+// position within the statement, not the `@import` keyword itself).
+#[test]
+fn import_passthrough_maps_to_url_token() {
+    let input = "@import url(theme.css);\n";
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), input).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(map.contains("\"mappings\":\"AAAQ\""), "got: {map}");
+}
