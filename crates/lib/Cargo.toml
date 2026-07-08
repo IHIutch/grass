@@ -69,3 +69,4 @@ nightly = ["include_sass/nightly"]
 [dev-dependencies]
 tempfile = "3.3.0"
 paste = "1.0.3"
+trybuild = "1.0"
