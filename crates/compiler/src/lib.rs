@@ -181,7 +181,8 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     file_name: P,
     options: &Options,
 ) -> Result<String> {
-    let (css, _mappings, _sources, _sources_content) = compile_impl(input, file_name, options)?;
+    let (css, _mappings, _sources, _sources_content, _loaded_files) =
+        compile_impl(input, file_name, options)?;
     Ok(css)
 }
 
@@ -212,7 +213,7 @@ pub fn from_string_with_source_map<S: Into<String>>(
         None
     };
 
-    let (css, mappings, mut sources, sources_content) =
+    let (css, mappings, mut sources, sources_content, loaded_files) =
         compile_impl(input, "stdin", options)?;
 
     let map = if options.source_map {
@@ -221,7 +222,7 @@ pub fn from_string_with_source_map<S: Into<String>>(
                 input_for_data_url.as_deref().unwrap_or_default(),
             );
         }
-        Some(SourceMapData::new(&mappings, sources, sources_content))
+        Some(SourceMapData::new(&mappings, sources, sources_content, loaded_files))
     } else {
         None
     };
@@ -240,10 +241,10 @@ pub fn from_path_with_source_map<P: AsRef<Path>>(
     options: &Options,
 ) -> Result<(String, Option<SourceMapData>)> {
     let input = String::from_utf8(options.fs.read(p.as_ref())?)?;
-    let (css, mappings, sources, sources_content) = compile_impl(input, p, options)?;
+    let (css, mappings, sources, sources_content, loaded_files) = compile_impl(input, p, options)?;
 
     let map = if options.source_map {
-        Some(SourceMapData::new(&mappings, sources, sources_content))
+        Some(SourceMapData::new(&mappings, sources, sources_content, loaded_files))
     } else {
         None
     };
@@ -261,6 +262,7 @@ fn compile_impl<P: AsRef<Path>>(
     Vec<crate::source_map::RawMapping>,
     Vec<String>,
     Vec<Arc<codemap::File>>,
+    Vec<std::path::PathBuf>,
 )> {
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
@@ -299,6 +301,25 @@ fn compile_impl<P: AsRef<Path>>(
         Ok(_) => {}
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     }
+    // Gathered before `finish()` (which consumes `visitor`) and gated on
+    // `options.source_map` to stay zero-cost for the default compile path,
+    // matching the serializer's own mapping-collection gate. Independent of
+    // whether any of these files contributed an emitted CSS mapping — see
+    // `Visitor::loaded_files`.
+    let loaded_files = if options.source_map {
+        let mut files = visitor.loaded_files();
+        let entry_path = options
+            .fs
+            .canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf());
+        if files.binary_search(&entry_path).is_err() {
+            files.push(entry_path);
+            files.sort_unstable();
+        }
+        files
+    } else {
+        Vec::new()
+    };
     let stmts = match visitor.finish() {
         Ok(s) => s,
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
@@ -391,7 +412,7 @@ fn compile_impl<P: AsRef<Path>>(
         }
     }
 
-    Ok((css, mappings, sources, sources_content))
+    Ok((css, mappings, sources, sources_content, loaded_files))
 }
 
 /// Compile CSS from a path

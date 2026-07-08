@@ -4,7 +4,7 @@
 //! alphabet is ~70 lines total and this repo is deliberately dep-skeptical
 //! (see `Cargo.toml`).
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -77,6 +77,14 @@ pub struct SourceMapData {
     /// never deep-copies file contents; `to_json` reads `.source()` (a
     /// borrow, no clone) only when `embed_sources` is true.
     pub sources_content: Vec<Arc<codemap::File>>,
+    /// The full set of files loaded during this compile via `@use`/
+    /// `@forward`/`@import` (plus the entry file itself), deduplicated and
+    /// sorted for a deterministic order. Unlike `sources`, this is *not*
+    /// limited to files that contributed an emitted CSS mapping -- e.g. a
+    /// `@use`d partial containing only variables never appears in `sources`
+    /// but does appear here. Intended for precise dependency tracking (e.g.
+    /// `--watch`), not for anything source-map-spec-shaped.
+    pub loaded_files: Vec<PathBuf>,
     /// Pre-encoded VLQ `mappings` string. Computed once at construction time
     /// since it depends only on the numeric fields of each `RawMapping`
     /// (line/column/file-index deltas), never on the string contents of
@@ -89,10 +97,12 @@ impl SourceMapData {
         mappings: &[RawMapping],
         sources: Vec<String>,
         sources_content: Vec<Arc<codemap::File>>,
+        loaded_files: Vec<PathBuf>,
     ) -> Self {
         Self {
             sources,
             sources_content,
+            loaded_files,
             encoded_mappings: encode_mappings(mappings),
         }
     }
@@ -321,6 +331,7 @@ mod tests {
             &[],
             vec!["stdin".to_owned()],
             vec![test_file("stdin", "")],
+            vec![],
         );
         let json = data.to_json(None, false);
         assert!(!json.contains("\"file\""), "got: {json}");
@@ -332,6 +343,7 @@ mod tests {
             &[],
             vec!["stdin".to_owned()],
             vec![test_file("stdin", "")],
+            vec![],
         );
         let json = data.to_json(Some("out.css"), false);
         assert!(json.contains("\"file\":\"out.css\""), "got: {json}");
@@ -343,6 +355,7 @@ mod tests {
             &[],
             vec!["in.scss".to_owned()],
             vec![test_file("in.scss", "a { b: c; }")],
+            vec![],
         );
         assert!(!data.to_json(None, false).contains("sourcesContent"));
         let embedded = data.to_json(None, true);

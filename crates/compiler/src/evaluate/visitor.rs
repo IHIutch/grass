@@ -566,6 +566,26 @@ impl<'a> Visitor<'a> {
         }
     }
 
+    /// The full set of files loaded during this compile via `@use`/
+    /// `@forward` (`self.modules`) and `@import` (`self.import_cache` plus
+    /// `self.files_seen`, which catches a file's *first* `@import` --
+    /// `import_cache` itself is only populated starting from a file's
+    /// *second* import, see `import_like_node`) -- independent of whether
+    /// any of those files contributed an emitted CSS mapping. Unlike
+    /// `SourceMapData::sources`, this includes `@use`d partials containing
+    /// only variables/mixins/functions, which never produce a mapping.
+    /// Deduplicated and sorted for a deterministic return order (none of
+    /// the backing maps/sets iterate deterministically).
+    pub(crate) fn loaded_files(&self) -> Vec<PathBuf> {
+        let mut files: FxHashSet<PathBuf> = FxHashSet::default();
+        files.extend(self.modules.keys().cloned());
+        files.extend(self.import_cache.keys().cloned());
+        files.extend(self.files_seen.iter().cloned());
+        let mut files: Vec<PathBuf> = files.into_iter().collect();
+        files.sort_unstable();
+        files
+    }
+
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
         self.flush_pending_imports(true);
         self.extend_modules()?;
