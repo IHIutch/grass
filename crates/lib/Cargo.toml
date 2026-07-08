@@ -51,11 +51,14 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [features]
 # todo: no commandline by default
-default = ["commandline", "random", "stacker"]
+default = ["commandline", "random", "stacker", "custom-builtin-fns"]
 # Option (enabled by default): build a binary using clap
 commandline = ["clap", "mimalloc"]
 random = ["grass_compiler/random"]
 wasm-exports = ["grass_compiler/wasm-exports", "wasm-bindgen"]
+# Option (enabled by default): register Rust functions as Sass builtins via
+# `Options::add_custom_fn`/`Builtin` (re-exported from `grass_compiler`).
+custom-builtin-fns = ["grass_compiler/custom-builtin-fns"]
 # Option (enabled by default): grow the stack on demand at recursive parse
 # chokepoints instead of a small fixed depth limit. Not supported on wasm32;
 # the wasm build (crates/lib/pkg-publish, built with --no-default-features)

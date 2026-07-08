@@ -71,6 +71,13 @@ pub use grass_compiler::{
     SourceMapData, StdFs, StdLogger,
 };
 
+/// Support for registering custom Sass functions implemented in Rust, via
+/// [`Options::add_custom_fn`] and [`Builtin`].
+///
+/// Requires the `custom-builtin-fns` feature, which is enabled by default.
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+pub use grass_compiler::{sass_value, Builtin, Visitor};
+
 /// Include CSS in your binary at compile time from a Sass source file
 ///
 /// `static CSS: &str = grass::include!("../static/_index.scss");`
