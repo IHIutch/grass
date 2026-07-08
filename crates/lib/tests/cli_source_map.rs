@@ -215,6 +215,73 @@ fn relative_urls_conflict_with_stdout() {
     );
 }
 
+// Ground truth: `npx sass@1.97.3 --embed-sources --no-source-map in.scss
+// out.css` -> exit 64, stderr "--embed-sources isn't allowed with
+// --no-source-map.\n\n<usage>" (message text copied verbatim; grass exits 1
+// per its own CLI-error convention rather than dart's 64).
+#[test]
+fn embed_sources_conflicts_with_no_source_map() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--embed-sources", "--no-source-map", "in.scss", "out.css"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "--embed-sources isn't allowed with --no-source-map.\n"
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 --source-map-urls=absolute --no-source-map
+// in.scss out.css` -> exit 64, stderr "--source-map-urls isn't allowed with
+// --no-source-map.\n\n<usage>" (message text copied verbatim).
+#[test]
+fn source_map_urls_conflicts_with_no_source_map() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args([
+            "--source-map-urls=absolute",
+            "--no-source-map",
+            "in.scss",
+            "out.css",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "--source-map-urls isn't allowed with --no-source-map.\n"
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 --embed-sources in.scss` (no output arg,
+// no --embed-source-map) -> exit 64, stderr "When printing to stdout,
+// --embed-sources requires --embed-source-map.\n\n<usage>" (message text
+// copied verbatim).
+#[test]
+fn embed_sources_without_embed_source_map_conflicts_with_stdout() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["--embed-sources", "in.scss"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "When printing to stdout, --embed-sources requires --embed-source-map.\n"
+    );
+}
+
 // Ground truth: `npx sass@1.97.3 --embed-source-map in.scss` (no output arg)
 // -> works (unlike --source-map-urls/--embed-sources alone), falling back to
 // an absolute file:// URL since there's no output directory for a relative
