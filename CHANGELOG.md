@@ -16,6 +16,8 @@ called out explicitly where relevant.
   WASM/npm package (same options plumbed through `pkg-publish`)
 - map standalone and trailing (`after-}`) comments, in addition to declarations and selectors
 - emit UTF-16 code-unit columns in mappings, matching dart-sass/JS source map conventions
+- map `@media`, `@font-face`, `@keyframes`, and `@import` at-rules, in addition to declarations,
+  selectors, and comments
 
 ## Deprecation warnings
 
@@ -29,6 +31,18 @@ called out explicitly where relevant.
 - unknown deprecation IDs passed to the napi binding now warn and continue, matching the real Sass
   JS API, instead of hard-erroring
 
+## CLI
+
+- implement `-w`/`--watch`: recompile a single `INPUT`/`OUTPUT` pair whenever the entry file's
+  directory or a `-I`/`--load-path` directory changes, printing dart-sass-style
+  `Compiled ... to ....` status lines (previously accepted but inert flags)
+- add `--poll`, a polling backend for `--watch` on filesystems where native file-change events
+  don't fire
+- implement `--error-css`/`--no-error-css`, matching dart-sass: on a failed compile to an output
+  file, a synthesized error stylesheet is written to that file by default (`--no-error-css` deletes
+  the file instead); this supersedes the interim "preserve the previous output file on failure"
+  behavior, which was never released
+
 ## Fixes
 
 - fix keyword-argument ordering to match dart-sass's insertion order (was previously unordered in
@@ -39,11 +53,14 @@ called out explicitly where relevant.
 - fix modern-color-space (`oklch`, `oklab`, `lab`, etc.) `$alpha` handling in
   `color.change`/`color.adjust`: percentage scaling, `$alpha: none`, and warning ordering now
   match dart-sass
-- fix the CLI's `-o`/output-file handling to no longer truncate a previously-written good output
-  file when a subsequent compile fails
+- fix `color.change()` to no longer require every channel/`$alpha` to be non-missing, matching
+  dart-sass (the missing-channel guard was only ever meant for `color.adjust`/`color.scale`)
 
 ## Other
 
+- expose custom builtin Sass functions from the `grass` crate itself: `Options::add_custom_fn` and
+  `Builtin`/`Visitor`/`sass_value` are now re-exported behind the default-enabled
+  `custom-builtin-fns` feature, rather than requiring a direct dependency on `grass_compiler`
 - raise the maximum style-rule nesting depth from 128 to 1024, matching dart-sass more closely
 - improve compile performance: the release CLI's USWDS benchmark has dropped from ~271ms to
   ~205ms since the `0.13.4` release
