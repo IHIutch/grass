@@ -3,6 +3,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod error_css;
+mod watch;
 
 use std::{
     fs::OpenOptions,
@@ -157,14 +158,15 @@ fn cli() -> Command {
         // Other
         .arg(
             Arg::new("WATCH")
+                .short('w')
                 .long("watch")
-                .hide(true)
+                .action(ArgAction::SetTrue)
                 .help("Watch stylesheets and recompile when they change."),
         )
         .arg(
             Arg::new("POLL")
                 .long("poll")
-                .hide(true)
+                .action(ArgAction::SetTrue)
                 .help("Manually check for changes rather than using a native watcher. Only valid with --watch.")
                 .requires("WATCH"),
         )
@@ -453,6 +455,115 @@ fn validate_source_map_flags(matches: &clap::ArgMatches, writing_to_stdout: bool
     true
 }
 
+/// Everything needed to turn one compile's `Result` into bytes on disk (or
+/// stdout), shared between the single-shot path and every recompile in
+/// `--watch` mode. Fields mirror the CLI flags that shape output, minus
+/// whatever's already baked into the `Options` used for the compile itself.
+pub(crate) struct WriteConfig<'a> {
+    pub(crate) output_arg: Option<&'a str>,
+    pub(crate) error_css_enabled: bool,
+    pub(crate) unicode_error_messages: bool,
+    pub(crate) generate_source_map: bool,
+    pub(crate) embed_source_map: bool,
+    pub(crate) embed_sources: bool,
+    pub(crate) source_map_urls: SourceMapUrls,
+}
+
+/// Handles one compile's outcome end to end: on error, prints the message
+/// and does the error-CSS overwrite/delete dance (see `error_css.rs`); on
+/// success, assembles the final output bytes (trailing newline, source map
+/// comment) and writes them to `cfg.output_arg` or stdout.
+///
+/// Returns `Ok(true)` on a successful compile and `Ok(false)` on a compile
+/// error (the caller decides whether that's fatal: the single-shot path
+/// exits 1, `--watch` logs and keeps watching).
+pub(crate) fn write_compile_result(
+    compile_result: grass::Result<(String, Option<SourceMapData>)>,
+    cfg: &WriteConfig,
+) -> std::io::Result<bool> {
+    let (css, map) = match compile_result {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{}", e);
+            if let Some(path) = cfg.output_arg {
+                if cfg.error_css_enabled {
+                    std::fs::write(path, error_css::synthesize(&e.to_string(), cfg.unicode_error_messages))?;
+                } else if Path::new(path).exists() {
+                    std::fs::remove_file(path)?;
+                }
+            }
+            return Ok(false);
+        }
+    };
+
+    // dart-sass's CLI always appends a trailing newline to non-empty output
+    // (compile_stylesheet.dart writes `css + "\n"` / uses `print`, which adds
+    // one); the library's returned CSS string itself never has one. grass's
+    // library output already ends in `\n` for expanded style, so only append
+    // when missing to avoid doubling it.
+    let mut bytes = css.into_bytes();
+    if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+        bytes.push(b'\n');
+    }
+
+    if cfg.generate_source_map {
+        if let Some(mut map) = map {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            // Present (`Some`) exactly when `output_arg` is: `generate_source_map`
+            // only allows a stdout target when `--embed-source-map` was passed,
+            // and dart-sass omits both `file` and the ability to use relative
+            // URLs in that one case (see `validate_source_map_flags`).
+            let output_path = cfg.output_arg.map(|p| absolute_source_path(p, &cwd));
+            let output_dir = output_path.as_deref().and_then(Path::parent);
+
+            rewrite_source_map_sources(&mut map, &cfg.source_map_urls, output_dir, &cwd);
+
+            let file_key = cfg
+                .output_arg
+                .and_then(|p| Path::new(p).file_name())
+                .map(|n| n.to_string_lossy().into_owned());
+            let json = map.to_json(file_key.as_deref(), cfg.embed_sources);
+
+            if cfg.embed_source_map {
+                bytes.extend_from_slice(b"\n/*# sourceMappingURL=data:application/json;charset=utf-8,");
+                bytes.extend_from_slice(grass_compiler::encode_uri(&json).as_bytes());
+                bytes.extend_from_slice(b" */\n");
+            } else {
+                // `generate_source_map` guarantees `output_arg` is `Some` here:
+                // stdout output only reaches this branch via --embed-source-map.
+                let output_path = output_path.expect("non-stdout output guaranteed by validate_source_map_flags");
+                let map_file_name = format!("{}.map", output_path.file_name().unwrap_or_default().to_string_lossy());
+                let map_path = output_path.with_file_name(&map_file_name);
+                std::fs::write(&map_path, json)?;
+
+                bytes.extend_from_slice(b"\n/*# sourceMappingURL=");
+                bytes.extend_from_slice(map_file_name.as_bytes());
+                bytes.extend_from_slice(b" */\n");
+            }
+        }
+    }
+
+    // The output file is only opened (and truncated) here, after a
+    // successful compile -- a failed compile takes the error-css/delete
+    // branch above and returns before ever reaching this point.
+    let (mut stdout_write, mut file_write);
+    let buf_out: &mut dyn Write = if let Some(path) = cfg.output_arg {
+        file_write = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        &mut file_write
+    } else {
+        stdout_write = stdout();
+        &mut stdout_write
+    };
+
+    buf_out.write_all(&bytes)?;
+
+    Ok(true)
+}
+
 fn main() -> std::io::Result<()> {
     let matches = cli().get_matches();
 
@@ -467,6 +578,22 @@ fn main() -> std::io::Result<()> {
 
     let output_arg = matches.get_one::<String>("OUTPUT");
     let writing_to_stdout = output_arg.is_none();
+    let watch = matches.get_flag("WATCH");
+
+    // dart-sass rejects both of these combinations outright (verified via
+    // npx sass@1.97.3: "--watch is not allowed with --stdin." / "--watch is
+    // not allowed when printing to stdout.", exit 64) rather than silently
+    // ignoring --watch. grass exits 1 (its own convention for CLI-level
+    // usage failures; see `error_exit_code`) but matches the message text
+    // and the "hard failure before compilation" behavior.
+    if watch && matches.get_flag("STDIN") {
+        eprintln!("--watch is not allowed with --stdin.");
+        std::process::exit(1);
+    }
+    if watch && writing_to_stdout {
+        eprintln!("--watch is not allowed when printing to stdout.");
+        std::process::exit(1);
+    }
 
     // dart-sass's `--[no-]error-css` (default true when writing to a file;
     // irrelevant for stdout, since a failed compile never writes anything to
@@ -477,12 +604,13 @@ fn main() -> std::io::Result<()> {
     let embed_source_map = matches.get_flag("EMBED_SOURCE_MAP");
     let embed_sources = matches.get_flag("EMBED_SOURCES");
     let source_map_urls = matches.get_one::<SourceMapUrls>("SOURCE_MAP_URLS").unwrap().clone();
+    let unicode_error_messages = !matches.get_flag("NO_UNICODE");
 
     let mut options = Options::default()
         .load_paths(&load_paths)
         .style(style)
         .quiet(matches.get_flag("QUIET"))
-        .unicode_error_messages(!matches.get_flag("NO_UNICODE"))
+        .unicode_error_messages(unicode_error_messages)
         .allows_charset(!matches.get_flag("NO_CHARSET"))
         .source_map(generate_source_map);
 
@@ -497,6 +625,31 @@ fn main() -> std::io::Result<()> {
     }
 
     let options = &options;
+
+    let write_config = WriteConfig {
+        output_arg: output_arg.map(String::as_str),
+        error_css_enabled,
+        unicode_error_messages,
+        generate_source_map,
+        embed_source_map,
+        embed_sources,
+        source_map_urls,
+    };
+
+    if watch {
+        // Validated above: watch requires a real INPUT path and a real
+        // OUTPUT file target (never --stdin, never stdout).
+        let input = matches.get_one::<String>("INPUT").expect("required_unless_present(STDIN)");
+        let output = output_arg.expect("writing_to_stdout rejected above");
+        return watch::run(watch::WatchArgs {
+            input,
+            output,
+            options,
+            write_config,
+            load_paths: &load_paths,
+            poll: matches.get_flag("POLL"),
+        });
+    }
 
     let compile_result = if let Some(name) = matches.get_one::<String>("INPUT") {
         from_path_with_source_map(name, options)
@@ -513,92 +666,10 @@ fn main() -> std::io::Result<()> {
         unreachable!()
     };
 
-    // dart-sass's error-CSS behavior on a failed compile (ground truth via
-    // npx sass@1.97.3; see error_css.rs and crates/lib/tests/cli.rs): when
-    // writing to a file, by default the target is OVERWRITTEN with a
-    // synthesized valid stylesheet embedding the error (live-reload UX);
-    // under --no-error-css it is DELETED instead. A `.map` sibling written
-    // by a prior successful compile is left completely untouched either way
-    // (verified: dart never regenerates or removes it on failure). Writing
-    // to stdout has no error-CSS output at all -- stdout is empty on
-    // failure, matching grass's existing stdout-branch behavior.
-    let (css, map) = match compile_result {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{}", e);
-            if let Some(path) = output_arg {
-                if error_css_enabled {
-                    let unicode = !matches.get_flag("NO_UNICODE");
-                    std::fs::write(path, error_css::synthesize(&e.to_string(), unicode))?;
-                } else if Path::new(path).exists() {
-                    std::fs::remove_file(path)?;
-                }
-            }
-            std::process::exit(1);
-        }
-    };
-
-    // dart-sass's CLI always appends a trailing newline to non-empty output
-    // (compile_stylesheet.dart writes `css + "\n"` / uses `print`, which adds
-    // one); the library's returned CSS string itself never has one. grass's
-    // library output already ends in `\n` for expanded style, so only append
-    // when missing to avoid doubling it.
-    let mut bytes = css.into_bytes();
-    if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
-        bytes.push(b'\n');
+    if !write_compile_result(compile_result, &write_config)? {
+        std::process::exit(1);
     }
 
-    if let Some(mut map) = map {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        // Present (`Some`) exactly when `output_arg` is: `generate_source_map`
-        // only allows a stdout target when `--embed-source-map` was passed,
-        // and dart-sass omits both `file` and the ability to use relative
-        // URLs in that one case (see `validate_source_map_flags`).
-        let output_path = output_arg.map(|p| absolute_source_path(p, &cwd));
-        let output_dir = output_path.as_deref().and_then(Path::parent);
-
-        rewrite_source_map_sources(&mut map, &source_map_urls, output_dir, &cwd);
-
-        let file_key = output_arg
-            .and_then(|p| Path::new(p).file_name())
-            .map(|n| n.to_string_lossy().into_owned());
-        let json = map.to_json(file_key.as_deref(), embed_sources);
-
-        if embed_source_map {
-            bytes.extend_from_slice(b"\n/*# sourceMappingURL=data:application/json;charset=utf-8,");
-            bytes.extend_from_slice(grass_compiler::encode_uri(&json).as_bytes());
-            bytes.extend_from_slice(b" */\n");
-        } else {
-            // `generate_source_map` guarantees `output_arg` is `Some` here:
-            // stdout output only reaches this branch via --embed-source-map.
-            let output_path = output_path.expect("non-stdout output guaranteed by validate_source_map_flags");
-            let map_file_name = format!("{}.map", output_path.file_name().unwrap_or_default().to_string_lossy());
-            let map_path = output_path.with_file_name(&map_file_name);
-            std::fs::write(&map_path, json)?;
-
-            bytes.extend_from_slice(b"\n/*# sourceMappingURL=");
-            bytes.extend_from_slice(map_file_name.as_bytes());
-            bytes.extend_from_slice(b" */\n");
-        }
-    }
-
-    // The output file is only opened (and truncated) here, after a
-    // successful compile -- a failed compile takes the error-css/delete
-    // branch above and exits before ever reaching this point.
-    let (mut stdout_write, mut file_write);
-    let buf_out: &mut dyn Write = if let Some(path) = output_arg {
-        file_write = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-        &mut file_write
-    } else {
-        stdout_write = stdout();
-        &mut stdout_write
-    };
-
-    buf_out.write_all(&bytes)?;
     Ok(())
 }
 

@@ -1,8 +1,35 @@
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 fn grass_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_grass"))
+}
+
+/// Kills (and reaps) a spawned `--watch` child on drop, so a failing
+/// assertion partway through a watch test can't leak a background process.
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Polls `cond` (e.g. "does the output file now contain the new content?")
+/// until it's true or `timeout` elapses. Used instead of a fixed sleep for
+/// the `--watch` tests below, since recompile latency depends on the host's
+/// filesystem-event delivery.
+fn wait_for<F: Fn() -> bool>(timeout: Duration, cond: F) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
 }
 
 fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
@@ -600,4 +627,231 @@ fn fatal_wins_over_silence_for_same_id() {
         "$a: 1;\nb { c: $a/2; }",
     );
     assert_eq!(output.status.code(), Some(1));
+}
+
+// Ground truth verified with dart-sass 1.97.3:
+//   printf 'a{b:c}' | npx sass@1.97.3 --watch --stdin
+//   -> "--watch is not allowed with --stdin.", exit 64
+// grass exits 1 (see `error_exit_code`) but matches the message text and the
+// "hard failure before compilation" behavior.
+#[test]
+fn watch_rejects_stdin() {
+    let output = run_with_stdin(&["--watch", "--stdin"], "a { b: c }");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--watch is not allowed with --stdin."),
+        "stderr: {stderr}"
+    );
+}
+
+// Ground truth verified with dart-sass 1.97.3:
+//   npx sass@1.97.3 --watch in.scss
+//   -> "--watch is not allowed when printing to stdout.", exit 64
+#[test]
+fn watch_rejects_stdout_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+
+    let output = grass_cmd()
+        .args(["--watch", in_path.to_str().unwrap()])
+        .output()
+        .expect("failed to spawn grass");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--watch is not allowed when printing to stdout."),
+        "stderr: {stderr}"
+    );
+}
+
+// Ground truth verified with dart-sass 1.97.3 (`npx sass@1.97.3 --watch
+// in.scss out.css`): the first line of output is `[timestamp] Compiled
+// in.scss to out.css.`, immediately followed by the "Sass is watching..."
+// banner (no blank line between them; see watch.rs's module doc comment for
+// the full transcript). Timestamps are UTC in grass rather than dart's local
+// wall-clock time (see watch.rs), so this only checks the message shape.
+#[test]
+fn watch_prints_compiled_message_then_banner() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+
+    let mut child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+
+    let stdout = child.stdout.take().unwrap();
+    let _guard = KillOnDrop(child);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        for line in BufReader::new(stdout).lines().flatten() {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while lines.len() < 2 && Instant::now() < deadline {
+        if let Ok(line) = rx.recv_timeout(Duration::from_secs(1)) {
+            lines.push(line);
+        }
+    }
+
+    assert!(
+        lines.len() >= 2,
+        "expected at least 2 lines of watch output within 10s, got: {lines:?}"
+    );
+    assert!(
+        lines[0].contains("Compiled") && lines[0].contains(" to ") && lines[0].ends_with('.'),
+        "line0: {}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "Sass is watching for changes. Press Ctrl-C to stop.");
+}
+
+// End-to-end: editing the watched input file triggers a recompile with the
+// new content, without the process exiting. Manually cross-checked against
+// `npx sass@1.97.3 --watch` (see watch.rs's module doc comment).
+#[test]
+fn watch_recompiles_on_input_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+
+    let child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+    let _guard = KillOnDrop(child);
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: c"))
+        }),
+        "initial compile did not appear within 10s"
+    );
+
+    std::fs::write(&in_path, "a { b: d }").unwrap();
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: d"))
+        }),
+        "recompile on input change did not appear within 10s"
+    );
+}
+
+// End-to-end: editing a `@use`d partial (not the entry point itself) also
+// triggers a recompile -- dependency tracking, not just entry-file watching.
+// Manually cross-checked against `npx sass@1.97.3 --watch`.
+#[test]
+fn watch_recompiles_on_dependency_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let dep_path = dir.path().join("_dep.scss");
+    let out_path = dir.path().join("out.css");
+    std::fs::write(&dep_path, "$x: 1;\n").unwrap();
+    std::fs::write(&in_path, "@use \"dep\";\na { b: dep.$x; }\n").unwrap();
+
+    let child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+    let _guard = KillOnDrop(child);
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: 1"))
+        }),
+        "initial compile did not appear within 10s"
+    );
+
+    std::fs::write(&dep_path, "$x: 999;\n").unwrap();
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: 999"))
+        }),
+        "recompile on dependency change did not appear within 10s"
+    );
+}
+
+// End-to-end: an error mid-watch overwrites the output with error CSS (same
+// format as the non-watch path -- `write_compile_result` is shared) and
+// keeps watching; fixing the file recompiles normally. Manually
+// cross-checked against `npx sass@1.97.3 --watch`.
+#[test]
+fn watch_recovers_from_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    std::fs::write(&in_path, "a { b: c }").unwrap();
+
+    let child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+    let _guard = KillOnDrop(child);
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: c"))
+        }),
+        "initial compile did not appear within 10s"
+    );
+
+    std::fs::write(&in_path, "a { b: ").unwrap();
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.starts_with("/* Error:"))
+        }),
+        "error CSS did not appear within 10s"
+    );
+
+    std::fs::write(&in_path, "a { b: e }").unwrap();
+
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(&out_path).is_ok_and(|c| c.contains("b: e"))
+        }),
+        "recovery recompile did not appear within 10s"
+    );
 }

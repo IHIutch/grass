@@ -48,12 +48,15 @@ grass_compiler = { path = "../compiler", version = "=0.13.4", default-features =
 include_sass = { path = "../include_sass", version = "0.13.4", optional = true }
 clap = { version = "4.3.10", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
+notify = { version = "8", optional = true }
 
 [features]
 # todo: no commandline by default
 default = ["commandline", "random", "stacker", "custom-builtin-fns"]
-# Option (enabled by default): build a binary using clap
-commandline = ["clap", "mimalloc"]
+# Option (enabled by default): build a binary using clap. Also pulls in
+# `notify` for `--watch`/`--poll` -- both are CLI-only concerns, so there's
+# no separate feature gate for watch support.
+commandline = ["clap", "mimalloc", "dep:notify"]
 random = ["grass_compiler/random"]
 wasm-exports = ["grass_compiler/wasm-exports", "wasm-bindgen"]
 # Option (enabled by default): register Rust functions as Sass builtins via
