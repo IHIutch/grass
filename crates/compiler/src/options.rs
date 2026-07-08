@@ -4,6 +4,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{builtin::Builtin, Deprecation, Fs, Logger, StdFs, StdLogger};
 
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+use std::sync::Arc;
+
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+use crate::{
+    ast::ArgumentResult, builtin::split_signature_name, builtin::DynamicBuiltinFn,
+    error::SassResult, evaluate::Visitor, value::Value,
+};
+
 /// Configuration for Sass compilation
 ///
 /// The simplest usage is `grass::Options::default()`; however, a builder pattern
@@ -181,6 +190,34 @@ impl<'a> Options<'a> {
     pub fn add_custom_fn<S: Into<String>>(mut self, name: S, func: Builtin) -> Self {
         self.custom_fns.insert(name.into(), func);
         self
+    }
+
+    /// Add a custom function accessible from within Sass, whose call
+    /// arguments are pre-bound to the parameters declared in `signature`
+    /// (positional/named/defaults/`$rest...`) before `f` is invoked — the
+    /// same calling convention as an `@function`, rather than the raw
+    /// unbound [`ArgumentResult`](crate::sass_value::ArgumentResult) that
+    /// [`Builtin::new`]/[`Options::add_custom_fn`] receive.
+    ///
+    /// `signature` is a full function signature string, e.g.
+    /// `"sum($a, $b: 1)"` or `"scale($a, $b: $a)"` (defaults may reference
+    /// earlier parameters). The name portion is normalized the same way as
+    /// `@function` names (`_` becomes `-`). Returns an error if `signature`
+    /// isn't of the form `"name(...)"`; the `(...)` portion itself is
+    /// parsed lazily, the first time the function is called in a given
+    /// compilation.
+    #[inline]
+    #[cfg(any(feature = "custom-builtin-fns", doc))]
+    pub fn add_custom_fn_with_signature<S, F>(mut self, signature: S, f: F) -> SassResult<Self>
+    where
+        S: AsRef<str>,
+        F: Fn(ArgumentResult, &mut Visitor) -> SassResult<Value> + Send + Sync + 'static,
+    {
+        let (name, arg_text) = split_signature_name(signature.as_ref())?;
+        let f: Arc<DynamicBuiltinFn> = Arc::new(f);
+        self.custom_fns
+            .insert(name, Builtin::new_dynamic(f, Some(Arc::from(arg_text))));
+        Ok(self)
     }
 
     /// Silence warnings for the given deprecation.

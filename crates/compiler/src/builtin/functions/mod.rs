@@ -8,7 +8,7 @@ use std::{
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use codemap::Span;
 
@@ -21,6 +21,12 @@ use crate::{
     value::{Number, SassNumber, Value},
     Options,
 };
+
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+use codemap::CodeMap;
+
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+use crate::error::SassError;
 
 pub mod color;
 pub mod list;
@@ -255,26 +261,84 @@ static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 ///     assert_eq!(css, "a {\n  color: 4;\n}\n");
 /// }
 /// ```
+/// A function pointer usable as the body of a dynamically-registered
+/// [`Builtin`] (see [`BuiltinFn::Dynamic`]). `Arc` (not `Rc`) is required
+/// because `Builtin` is stored inside `GLOBAL_FUNCTIONS`, a `static
+/// LazyLock<GlobalFunctionMap>` — the map's value type must be `Sync` even
+/// though no `GLOBAL_FUNCTIONS` entry is ever `Dynamic`, since the bound is
+/// checked against the enum's type, not any particular value. This does
+/// NOT require the closure to touch `Visitor`/`Value` (both `Rc`-heavy,
+/// `!Send`) across threads — only whatever state the closure *captures*
+/// must be thread-safe.
+pub(crate) type DynamicBuiltinFn = dyn Fn(ArgumentResult, &mut Visitor) -> SassResult<Value> + Send + Sync;
+
+/// The callable body of a [`Builtin`].
+pub(crate) enum BuiltinFn {
+    /// A plain Rust function pointer — the original, zero-overhead form
+    /// used by every builtin in `GLOBAL_FUNCTIONS` and by
+    /// [`Builtin::new`].
+    Static(fn(ArgumentResult, &mut Visitor) -> SassResult<Value>),
+    /// A closure registered via
+    /// [`Options::add_custom_fn_with_signature`], together with the raw
+    /// `(...)` signature text (if any) used to bind call arguments to
+    /// declared parameter names/defaults/rest before invoking `f`. `None`
+    /// means the closure receives the raw unbound [`ArgumentResult`], same
+    /// as the [`BuiltinFn::Static`] path.
+    Dynamic {
+        f: Arc<DynamicBuiltinFn>,
+        signature: Option<Arc<str>>,
+    },
+}
+
+impl Clone for BuiltinFn {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Static(f) => Self::Static(*f),
+            Self::Dynamic { f, signature } => Self::Dynamic {
+                f: Arc::clone(f),
+                signature: signature.clone(),
+            },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Builtin(
-    pub(crate) fn(ArgumentResult, &mut Visitor) -> SassResult<Value>,
+    pub(crate) BuiltinFn,
     usize,
     pub(crate) Option<(&'static str, &'static str)>,
 );
 
 impl fmt::Debug for Builtin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Builtin")
-            .field("id", &self.1)
-            .field("fn_ptr", &(self.0 as usize))
-            .finish()
+        let mut s = f.debug_struct("Builtin");
+        s.field("id", &self.1);
+        match &self.0 {
+            BuiltinFn::Static(func) => {
+                s.field("fn_ptr", &(*func as usize));
+            }
+            BuiltinFn::Dynamic { signature, .. } => {
+                s.field("dynamic_signature", signature);
+            }
+        }
+        s.finish()
     }
 }
 
 impl Builtin {
     pub fn new(body: fn(ArgumentResult, &mut Visitor) -> SassResult<Value>) -> Builtin {
         let count = FUNCTION_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(body, count, None)
+        Self(BuiltinFn::Static(body), count, None)
+    }
+
+    /// Registers a closure-backed builtin, optionally bound to a signature
+    /// string (the `(...)` argument-declaration text, without the leading
+    /// name) parsed lazily on first call. See
+    /// [`Options::add_custom_fn_with_signature`].
+    #[cfg(any(feature = "custom-builtin-fns", doc))]
+    pub(crate) fn new_dynamic(f: Arc<DynamicBuiltinFn>, signature: Option<Arc<str>>) -> Builtin {
+        let count = FUNCTION_COUNT.fetch_add(1, Ordering::Relaxed);
+        Self(BuiltinFn::Dynamic { f, signature }, count, None)
     }
 
     /// Marks this global function as replaced by `{module}.{name}` in the
@@ -314,6 +378,46 @@ impl PartialEq for Builtin {
 }
 
 impl Eq for Builtin {}
+
+/// Splits a full custom-function signature string (e.g. `"sum($a, $b: 1)"`)
+/// into its normalized bare name (`_` becomes `-`, matching `@function` name
+/// parsing) and the `(...)` argument-declaration text, which is parsed
+/// lazily per-compile (see `Visitor::parse_dynamic_signature`). Pure string
+/// slicing — no parser involved, so this can run before any compile/CodeMap
+/// exists, at `Options::add_custom_fn_with_signature` time.
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+pub(crate) fn split_signature_name(signature: &str) -> SassResult<(String, String)> {
+    let malformed = || malformed_signature_error(signature);
+
+    let paren_idx = signature.find('(').ok_or_else(malformed)?;
+    let name = signature[..paren_idx].trim();
+
+    if name.is_empty() || !signature.trim_end().ends_with(')') {
+        return Err(malformed());
+    }
+
+    let normalized_name = name.replace('_', "-");
+    let arg_text = signature[paren_idx..].trim_end().to_string();
+
+    Ok((normalized_name, arg_text))
+}
+
+/// Builds a proper `ParseError` (never `SassErrorKind::Raw`, which panics on
+/// `Display`/`.kind()` if it ever escapes to a public caller) for a
+/// malformed custom-function signature, using a throwaway `CodeMap` since
+/// this runs before any compile has begun and there is no real `CodeMap` to
+/// mint a span from yet.
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+fn malformed_signature_error(signature: &str) -> Box<SassError> {
+    let mut map = CodeMap::new();
+    let file = map.add_file("<custom-fn-signature>".to_string(), signature.to_string());
+    let loc = map.look_up_span(file.span);
+    Box::new(SassError::from_loc(
+        format!("Invalid custom function signature: {signature:?}. Expected \"name(...)\"."),
+        loc,
+        true,
+    ))
+}
 
 pub(crate) static GLOBAL_FUNCTIONS: LazyLock<GlobalFunctionMap> = LazyLock::new(|| {
     let mut m = FxHashMap::default();

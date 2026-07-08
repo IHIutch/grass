@@ -2,9 +2,12 @@ mod functions;
 pub(crate) mod modules;
 
 pub(crate) use functions::{
-    color, global_builtin_message, list, map, math, meta, selector, string,
+    color, global_builtin_message, list, map, math, meta, selector, string, BuiltinFn,
     DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, GLOBAL_FUNCTIONS,
 };
+
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+pub(crate) use functions::{split_signature_name, DynamicBuiltinFn};
 
 pub use functions::Builtin;
 

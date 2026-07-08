@@ -38,3 +38,15 @@ pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(
 ) -> StyleSheet<'static> {
     std::mem::transmute(sheet)
 }
+
+/// Safety: mirrors [`erase_stylesheet_lifetime`] — this is only used to
+/// erase the lifetime of an `ArgumentDeclaration` parsed against a
+/// `Visitor`'s own arena (see `Visitor::parse_dynamic_signature`), which
+/// lives for the entire compilation. The erased value is cached on the
+/// `Visitor` itself (never on `Builtin`/`Options`, which can outlive any
+/// single compilation), so it cannot outlive the arena it borrows from.
+pub(crate) unsafe fn erase_argument_declaration_lifetime<'a>(
+    decl: ArgumentDeclaration<'a>,
+) -> ArgumentDeclaration<'static> {
+    std::mem::transmute(decl)
+}

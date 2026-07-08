@@ -6,6 +6,7 @@ use std::{
     mem,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
 use codemap::{CodeMap, Span, Spanned};
@@ -23,7 +24,7 @@ use crate::{
             declare_module_color, declare_module_list, declare_module_map, declare_module_math,
             declare_module_meta, declare_module_selector, declare_module_string, Module,
         },
-        GLOBAL_FUNCTIONS,
+        BuiltinFn, GLOBAL_FUNCTIONS,
     },
     common::{unvendor, BinaryOp, SmallOrderedMap, Identifier, ListSeparator, QuoteKind, UnaryOp},
     error::SassResult,
@@ -317,6 +318,15 @@ pub struct Visitor<'a> {
     /// `&self`-only candidate-resolution helpers. `None` means the directory
     /// couldn't be listed (or the embedder's `Fs` doesn't support batching).
     dir_listing_cache: RefCell<FxHashMap<PathBuf, Option<Rc<crate::fs::DirListing>>>>,
+    /// Cache of parsed argument declarations for closure-backed
+    /// (`BuiltinFn::Dynamic`) custom functions, keyed by their raw `(...)`
+    /// signature text. Parsing happens lazily against this `Visitor`'s own
+    /// `arena`/`map` (see `parse_dynamic_signature`), so the cache lives
+    /// here rather than on `Builtin`/`Options` — a `Builtin` can outlive
+    /// any single compilation (e.g. a reused `Options` across `--watch`
+    /// recompiles), but the parsed declaration must not outlive the arena
+    /// it borrows from.
+    dynamic_signature_cache: FxHashMap<Arc<str>, Rc<ArgumentDeclaration<'static>>>,
     /// Nesting depth of user-defined function/mixin/content-block invocations.
     /// Guards against stack overflow from unbounded recursion (e.g. a
     /// function that calls itself with no terminating `@if`); see
@@ -389,6 +399,7 @@ impl<'a> Visitor<'a> {
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
             dir_listing_cache: RefCell::new(FxHashMap::default()),
+            dynamic_signature_cache: FxHashMap::default(),
             recursion_depth: 0,
             style_rule_recursion_depth: 0,
         }
@@ -2485,6 +2496,138 @@ impl<'a> Visitor<'a> {
         Ok(unsafe { crate::ast::erase_stylesheet_lifetime(result) })
     }
 
+    /// Parses (and caches) the `(...)` argument-declaration text of a
+    /// closure-backed [`BuiltinFn::Dynamic`] custom function's signature,
+    /// using the *current compilation's own* `self.arena`/`self.map`
+    /// rather than a fresh throwaway `CodeMap`. This is load-bearing, not
+    /// style: `codemap`'s `Span`s are only unique within the `CodeMap`
+    /// that minted them (`CodeMap::add_file` starts at `end_pos()+1`; a
+    /// fresh `CodeMap::new()` starts at 0), and `CodeMap::find_file` panics
+    /// on a miss. Parsing eagerly against a synthetic one-off `CodeMap` at
+    /// `Options`-build time would embed spans (in default-value
+    /// expressions) that alias onto the wrong location or panic when later
+    /// looked up against the real compile's `self.map`.
+    fn parse_dynamic_signature(
+        &mut self,
+        signature: &Arc<str>,
+    ) -> SassResult<Rc<ArgumentDeclaration<'static>>> {
+        if let Some(cached) = self.dynamic_signature_cache.get(signature) {
+            return Ok(Rc::clone(cached));
+        }
+
+        let file = self
+            .map
+            .add_file("<custom-fn-signature>".to_string(), signature.to_string());
+        let empty_span = file.span.subspan(0, 0);
+        let lexer = Lexer::new_from_file(&file);
+        let path = Path::new("<custom-fn-signature>");
+
+        let declaration = ScssParser::new(lexer, self.options, empty_span, path, self.arena)
+            .parse_argument_declaration()?;
+
+        // Safety: mirrors `parse_file`'s use of `erase_stylesheet_lifetime` —
+        // the arena lives for the entire compilation (stored in Visitor), and
+        // this cache lives on the Visitor too, so it cannot outlive the arena.
+        let declaration =
+            Rc::new(unsafe { crate::ast::erase_argument_declaration_lifetime(declaration) });
+
+        self.dynamic_signature_cache
+            .insert(Arc::clone(signature), Rc::clone(&declaration));
+
+        Ok(declaration)
+    }
+
+    /// Binds an evaluated (but unbound) [`ArgumentResult`] to `signature`'s
+    /// declared parameters — positional fill → named fill of remaining
+    /// declared slots → missing args fall back to declared defaults
+    /// (evaluated with earlier-bound args visible as `$name` variables, so
+    /// e.g. `"scale($a, $b: $a)"`-style sibling-referencing defaults work)
+    /// → trailing `$rest...` collected into a `Value::ArgList`. Mirrors
+    /// `run_user_defined_callable_inner`'s algorithm, but returns a
+    /// declaration-ordered `ArgumentResult` (rest appended last) instead of
+    /// inserting into a persistent callable scope, since
+    /// `BuiltinFn::Dynamic` closures are plain Rust with no `$name`
+    /// variables to bind into.
+    ///
+    /// Known accepted gap: unlike a real `@function` call, no
+    /// unused-named-arguments-become-an-error check runs after the closure
+    /// returns.
+    fn bind_dynamic_args(
+        &mut self,
+        signature: Option<&Arc<str>>,
+        mut evaluated: ArgumentResult,
+        span: Span,
+    ) -> SassResult<ArgumentResult> {
+        let declaration = match signature {
+            Some(signature) => self.parse_dynamic_signature(signature)?,
+            None => return Ok(evaluated),
+        };
+
+        declaration.verify(evaluated.positional.len(), &evaluated.named, evaluated.span)?;
+
+        self.with_scope(false, true, move |visitor| {
+            let declared_arguments = &declaration.args;
+            let positional_len = evaluated.positional.len();
+            let min_len = positional_len.min(declared_arguments.len());
+
+            let mut bound = Vec::with_capacity(declared_arguments.len() + 1);
+
+            for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
+                visitor
+                    .env
+                    .scopes_mut()
+                    .insert_var_last(declared_arguments[i].name, val.clone());
+                bound.push(val);
+            }
+
+            let additional_declared_args = if declared_arguments.len() > positional_len {
+                &declared_arguments[positional_len..]
+            } else {
+                &[]
+            };
+
+            for argument in additional_declared_args {
+                let value = match evaluated.named.shift_remove(&argument.name) {
+                    Some(v) => v,
+                    None => {
+                        let default = argument.default.as_ref().unwrap();
+                        let v = visitor.visit_expr_ref(default)?;
+                        visitor.without_slash(v, || Self::expr_span(default, span))?
+                    }
+                };
+                visitor
+                    .env
+                    .scopes_mut()
+                    .insert_var_last(argument.name, value.clone());
+                bound.push(value);
+            }
+
+            if declaration.rest.is_some() {
+                let rest = mem::take(&mut evaluated.positional);
+                let were_keywords_accessed = Rc::new(Cell::new(false));
+                let arg_list = ArgList::new(
+                    rest,
+                    were_keywords_accessed,
+                    evaluated.named.clone(),
+                    if evaluated.separator == ListSeparator::Undecided {
+                        ListSeparator::Comma
+                    } else {
+                        evaluated.separator
+                    },
+                );
+                bound.push(Value::ArgList(arg_list));
+            }
+
+            Ok(ArgumentResult {
+                positional: bound,
+                named: SmallOrderedMap::default(),
+                separator: evaluated.separator,
+                span: evaluated.span,
+                touched: FxHashSet::default(),
+            })
+        })
+    }
+
     fn import_like_node(
         &mut self,
         url: &str,
@@ -4403,7 +4546,13 @@ impl<'a> Visitor<'a> {
         match func {
             SassFunction::Builtin(func, _name) => {
                 let evaluated = self.eval_maybe_args(arguments, span)?;
-                let val = func.0(evaluated, self)?;
+                let val = match &func.0 {
+                    BuiltinFn::Static(f) => f(evaluated, self)?,
+                    BuiltinFn::Dynamic { f, signature } => {
+                        let bound = self.bind_dynamic_args(signature.as_ref(), evaluated, span)?;
+                        f(bound, self)?
+                    }
+                };
                 self.without_slash(val, || span)
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
