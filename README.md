@@ -107,13 +107,11 @@ same range-fatalization behavior as the CLI's version form.
 
 ## Custom Builtin Functions
 
-Rust functions can be registered as Sass builtins through the lower-level `grass_compiler` crate (the
-crate that `grass` itself is built on), which exposes `Options::add_custom_fn` and `Builtin` behind its
-default-enabled `custom-builtin-fns` feature. This is not currently re-exported through the `grass`
-crate's own API, so it requires depending on `grass_compiler` directly:
+Rust functions can be registered as Sass builtins via `Options::add_custom_fn` and `Builtin`,
+re-exported from `grass` behind its default-enabled `custom-builtin-fns` feature:
 
 ```rust
-use grass_compiler::{
+use grass::{
     sass_value::{ArgumentResult, SassNumber, Value},
     Builtin, Options, Result as SassResult, Visitor,
 };
@@ -129,11 +127,14 @@ fn length(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> 
 
 fn main() {
     let options = Options::default().add_custom_fn("length", Builtin::new(length));
-    let css = grass_compiler::from_string("a { color: length([a, b]); }", &options).unwrap();
+    let css = grass::from_string("a { color: length([a, b]); }".to_owned(), &options).unwrap();
 
     assert_eq!(css, "a {\n  color: 4;\n}\n");
 }
 ```
+
+The same types are also available directly from the lower-level `grass_compiler` crate (the crate
+that `grass` itself is built on), which is useful if you depend on it directly instead of `grass`.
 
 ## Testing
 
