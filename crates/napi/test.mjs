@@ -287,20 +287,178 @@ assert.throws(() =>
   assert.throws(() => binding.compileString("a { b: bad-return(); }", opts));
 }
 
-// `functions` + `compileAsync`/`compileStringAsync`: not yet supported
-// (todo #221 slice 2 — see functions.rs's module doc comment), rejected
-// synchronously with a clear error rather than silently ignored or
-// (unsoundly) executed off the JS thread.
+// --- `functions` + async entry points (todo #221 slice 3) -------------
+
+// Small helper: race a promise against a timeout so a genuine deadlock in
+// the code under test reports as a clear failure line instead of a hung
+// `node test.mjs` process (per the slice 3 brief's probe requirements).
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`TIMEOUT (${ms}ms): ${label}`)), ms),
+    ),
+  ]);
+}
+
+// 1. BASELINE: a single compileStringAsync (await) with a sync JS function
+// doing unit-preserving numeric work.
 {
-  const opts = { functions: { "noop()": () => null } };
-  assert.throws(
-    () => binding.compileAsync("a { b: c }", opts),
-    /functions is not yet supported with compileAsync/,
+  const opts = {
+    functions: {
+      "double($n)": (args) => {
+        const n = args[0];
+        assert(n instanceof binding.SassNumber);
+        return new binding.SassNumber(n.value * 2, {
+          numeratorUnits: n.numeratorUnits,
+          denominatorUnits: n.denominatorUnits,
+        });
+      },
+    },
+  };
+  const r = await withTimeout(
+    binding.compileStringAsync("a { b: double(21px); }", opts),
+    10000,
+    "baseline async fn",
   );
-  assert.throws(
-    () => binding.compileStringAsync("a { b: c }", opts),
-    /functions is not yet supported with compileStringAsync/,
+  assert.equal(r.css, "a {\n  b: 42px;\n}\n");
+}
+
+// A thrown JS exception under compileAsync surfaces as a clean rejection
+// (not a hang, not a process abort).
+{
+  const opts = { functions: { "boom()": () => { throw new Error("kaboom"); } } };
+  await assert.rejects(
+    withTimeout(binding.compileStringAsync("a { b: boom(); }", opts), 10000, "throwing async fn"),
+    /kaboom/,
   );
+}
+
+// 2. CONCURRENCY: Promise.all of N=8 and N=16 concurrent compileStringAsync
+// calls (exceeding the 4-thread default libuv pool), each using a JS
+// function — all must resolve correctly. Also re-run once with
+// UV_THREADPOOL_SIZE=1 externally (see the slice 3 report) to stress worker
+// starvation — that variant isn't run automatically here since the env var
+// must be set before the process starts.
+async function probeConcurrency(n) {
+  const opts = { functions: { "id($n)": (args) => args[0] } };
+  const start = Date.now();
+  const promises = [];
+  for (let i = 0; i < n; i++) {
+    promises.push(binding.compileStringAsync(`a { b: id(${i}px); }`, opts));
+  }
+  const results = await withTimeout(Promise.all(promises), 20000, `concurrency N=${n}`);
+  const elapsed = Date.now() - start;
+  results.forEach((r, i) => assert.equal(r.css, `a {\n  b: ${i}px;\n}\n`));
+  console.log(`  concurrency N=${n}: PASS, elapsed=${elapsed}ms`);
+}
+await probeConcurrency(8);
+await probeConcurrency(16);
+
+// 3. RE-ENTRANCY.
+// 3a. A custom function whose JS body itself calls compileString (SYNC) —
+// expected safe: it's a plain nested synchronous call on the same thread.
+{
+  const opts = {
+    functions: {
+      "nested-sync()": () => {
+        const inner = binding.compileString("x { y: z }", null);
+        return new binding.SassString(inner.css.trim(), false);
+      },
+    },
+  };
+  const r = await withTimeout(
+    binding.compileStringAsync("a { b: nested-sync(); }", opts),
+    10000,
+    "sync re-entrancy",
+  );
+  assert.equal(r.css, "a {\n  b: x { y: z; };\n}\n");
+  console.log("  re-entrancy (sync nested compile): PASS");
+}
+
+// 3b. A custom function that calls compileStringAsync WITHOUT awaiting it
+// (the only shape a non-async custom function can use, since the custom
+// function itself must return synchronously) — must not deadlock; the
+// inner compile keeps running independently after the outer one returns.
+{
+  let innerSettled = false;
+  const opts = {
+    functions: {
+      "nested-async-fireforget()": () => {
+        binding
+          .compileStringAsync("x { y: z }", null)
+          .then(() => { innerSettled = true; })
+          .catch(() => { innerSettled = true; });
+        return new binding.SassString("started", false);
+      },
+    },
+  };
+  const r = await withTimeout(
+    binding.compileStringAsync("a { b: nested-async-fireforget(); }", opts),
+    10000,
+    "async re-entrancy (fire-and-forget)",
+  );
+  assert.equal(r.css, "a {\n  b: started;\n}\n");
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(innerSettled, true, "inner fire-and-forget compile should settle shortly after");
+  console.log("  re-entrancy (async nested compile, fire-and-forget): PASS");
+}
+
+// 3c. An ASYNC custom function that itself `await`s a nested
+// compileStringAsync — the prime deadlock candidate. Calling an `async`
+// function always returns a Promise synchronously (before any internal
+// `await` resumes), so this hits the Promise-return guard (case 4) before
+// ever reaching a wait on the nested compile — guarded, not hung.
+{
+  const opts = {
+    functions: {
+      "nested-async-awaited()": async () => {
+        const inner = await binding.compileStringAsync("x { y: z }", null);
+        return new binding.SassString(inner.css.trim(), false);
+      },
+    },
+  };
+  await assert.rejects(
+    withTimeout(
+      binding.compileStringAsync("a { b: nested-async-awaited(); }", opts),
+      10000,
+      "async re-entrancy (awaited) — must be guarded, not hang",
+    ),
+    /async custom functions returning a Promise are not yet supported/,
+  );
+  console.log("  re-entrancy (async nested compile, awaited): GUARDED (Promise-return error), no hang");
+}
+
+// 4. ASYNC JS FUNCTION returning a Promise directly (not via re-entrancy) —
+// must produce a clear, specific error, never hang and never mis-marshal
+// the Promise object as if it were a plain Sass value.
+{
+  const opts = { functions: { "async-fn()": async () => new binding.SassNumber(1) } };
+  await assert.rejects(
+    withTimeout(binding.compileStringAsync("a { b: async-fn(); }", opts), 10000, "async fn returning Promise"),
+    /async custom functions returning a Promise are not yet supported in compileAsync; use a synchronous function/,
+  );
+  console.log("  async-function-returns-Promise: GUARDED with clear error");
+}
+{
+  // A plain (non-async) function that manually returns a `new Promise(...)`
+  // — same guard, doesn't require the function to be declared `async`.
+  const opts = {
+    functions: { "manual-promise()": () => new Promise((resolve) => resolve(new binding.SassNumber(1))) },
+  };
+  await assert.rejects(
+    withTimeout(binding.compileStringAsync("a { b: manual-promise(); }", opts), 10000, "manual Promise return"),
+    /async custom functions returning a Promise are not yet supported/,
+  );
+  console.log("  manual-Promise-return: GUARDED with clear error");
+}
+
+// compile()/compileString() (sync) still work unchanged with `functions`
+// alongside the async entries above, confirming no cross-contamination
+// between the sync (Ref<JsFunction>) and async (ThreadsafeFunction) bridges.
+{
+  const opts = { functions: { "double($n)": (args) => new binding.SassNumber(args[0].value * 2) } };
+  assert.equal(binding.compileString("a { b: double(3); }", opts).css, "a {\n  b: 6;\n}\n");
 }
 
 console.log("ok");
