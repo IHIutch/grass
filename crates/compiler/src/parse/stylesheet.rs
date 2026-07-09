@@ -435,7 +435,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.set_consume_newlines(was_consuming_newlines);
 
         Ok(ArgumentDeclaration {
-            args: arguments,
+            args: self.arena().alloc_slice_fill_iter(arguments),
             rest: rest_argument,
         })
     }
@@ -908,7 +908,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace_without_comments();
 
         Ok(AstStmt::If(AstIf {
-            if_clauses: clauses,
+            if_clauses: self.arena().alloc_slice_fill_iter(clauses),
             else_clause: last_clause,
         }))
     }
@@ -1831,6 +1831,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         let config = self.parse_configuration(true)?;
+        let config: &'a [ConfiguredVariable<'a>] =
+            self.arena().alloc_slice_fill_iter(config.unwrap_or_default());
 
         self.expect_statement_separator(Some("@forward rule"))?;
         let span = self.toks_mut().span_from(start);
@@ -2076,10 +2078,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.expect_statement_separator(Some("@use rule"))?;
 
+        let configuration = self
+            .arena()
+            .alloc_slice_fill_iter(configuration.unwrap_or_default());
+
         Ok(AstStmt::Use(self.arena().alloc(AstUseRule {
             url: path,
             namespace,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         })))
     }

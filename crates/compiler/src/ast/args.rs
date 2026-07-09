@@ -20,14 +20,14 @@ pub struct Argument<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ArgumentDeclaration<'a> {
-    pub args: Vec<Argument<'a>>,
+    pub args: &'a [Argument<'a>],
     pub rest: Option<Identifier>,
 }
 
 impl<'a> ArgumentDeclaration<'a> {
     pub fn empty() -> Self {
         Self {
-            args: Vec::new(),
+            args: &[],
             rest: None,
         }
     }

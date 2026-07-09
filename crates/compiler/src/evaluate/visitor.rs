@@ -1134,7 +1134,7 @@ impl<'a> Visitor<'a> {
     /// Reference-based if-statement visitor.
     fn visit_if_stmt_ref(&mut self, if_stmt: &AstIf<'static>) -> SassResult<Option<Value>> {
         let mut matched_body: Option<&[AstStmt<'static>]> = None;
-        for clause in &if_stmt.if_clauses {
+        for clause in if_stmt.if_clauses {
             if self.visit_expr_ref(&clause.condition)?.is_truthy() {
                 matched_body = Some(clause.body);
                 break;
@@ -1321,7 +1321,7 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Rc<RefCell<Configuration>>> {
         let mut new_values = FxHashMap::from_iter((*config).borrow().values.iter());
 
-        for variable in &forward_rule.configuration {
+        for variable in forward_rule.configuration {
             if variable.is_guarded {
                 let old_value = (*config).borrow_mut().remove(variable.name.node);
 
@@ -2153,7 +2153,7 @@ impl<'a> Visitor<'a> {
             let mut values = FxHashMap::default();
 
             for var in use_rule.configuration {
-                let value = self.visit_expr(var.expr.node)?;
+                let value = self.visit_expr_ref(&var.expr.node)?;
                 let value = self.without_slash(value, || var.expr.span)?;
                 values.insert(
                     var.name.node,
@@ -5170,7 +5170,7 @@ impl<'a> Visitor<'a> {
             return self.without_slash(value, || span);
         }
 
-        if_arguments().verify(if_expr.0.positional.len(), if_expr.0.named, if_expr.0.span)?;
+        if_arguments(self.arena).verify(if_expr.0.positional.len(), if_expr.0.named, if_expr.0.span)?;
 
         let positional = if_expr.0.positional;
         let named = if_expr.0.named;

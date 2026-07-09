@@ -2,11 +2,14 @@ use compact_str::CompactString;
 
 use crate::builtin::builtin_imports::*;
 
-// todo: this should be a constant of some sort. we shouldn't be allocating this
-// every time
-pub(crate) fn if_arguments() -> ArgumentDeclaration<'static> {
+/// `AstExpr` (via `Argument::default`) holds `Rc<Color>`, so this can't be a
+/// `static`/`LazyLock` (not `Sync`) -- the caller's own arena is used
+/// instead, matching how the rest of the AST is allocated (see Plan 091 /
+/// todo #276): the three `Argument`s die with the arena's chunk rather than
+/// leaking a fresh heap `Vec` on every call, as the old code did.
+pub(crate) fn if_arguments<'a>(arena: &'a bumpalo::Bump) -> ArgumentDeclaration<'a> {
     ArgumentDeclaration {
-        args: vec![
+        args: arena.alloc_slice_fill_iter(vec![
             Argument {
                 name: Identifier::from("condition"),
                 default: None,
@@ -19,7 +22,7 @@ pub(crate) fn if_arguments() -> ArgumentDeclaration<'static> {
                 name: Identifier::from("if-false"),
                 default: None,
             },
-        ],
+        ]),
         rest: None,
     }
 }

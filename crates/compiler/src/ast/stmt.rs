@@ -36,7 +36,7 @@ pub struct AstSassImport {
 
 #[derive(Debug, Clone)]
 pub struct AstIf<'a> {
-    pub if_clauses: Vec<AstIfClause<'a>>,
+    pub if_clauses: &'a [AstIfClause<'a>],
     pub else_clause: Option<&'a [AstStmt<'a>]>,
 }
 
@@ -289,7 +289,7 @@ impl<'a> AstImport<'a> {
 pub struct AstUseRule<'a> {
     pub url: PathBuf,
     pub namespace: Option<String>,
-    pub configuration: Vec<ConfiguredVariable<'a>>,
+    pub configuration: &'a [ConfiguredVariable<'a>],
     pub span: Span,
 }
 
@@ -433,7 +433,7 @@ pub struct AstForwardRule<'a> {
     pub hidden_mixins_and_functions: Option<FxHashSet<Identifier>>,
     pub hidden_variables: Option<FxHashSet<Identifier>>,
     pub prefix: Option<String>,
-    pub configuration: Vec<ConfiguredVariable<'a>>,
+    pub configuration: &'a [ConfiguredVariable<'a>],
     pub span: Span,
 }
 
@@ -441,7 +441,7 @@ impl<'a> AstForwardRule<'a> {
     pub fn new(
         url: PathBuf,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable<'a>>>,
+        configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
     ) -> Self {
         Self {
@@ -451,7 +451,7 @@ impl<'a> AstForwardRule<'a> {
             hidden_mixins_and_functions: None,
             hidden_variables: None,
             prefix,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         }
     }
@@ -461,7 +461,7 @@ impl<'a> AstForwardRule<'a> {
         shown_mixins_and_functions: FxHashSet<Identifier>,
         shown_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable<'a>>>,
+        configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
     ) -> Self {
         Self {
@@ -471,7 +471,7 @@ impl<'a> AstForwardRule<'a> {
             hidden_mixins_and_functions: None,
             hidden_variables: None,
             prefix,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         }
     }
@@ -481,7 +481,7 @@ impl<'a> AstForwardRule<'a> {
         hidden_mixins_and_functions: FxHashSet<Identifier>,
         hidden_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable<'a>>>,
+        configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
     ) -> Self {
         Self {
@@ -491,7 +491,7 @@ impl<'a> AstForwardRule<'a> {
             hidden_mixins_and_functions: Some(hidden_mixins_and_functions),
             hidden_variables: Some(hidden_variables),
             prefix,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         }
     }
@@ -639,7 +639,7 @@ fn collect_globals_from_stmt<'a>(stmt: &AstStmt<'a>, globals: &mut FxHashSet<Ide
             }
         }
         AstStmt::If(if_stmt) => {
-            for clause in &if_stmt.if_clauses {
+            for clause in if_stmt.if_clauses {
                 collect_globals_from_stmts(clause.body, globals);
             }
             if let Some(else_clause) = &if_stmt.else_clause {
