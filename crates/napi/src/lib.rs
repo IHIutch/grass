@@ -1,6 +1,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use std::collections::HashMap;
+
 use napi::bindgen_prelude::*;
 use napi::Task;
 use napi_derive::napi;
@@ -9,6 +11,11 @@ use grass_compiler::{
     from_path_with_source_map, from_string_with_source_map, Deprecation, Options, OutputStyle,
     SourceMapData,
 };
+
+mod functions;
+mod values;
+
+pub use values::{SassList, SassNumber, SassNumberUnits, SassString};
 
 /// A Dart Sass compiler version, per the Sass JS API's `Version` class
 /// (`major`/`minor`/`patch`, e.g. `new sass.Version(1, 95, 0)`).
@@ -30,7 +37,12 @@ pub struct DeprecationVersion {
     pub patch: u16,
 }
 
-#[napi(object)]
+// `object_to_js = false`: `CompileOptions` is only ever received from JS,
+// never returned to it. This matters because `functions` (added below)
+// holds a `JsFunctionRef`, which only implements `FromNapiValue` (see
+// `functions.rs`) — a `ToNapiValue` impl would need a way to hand a live
+// callback *back* to JS as a plain value, which nothing here needs.
+#[napi(object, object_to_js = false)]
 pub struct CompileOptions {
     pub style: Option<String>,
     pub load_paths: Option<Vec<String>>,
@@ -67,6 +79,22 @@ pub struct CompileOptions {
     /// `sourcesContent`, per the Sass JS API's `sourceMapIncludeSources`
     /// option. Has no effect unless `sourceMap` is also `true`.
     pub source_map_include_sources: Option<bool>,
+    /// Custom Sass functions callable from stylesheets, per the Sass JS
+    /// API's `functions` option (todo #221 slice 2). Keys are full function
+    /// signatures (e.g. `"sum($a, $b)"` — the same grammar as an
+    /// `@function` parameter list, including `$rest...`); values are JS
+    /// callbacks invoked with pre-bound, declaration-ordered arguments. See
+    /// `SassNumber`/`SassString`/`SassList` for the supported argument/
+    /// return value shapes — `SassColor`/`SassMap`/`SassCalculation`/
+    /// `SassFunction`/`SassMixin` are not yet supported and produce a clear
+    /// compile error if a callback receives or returns one.
+    ///
+    /// Only `compile`/`compileString` support this option.
+    /// `compileAsync`/`compileStringAsync` reject it with a runtime error
+    /// (see `crates/napi/src/functions.rs`'s module doc comment for why —
+    /// the sync calling convention used here is not sound off the JS
+    /// thread).
+    pub functions: Option<HashMap<String, functions::JsFunctionRef>>,
 }
 
 #[napi(object)]
@@ -203,6 +231,22 @@ fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>>
     Ok(options)
 }
 
+/// Pops `functions` off of `options` (if present) and registers each entry
+/// onto `opts` via the sync-only bridge (`functions.rs`). Only safe to call
+/// from `compile`/`compileString` — see `functions.rs`'s module doc
+/// comment.
+fn build_options_with_functions(
+    mut options: Option<CompileOptions>,
+) -> napi::Result<Options<'static>> {
+    let funcs = options.as_mut().and_then(|o| o.functions.take());
+    let opts = build_options(options)?;
+
+    match funcs {
+        Some(f) if !f.is_empty() => functions::register_functions(opts, f),
+        _ => Ok(opts),
+    }
+}
+
 #[napi]
 pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<CompileResult> {
     catch(|| {
@@ -210,7 +254,7 @@ pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<Co
             .as_ref()
             .and_then(|o| o.source_map_include_sources)
             .unwrap_or(false);
-        let opts = build_options(options)?;
+        let opts = build_options_with_functions(options)?;
 
         let (css, map) = from_path_with_source_map(&path, &opts)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -232,7 +276,7 @@ pub fn compile_string(
             .as_ref()
             .and_then(|o| o.source_map_include_sources)
             .unwrap_or(false);
-        let opts = build_options(options)?;
+        let opts = build_options_with_functions(options)?;
 
         // `from_string_with_source_map` produces a `data:` URL `sources`
         // entry (matching `compileString` without a `url` option — see
@@ -307,25 +351,52 @@ impl Task for CompileStringTask {
     }
 }
 
+/// `functions` isn't supported off the JS thread yet (todo #221 slice 2 —
+/// see `functions.rs`'s module doc comment for why the sync calling
+/// convention doesn't extend to `Task::compute()`, which runs on a libuv
+/// worker thread with no `Env`). Slice 3 is the real async bridge
+/// (`ThreadsafeFunction` + a blocking channel round trip).
+fn reject_functions_for_async(options: &Option<CompileOptions>, fn_name: &str) -> napi::Result<()> {
+    let has_functions = options
+        .as_ref()
+        .and_then(|o| o.functions.as_ref())
+        .is_some_and(|f| !f.is_empty());
+
+    if has_functions {
+        return Err(napi::Error::from_reason(format!(
+            "functions is not yet supported with {fn_name}"
+        )));
+    }
+
+    Ok(())
+}
+
 #[napi(ts_return_type = "Promise<CompileResult>")]
-pub fn compile_async(path: String, options: Option<CompileOptions>) -> AsyncTask<CompileTask> {
+pub fn compile_async(
+    path: String,
+    options: Option<CompileOptions>,
+) -> napi::Result<AsyncTask<CompileTask>> {
+    reject_functions_for_async(&options, "compileAsync")?;
+
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
-    AsyncTask::new(CompileTask { path, options, include_sources })
+    Ok(AsyncTask::new(CompileTask { path, options, include_sources }))
 }
 
 #[napi(ts_return_type = "Promise<CompileResult>")]
 pub fn compile_string_async(
     source: String,
     options: Option<CompileOptions>,
-) -> AsyncTask<CompileStringTask> {
+) -> napi::Result<AsyncTask<CompileStringTask>> {
+    reject_functions_for_async(&options, "compileStringAsync")?;
+
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
-    AsyncTask::new(CompileStringTask { source, options, include_sources })
+    Ok(AsyncTask::new(CompileStringTask { source, options, include_sources }))
 }
 
 #[cfg(test)]
@@ -343,6 +414,7 @@ mod tests {
             future_deprecations: None,
             source_map: None,
             source_map_include_sources: None,
+            functions: None,
         }
     }
 
