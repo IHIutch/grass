@@ -36,6 +36,27 @@ pub enum ImportResolution {
     NotFound,
 }
 
+/// The result of resolving a load-rule URL to an actual source, returned by
+/// [`Visitor::find_import`](crate::evaluate::Visitor::find_import). Unlike
+/// [`ImportResolution`] (an individual [`Importer`]'s answer), this is the
+/// final outcome of the whole resolution chain (custom importers, then the
+/// default filesystem/load-path candidate search).
+#[derive(Debug, Clone)]
+pub enum ImportSource {
+    /// A real file on disk, found via the default filesystem/load-path
+    /// search or an [`ImportResolution::DelegateToPath`] importer result.
+    /// Read and parsed the usual way (`Fs::read` + `InputSyntax::for_path`).
+    Path(PathBuf),
+    /// Inline contents from an [`ImportResolution::Resolved`] importer
+    /// result. Parsed directly under `syntax`, bypassing `Fs` entirely, and
+    /// cached by `canonical_url` rather than a filesystem path.
+    Resolved {
+        canonical_url: String,
+        contents: String,
+        syntax: InputSyntax,
+    },
+}
+
 /// A hook allowing custom resolution of `@use`/`@forward`/`@import` URLs,
 /// checked in [`Options`](crate::Options) registration order ahead of the
 /// default filesystem/load-path resolution.

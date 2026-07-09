@@ -31,7 +31,7 @@ use crate::{
         UnaryOp,
     },
     error::SassResult,
-    importer::ImportResolution,
+    importer::{ImportResolution, ImportSource},
     interner::InternedString,
     lexer::Lexer,
     parse::{
@@ -225,6 +225,17 @@ pub(crate) struct CallableContentBlock {
     env: Environment,
 }
 
+/// Key for `Visitor::import_cache`. A real filesystem path and an
+/// importer-supplied canonical URL string live in separate variants so a
+/// `scheme:foo`-style canonical URL can never collide with (and shadow) a
+/// real file path that happens to have the same text — see
+/// `ImportSource::Resolved`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImportKey {
+    Path(PathBuf),
+    Url(String),
+}
+
 /// Evaluation context of the current execution
 #[derive(Debug)]
 pub struct Visitor<'a> {
@@ -306,14 +317,14 @@ pub struct Visitor<'a> {
     pub(crate) arena: &'a bumpalo::Bump,
     // todo: remove
     empty_span: Span,
-    import_cache: FxHashMap<PathBuf, StyleSheet<'static>>,
+    import_cache: FxHashMap<ImportKey, StyleSheet<'static>>,
     /// As a simple heuristic, we don't cache the results of an import unless it
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
     files_seen: FxHashSet<PathBuf>,
     /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
     /// Avoids redundant filesystem probing for the same import path from the same context.
-    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
+    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<ImportSource>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
     /// Cache of directory listings, used to batch existence probes for many
@@ -594,7 +605,12 @@ impl<'a> Visitor<'a> {
     pub(crate) fn loaded_files(&self) -> Vec<PathBuf> {
         let mut files: FxHashSet<PathBuf> = FxHashSet::default();
         files.extend(self.modules.keys().cloned());
-        files.extend(self.import_cache.keys().cloned());
+        // `ImportKey::Url` entries are importer-supplied canonical URLs, not
+        // real files on disk — they have no filesystem path to report here.
+        files.extend(self.import_cache.keys().filter_map(|key| match key {
+            ImportKey::Path(p) => Some(p.clone()),
+            ImportKey::Url(_) => None,
+        }));
         files.extend(self.files_seen.iter().cloned());
         let mut files: Vec<PathBuf> = files.into_iter().collect();
         files.sort_unstable();
@@ -2261,7 +2277,7 @@ impl<'a> Visitor<'a> {
         path: &Path,
         for_import: bool,
         span: Span,
-    ) -> SassResult<Option<PathBuf>> {
+    ) -> SassResult<Option<ImportSource>> {
         // Cache key must include the import context (parent dir of current file)
         // because the same relative path resolves differently from different files
         let context_dir = self
@@ -2313,7 +2329,7 @@ impl<'a> Visitor<'a> {
         path: &Path,
         for_import: bool,
         span: Span,
-    ) -> SassResult<Option<PathBuf>> {
+    ) -> SassResult<Option<ImportSource>> {
         let path_buf = if path.is_absolute() {
             Self::normalize_path(path)
         } else {
@@ -2473,7 +2489,7 @@ impl<'a> Visitor<'a> {
                         if let Some(found) =
                             resolve_with_conflicts(&delegate_path, for_import, context_dir, span)?
                         {
-                            return Ok(Some(found));
+                            return Ok(Some(ImportSource::Path(found)));
                         }
                         if self.is_dir_fast(&delegate_path) {
                             if let Some(found) = resolve_with_conflicts(
@@ -2482,24 +2498,27 @@ impl<'a> Visitor<'a> {
                                 context_dir,
                                 span,
                             )? {
-                                return Ok(Some(found));
+                                return Ok(Some(ImportSource::Path(found)));
                             }
                         }
                         Ok(None)
                     }
-                    ImportResolution::Resolved { .. } => {
-                        // A full `Importer` (canonicalize+load) result.
-                        // Nothing registers one yet in this slice (only a
-                        // `FileImporter`, which can only ever produce
-                        // `DelegateToPath`/`NotFound`) — closing this gap
-                        // for real (todo #221 slice 5) needs
-                        // `find_import`'s `Option<PathBuf>` return type (or
-                        // a sibling method) to grow a third case that lets
-                        // `import_like_node` bypass `Fs`/path-based parsing
-                        // entirely: parse `contents` directly under
-                        // `syntax` and cache the resulting stylesheet under
-                        // `canonical_url` instead of a `PathBuf` key.
-                        Ok(None)
+                    ImportResolution::Resolved {
+                        canonical_url,
+                        contents,
+                        syntax,
+                    } => {
+                        // A full `Importer` (canonicalize+load) result:
+                        // bypasses `Fs`/path-based parsing entirely.
+                        // `import_like_node` parses `contents` directly
+                        // under `syntax` and caches the resulting
+                        // stylesheet under `canonical_url` (see
+                        // `ImportKey::Url`) rather than a filesystem path.
+                        Ok(Some(ImportSource::Resolved {
+                            canonical_url,
+                            contents,
+                            syntax,
+                        }))
                     }
                     ImportResolution::NotFound => {
                         unreachable!("resolve_via_importers filters out NotFound")
@@ -2520,12 +2539,16 @@ impl<'a> Visitor<'a> {
                 ));
             }
             candidates.extend(path_candidates(path_buf));
-            return Ok(self.options.fs.resolve_first_existing(&candidates));
+            return Ok(self
+                .options
+                .fs
+                .resolve_first_existing(&candidates)
+                .map(ImportSource::Path));
         }
 
         // Check base path with conflict detection
         if let Some(found) = resolve_with_conflicts(&path_buf, for_import, context_dir, span)? {
-            return Ok(Some(found));
+            return Ok(Some(ImportSource::Path(found)));
         }
 
         // Also check index files
@@ -2533,7 +2556,7 @@ impl<'a> Visitor<'a> {
             if let Some(found) =
                 resolve_with_conflicts(&path_buf.join("index"), for_import, context_dir, span)?
             {
-                return Ok(Some(found));
+                return Ok(Some(ImportSource::Path(found)));
             }
         }
 
@@ -2544,7 +2567,7 @@ impl<'a> Visitor<'a> {
             if let Some(found) =
                 resolve_with_conflicts(&lp_buf, for_import, context_dir, span)?
             {
-                return Ok(Some(found));
+                return Ok(Some(ImportSource::Path(found)));
             }
 
             if self.is_dir_fast(&lp_buf) {
@@ -2554,7 +2577,7 @@ impl<'a> Visitor<'a> {
                     context_dir,
                     span,
                 )? {
-                    return Ok(Some(found));
+                    return Ok(Some(ImportSource::Path(found)));
                 }
             }
         }
@@ -2568,7 +2591,21 @@ impl<'a> Visitor<'a> {
         path: &Path,
         empty_span: Span,
     ) -> SassResult<StyleSheet<'static>> {
-        let result = match InputSyntax::for_path(path) {
+        self.parse_file_with_syntax(lexer, path, empty_span, InputSyntax::for_path(path))
+    }
+
+    /// Like `parse_file`, but takes an explicit `syntax` instead of
+    /// inferring one from `path`'s extension — used by `import_like_node`'s
+    /// `ImportSource::Resolved` arm, where `path` is a synthetic
+    /// (non-filesystem) canonical URL with no meaningful extension.
+    fn parse_file_with_syntax(
+        &mut self,
+        lexer: Lexer,
+        path: &Path,
+        empty_span: Span,
+        syntax: InputSyntax,
+    ) -> SassResult<StyleSheet<'static>> {
+        let result = match syntax {
             InputSyntax::Scss => ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
             InputSyntax::Sass => SassParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
             InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
@@ -2716,36 +2753,83 @@ impl<'a> Visitor<'a> {
         for_import: bool,
         span: Span,
     ) -> SassResult<StyleSheet<'static>> {
-        if let Some(name) = self.find_import(url.as_ref(), for_import, span)? {
-            let name = self.canonicalize(&name);
-            if let Some(style_sheet) = self.import_cache.get(&name) {
-                return Ok(style_sheet.clone());
+        match self.find_import(url.as_ref(), for_import, span)? {
+            Some(ImportSource::Path(name)) => {
+                let name = self.canonicalize(&name);
+                if let Some(style_sheet) = self.import_cache.get(&ImportKey::Path(name.clone())) {
+                    return Ok(style_sheet.clone());
+                }
+
+                let file = self.map.add_file(
+                    name.to_string_lossy().into(),
+                    String::from_utf8(self.options.fs.read(&name)?)?,
+                );
+
+                let old_is_use_allowed = self.flags.is_use_allowed();
+                self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
+
+                let style_sheet = self.parse_file(
+                    Lexer::new_from_file(&file),
+                    &name,
+                    file.span.subspan(0, 0),
+                )?;
+
+                self.flags
+                    .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
+
+                if self.files_seen.contains(&name) {
+                    self.import_cache
+                        .insert(ImportKey::Path(name), style_sheet.clone());
+                } else {
+                    self.files_seen.insert(name);
+                }
+
+                Ok(style_sheet)
             }
+            Some(ImportSource::Resolved {
+                canonical_url,
+                contents,
+                syntax,
+            }) => {
+                let key = ImportKey::Url(canonical_url.clone());
+                if let Some(style_sheet) = self.import_cache.get(&key) {
+                    return Ok(style_sheet.clone());
+                }
 
-            let file = self.map.add_file(
-                name.to_string_lossy().into(),
-                String::from_utf8(self.options.fs.read(&name)?)?,
-            );
+                // Synthetic, non-filesystem path used only as the parsed
+                // stylesheet's `url` (diagnostics, and the `@use`/`@forward`
+                // module-cache key in `Visitor::modules`) -- never read
+                // from disk, `contents` is parsed directly instead.
+                let synthetic_path = PathBuf::from(&canonical_url);
 
-            let old_is_use_allowed = self.flags.is_use_allowed();
-            self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
+                let file = self.map.add_file(canonical_url.clone(), contents);
 
-            let style_sheet =
-                self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
+                let old_is_use_allowed = self.flags.is_use_allowed();
+                self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-            self.flags
-                .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
+                let style_sheet = self.parse_file_with_syntax(
+                    Lexer::new_from_file(&file),
+                    &synthetic_path,
+                    file.span.subspan(0, 0),
+                    syntax,
+                )?;
 
-            if self.files_seen.contains(&name) {
-                self.import_cache.insert(name, style_sheet.clone());
-            } else {
-                self.files_seen.insert(name);
+                self.flags
+                    .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
+
+                // Unlike `Path` imports (lazily cached only from a file's
+                // *second* import, see `files_seen` above), `Resolved`
+                // imports are always cached on first sight: the same
+                // canonical URL resolving to the same module is a
+                // correctness requirement (design doc §1.2, "same
+                // canonical URL -> same cached module"), not just a perf
+                // heuristic.
+                self.import_cache.insert(key, style_sheet.clone());
+
+                Ok(style_sheet)
             }
-
-            return Ok(style_sheet);
+            None => Err(("Can't find stylesheet to import.", span).into()),
         }
-
-        Err(("Can't find stylesheet to import.", span).into())
     }
 
     pub(crate) fn load_style_sheet(

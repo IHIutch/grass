@@ -67,7 +67,8 @@ grass input.scss
 
 pub use grass_compiler::{
     from_path, from_path_with_source_map, from_string, from_string_with_source_map, Deprecation,
-    Error, ErrorKind, Fs, ImportResolution, Importer, InputSyntax, Logger, NullFs, NullLogger,
+    Error, ErrorKind, Fs, ImportResolution, ImportSource, Importer, InputSyntax, Logger, NullFs,
+    NullLogger,
     Options, OutputStyle, Result, SourceMapData, StdFs, StdLogger,
 };
 
