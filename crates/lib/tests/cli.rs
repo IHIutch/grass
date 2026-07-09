@@ -69,6 +69,36 @@ fn stdin_compressed() {
     assert_eq!(output.stdout, b"a{b:c}\n");
 }
 
+// Regression test for todo #200: `grass --stdin <file>` must read the
+// stylesheet from stdin and WRITE the compiled CSS to <file> (dart-sass
+// behavior: `printf 'a{b:c}' | npx sass@1.97.3 --stdin out.css` writes
+// "a {\n  b: c;\n}\n" to out.css). Before the fix, the lone positional was
+// bound to INPUT and grass tried to READ it, failing with
+// "No such file or directory". --no-source-map keeps the file contents equal
+// to the plain expanded output (file output otherwise defaults source maps on
+// and would append a sourceMappingURL comment). The CSS content itself is the
+// same ground-truth-verified output as `stdin_expanded` above.
+#[test]
+fn stdin_writes_to_output_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let out_path = dir.path().join("out.css");
+
+    let output = run_with_stdin(
+        &["--stdin", "--no-source-map", out_path.to_str().unwrap()],
+        "a { b: c }",
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // With an output file given, nothing is written to stdout.
+    assert!(output.stdout.is_empty(), "stdout: {:?}", output.stdout);
+
+    let file_contents = std::fs::read_to_string(&out_path).unwrap();
+    assert_eq!(file_contents, "a {\n  b: c;\n}\n");
+}
+
 // Ground truth verified with dart-sass 1.97.3:
 //   printf 'a { b: ' | npx sass@1.97.3 --stdin --style=expanded
 //   -> exit 65, stderr "Error: Expected expression." (+ span), empty stdout

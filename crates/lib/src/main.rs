@@ -576,7 +576,26 @@ fn main() -> std::io::Result<()> {
         Style::Compressed => OutputStyle::Compressed,
     };
 
-    let output_arg = matches.get_one::<String>("OUTPUT");
+    let use_stdin = matches.get_flag("STDIN");
+
+    // clap fills the INPUT positional slot before OUTPUT, but with `--stdin`
+    // the stylesheet comes from stdin, so a lone trailing positional is really
+    // the OUTPUT file (dart-sass: `sass --stdin out.css` writes to out.css),
+    // NOT an input path. Re-map the positionals here.
+    let (input_arg, output_arg): (Option<&String>, Option<&String>) = if use_stdin {
+        // No input path under --stdin. The positional clap parsed into INPUT is
+        // the output target (prefer an explicit second positional if one landed
+        // in OUTPUT, matching clap's declaration order).
+        let output = matches
+            .get_one::<String>("OUTPUT")
+            .or_else(|| matches.get_one::<String>("INPUT"));
+        (None, output)
+    } else {
+        (
+            matches.get_one::<String>("INPUT"),
+            matches.get_one::<String>("OUTPUT"),
+        )
+    };
     let writing_to_stdout = output_arg.is_none();
     let watch = matches.get_flag("WATCH");
 
@@ -586,7 +605,7 @@ fn main() -> std::io::Result<()> {
     // ignoring --watch. grass exits 1 (its own convention for CLI-level
     // usage failures; see `error_exit_code`) but matches the message text
     // and the "hard failure before compilation" behavior.
-    if watch && matches.get_flag("STDIN") {
+    if watch && use_stdin {
         eprintln!("--watch is not allowed with --stdin.");
         std::process::exit(1);
     }
@@ -644,7 +663,8 @@ fn main() -> std::io::Result<()> {
     if watch {
         // Validated above: watch requires a real INPUT path and a real
         // OUTPUT file target (never --stdin, never stdout).
-        let input = matches.get_one::<String>("INPUT").expect("required_unless_present(STDIN)");
+        let input = input_arg
+            .expect("required_unless_present(STDIN); non-stdin guaranteed by --watch reject above");
         let output = output_arg.expect("writing_to_stdout rejected above");
         return watch::run(watch::WatchArgs {
             input,
@@ -656,9 +676,9 @@ fn main() -> std::io::Result<()> {
         });
     }
 
-    let compile_result = if let Some(name) = matches.get_one::<String>("INPUT") {
+    let compile_result = if let Some(name) = input_arg {
         from_path_with_source_map(name, options)
-    } else if matches.get_flag("STDIN") {
+    } else if use_stdin {
         from_string_with_source_map(
             {
                 let mut buffer = String::new();
