@@ -24,7 +24,7 @@ mod value;
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum DeclarationOrBuffer<'a> {
     Stmt(AstStmt<'a>),
-    Buffer(Interpolation<'a>),
+    Buffer(InterpolationBuilder<'a>),
 }
 
 /// Names that functions are not allowed to have
@@ -42,5 +42,5 @@ pub(super) const RESERVED_IDENTIFIERS: [&str; 8] = [
 #[derive(Debug, Clone)]
 pub(crate) enum VariableDeclOrInterpolation<'a> {
     VariableDecl(AstVariableDecl<'a>),
-    Interpolation(Interpolation<'a>),
+    Interpolation(InterpolationBuilder<'a>),
 }

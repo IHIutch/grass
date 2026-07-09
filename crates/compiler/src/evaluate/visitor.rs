@@ -1448,12 +1448,12 @@ impl<'a> Visitor<'a> {
             }
             AstSupportsCondition::Function { name, args } => Ok(format!(
                 "{}({})",
-                self.perform_interpolation(name.clone(), false)?,
-                self.perform_interpolation(args.clone(), false)?
+                self.perform_interpolation_ref(name, false)?,
+                self.perform_interpolation_ref(args, false)?
             )),
             AstSupportsCondition::Anything { contents } => Ok(format!(
                 "({})",
-                self.perform_interpolation(contents.clone(), false)?,
+                self.perform_interpolation_ref(contents, false)?,
             )),
         }
     }
@@ -2844,9 +2844,9 @@ impl<'a> Visitor<'a> {
     }
 
     fn visit_at_root_rule(&mut self, mut at_root_rule: AstAtRootRule<'static>) -> SassResult<Option<Value>> {
-        let query = match at_root_rule.query.clone() {
+        let query = match at_root_rule.query {
             Some(query) => {
-                let resolved = self.perform_interpolation(query.node, true)?;
+                let resolved = self.perform_interpolation_ref(&query.node, true)?;
 
                 let span = query.span;
 
@@ -4040,7 +4040,7 @@ impl<'a> Visitor<'a> {
         // default=false
         warn_for_color: bool,
     ) -> SassResult<String> {
-        let result = self.perform_interpolation(interpolation, warn_for_color)?;
+        let result = self.perform_interpolation_ref(&interpolation, warn_for_color)?;
 
         Ok(if trim {
             trim_ascii(&result, true).to_owned()
@@ -4074,42 +4074,6 @@ impl<'a> Visitor<'a> {
                     InterpolationPart::Expr(e) => {
                         let span = e.span;
                         let result = self.visit_expr_ref(&e.node)?;
-                        self.serialize(result, QuoteKind::None, span)
-                    }
-                })
-                .collect::<SassResult<String>>()?,
-        };
-
-        Ok(result)
-    }
-
-    fn perform_interpolation(
-        &mut self,
-        mut interpolation: Interpolation<'static>,
-        // todo check to emit warning if this is true
-        _warn_for_color: bool,
-    ) -> SassResult<String> {
-        let result = match interpolation.contents.len() {
-            0 => String::new(),
-            1 => match interpolation.contents.pop() {
-                Some(InterpolationPart::String(s)) => s,
-                Some(InterpolationPart::Expr(e)) => {
-                    let span = e.span;
-                    let result = self.visit_expr(e.node)?;
-                    // todo: span for specific expr
-                    self.serialize(result, QuoteKind::None, span)?
-                }
-                None => unreachable!(),
-            },
-            _ => interpolation
-                .contents
-                .into_iter()
-                .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s),
-                    InterpolationPart::Expr(e) => {
-                        let span = e.span;
-                        let result = self.visit_expr(e.node)?;
-                        // todo: span for specific expr
                         self.serialize(result, QuoteKind::None, span)
                     }
                 })
@@ -5451,7 +5415,7 @@ impl<'a> Visitor<'a> {
                 let text = self.perform_interpolation_ref(interp, false)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
                     IfConditionAtom::Css(
-                        Interpolation::new_plain(text),
+                        unsafe { crate::ast::erase_interpolation_lifetime(InterpolationBuilder::new_plain(text).finish(self.arena)) },
                         *span,
                     ),
                 )))
@@ -5461,7 +5425,7 @@ impl<'a> Visitor<'a> {
                 let text = self.serialize(value, QuoteKind::None, *span)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
                     IfConditionAtom::Css(
-                        Interpolation::new_plain(text),
+                        unsafe { crate::ast::erase_interpolation_lifetime(InterpolationBuilder::new_plain(text).finish(self.arena)) },
                         *span,
                     ),
                 )))

@@ -477,10 +477,12 @@ fn try_extend_with_raw<'a>(
 ) -> SassResult<IfCondition<'a>> {
     let (first_interp, first_span) = match first {
         IfCondition::Atom(IfConditionAtom::Css(interp, span))
-        | IfCondition::Atom(IfConditionAtom::CssRaw(interp, span)) => (interp, span),
+        | IfCondition::Atom(IfConditionAtom::CssRaw(interp, span)) => {
+            (InterpolationBuilder::from_interpolation(interp), span)
+        }
         IfCondition::Atom(IfConditionAtom::Interp(expr, span)) => {
             // Convert interpolation to a CSS atom with an interpolation expression
-            let mut interp = Interpolation::new();
+            let mut interp = InterpolationBuilder::new();
             interp.add_expr(Spanned { node: expr, span });
             (interp, span)
         }
@@ -649,10 +651,16 @@ fn try_extend_with_raw<'a>(
     }
 
     if !has_extra {
-        return Ok(IfCondition::Atom(IfConditionAtom::Css(buffer, first_span)));
+        return Ok(IfCondition::Atom(IfConditionAtom::Css(
+            buffer.finish(parser.arena()),
+            first_span,
+        )));
     }
 
-    Ok(IfCondition::Atom(IfConditionAtom::CssRaw(buffer, first_span)))
+    Ok(IfCondition::Atom(IfConditionAtom::CssRaw(
+        buffer.finish(parser.arena()),
+        first_span,
+    )))
 }
 
 /// Parse a primary condition atom.
@@ -704,14 +712,17 @@ fn parse_condition_primary<'a>(
             let content = parse_css_function_args(parser)?;
             parser.expect_char(')')?;
 
-            let mut interp = Interpolation::new();
+            let mut interp = InterpolationBuilder::new();
             let expr_span = parser.toks_mut().span_from(start);
             interp.add_expr(Spanned { node: expr.node, span: expr_span });
             interp.add_char('(');
             interp.add_interpolation(content);
             interp.add_char(')');
             let span = parser.toks_mut().span_from(start);
-            return Ok(IfCondition::Atom(IfConditionAtom::Css(interp, span)));
+            return Ok(IfCondition::Atom(IfConditionAtom::Css(
+                interp.finish(parser.arena()),
+                span,
+            )));
         }
 
         let span = parser.toks_mut().span_from(start);
@@ -783,22 +794,25 @@ fn parse_condition_primary<'a>(
             parser.expect_char(')')?;
             parser.set_consume_newlines(was_consuming);
 
-            let mut interp = Interpolation::new_plain(format!("{}(", name));
+            let mut interp = InterpolationBuilder::new_plain(format!("{}(", name));
             interp.add_interpolation(content);
             interp.add_char(')');
             let span = parser.toks_mut().span_from(ident_start);
-            Ok(IfCondition::Atom(IfConditionAtom::Css(interp, span)))
+            Ok(IfCondition::Atom(IfConditionAtom::Css(
+                interp.finish(parser.arena()),
+                span,
+            )))
         }
     }
 }
 
-/// Parse the arguments of a CSS function as an Interpolation<'a>.
+/// Parse the arguments of a CSS function as an InterpolationBuilder<'a>.
 /// Preserves raw text exactly (including quote style), only processing #{...}.
 /// Stops at the unmatched closing `)` (not consumed).
 fn parse_css_function_args<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<Interpolation<'a>> {
-    let mut buffer = Interpolation::new();
+) -> SassResult<InterpolationBuilder<'a>> {
+    let mut buffer = InterpolationBuilder::new();
     let mut depth = 0; // track nested parens
 
     while let Some(tok) = parser.toks().peek() {

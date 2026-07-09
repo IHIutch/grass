@@ -90,7 +90,7 @@ fn add_leading_zero_to_bare_decimals(s: &str) -> String {
     out
 }
 
-fn is_hex_color<'a>(interpolation: &Interpolation<'a>) -> bool {
+fn is_hex_color<'a>(interpolation: &InterpolationBuilder<'a>) -> bool {
     if let Some(plain) = interpolation.as_plain() {
         if ![3, 4, 6, 8].contains(&plain.len()) {
             return false;
@@ -465,7 +465,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         parser.toks_mut().next();
                         let span = parser.toks_mut().span_from(expr_start);
                         let expr = AstExpr::String(
-                            StringExpr(Interpolation::new_plain("%".to_owned()), QuoteKind::None),
+                            StringExpr(InterpolationBuilder::new_plain("%".to_owned()).finish(parser.arena()), QuoteKind::None),
                             span,
                         )
                         .span(span);
@@ -679,7 +679,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 parser.toks_mut().next();
                 let span = parser.toks_mut().span_from(start);
                 Ok(AstExpr::String(
-                    StringExpr(Interpolation::new_plain("%".to_owned()), QuoteKind::None),
+                    StringExpr(InterpolationBuilder::new_plain("%".to_owned()).finish(parser.arena()), QuoteKind::None),
                     span,
                 )
                 .span(span))
@@ -1111,14 +1111,17 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             );
         }
 
-        let mut buffer = Interpolation::new();
+        let mut buffer = InterpolationBuilder::new();
 
         buffer.add_char('#');
         buffer.add_interpolation(ident);
 
         let span = parser.toks_mut().span_from(start);
 
-        Ok(AstExpr::String(StringExpr(buffer, QuoteKind::None), span).span(span))
+        Ok(
+            AstExpr::String(StringExpr(buffer.finish(parser.arena()), QuoteKind::None), span)
+                .span(span),
+        )
     }
 
     fn parse_hex_digit(&mut self, parser: &mut P) -> SassResult<u32> {
@@ -1410,7 +1413,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         Ok(AstExpr::String(
             StringExpr(
-                Interpolation::new_plain("!important".to_owned()),
+                InterpolationBuilder::new_plain("!important".to_owned()).finish(parser.arena()),
                 QuoteKind::None,
             ),
             span,
@@ -1520,7 +1523,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             Some(Token { kind: '.', .. }) => {
                 if matches!(parser.toks().peek_n(1), Some(Token { kind: '.', .. })) {
                     return Ok(AstExpr::String(
-                        StringExpr(identifier, QuoteKind::None),
+                        StringExpr(identifier.finish(parser.arena()), QuoteKind::None),
                         parser.toks_mut().span_from(start),
                     )
                     .span(parser.toks_mut().span_from(start)));
@@ -1560,7 +1563,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     let arguments = parser.parse_argument_invocation(false, false)?;
                     Ok(
                         AstExpr::InterpolatedFunction(parser.arena().alloc(InterpolatedFunction {
-                            name: identifier,
+                            name: identifier.finish(parser.arena()),
                             arguments,
                             span: parser.toks_mut().span_from(start),
                         }))
@@ -1569,7 +1572,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 }
             }
             _ => Ok(AstExpr::String(
-                StringExpr(identifier, QuoteKind::None),
+                StringExpr(identifier.finish(parser.arena()), QuoteKind::None),
                 parser.toks_mut().span_from(start),
             )
             .span(parser.toks_mut().span_from(start))),
@@ -1703,7 +1706,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         } else if has_question_mark {
             return Ok(AstExpr::String(
                 StringExpr(
-                    Interpolation::new_plain(parser.toks_mut().raw_text(start)),
+                    InterpolationBuilder::new_plain(parser.toks_mut().raw_text(start)).finish(parser.arena()),
                     QuoteKind::None,
                 ),
                 span,
@@ -1743,7 +1746,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         Ok(AstExpr::String(
             StringExpr(
-                Interpolation::new_plain(parser.toks_mut().raw_text(start)),
+                InterpolationBuilder::new_plain(parser.toks_mut().raw_text(start)).finish(parser.arena()),
                 QuoteKind::None,
             ),
             span,
@@ -1780,7 +1783,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             if !parser.scan_char('(') {
                 return Ok(None);
             }
-            buffer = Interpolation::new_plain(name.to_owned());
+            buffer = InterpolationBuilder::new_plain(name.to_owned());
             buffer.add_char('(');
 
             buffer.add_interpolation(parser.parse_interpolated_declaration_value(false, true, true)?);
@@ -1789,7 +1792,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
             return Ok(Some(
                 AstExpr::String(
-                    StringExpr(buffer, QuoteKind::None),
+                    StringExpr(buffer.finish(parser.arena()), QuoteKind::None),
                     parser.toks_mut().span_from(start),
                 )
                 .span(parser.toks_mut().span_from(start)),
@@ -1802,14 +1805,14 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     return Ok(None);
                 }
 
-                buffer = Interpolation::new_plain(name.to_owned());
+                buffer = InterpolationBuilder::new_plain(name.to_owned());
                 buffer.add_char('(');
             }
             "progid" => {
                 if !parser.scan_char(':') {
                     return Ok(None);
                 }
-                buffer = Interpolation::new_plain(name.to_owned());
+                buffer = InterpolationBuilder::new_plain(name.to_owned());
                 buffer.add_char(':');
 
                 while let Some(Token { kind, .. }) = parser.toks().peek() {
@@ -1825,7 +1828,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             "url" => {
                 return Ok(parser.try_url_contents(None)?.map(|contents| {
                     AstExpr::String(
-                        StringExpr(contents, QuoteKind::None),
+                        StringExpr(contents.finish(parser.arena()), QuoteKind::None),
                         parser.toks_mut().span_from(start),
                     )
                     .span(parser.toks_mut().span_from(start))
@@ -1840,7 +1843,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         Ok(Some(
             AstExpr::String(
-                StringExpr(buffer, QuoteKind::None),
+                StringExpr(buffer.finish(parser.arena()), QuoteKind::None),
                 parser.toks_mut().span_from(start),
             )
             .span(parser.toks_mut().span_from(start)),
@@ -1993,7 +1996,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             if ValueParser::contains_calculation_interpolation(parser)? {
                 Some(AstExpr::String(
                     StringExpr(
-                        parser.parse_interpolated_declaration_value(false, false, true)?,
+                        parser
+                            .parse_interpolated_declaration_value(false, false, true)?
+                            .finish(parser.arena()),
                         QuoteKind::None,
                     ),
                     parser.toks_mut().span_from(start),
@@ -2058,7 +2063,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 let interpolation = parser.parse_single_interpolation()?;
                 let span = parser.toks_mut().span_from(start);
                 Ok(AstExpr::String(
-                    StringExpr(interpolation, QuoteKind::None),
+                    StringExpr(interpolation.finish(parser.arena()), QuoteKind::None),
                     span,
                 )
                 .span(span))
@@ -2118,7 +2123,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             let span = parser.toks_mut().span_from(start);
                             return Ok(AstExpr::String(
                                 StringExpr(
-                                    Interpolation::new_plain(ident),
+                                    InterpolationBuilder::new_plain(ident).finish(parser.arena()),
                                     QuoteKind::None,
                                 ),
                                 span,

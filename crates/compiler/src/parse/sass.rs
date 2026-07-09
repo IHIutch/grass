@@ -133,8 +133,8 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         &mut self.parse_time_warnings
     }
 
-    fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
-        let mut buffer = Interpolation::new();
+    fn parse_style_rule_selector(&mut self) -> SassResult<InterpolationBuilder<'a>> {
+        let mut buffer = InterpolationBuilder::new();
 
         loop {
             buffer.add_interpolation(self.almost_any_value(true)?);
@@ -315,7 +315,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
         let mut first = true;
 
-        let mut buffer = Interpolation::new_plain("/*".to_owned());
+        let mut buffer = InterpolationBuilder::new_plain("/*".to_owned());
         let parent_indentation = self.current_indentation;
 
         loop {
@@ -428,7 +428,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         }
 
         Ok(AstLoudComment {
-            text: buffer,
+            text: buffer.finish(self.arena()),
             span: self.toks.span_from(start),
         })
     }

@@ -173,19 +173,24 @@ impl<'a> CssParser<'a> {
         } else {
             let string = self.parse_interpolated_string()?;
             AstExpr::String(
-                StringExpr(string.node.as_interpolation(true, None), QuoteKind::None),
+                StringExpr(
+                    string.node.as_interpolation(true, None, self.arena()),
+                    QuoteKind::None,
+                ),
                 string.span,
             )
             .span(string.span)
         };
 
         self.whitespace()?;
-        let modifiers = self.try_import_modifiers()?;
+        let modifiers = self
+            .try_import_modifiers()?
+            .map(|m| m.finish(self.arena()));
         self.expect_statement_separator(Some("@import rule"))?;
 
         Ok(AstStmt::ImportRule(AstImportRule {
             imports: vec![AstImport::Plain(AstPlainCssImport {
-                url: Interpolation::new_with_expr(url),
+                url: InterpolationBuilder::new_with_expr(url).finish(self.arena()),
                 modifiers,
                 span: self.toks.span_from(url_start),
             })],
@@ -214,7 +219,11 @@ impl<'a> CssParser<'a> {
 
         if !self.scan_char('(') {
             let span = self.toks.span_from(start);
-            return Ok(AstExpr::String(StringExpr(identifier, QuoteKind::None), span).span(span));
+            return Ok(AstExpr::String(
+                StringExpr(identifier.finish(self.arena()), QuoteKind::None),
+                span,
+            )
+            .span(span));
         }
 
         let allow_empty_second_arg = lower == "var";
@@ -228,7 +237,10 @@ impl<'a> CssParser<'a> {
                 let arg_start = self.toks.cursor();
                 if allow_empty_second_arg && arguments.len() == 1 && self.toks.next_char_is(')') {
                     arguments.push(AstExpr::String(
-                        StringExpr(Interpolation::new_plain(String::new()), QuoteKind::None),
+                        StringExpr(
+                            InterpolationBuilder::new_plain(String::new()).finish(self.arena()),
+                            QuoteKind::None,
+                        ),
                         self.toks.span_from(arg_start),
                     ));
                     break;
@@ -251,7 +263,7 @@ impl<'a> CssParser<'a> {
 
         Ok(
             AstExpr::InterpolatedFunction(self.arena.alloc(InterpolatedFunction {
-                name: identifier,
+                name: identifier.finish(self.arena()),
                 arguments: ArgumentInvocation {
                     positional: self.arena.alloc_slice_fill_iter(arguments),
                     named: &[],

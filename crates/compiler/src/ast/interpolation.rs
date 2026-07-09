@@ -1,16 +1,85 @@
+use bumpalo::Bump;
 use codemap::Spanned;
 
 use super::AstExpr;
 
-#[derive(Debug, Clone)]
+/// The immutable, arena-backed form of an interpolation, used for AST storage.
+/// Built from an [`InterpolationBuilder`] via [`InterpolationBuilder::finish`].
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Interpolation<'a> {
-    pub contents: Vec<InterpolationPart<'a>>,
+    pub contents: &'a [InterpolationPart<'a>],
 }
 
 impl<'a> Interpolation<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.contents.is_empty()
+    }
+
+    pub fn initial_plain(&self) -> &str {
+        match self.contents.first() {
+            Some(InterpolationPart::String(s)) => s,
+            _ => "",
+        }
+    }
+
+    pub fn as_plain(&self) -> Option<&str> {
+        if self.contents.is_empty() {
+            Some("")
+        } else if self.contents.len() > 1 {
+            None
+        } else {
+            match self.contents.first()? {
+                InterpolationPart::String(s) => Some(s),
+                InterpolationPart::Expr(..) => None,
+            }
+        }
+    }
+
+    pub fn trailing_string(&self) -> &str {
+        match self.contents.last() {
+            Some(InterpolationPart::String(s)) => s,
+            Some(InterpolationPart::Expr(..)) | None => "",
+        }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, InterpolationPart<'a>> {
+        self.contents.iter()
+    }
+}
+
+impl<'a> IntoIterator for Interpolation<'a> {
+    type Item = &'a InterpolationPart<'a>;
+    type IntoIter = std::slice::Iter<'a, InterpolationPart<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.contents.iter()
+    }
+}
+
+/// The mutable, `std::Vec`-backed builder used incrementally by the parser.
+/// Its backing buffer is a plain heap allocation freed normally when it goes
+/// out of scope; only the finished form ([`Interpolation`]) is arena-allocated
+/// via [`InterpolationBuilder::finish`], so parser-local buffers never leak
+/// into the arena's never-dropped storage.
+#[derive(Debug, Clone, Default)]
+pub struct InterpolationBuilder<'a> {
+    pub contents: Vec<InterpolationPart<'a>>,
+}
+
+impl<'a> InterpolationBuilder<'a> {
     pub fn new() -> Self {
         Self {
             contents: Vec::new(),
+        }
+    }
+
+    /// Reopens an already-finished [`Interpolation`] for further mutation,
+    /// cloning its parts into a fresh `Vec` (rare — only needed where a
+    /// finished interpolation must be extended, e.g. CSS-native `if()`'s
+    /// adjacent-raw-item extension).
+    pub fn from_interpolation(interp: Interpolation<'a>) -> Self {
+        Self {
+            contents: interp.contents.to_vec(),
         }
     }
 
@@ -101,6 +170,15 @@ impl<'a> Interpolation<'a> {
         match self.contents.last() {
             Some(InterpolationPart::String(s)) => s,
             Some(InterpolationPart::Expr(..)) | None => "",
+        }
+    }
+
+    /// Consumes the builder's `Vec` buffer into an arena-allocated slice.
+    /// The builder's backing buffer is freed normally by `alloc_slice_fill_iter`
+    /// draining it, so nothing leaks into the arena's never-dropped storage.
+    pub fn finish(self, arena: &'a Bump) -> Interpolation<'a> {
+        Interpolation {
+            contents: arena.alloc_slice_fill_iter(self.contents),
         }
     }
 }

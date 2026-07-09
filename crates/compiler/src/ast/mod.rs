@@ -61,3 +61,15 @@ pub(crate) unsafe fn erase_argument_declaration_lifetime<'a>(
 pub(crate) unsafe fn erase_ref_lifetime<T: ?Sized>(r: &T) -> &'static T {
     std::mem::transmute(r)
 }
+
+/// Safety: mirrors [`erase_stylesheet_lifetime`] — used when the evaluator
+/// rebuilds an `Interpolation` while evaluating CSS-native `if()` conditions,
+/// finishing an [`InterpolationBuilder`] against the `Visitor`'s own arena
+/// lifetime `'a` that must be widened to the `'static` erasure used
+/// throughout the AST/runtime boundary. Sound under the same invariant: the
+/// arena outlives the compilation that produced the value.
+pub(crate) unsafe fn erase_interpolation_lifetime<'a>(
+    interp: Interpolation<'a>,
+) -> Interpolation<'static> {
+    std::mem::transmute(interp)
+}

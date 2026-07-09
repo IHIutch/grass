@@ -1,5 +1,6 @@
 use std::{iter::Iterator, rc::Rc};
 
+use bumpalo::Bump;
 use codemap::{Span, Spanned};
 use compact_str::CompactString;
 
@@ -10,7 +11,10 @@ use crate::{
     value::{CalculationName, Number},
 };
 
-use super::{ArgumentInvocation, AstSupportsCondition, Interpolation, InterpolationPart};
+use super::{
+    ArgumentInvocation, AstSupportsCondition, Interpolation, InterpolationBuilder,
+    InterpolationPart,
+};
 
 /// Represented by the legacy `if($condition, $if-true, $if-false)` function
 #[derive(Debug, Clone)]
@@ -162,7 +166,7 @@ impl<'a> StringExpr<'a> {
     fn quote_inner_text(
         text: &str,
         quote: char,
-        buffer: &mut Interpolation<'a>,
+        buffer: &mut InterpolationBuilder<'a>,
         // default=false
         is_static: bool,
     ) {
@@ -210,7 +214,12 @@ impl<'a> StringExpr<'a> {
         }
     }
 
-    pub fn as_interpolation(self, is_static: bool, preferred_quote: Option<char>) -> Interpolation<'a> {
+    pub fn as_interpolation(
+        self,
+        is_static: bool,
+        preferred_quote: Option<char>,
+        arena: &'a Bump,
+    ) -> Interpolation<'a> {
         if self.1 == QuoteKind::None {
             return self.0;
         }
@@ -223,21 +232,21 @@ impl<'a> StringExpr<'a> {
             preferred_quote,
         );
 
-        let mut buffer = Interpolation::new();
+        let mut buffer = InterpolationBuilder::new();
         buffer.add_char(quote);
 
-        for value in self.0.contents {
+        for value in self.0 {
             match value {
-                InterpolationPart::Expr(e) => buffer.add_expr(e),
+                InterpolationPart::Expr(e) => buffer.add_expr(e.clone()),
                 InterpolationPart::String(text) => {
-                    Self::quote_inner_text(&text, quote, &mut buffer, is_static);
+                    Self::quote_inner_text(text, quote, &mut buffer, is_static);
                 }
             }
         }
 
         buffer.add_char(quote);
 
-        buffer
+        buffer.finish(arena)
     }
 }
 
