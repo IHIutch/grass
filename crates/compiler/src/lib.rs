@@ -73,7 +73,7 @@ pub use crate::deprecation::Deprecation;
 pub use crate::error::{
     PublicSassErrorKind as ErrorKind, SassError as Error, SassResult as Result,
 };
-pub use crate::fs::{DirListing, Fs, NullFs, StdFs};
+pub use crate::fs::{DirListing, EntryKind, Fs, NullFs, StdFs};
 pub use crate::importer::{ImportResolution, ImportSource, Importer};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
@@ -457,13 +457,17 @@ pub fn from_string_js(input: String) -> std::result::Result<String, String> {
 #[cfg(feature = "wasm-exports")]
 mod wasm_fs {
     use std::{
+        ffi::OsString,
         io::{self, Error, ErrorKind},
         path::{Path, PathBuf},
     };
 
     use wasm_bindgen::prelude::*;
 
-    use crate::Fs;
+    use crate::{
+        fs::{DirListing, EntryKind},
+        Fs,
+    };
 
     #[wasm_bindgen]
     extern "C" {
@@ -483,6 +487,16 @@ mod wasm_fs {
 
         #[wasm_bindgen(method, catch)]
         fn resolve_first_existing(this: &JsFsCallbacks, candidates: Vec<String>) -> Result<JsValue, JsValue>;
+
+        /// Batches many per-candidate `is_file`/`is_dir` boundary crossings
+        /// into a single directory read. Each returned entry is a string
+        /// whose first byte is a kind tag (`f` file / `d` dir / anything
+        /// else = unknown/symlink) followed immediately by the entry's file
+        /// name. Optional: if the JS side doesn't implement this method (or
+        /// it throws), the call errors and `dir_listing` falls back to
+        /// per-candidate checks, exactly as before this method existed.
+        #[wasm_bindgen(method, catch, js_name = readdirSync)]
+        fn readdir_sync(this: &JsFsCallbacks, dir: &str) -> Result<Vec<String>, JsValue>;
     }
 
     pub struct JsFs {
@@ -553,6 +567,24 @@ mod wasm_fs {
                 // Fallback: JS side doesn't implement this method
                 Err(_) => candidates.iter().find(|p| self.is_file(p)).cloned(),
             }
+        }
+
+        fn dir_listing(&self, dir: &Path) -> Option<DirListing> {
+            let entries = self.callbacks.readdir_sync(&dir.to_string_lossy()).ok()?;
+            let mut listing = DirListing::default();
+            for entry in entries {
+                if entry.is_empty() {
+                    continue;
+                }
+                let (kind_tag, name) = entry.split_at(1);
+                let kind = match kind_tag {
+                    "f" => EntryKind::File,
+                    "d" => EntryKind::Dir,
+                    _ => EntryKind::Other,
+                };
+                listing.insert(OsString::from(name), kind);
+            }
+            Some(listing)
         }
     }
 }

@@ -1,4 +1,4 @@
-import { readFileSync, statSync, realpathSync, existsSync } from "fs";
+import { readFileSync, statSync, realpathSync, existsSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { pathToFileURL, fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -98,6 +98,25 @@ const fsCallbacks = {
       try { if (statSync(p).isFile()) return p; } catch {}
     }
     return null;
+  },
+  // Batches many per-candidate is_file/is_dir crossings into a single
+  // directory read: each entry is a 1-char kind tag ("f"/"d"/other) followed
+  // by the entry name.
+  readdirSync(dir) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return entries.map((e) => {
+      let kind = "o";
+      try {
+        if (e.isFile()) kind = "f";
+        else if (e.isDirectory()) kind = "d";
+      } catch {}
+      return kind + e.name;
+    });
   },
 };
 

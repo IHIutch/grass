@@ -30,21 +30,34 @@ pub struct DirListing {
     all_names_lower: FxHashSet<String>,
 }
 
+/// The kind of a directory entry, abstracted away from `std::fs::FileType` so
+/// non-native `Fs` implementations (e.g. a JS-backed bridge on wasm) can
+/// build a [`DirListing`] from their own directory-listing primitive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    File,
+    Dir,
+    /// Symlinks and anything else that couldn't be classified.
+    Other,
+}
+
 impl DirListing {
-    fn insert(&mut self, name: OsString, file_type: Option<std::fs::FileType>) {
+    /// Records one directory entry. See [`EntryKind::Other`] for what's
+    /// deliberately excluded from `plain_files`/`plain_dirs`.
+    pub fn insert(&mut self, name: OsString, kind: EntryKind) {
         self.all_names_lower
             .insert(name.to_string_lossy().to_lowercase());
-        match file_type {
-            Some(ft) if ft.is_file() => {
+        match kind {
+            EntryKind::File => {
                 self.plain_files.insert(name);
             }
-            Some(ft) if ft.is_dir() => {
+            EntryKind::Dir => {
                 self.plain_dirs.insert(name);
             }
             // symlinks (and anything we couldn't stat) are deliberately left
             // out of plain_files/plain_dirs so lookups for them fall back to
             // a direct filesystem check.
-            _ => {}
+            EntryKind::Other => {}
         }
     }
 
@@ -148,8 +161,12 @@ impl Fs for StdFs {
         let entries = std::fs::read_dir(dir).ok()?;
         let mut listing = DirListing::default();
         for entry in entries.flatten() {
-            let file_type = entry.file_type().ok();
-            listing.insert(entry.file_name(), file_type);
+            let kind = match entry.file_type() {
+                Ok(ft) if ft.is_file() => EntryKind::File,
+                Ok(ft) if ft.is_dir() => EntryKind::Dir,
+                _ => EntryKind::Other,
+            };
+            listing.insert(entry.file_name(), kind);
         }
         Some(listing)
     }
