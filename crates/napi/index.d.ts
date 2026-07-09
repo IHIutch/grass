@@ -100,6 +100,24 @@ export interface CompileOptions {
    * awaits it; grass's blocking-channel bridge cannot do so safely yet).
    */
   functions?: Record<string, (args: Array<SassNumber | SassString | SassList | boolean | null>) => SassNumber | SassString | SassList | boolean | null | Array<unknown>>
+  /**
+   * Custom import resolvers for `@use`/`@forward`/`@import`, per the Sass
+   * JS API's `importers` option (todo #221 slice 4). Checked in array
+   * order, ahead of `loadPaths`. Only the `FileImporter` shape
+   * (`{findFileUrl(url, context)}`) is supported so far — a full
+   * `Importer` (`canonicalize`+`load`, arbitrary non-`file:` schemes) is
+   * todo #221 slice 5. `findFileUrl` may return a `file:` URL string (or
+   * any string, treated as a path — an ergonomic relaxation beyond the
+   * real API) or `null`/`undefined` to decline; the compiler then applies
+   * normal partial/extension/index-file resolution on top, exactly like
+   * a load path.
+   *
+   * Sync entry points only (`compile`/`compileString`) — passing a
+   * non-empty `importers` to `compileAsync`/`compileStringAsync` is
+   * rejected with a clear error rather than silently ignored (async
+   * importer support is todo #221 slice 5, see `reject_importers_for_async`).
+   */
+  importers?: Array<{ findFileUrl(url: string, context: { fromImport: boolean, containingUrl: string | null }): string | null | undefined }>
 }
 export interface CompileResult {
   css: string

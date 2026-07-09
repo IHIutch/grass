@@ -3,9 +3,10 @@ import assert from "assert";
 const require = createRequire(import.meta.url);
 
 // napi build --platform names the file with a platform suffix; find it.
-import { readdirSync, writeFileSync, rmSync } from "fs";
+import { readdirSync, writeFileSync, rmSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { pathToFileURL } from "url";
 const nodeFile = readdirSync(new URL(".", import.meta.url)).find((f) => f.endsWith(".node"));
 assert(nodeFile, "no .node binary found — run `npx napi build --platform --release` first");
 const binding = require(`./${nodeFile}`);
@@ -459,6 +460,88 @@ await probeConcurrency(16);
 {
   const opts = { functions: { "double($n)": (args) => new binding.SassNumber(args[0].value * 2) } };
   assert.equal(binding.compileString("a { b: double(3); }", opts).css, "a {\n  b: 6;\n}\n");
+}
+
+// --- `importers` option (todo #221 slice 4, FileImporter only) --------
+
+// A FileImporter redirects a virtual URL to a real file on disk, returned
+// as a `file:` URL — mirrors the real Sass JS API's FileImporter contract
+// (findFileUrl(url, context) returns a file: URL, or null to decline).
+{
+  const path = join(tmpdir(), `grass-napi-importer-redirect-${process.pid}.scss`);
+  writeFileSync(path, "$a: red;");
+  try {
+    const opts = {
+      importers: [
+        {
+          findFileUrl(url, context) {
+            assert.equal(typeof context.fromImport, "boolean");
+            assert(context.containingUrl === null || typeof context.containingUrl === "string");
+            if (url === "virtual:thing") {
+              return pathToFileURL(path).href;
+            }
+            return null;
+          },
+        },
+      ],
+    };
+    const res = binding.compileString('@import "virtual:thing";\na { b: $a; }', opts);
+    assert.equal(res.css, "a {\n  b: red;\n}\n");
+  } finally {
+    rmSync(path);
+  }
+}
+
+// findFileUrl returning null declines and falls through to the default
+// (loadPaths) resolution underneath it — the importer doesn't break normal
+// resolution just by being registered.
+{
+  const dir = join(tmpdir(), `grass-napi-importer-fallthrough-${process.pid}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "real-thing.scss"), "$b: blue;");
+  try {
+    const opts = {
+      importers: [{ findFileUrl: () => null }],
+      loadPaths: [dir],
+    };
+    const res = binding.compileString('@import "real-thing";\na { b: $b; }', opts);
+    assert.equal(res.css, "a {\n  b: blue;\n}\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A thrown JS exception inside findFileUrl surfaces as a clean compile
+// error (not a crash), same as a thrown `functions` callback.
+{
+  const opts = {
+    importers: [
+      {
+        findFileUrl() {
+          throw new Error("importer kaboom");
+        },
+      },
+    ],
+  };
+  assert.throws(
+    () => binding.compileString('@import "anything"; a { b: c; }', opts),
+    /importer kaboom/,
+  );
+}
+
+// `importers` is sync-only (todo #221 slice 4) — compileAsync/
+// compileStringAsync reject a non-empty `importers` list outright rather
+// than silently ignoring it or attempting to support it.
+{
+  const opts = { importers: [{ findFileUrl: () => null }] };
+  assert.throws(
+    () => binding.compileAsync("nonexistent.scss", opts),
+    /importers is not yet supported with compileAsync/,
+  );
+  assert.throws(
+    () => binding.compileStringAsync("a { b: c }", opts),
+    /importers is not yet supported with compileStringAsync/,
+  );
 }
 
 console.log("ok");

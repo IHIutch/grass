@@ -121,7 +121,12 @@ use crate::wire::{value_to_wire, wire_to_sass, WireValue};
 /// which never leaves the JS thread. It must never be stored anywhere that
 /// could outlive that call (in particular, never inside an `AsyncTask`/
 /// `Task`).
-struct SyncEnv(Env);
+///
+/// `pub(crate)` because `importers.rs`'s sync `FileImporter` bridge (todo
+/// #221 slice 4) needs the exact same argument — a single JS callback,
+/// referenced and invoked only within one synchronous entry-point call —
+/// and reuses this type rather than re-deriving the same safety argument.
+pub(crate) struct SyncEnv(pub(crate) Env);
 
 // SAFETY: see the module doc comment and `SyncEnv`'s doc comment above.
 unsafe impl Send for SyncEnv {}

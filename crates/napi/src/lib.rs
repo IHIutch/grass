@@ -13,6 +13,7 @@ use grass_compiler::{
 };
 
 mod functions;
+mod importers;
 mod values;
 mod wire;
 
@@ -104,6 +105,25 @@ pub struct CompileOptions {
         ts_type = "Record<string, (args: Array<SassNumber | SassString | SassList | boolean | null>) => SassNumber | SassString | SassList | boolean | null | Array<unknown>>"
     )]
     pub functions: Option<HashMap<String, functions::JsFunctionRef>>,
+    /// Custom import resolvers for `@use`/`@forward`/`@import`, per the Sass
+    /// JS API's `importers` option (todo #221 slice 4). Checked in array
+    /// order, ahead of `loadPaths`. Only the `FileImporter` shape
+    /// (`{findFileUrl(url, context)}`) is supported so far — a full
+    /// `Importer` (`canonicalize`+`load`, arbitrary non-`file:` schemes) is
+    /// todo #221 slice 5. `findFileUrl` may return a `file:` URL string (or
+    /// any string, treated as a path — an ergonomic relaxation beyond the
+    /// real API) or `null`/`undefined` to decline; the compiler then applies
+    /// normal partial/extension/index-file resolution on top, exactly like
+    /// a load path.
+    ///
+    /// Sync entry points only (`compile`/`compileString`) — passing a
+    /// non-empty `importers` to `compileAsync`/`compileStringAsync` is
+    /// rejected with a clear error rather than silently ignored (async
+    /// importer support is todo #221 slice 5, see `reject_importers_for_async`).
+    #[napi(
+        ts_type = "Array<{ findFileUrl(url: string, context: { fromImport: boolean, containingUrl: string | null }): string | null | undefined }>"
+    )]
+    pub importers: Option<Vec<importers::FileImporterRef>>,
 }
 
 #[napi(object)]
@@ -240,20 +260,53 @@ fn build_options(opts: Option<CompileOptions>) -> napi::Result<Options<'static>>
     Ok(options)
 }
 
-/// Pops `functions` off of `options` (if present) and registers each entry
-/// onto `opts` via the sync-only bridge (`functions.rs`). Only safe to call
-/// from `compile`/`compileString` — see `functions.rs`'s module doc
-/// comment.
+/// Pops `functions`/`importers` off of `options` (if present) and registers
+/// each onto `opts` via their sync-only bridges (`functions.rs`/
+/// `importers.rs`). Only safe to call from `compile`/`compileString` — see
+/// those modules' doc comments.
 fn build_options_with_functions(
     mut options: Option<CompileOptions>,
 ) -> napi::Result<Options<'static>> {
     let funcs = options.as_mut().and_then(|o| o.functions.take());
+    let imps = options.as_mut().and_then(|o| o.importers.take());
     let opts = build_options(options)?;
 
-    match funcs {
-        Some(f) if !f.is_empty() => functions::register_functions(opts, f),
-        _ => Ok(opts),
+    let opts = match funcs {
+        Some(f) if !f.is_empty() => functions::register_functions(opts, f)?,
+        _ => opts,
+    };
+
+    let opts = match imps {
+        Some(list) if !list.is_empty() => importers::register_importers(opts, list),
+        _ => opts,
+    };
+
+    Ok(opts)
+}
+
+/// Rejects a non-empty `CompileOptions.importers` for the async entry
+/// points. Unlike `functions` (sync-only in its own former slice 2, later
+/// upgraded to a real `ThreadsafeFunction` bridge in slice 3), closing this
+/// gap for `importers` is deferred to todo #221 slice 5 (alongside the full
+/// `Importer` shape), not treated as a smaller standalone follow-up — see
+/// `importers.rs`'s module doc comment.
+fn reject_importers_for_async(
+    options: &Option<CompileOptions>,
+    entry_point: &str,
+) -> napi::Result<()> {
+    let has_importers = options
+        .as_ref()
+        .and_then(|o| o.importers.as_ref())
+        .is_some_and(|list| !list.is_empty());
+
+    if has_importers {
+        return Err(napi::Error::from_reason(format!(
+            "importers is not yet supported with {entry_point} (todo #221 slice 5); use a \
+             synchronous compile/compileString call instead"
+        )));
     }
+
+    Ok(())
 }
 
 #[napi]
@@ -401,6 +454,7 @@ pub fn compile_async(
     path: String,
     mut options: Option<CompileOptions>,
 ) -> napi::Result<AsyncTask<CompileTask>> {
+    reject_importers_for_async(&options, "compileAsync")?;
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
@@ -419,6 +473,7 @@ pub fn compile_string_async(
     source: String,
     mut options: Option<CompileOptions>,
 ) -> napi::Result<AsyncTask<CompileStringTask>> {
+    reject_importers_for_async(&options, "compileStringAsync")?;
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
@@ -448,6 +503,7 @@ mod tests {
             source_map: None,
             source_map_include_sources: None,
             functions: None,
+            importers: None,
         }
     }
 
