@@ -303,7 +303,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         }
 
         Ok(AstStmt::SilentComment(AstSilentComment {
-            text: buffer,
+            text: self.arena().alloc_str(&buffer),
             span: self.toks.span_from(start),
         }))
     }

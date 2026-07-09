@@ -3164,7 +3164,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace_without_comments();
 
         Ok(AstStmt::SilentComment(AstSilentComment {
-            text: buffer,
+            text: self.arena().alloc_str(&buffer),
             span: self.toks_mut().span_from(start),
         }))
     }

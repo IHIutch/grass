@@ -13,10 +13,10 @@ use crate::{
     value::Value,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(unused)]
-pub struct AstSilentComment {
-    pub text: String,
+pub struct AstSilentComment<'a> {
+    pub text: &'a str,
     pub span: Span,
 }
 
@@ -546,7 +546,7 @@ pub enum AstStmt<'a> {
     While(&'a AstWhile<'a>),
     VariableDecl(&'a AstVariableDecl<'a>),
     LoudComment(AstLoudComment<'a>),
-    SilentComment(AstSilentComment),
+    SilentComment(AstSilentComment<'a>),
     FunctionDecl(AstFunctionDecl<'a>),
     Mixin(AstMixin<'a>),
     ContentRule(&'a AstContentRule<'a>),
