@@ -4059,7 +4059,7 @@ impl<'a> Visitor<'a> {
         let result = match interpolation.contents.len() {
             0 => String::new(),
             1 => match &interpolation.contents[0] {
-                InterpolationPart::String(s) => s.clone(),
+                InterpolationPart::String(s) => (*s).to_owned(),
                 InterpolationPart::Expr(e) => {
                     let span = e.span;
                     let result = self.visit_expr_ref(&e.node)?;
@@ -4070,7 +4070,7 @@ impl<'a> Visitor<'a> {
                 .contents
                 .iter()
                 .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s.clone()),
+                    InterpolationPart::String(s) => Ok((*s).to_owned()),
                     InterpolationPart::Expr(e) => {
                         let span = e.span;
                         let result = self.visit_expr_ref(&e.node)?;
@@ -5482,7 +5482,7 @@ impl<'a> Visitor<'a> {
         let result = match text.contents.len() {
             0 => String::new(),
             1 => match &text.contents[0] {
-                InterpolationPart::String(s) => s.clone(),
+                InterpolationPart::String(s) => (*s).to_owned(),
                 InterpolationPart::Expr(Spanned { node, span }) => {
                     match self.visit_expr_ref(node)? {
                         Value::String(s, ..) => s.to_string(),
@@ -5494,7 +5494,7 @@ impl<'a> Visitor<'a> {
                 .contents
                 .iter()
                 .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s.clone()),
+                    InterpolationPart::String(s) => Ok((*s).to_owned()),
                     InterpolationPart::Expr(Spanned { node, span }) => {
                         match self.visit_expr_ref(node)? {
                             Value::String(s, ..) => Ok(s.to_string()),

@@ -1535,8 +1535,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         let expression = match interpolation.contents.first() {
-            Some(InterpolationPart::Expr(e)) => e,
-            Some(InterpolationPart::String(..)) => return Ok(None),
+            Some(InterpolationPartBuilder::Expr(e)) => e,
+            Some(InterpolationPartBuilder::String(..)) => return Ok(None),
             None => unreachable!(),
         };
 
@@ -1622,13 +1622,13 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             } else if identifier.contents.len() != 1
                 || !matches!(
                     identifier.contents.first(),
-                    Some(InterpolationPart::Expr(..))
+                    Some(InterpolationPartBuilder::Expr(..))
                 )
             {
                 return Err(("Expected @supports condition.", ident_span).into());
             } else {
                 match identifier.contents.first() {
-                    Some(InterpolationPart::Expr(e)) => {
+                    Some(InterpolationPartBuilder::Expr(e)) => {
                         return Ok(AstSupportsCondition::Interpolation(e.clone().node))
                     }
                     _ => unreachable!(),
@@ -2368,7 +2368,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let mut interpolation = InterpolationBuilder::new();
         interpolation
             .contents
-            .push(InterpolationPart::Expr(contents));
+            .push(InterpolationPartBuilder::Expr(contents));
 
         Ok(interpolation)
     }

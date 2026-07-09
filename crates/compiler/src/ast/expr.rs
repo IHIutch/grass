@@ -227,7 +227,7 @@ impl<'a> StringExpr<'a> {
         let quote = Self::best_quote(
             self.0.contents.iter().filter_map(|c| match c {
                 InterpolationPart::Expr(..) => None,
-                InterpolationPart::String(text) => Some(text.as_str()),
+                InterpolationPart::String(text) => Some(*text),
             }),
             preferred_quote,
         );

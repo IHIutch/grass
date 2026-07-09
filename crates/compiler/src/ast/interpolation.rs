@@ -57,13 +57,15 @@ impl<'a> IntoIterator for Interpolation<'a> {
 }
 
 /// The mutable, `std::Vec`-backed builder used incrementally by the parser.
-/// Its backing buffer is a plain heap allocation freed normally when it goes
-/// out of scope; only the finished form ([`Interpolation`]) is arena-allocated
-/// via [`InterpolationBuilder::finish`], so parser-local buffers never leak
-/// into the arena's never-dropped storage.
+/// Its backing buffer (and every `String` inside an
+/// [`InterpolationPartBuilder::String`]) is a plain heap allocation freed
+/// normally when it goes out of scope; only the finished form
+/// ([`Interpolation`]) is arena-allocated via [`InterpolationBuilder::finish`],
+/// which also copies each string part into the arena via `alloc_str` so no
+/// `String` buffer ends up embedded by value inside the never-dropped arena.
 #[derive(Debug, Clone, Default)]
 pub struct InterpolationBuilder<'a> {
-    pub contents: Vec<InterpolationPart<'a>>,
+    pub contents: Vec<InterpolationPartBuilder<'a>>,
 }
 
 impl<'a> InterpolationBuilder<'a> {
@@ -79,7 +81,16 @@ impl<'a> InterpolationBuilder<'a> {
     /// adjacent-raw-item extension).
     pub fn from_interpolation(interp: Interpolation<'a>) -> Self {
         Self {
-            contents: interp.contents.to_vec(),
+            contents: interp
+                .contents
+                .iter()
+                .map(|part| match part {
+                    InterpolationPart::String(s) => {
+                        InterpolationPartBuilder::String((*s).to_owned())
+                    }
+                    InterpolationPart::Expr(e) => InterpolationPartBuilder::Expr(e.clone()),
+                })
+                .collect(),
         }
     }
 
@@ -89,24 +100,24 @@ impl<'a> InterpolationBuilder<'a> {
 
     pub fn new_with_expr(e: Spanned<AstExpr<'a>>) -> Self {
         Self {
-            contents: vec![InterpolationPart::Expr(e)],
+            contents: vec![InterpolationPartBuilder::Expr(e)],
         }
     }
 
     pub fn new_plain(s: String) -> Self {
         Self {
-            contents: vec![InterpolationPart::String(s)],
+            contents: vec![InterpolationPartBuilder::String(s)],
         }
     }
 
     pub fn add_expr(&mut self, expr: Spanned<AstExpr<'a>>) {
-        self.contents.push(InterpolationPart::Expr(expr));
+        self.contents.push(InterpolationPartBuilder::Expr(expr));
     }
 
     pub fn add_string(&mut self, s: String) {
         match self.contents.last_mut() {
-            Some(InterpolationPart::String(existing)) => existing.push_str(&s),
-            _ => self.contents.push(InterpolationPart::String(s)),
+            Some(InterpolationPartBuilder::String(existing)) => existing.push_str(&s),
+            _ => self.contents.push(InterpolationPartBuilder::String(s)),
         }
     }
 
@@ -115,8 +126,10 @@ impl<'a> InterpolationBuilder<'a> {
     /// `String` purely to hand it to `add_string`.
     pub fn add_str(&mut self, s: &str) {
         match self.contents.last_mut() {
-            Some(InterpolationPart::String(existing)) => existing.push_str(s),
-            _ => self.contents.push(InterpolationPart::String(s.to_owned())),
+            Some(InterpolationPartBuilder::String(existing)) => existing.push_str(s),
+            _ => self
+                .contents
+                .push(InterpolationPartBuilder::String(s.to_owned())),
         }
     }
 
@@ -125,20 +138,26 @@ impl<'a> InterpolationBuilder<'a> {
     /// Appends made through this handle merge into the existing text
     /// without any intermediate `String` allocation.
     pub fn trailing_string_mut(&mut self) -> &mut String {
-        if !matches!(self.contents.last(), Some(InterpolationPart::String(_))) {
-            self.contents.push(InterpolationPart::String(String::new()));
+        if !matches!(
+            self.contents.last(),
+            Some(InterpolationPartBuilder::String(_))
+        ) {
+            self.contents
+                .push(InterpolationPartBuilder::String(String::new()));
         }
 
         match self.contents.last_mut() {
-            Some(InterpolationPart::String(s)) => s,
+            Some(InterpolationPartBuilder::String(s)) => s,
             _ => unreachable!(),
         }
     }
 
     pub fn add_char(&mut self, c: char) {
         match self.contents.last_mut() {
-            Some(InterpolationPart::String(existing)) => existing.push(c),
-            _ => self.contents.push(InterpolationPart::String(c.to_string())),
+            Some(InterpolationPartBuilder::String(existing)) => existing.push(c),
+            _ => self
+                .contents
+                .push(InterpolationPartBuilder::String(c.to_string())),
         }
     }
 
@@ -148,7 +167,7 @@ impl<'a> InterpolationBuilder<'a> {
 
     pub fn initial_plain(&self) -> &str {
         match self.contents.first() {
-            Some(InterpolationPart::String(s)) => s,
+            Some(InterpolationPartBuilder::String(s)) => s,
             _ => "",
         }
     }
@@ -160,31 +179,51 @@ impl<'a> InterpolationBuilder<'a> {
             None
         } else {
             match self.contents.first()? {
-                InterpolationPart::String(s) => Some(s),
-                InterpolationPart::Expr(..) => None,
+                InterpolationPartBuilder::String(s) => Some(s),
+                InterpolationPartBuilder::Expr(..) => None,
             }
         }
     }
 
     pub fn trailing_string(&self) -> &str {
         match self.contents.last() {
-            Some(InterpolationPart::String(s)) => s,
-            Some(InterpolationPart::Expr(..)) | None => "",
+            Some(InterpolationPartBuilder::String(s)) => s,
+            Some(InterpolationPartBuilder::Expr(..)) | None => "",
         }
     }
 
     /// Consumes the builder's `Vec` buffer into an arena-allocated slice.
-    /// The builder's backing buffer is freed normally by `alloc_slice_fill_iter`
-    /// draining it, so nothing leaks into the arena's never-dropped storage.
+    /// Each `String` part is copied into the arena via `alloc_str` (so its
+    /// heap buffer is freed normally when the builder's `Vec` drops); the
+    /// `Vec`'s own backing buffer is freed normally by `alloc_slice_fill_iter`
+    /// draining it. Nothing leaks into the arena's never-dropped storage.
     pub fn finish(self, arena: &'a Bump) -> Interpolation<'a> {
         Interpolation {
-            contents: arena.alloc_slice_fill_iter(self.contents),
+            contents: arena.alloc_slice_fill_iter(self.contents.into_iter().map(|part| {
+                match part {
+                    InterpolationPartBuilder::String(s) => {
+                        InterpolationPart::String(arena.alloc_str(&s))
+                    }
+                    InterpolationPartBuilder::Expr(e) => InterpolationPart::Expr(e),
+                }
+            })),
         }
     }
 }
 
+/// The immutable, arena-backed form of an interpolation part, used for AST
+/// storage. See [`InterpolationPartBuilder`] for the mutable builder form.
 #[derive(Debug, Clone)]
 pub enum InterpolationPart<'a> {
+    String(&'a str),
+    Expr(Spanned<AstExpr<'a>>),
+}
+
+/// The mutable, `std::String`-backed builder form of an interpolation part,
+/// used incrementally by the parser. See [`InterpolationPart`] for the
+/// finished, arena-backed storage form.
+#[derive(Debug, Clone)]
+pub enum InterpolationPartBuilder<'a> {
     String(String),
     Expr(Spanned<AstExpr<'a>>),
 }
