@@ -155,7 +155,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             if parser.scan_char(']') {
                 parser.set_consume_newlines(value_parser.was_consuming_newlines);
                 return Ok(AstExpr::List(ListExpr {
-                    elems: Vec::new(),
+                    elems: &[],
                     separator: ListSeparator::Undecided,
                     brackets: Brackets::Bracketed,
                 })
@@ -591,7 +591,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
 
             Ok(AstExpr::List(ListExpr {
-                elems: self.comma_expressions.take().unwrap(),
+                elems: parser
+                    .arena()
+                    .alloc_slice_fill_iter(self.comma_expressions.take().unwrap()),
                 separator: ListSeparator::Comma,
                 brackets: if self.inside_bracketed_list {
                     Brackets::Bracketed
@@ -609,7 +611,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 .push(self.single_expression.take().unwrap());
 
             Ok(AstExpr::List(ListExpr {
-                elems: self.space_expressions.take().unwrap(),
+                elems: parser
+                    .arena()
+                    .alloc_slice_fill_iter(self.space_expressions.take().unwrap()),
                 separator: ListSeparator::Space,
                 brackets: Brackets::Bracketed,
             })
@@ -619,7 +623,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
             if self.inside_bracketed_list {
                 return Ok(AstExpr::List(ListExpr {
-                    elems: vec![self.single_expression.take().unwrap()],
+                    elems: parser
+                        .arena()
+                        .alloc_slice_fill_iter([self.single_expression.take().unwrap()]),
                     separator: ListSeparator::Undecided,
                     brackets: Brackets::Bracketed,
                 })
@@ -906,7 +912,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
             self.single_expression = Some(
                 AstExpr::List(ListExpr {
-                    elems: space_expressions,
+                    elems: parser.arena().alloc_slice_fill_iter(space_expressions),
                     separator: ListSeparator::Space,
                     brackets: Brackets::None,
                 })
@@ -975,7 +981,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 .flags_mut()
                 .set(ContextFlags::IN_PARENS, was_in_parentheses);
             return Ok(AstExpr::List(ListExpr {
-                elems: Vec::new(),
+                elems: &[],
                 separator: ListSeparator::Undecided,
                 brackets: Brackets::None,
             })
@@ -1023,7 +1029,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             .set(ContextFlags::IN_PARENS, was_in_parentheses);
 
         Ok(AstExpr::List(ListExpr {
-            elems: expressions,
+            elems: parser.arena().alloc_slice_fill_iter(expressions),
             separator: ListSeparator::Comma,
             brackets: Brackets::None,
         })

@@ -61,9 +61,9 @@ pub struct CssIfExpression<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ListExpr<'a> {
-    pub elems: Vec<Spanned<AstExpr<'a>>>,
+    pub elems: &'a [Spanned<AstExpr<'a>>],
     pub separator: ListSeparator,
     pub brackets: Brackets,
 }
