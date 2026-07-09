@@ -39,6 +39,20 @@ pub struct DeprecationVersion {
     pub patch: u16,
 }
 
+/// The `context` argument passed to a JS `importers` entry's
+/// `canonicalize`/`findFileUrl` method, per the Sass JS API's
+/// `CanonicalizeContext`. Never constructed from this struct directly (the
+/// actual context object handed to JS is built by hand in `importers.rs`,
+/// which needs no `FromNapiValue`/`ToNapiValue` round trip for it) — this
+/// type exists purely so `napi build` emits a named `CanonicalizeContext`
+/// TypeScript interface instead of `importers`' `ts_type` needing to inline
+/// the shape.
+#[napi(object)]
+pub struct CanonicalizeContext {
+    pub from_import: bool,
+    pub containing_url: Option<String>,
+}
+
 // `object_to_js = false`: `CompileOptions` is only ever received from JS,
 // never returned to it. This matters because `functions` (added below)
 // holds a `JsFunctionRef`, which only implements `FromNapiValue` (see
@@ -106,24 +120,32 @@ pub struct CompileOptions {
     )]
     pub functions: Option<HashMap<String, functions::JsFunctionRef>>,
     /// Custom import resolvers for `@use`/`@forward`/`@import`, per the Sass
-    /// JS API's `importers` option (todo #221 slice 4). Checked in array
-    /// order, ahead of `loadPaths`. Only the `FileImporter` shape
-    /// (`{findFileUrl(url, context)}`) is supported so far — a full
-    /// `Importer` (`canonicalize`+`load`, arbitrary non-`file:` schemes) is
-    /// todo #221 slice 5. `findFileUrl` may return a `file:` URL string (or
-    /// any string, treated as a path — an ergonomic relaxation beyond the
-    /// real API) or `null`/`undefined` to decline; the compiler then applies
-    /// normal partial/extension/index-file resolution on top, exactly like
-    /// a load path.
+    /// JS API's `importers` option (todo #221 slices 4-5b). Checked in array
+    /// order, ahead of `loadPaths`. Two mutually-exclusive shapes per entry:
+    /// a `FileImporter` (`{findFileUrl(url, context)}`, may return a `file:`
+    /// URL string — or any string, treated as a path, an ergonomic
+    /// relaxation beyond the real API — or `null`/`undefined` to decline;
+    /// the compiler then applies normal partial/extension/index-file
+    /// resolution on top, exactly like a load path) or a full `Importer`
+    /// (`{canonicalize(url, context), load(canonicalUrl)}`, arbitrary
+    /// non-`file:` schemes: `canonicalize` returns a canonical URL string or
+    /// `null`/`undefined` to decline; if a URL, `load` is called with it and
+    /// must return `{contents, syntax: 'scss'|'sass'|'css'}` or
+    /// `null`/`undefined`).
     ///
-    /// Sync entry points only (`compile`/`compileString`) — passing a
-    /// non-empty `importers` to `compileAsync`/`compileStringAsync` is
-    /// rejected with a clear error rather than silently ignored (async
-    /// importer support is todo #221 slice 5, see `reject_importers_for_async`).
+    /// Supported by all four entry points (`compile`/`compileString`/
+    /// `compileAsync`/`compileStringAsync`). `compileAsync`/
+    /// `compileStringAsync` use the same `ThreadsafeFunction` + blocking
+    /// channel calling convention as `functions` (see `importers.rs`'s
+    /// module doc comment) — a full `Importer` needs two sequential round
+    /// trips (`canonicalize` then `load`) per resolution attempt — with the
+    /// same constraint: a `canonicalize`/`load`/`findFileUrl` that is itself
+    /// `async`/returns a `Promise` is not supported and produces a clear
+    /// compile error rather than being awaited.
     #[napi(
-        ts_type = "Array<{ findFileUrl(url: string, context: { fromImport: boolean, containingUrl: string | null }): string | null | undefined }>"
+        ts_type = "Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }>"
     )]
-    pub importers: Option<Vec<importers::FileImporterRef>>,
+    pub importers: Option<Vec<importers::ImporterRef>>,
 }
 
 #[napi(object)]
@@ -284,31 +306,6 @@ fn build_options_with_functions(
     Ok(opts)
 }
 
-/// Rejects a non-empty `CompileOptions.importers` for the async entry
-/// points. Unlike `functions` (sync-only in its own former slice 2, later
-/// upgraded to a real `ThreadsafeFunction` bridge in slice 3), closing this
-/// gap for `importers` is deferred to todo #221 slice 5 (alongside the full
-/// `Importer` shape), not treated as a smaller standalone follow-up — see
-/// `importers.rs`'s module doc comment.
-fn reject_importers_for_async(
-    options: &Option<CompileOptions>,
-    entry_point: &str,
-) -> napi::Result<()> {
-    let has_importers = options
-        .as_ref()
-        .and_then(|o| o.importers.as_ref())
-        .is_some_and(|list| !list.is_empty());
-
-    if has_importers {
-        return Err(napi::Error::from_reason(format!(
-            "importers is not yet supported with {entry_point} (todo #221 slice 5); use a \
-             synchronous compile/compileString call instead"
-        )));
-    }
-
-    Ok(())
-}
-
 #[napi]
 pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<CompileResult> {
     catch(|| {
@@ -380,10 +377,37 @@ fn take_async_functions(
     }
 }
 
+/// Pops `importers` off of `options` (if present) and upgrades each entry
+/// into its async counterpart (todo #221 slice 5b) — a JS-thread-only step
+/// (`ImporterRef::into_threadsafe` needs `Env` to build a
+/// `ThreadsafeFunction`), so this must run in `compile_async`/
+/// `compile_string_async`'s synchronous body, before the `AsyncTask`/
+/// `Task::compute()` (which runs off the JS thread) is ever constructed.
+/// The actual registration onto `Options`
+/// (`importers::register_importers_async`) happens later, inside
+/// `compute()` — that part touches no `Env` and is safe there.
+fn take_async_importers(
+    options: &mut Option<CompileOptions>,
+) -> napi::Result<Option<Vec<importers::AsyncImporterRef>>> {
+    let imps = options.as_mut().and_then(|o| o.importers.take());
+
+    match imps {
+        Some(list) if !list.is_empty() => {
+            let mut upgraded = Vec::with_capacity(list.len());
+            for imp in list {
+                upgraded.push(imp.into_threadsafe()?);
+            }
+            Ok(Some(upgraded))
+        }
+        _ => Ok(None),
+    }
+}
+
 pub struct CompileTask {
     path: String,
     options: Option<CompileOptions>,
     async_functions: Option<HashMap<String, functions::AsyncJsFunctionRef>>,
+    async_importers: Option<Vec<importers::AsyncImporterRef>>,
     /// Read once at task-construction time, since `compute()` consumes
     /// `options` via `take()` before `resolve()` runs.
     include_sources: bool,
@@ -398,6 +422,10 @@ impl Task for CompileTask {
         let opts = build_options(self.options.take())?;
         let opts = match self.async_functions.take() {
             Some(f) if !f.is_empty() => functions::register_functions_async(opts, f)?,
+            _ => opts,
+        };
+        let opts = match self.async_importers.take() {
+            Some(list) if !list.is_empty() => importers::register_importers_async(opts, list),
             _ => opts,
         };
         catch(std::panic::AssertUnwindSafe(|| {
@@ -418,6 +446,7 @@ pub struct CompileStringTask {
     source: String,
     options: Option<CompileOptions>,
     async_functions: Option<HashMap<String, functions::AsyncJsFunctionRef>>,
+    async_importers: Option<Vec<importers::AsyncImporterRef>>,
     /// Read once at task-construction time, since `compute()` consumes
     /// `options` via `take()` before `resolve()` runs.
     include_sources: bool,
@@ -431,6 +460,10 @@ impl Task for CompileStringTask {
         let opts = build_options(self.options.take())?;
         let opts = match self.async_functions.take() {
             Some(f) if !f.is_empty() => functions::register_functions_async(opts, f)?,
+            _ => opts,
+        };
+        let opts = match self.async_importers.take() {
+            Some(list) if !list.is_empty() => importers::register_importers_async(opts, list),
             _ => opts,
         };
         let source = self.source.clone();
@@ -454,16 +487,17 @@ pub fn compile_async(
     path: String,
     mut options: Option<CompileOptions>,
 ) -> napi::Result<AsyncTask<CompileTask>> {
-    reject_importers_for_async(&options, "compileAsync")?;
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
     let async_functions = take_async_functions(&mut options)?;
+    let async_importers = take_async_importers(&mut options)?;
     Ok(AsyncTask::new(CompileTask {
         path,
         options,
         async_functions,
+        async_importers,
         include_sources,
     }))
 }
@@ -473,16 +507,17 @@ pub fn compile_string_async(
     source: String,
     mut options: Option<CompileOptions>,
 ) -> napi::Result<AsyncTask<CompileStringTask>> {
-    reject_importers_for_async(&options, "compileStringAsync")?;
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
     let async_functions = take_async_functions(&mut options)?;
+    let async_importers = take_async_importers(&mut options)?;
     Ok(AsyncTask::new(CompileStringTask {
         source,
         options,
         async_functions,
+        async_importers,
         include_sources,
     }))
 }
@@ -638,6 +673,7 @@ mod tests {
             source: "a { b: c }".to_owned(),
             options: None,
             async_functions: None,
+            async_importers: None,
             include_sources: false,
         };
         assert!(task.compute().is_ok());
@@ -645,6 +681,7 @@ mod tests {
             source: "a {".to_owned(),
             options: None,
             async_functions: None,
+            async_importers: None,
             include_sources: false,
         };
         assert!(bad.compute().is_err());
@@ -706,6 +743,7 @@ mod tests {
             source: "a {\n  b: c;\n}\n".to_owned(),
             options: Some(opts),
             async_functions: None,
+            async_importers: None,
             include_sources: false,
         };
         let output = task.compute().unwrap();

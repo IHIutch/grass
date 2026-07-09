@@ -390,7 +390,11 @@ fn string_err_to_sass(msg: String, span: Span) -> Box<grass_compiler::Error> {
 /// (napi's API requires *some* JS function). See the module doc comment for
 /// why the real call happens by hand instead of relying on the framework's
 /// own auto-invocation of this target.
-unsafe extern "C" fn noop_callback(
+///
+/// `pub(crate)` because `importers.rs`'s async `Importer`/`FileImporter`
+/// bridge (todo #221 slice 5b) needs the exact same dummy-target trick for
+/// its own `ThreadsafeFunction`s and reuses this rather than duplicating it.
+pub(crate) unsafe extern "C" fn noop_callback(
     env: sys::napi_env,
     _info: sys::napi_callback_info,
 ) -> sys::napi_value {
