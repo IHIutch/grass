@@ -529,19 +529,216 @@ await probeConcurrency(16);
   );
 }
 
-// `importers` is sync-only (todo #221 slice 4) — compileAsync/
-// compileStringAsync reject a non-empty `importers` list outright rather
-// than silently ignoring it or attempting to support it.
+// --- full `Importer` (canonicalize+load) + async importers (todo #221 slice 5b) ---
+
+// A full Importer resolves an arbitrary non-file: scheme entirely from
+// inline contents (canonicalize returns a canonical URL, load returns
+// {contents, syntax}) — no filesystem involved at all.
 {
-  const opts = { importers: [{ findFileUrl: () => null }] };
+  const opts = {
+    importers: [
+      {
+        canonicalize(url, context) {
+          assert.equal(typeof context.fromImport, "boolean");
+          assert(context.containingUrl === null || typeof context.containingUrl === "string");
+          if (url === "db:colors") return "db:colors";
+          return null;
+        },
+        load(canonicalUrl) {
+          assert.equal(canonicalUrl, "db:colors");
+          return { contents: "$c: red;", syntax: "scss" };
+        },
+      },
+    ],
+  };
+  const res = binding.compileString('@use "db:colors" as colors;\na { b: colors.$c; }', opts);
+  assert.equal(res.css, "a {\n  b: red;\n}\n");
+}
+
+// canonicalize/load returning null declines, falling through cleanly (no
+// filesystem hit, no crash) when nothing else resolves the URL either.
+{
+  const opts = {
+    importers: [{ canonicalize: () => null, load: () => null }],
+  };
+  assert.throws(() => binding.compileString('@use "db:nope" as nope;', opts));
+}
+
+// An entry mixing findFileUrl with canonicalize/load (or missing all three)
+// is rejected with a clear shape error, not silently misinterpreted.
+{
   assert.throws(
-    () => binding.compileAsync("nonexistent.scss", opts),
-    /importers is not yet supported with compileAsync/,
+    () => binding.compileString("a { b: c }", { importers: [{ findFileUrl: () => null, canonicalize: () => null, load: () => null }] }),
+    /not a mix of both shapes/,
   );
   assert.throws(
-    () => binding.compileStringAsync("a { b: c }", opts),
-    /importers is not yet supported with compileStringAsync/,
+    () => binding.compileString("a { b: c }", { importers: [{}] }),
+    /must be an object with either/,
   );
+}
+
+// A thrown JS exception inside canonicalize/load surfaces as a clean compile
+// error under the full Importer shape too.
+{
+  const opts = {
+    importers: [
+      {
+        canonicalize: () => "db:boom",
+        load() {
+          throw new Error("load kaboom");
+        },
+      },
+    ],
+  };
+  assert.throws(
+    () => binding.compileString('@use "db:boom" as boom;', opts),
+    /load kaboom/,
+  );
+}
+
+// ASYNC: a FileImporter findFileUrl redirect works under compileStringAsync.
+{
+  const path = join(tmpdir(), `grass-napi-importer-async-file-${process.pid}.scss`);
+  writeFileSync(path, "$a: teal;");
+  try {
+    const opts = {
+      importers: [
+        {
+          findFileUrl(url) {
+            if (url === "virtual:async-thing") return pathToFileURL(path).href;
+            return null;
+          },
+        },
+      ],
+    };
+    const res = await withTimeout(
+      binding.compileStringAsync('@import "virtual:async-thing";\na { b: $a; }', opts),
+      10000,
+      "async FileImporter",
+    );
+    assert.equal(res.css, "a {\n  b: teal;\n}\n");
+  } finally {
+    rmSync(path);
+  }
+}
+
+// ASYNC: a full Importer (canonicalize+load) works under compileStringAsync,
+// exercising the two-sequential-round-trip path.
+{
+  const opts = {
+    importers: [
+      {
+        canonicalize(url) {
+          return url === "db:async-colors" ? "db:async-colors" : null;
+        },
+        load(canonicalUrl) {
+          assert.equal(canonicalUrl, "db:async-colors");
+          return { contents: "$c: purple;", syntax: "scss" };
+        },
+      },
+    ],
+  };
+  const res = await withTimeout(
+    binding.compileStringAsync('@use "db:async-colors" as asyncColors;\na { b: asyncColors.$c; }', opts),
+    10000,
+    "async full Importer",
+  );
+  assert.equal(res.css, "a {\n  b: purple;\n}\n");
+}
+
+// ASYNC: a throwing canonicalize/load surfaces as a clean rejection, never a
+// process abort (the risk napi's call_with_return_value would otherwise hit).
+{
+  const opts = {
+    importers: [
+      {
+        canonicalize: () => "db:boom-async",
+        load() {
+          throw new Error("async load kaboom");
+        },
+      },
+    ],
+  };
+  await assert.rejects(
+    withTimeout(
+      binding.compileStringAsync('@use "db:boom-async" as boomAsync;', opts),
+      10000,
+      "async importer throw",
+    ),
+    /async load kaboom/,
+  );
+}
+{
+  const opts = { importers: [{ findFileUrl: () => { throw new Error("findFileUrl kaboom"); } }] };
+  await assert.rejects(
+    withTimeout(
+      binding.compileStringAsync('@import "anything";', opts),
+      10000,
+      "async FileImporter throw",
+    ),
+    /findFileUrl kaboom/,
+  );
+}
+
+// ASYNC: a Promise-returning importer method is guarded with a clear error,
+// never awaited and never hung.
+{
+  const opts = { importers: [{ findFileUrl: async () => null }] };
+  await assert.rejects(
+    withTimeout(
+      binding.compileStringAsync('@import "anything";', opts),
+      10000,
+      "async Promise-returning findFileUrl",
+    ),
+    /returning a Promise.*are not yet supported/,
+  );
+}
+{
+  const opts = {
+    importers: [
+      {
+        canonicalize: async () => "db:promise",
+        load: () => ({ contents: "", syntax: "scss" }),
+      },
+    ],
+  };
+  await assert.rejects(
+    withTimeout(
+      binding.compileStringAsync('@use "db:promise" as promiseMod;', opts),
+      10000,
+      "async Promise-returning canonicalize",
+    ),
+    /returning a Promise.*are not yet supported/,
+  );
+}
+
+// CONCURRENCY: Promise.all of several compileStringAsync calls, each with
+// its own importer (mixing both shapes) — all must resolve, none deadlock.
+{
+  async function probeImporterConcurrency(n) {
+    const promises = [];
+    for (let i = 0; i < n; i++) {
+      const useFile = i % 2 === 0;
+      const opts = useFile
+        ? { importers: [{ findFileUrl: () => null }] }
+        : {
+            importers: [
+              {
+                canonicalize: (url) => (url === `db:c${i}` ? `db:c${i}` : null),
+                load: () => ({ contents: `$v: ${i};`, syntax: "scss" }),
+              },
+            ],
+          };
+      const source = useFile
+        ? `a { b: ${i}; }`
+        : `@use "db:c${i}" as m${i};\na { b: m${i}.$v; }`;
+      promises.push(binding.compileStringAsync(source, opts));
+    }
+    const results = await withTimeout(Promise.all(promises), 20000, `importer concurrency N=${n}`);
+    results.forEach((r, i) => assert.equal(r.css, `a {\n  b: ${i};\n}\n`));
+    console.log(`  importer concurrency N=${n}: PASS`);
+  }
+  await probeImporterConcurrency(8);
 }
 
 console.log("ok");

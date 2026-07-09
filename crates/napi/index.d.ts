@@ -31,6 +31,20 @@ export interface DeprecationVersion {
   minor: number
   patch: number
 }
+/**
+ * The `context` argument passed to a JS `importers` entry's
+ * `canonicalize`/`findFileUrl` method, per the Sass JS API's
+ * `CanonicalizeContext`. Never constructed from this struct directly (the
+ * actual context object handed to JS is built by hand in `importers.rs`,
+ * which needs no `FromNapiValue`/`ToNapiValue` round trip for it) — this
+ * type exists purely so `napi build` emits a named `CanonicalizeContext`
+ * TypeScript interface instead of `importers`' `ts_type` needing to inline
+ * the shape.
+ */
+export interface CanonicalizeContext {
+  fromImport: boolean
+  containingUrl?: string
+}
 export interface CompileOptions {
   style?: string
   loadPaths?: Array<string>
@@ -102,22 +116,30 @@ export interface CompileOptions {
   functions?: Record<string, (args: Array<SassNumber | SassString | SassList | boolean | null>) => SassNumber | SassString | SassList | boolean | null | Array<unknown>>
   /**
    * Custom import resolvers for `@use`/`@forward`/`@import`, per the Sass
-   * JS API's `importers` option (todo #221 slice 4). Checked in array
-   * order, ahead of `loadPaths`. Only the `FileImporter` shape
-   * (`{findFileUrl(url, context)}`) is supported so far — a full
-   * `Importer` (`canonicalize`+`load`, arbitrary non-`file:` schemes) is
-   * todo #221 slice 5. `findFileUrl` may return a `file:` URL string (or
-   * any string, treated as a path — an ergonomic relaxation beyond the
-   * real API) or `null`/`undefined` to decline; the compiler then applies
-   * normal partial/extension/index-file resolution on top, exactly like
-   * a load path.
+   * JS API's `importers` option (todo #221 slices 4-5b). Checked in array
+   * order, ahead of `loadPaths`. Two mutually-exclusive shapes per entry:
+   * a `FileImporter` (`{findFileUrl(url, context)}`, may return a `file:`
+   * URL string — or any string, treated as a path, an ergonomic
+   * relaxation beyond the real API — or `null`/`undefined` to decline;
+   * the compiler then applies normal partial/extension/index-file
+   * resolution on top, exactly like a load path) or a full `Importer`
+   * (`{canonicalize(url, context), load(canonicalUrl)}`, arbitrary
+   * non-`file:` schemes: `canonicalize` returns a canonical URL string or
+   * `null`/`undefined` to decline; if a URL, `load` is called with it and
+   * must return `{contents, syntax: 'scss'|'sass'|'css'}` or
+   * `null`/`undefined`).
    *
-   * Sync entry points only (`compile`/`compileString`) — passing a
-   * non-empty `importers` to `compileAsync`/`compileStringAsync` is
-   * rejected with a clear error rather than silently ignored (async
-   * importer support is todo #221 slice 5, see `reject_importers_for_async`).
+   * Supported by all four entry points (`compile`/`compileString`/
+   * `compileAsync`/`compileStringAsync`). `compileAsync`/
+   * `compileStringAsync` use the same `ThreadsafeFunction` + blocking
+   * channel calling convention as `functions` (see `importers.rs`'s
+   * module doc comment) — a full `Importer` needs two sequential round
+   * trips (`canonicalize` then `load`) per resolution attempt — with the
+   * same constraint: a `canonicalize`/`load`/`findFileUrl` that is itself
+   * `async`/returns a `Promise` is not supported and produces a clear
+   * compile error rather than being awaited.
    */
-  importers?: Array<{ findFileUrl(url: string, context: { fromImport: boolean, containingUrl: string | null }): string | null | undefined }>
+  importers?: Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }>
 }
 export interface CompileResult {
   css: string
