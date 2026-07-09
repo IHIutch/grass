@@ -132,7 +132,7 @@ pub fn to_unknown<T: ToNapiValue>(env: Env, val: T) -> Result<JsUnknown> {
     }
 }
 
-fn list_separator_to_str(sep: sass::ListSeparator) -> &'static str {
+pub(crate) fn list_separator_to_str(sep: sass::ListSeparator) -> &'static str {
     match sep {
         sass::ListSeparator::Space => "space",
         sass::ListSeparator::Comma => "comma",
@@ -141,7 +141,7 @@ fn list_separator_to_str(sep: sass::ListSeparator) -> &'static str {
     }
 }
 
-fn list_separator_from_str(s: &str) -> sass::ListSeparator {
+pub(crate) fn list_separator_from_str(s: &str) -> sass::ListSeparator {
     match s {
         "space" => sass::ListSeparator::Space,
         "slash" => sass::ListSeparator::Slash,
@@ -154,7 +154,7 @@ fn list_separator_from_str(s: &str) -> sass::ListSeparator {
 /// denominatorUnits)` string arrays. Uses only `grass_compiler`'s public
 /// API (`Unit::Complex`/`ComplexUnit`'s fields are public, `Display` gives
 /// each single unit's canonical string) — no compiler-crate changes needed.
-fn unit_to_js_units(unit: &sass::Unit) -> (Vec<String>, Vec<String>) {
+pub(crate) fn unit_to_js_units(unit: &sass::Unit) -> (Vec<String>, Vec<String>) {
     match unit {
         sass::Unit::None => (Vec::new(), Vec::new()),
         sass::Unit::Complex(complex) => (
@@ -168,7 +168,7 @@ fn unit_to_js_units(unit: &sass::Unit) -> (Vec<String>, Vec<String>) {
 /// The inverse of [`unit_to_js_units`], built the same way: `Unit::from`
 /// (public) parses each unit string, `Unit::Complex`/`ComplexUnit` (public
 /// variant/fields) assembles compound units.
-fn js_units_to_unit(numerator_units: Vec<String>, denominator_units: Vec<String>) -> sass::Unit {
+pub(crate) fn js_units_to_unit(numerator_units: Vec<String>, denominator_units: Vec<String>) -> sass::Unit {
     let numer: Vec<sass::Unit> = numerator_units.into_iter().map(sass::Unit::from).collect();
     let denom: Vec<sass::Unit> = denominator_units
         .into_iter()

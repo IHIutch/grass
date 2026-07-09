@@ -79,8 +79,8 @@ export interface CompileOptions {
   sourceMapIncludeSources?: boolean
   /**
    * Custom Sass functions callable from stylesheets, per the Sass JS
-   * API's `functions` option (todo #221 slice 2). Keys are full function
-   * signatures (e.g. `"sum($a, $b)"` — the same grammar as an
+   * API's `functions` option (todo #221 slices 2-3). Keys are full
+   * function signatures (e.g. `"sum($a, $b)"` — the same grammar as an
    * `@function` parameter list, including `$rest...`); values are JS
    * callbacks invoked with pre-bound, declaration-ordered arguments. See
    * `SassNumber`/`SassString`/`SassList` for the supported argument/
@@ -88,11 +88,16 @@ export interface CompileOptions {
    * `SassFunction`/`SassMixin` are not yet supported and produce a clear
    * compile error if a callback receives or returns one.
    *
-   * Only `compile`/`compileString` support this option.
-   * `compileAsync`/`compileStringAsync` reject it with a runtime error
-   * (see `crates/napi/src/functions.rs`'s module doc comment for why —
-   * the sync calling convention used here is not sound off the JS
-   * thread).
+   * Supported by all four entry points (`compile`/`compileString`/
+   * `compileAsync`/`compileStringAsync`). `compileAsync`/
+   * `compileStringAsync` use a different calling convention under the
+   * hood (`ThreadsafeFunction` + a blocking channel round-trip, since
+   * `Task::compute()` runs off the JS thread — see
+   * `crates/napi/src/functions.rs`'s module doc comment) with one
+   * additional constraint the sync entries don't have: a callback that
+   * is itself `async`/returns a `Promise` is not supported and produces
+   * a clear compile error rather than being awaited (real dart-sass
+   * awaits it; grass's blocking-channel bridge cannot do so safely yet).
    */
   functions?: Record<string, (args: Array<SassNumber | SassString | SassList | boolean | null>) => SassNumber | SassString | SassList | boolean | null | Array<unknown>>
 }

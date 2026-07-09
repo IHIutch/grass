@@ -14,6 +14,7 @@ use grass_compiler::{
 
 mod functions;
 mod values;
+mod wire;
 
 pub use values::{SassList, SassNumber, SassNumberUnits, SassString};
 
@@ -80,8 +81,8 @@ pub struct CompileOptions {
     /// option. Has no effect unless `sourceMap` is also `true`.
     pub source_map_include_sources: Option<bool>,
     /// Custom Sass functions callable from stylesheets, per the Sass JS
-    /// API's `functions` option (todo #221 slice 2). Keys are full function
-    /// signatures (e.g. `"sum($a, $b)"` — the same grammar as an
+    /// API's `functions` option (todo #221 slices 2-3). Keys are full
+    /// function signatures (e.g. `"sum($a, $b)"` — the same grammar as an
     /// `@function` parameter list, including `$rest...`); values are JS
     /// callbacks invoked with pre-bound, declaration-ordered arguments. See
     /// `SassNumber`/`SassString`/`SassList` for the supported argument/
@@ -89,11 +90,16 @@ pub struct CompileOptions {
     /// `SassFunction`/`SassMixin` are not yet supported and produce a clear
     /// compile error if a callback receives or returns one.
     ///
-    /// Only `compile`/`compileString` support this option.
-    /// `compileAsync`/`compileStringAsync` reject it with a runtime error
-    /// (see `crates/napi/src/functions.rs`'s module doc comment for why —
-    /// the sync calling convention used here is not sound off the JS
-    /// thread).
+    /// Supported by all four entry points (`compile`/`compileString`/
+    /// `compileAsync`/`compileStringAsync`). `compileAsync`/
+    /// `compileStringAsync` use a different calling convention under the
+    /// hood (`ThreadsafeFunction` + a blocking channel round-trip, since
+    /// `Task::compute()` runs off the JS thread — see
+    /// `crates/napi/src/functions.rs`'s module doc comment) with one
+    /// additional constraint the sync entries don't have: a callback that
+    /// is itself `async`/returns a `Promise` is not supported and produces
+    /// a clear compile error rather than being awaited (real dart-sass
+    /// awaits it; grass's blocking-channel bridge cannot do so safely yet).
     #[napi(
         ts_type = "Record<string, (args: Array<SassNumber | SassString | SassList | boolean | null>) => SassNumber | SassString | SassList | boolean | null | Array<unknown>>"
     )]
@@ -295,9 +301,36 @@ pub fn compile_string(
     })
 }
 
+/// Pops `functions` off of `options` (if present) and upgrades each JS
+/// callback into a [`functions::AsyncJsFunctionRef`] (todo #221 slice 3) —
+/// a JS-thread-only step (`JsFunctionRef::into_threadsafe` needs `Env` to
+/// build a `ThreadsafeFunction`), so this must run in `compile_async`/
+/// `compile_string_async`'s synchronous body, before the `AsyncTask`/
+/// `Task::compute()` (which runs off the JS thread) is ever constructed.
+/// The actual registration onto `Options` (`functions::register_functions_async`)
+/// happens later, inside `compute()` — that part touches no `Env` and is
+/// safe there.
+fn take_async_functions(
+    options: &mut Option<CompileOptions>,
+) -> napi::Result<Option<HashMap<String, functions::AsyncJsFunctionRef>>> {
+    let funcs = options.as_mut().and_then(|o| o.functions.take());
+
+    match funcs {
+        Some(f) if !f.is_empty() => {
+            let mut upgraded = HashMap::with_capacity(f.len());
+            for (signature, func_ref) in f {
+                upgraded.insert(signature, func_ref.into_threadsafe()?);
+            }
+            Ok(Some(upgraded))
+        }
+        _ => Ok(None),
+    }
+}
+
 pub struct CompileTask {
     path: String,
     options: Option<CompileOptions>,
+    async_functions: Option<HashMap<String, functions::AsyncJsFunctionRef>>,
     /// Read once at task-construction time, since `compute()` consumes
     /// `options` via `take()` before `resolve()` runs.
     include_sources: bool,
@@ -310,6 +343,10 @@ impl Task for CompileTask {
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let path = &self.path;
         let opts = build_options(self.options.take())?;
+        let opts = match self.async_functions.take() {
+            Some(f) if !f.is_empty() => functions::register_functions_async(opts, f)?,
+            _ => opts,
+        };
         catch(std::panic::AssertUnwindSafe(|| {
             from_path_with_source_map(path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
         }))
@@ -327,6 +364,7 @@ impl Task for CompileTask {
 pub struct CompileStringTask {
     source: String,
     options: Option<CompileOptions>,
+    async_functions: Option<HashMap<String, functions::AsyncJsFunctionRef>>,
     /// Read once at task-construction time, since `compute()` consumes
     /// `options` via `take()` before `resolve()` runs.
     include_sources: bool,
@@ -338,6 +376,10 @@ impl Task for CompileStringTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let opts = build_options(self.options.take())?;
+        let opts = match self.async_functions.take() {
+            Some(f) if !f.is_empty() => functions::register_functions_async(opts, f)?,
+            _ => opts,
+        };
         let source = self.source.clone();
         catch(std::panic::AssertUnwindSafe(|| {
             from_string_with_source_map(source, &opts)
@@ -354,52 +396,40 @@ impl Task for CompileStringTask {
     }
 }
 
-/// `functions` isn't supported off the JS thread yet (todo #221 slice 2 —
-/// see `functions.rs`'s module doc comment for why the sync calling
-/// convention doesn't extend to `Task::compute()`, which runs on a libuv
-/// worker thread with no `Env`). Slice 3 is the real async bridge
-/// (`ThreadsafeFunction` + a blocking channel round trip).
-fn reject_functions_for_async(options: &Option<CompileOptions>, fn_name: &str) -> napi::Result<()> {
-    let has_functions = options
-        .as_ref()
-        .and_then(|o| o.functions.as_ref())
-        .is_some_and(|f| !f.is_empty());
-
-    if has_functions {
-        return Err(napi::Error::from_reason(format!(
-            "functions is not yet supported with {fn_name}"
-        )));
-    }
-
-    Ok(())
-}
-
 #[napi(ts_return_type = "Promise<CompileResult>")]
 pub fn compile_async(
     path: String,
-    options: Option<CompileOptions>,
+    mut options: Option<CompileOptions>,
 ) -> napi::Result<AsyncTask<CompileTask>> {
-    reject_functions_for_async(&options, "compileAsync")?;
-
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
-    Ok(AsyncTask::new(CompileTask { path, options, include_sources }))
+    let async_functions = take_async_functions(&mut options)?;
+    Ok(AsyncTask::new(CompileTask {
+        path,
+        options,
+        async_functions,
+        include_sources,
+    }))
 }
 
 #[napi(ts_return_type = "Promise<CompileResult>")]
 pub fn compile_string_async(
     source: String,
-    options: Option<CompileOptions>,
+    mut options: Option<CompileOptions>,
 ) -> napi::Result<AsyncTask<CompileStringTask>> {
-    reject_functions_for_async(&options, "compileStringAsync")?;
-
     let include_sources = options
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
-    Ok(AsyncTask::new(CompileStringTask { source, options, include_sources }))
+    let async_functions = take_async_functions(&mut options)?;
+    Ok(AsyncTask::new(CompileStringTask {
+        source,
+        options,
+        async_functions,
+        include_sources,
+    }))
 }
 
 #[cfg(test)]
@@ -551,12 +581,14 @@ mod tests {
         let mut task = CompileStringTask {
             source: "a { b: c }".to_owned(),
             options: None,
+            async_functions: None,
             include_sources: false,
         };
         assert!(task.compute().is_ok());
         let mut bad = CompileStringTask {
             source: "a {".to_owned(),
             options: None,
+            async_functions: None,
             include_sources: false,
         };
         assert!(bad.compute().is_err());
@@ -617,6 +649,7 @@ mod tests {
         let mut task = CompileStringTask {
             source: "a {\n  b: c;\n}\n".to_owned(),
             options: Some(opts),
+            async_functions: None,
             include_sources: false,
         };
         let output = task.compute().unwrap();
