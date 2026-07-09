@@ -941,6 +941,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         parser.expect_char(')')?;
         parser.set_consume_newlines(restore_consume_newlines);
 
+        let pairs = parser.arena().alloc_slice_fill_iter(pairs);
+
         Ok(AstExpr::Map(AstSassMap(pairs)).span(parser.toks_mut().span_from(start)))
     }
 

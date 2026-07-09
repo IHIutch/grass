@@ -102,8 +102,8 @@ pub struct CalculationWithFallbackExpr<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct AstSassMap<'a>(pub Vec<(Spanned<AstExpr<'a>>, AstExpr<'a>)>);
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AstSassMap<'a>(pub &'a [(Spanned<AstExpr<'a>>, AstExpr<'a>)]);
 
 #[derive(Debug, Clone)]
 pub struct BinaryOpExpr<'a> {

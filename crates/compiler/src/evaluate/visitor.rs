@@ -5552,7 +5552,7 @@ impl<'a> Visitor<'a> {
     fn visit_map(&mut self, map: &AstSassMap<'static>) -> SassResult<Value> {
         let mut sass_map = SassMap::new();
 
-        for pair in &map.0 {
+        for pair in map.0 {
             let key_span = pair.0.span;
             let key = self.visit_expr_ref(&pair.0.node)?;
             let value = self.visit_expr_ref(&pair.1)?;
