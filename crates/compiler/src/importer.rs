@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use codemap::Span;
+
 use crate::{error::SassResult, options::InputSyntax};
 
 /// The outcome of asking an [`Importer`] to resolve a load-rule URL
@@ -44,11 +46,15 @@ pub trait Importer: std::fmt::Debug {
     /// `from_import` is `true` when resolving an `@import` (as opposed to
     /// `@use`/`@forward`). `containing_url` is the canonical URL/path of
     /// the file the load rule appears in, or `None` at the compilation
-    /// entrypoint.
+    /// entrypoint. `span` is the call-site span of the load rule, provided
+    /// so an `Err` return carries the same source-frame attribution as any
+    /// other Sass compile error (e.g. a thrown JS exception surfaced
+    /// through a napi-backed `Importer`).
     fn canonicalize(
         &self,
         url: &str,
         from_import: bool,
         containing_url: Option<&str>,
+        span: Span,
     ) -> SassResult<ImportResolution>;
 }

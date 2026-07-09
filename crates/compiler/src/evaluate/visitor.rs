@@ -2235,12 +2235,13 @@ impl<'a> Visitor<'a> {
         &self,
         path: &Path,
         for_import: bool,
+        span: Span,
     ) -> SassResult<Option<ImportResolution>> {
         let url = path.to_str().unwrap_or_default();
         let containing_url = self.current_import_path.to_str();
 
         for importer in &self.options.importers {
-            match importer.canonicalize(url, for_import, containing_url)? {
+            match importer.canonicalize(url, for_import, containing_url, span)? {
                 ImportResolution::NotFound => continue,
                 other => return Ok(Some(other)),
             }
@@ -2457,7 +2458,7 @@ impl<'a> Visitor<'a> {
         // `NotFound` wins. This branch costs a single `Vec::is_empty()`
         // check when no importers are registered.
         if !self.options.importers.is_empty() {
-            if let Some(resolution) = self.resolve_via_importers(path, for_import)? {
+            if let Some(resolution) = self.resolve_via_importers(path, for_import, span)? {
                 return match resolution {
                     ImportResolution::DelegateToPath(delegate_path) => {
                         // A `FileImporter`-style result: treat it exactly

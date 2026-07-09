@@ -1,6 +1,7 @@
 use std::{io::Write, path::PathBuf, rc::Rc};
 
 use grass::{ImportResolution, Importer, Options, Result as SassResult};
+use grass_compiler::codemap::Span;
 
 #[macro_use]
 mod macros;
@@ -21,6 +22,7 @@ impl Importer for VirtualImporter {
         url: &str,
         _from_import: bool,
         _containing_url: Option<&str>,
+        _span: Span,
     ) -> SassResult<ImportResolution> {
         if url == self.virtual_url {
             Ok(ImportResolution::DelegateToPath(self.target.clone()))
