@@ -232,6 +232,31 @@ pub fn from_string_with_source_map<S: Into<String>>(
     Ok((css, map))
 }
 
+/// Like [`from_string_with_source_map`], but seeds the entrypoint's canonical
+/// URL / relative-import base with `url` (matching the JS API's
+/// `compileString({ url })`). `@use`/`@import` written relative to the entry
+/// resolve against `url` — it becomes the entry's `current_import_path`, and
+/// is the `containing_url` handed to custom importers for the entry's OWN
+/// loads — and the source map's sole entrypoint `sources` entry is `url`
+/// itself rather than the synthetic `data:` URL that
+/// [`from_string_with_source_map`] uses when no URL is known.
+pub fn from_string_with_url_and_source_map<S: Into<String>>(
+    input: S,
+    url: &str,
+    options: &Options,
+) -> Result<(String, Option<SourceMapData>)> {
+    let (css, mappings, sources, sources_content, loaded_files) =
+        compile_impl(input.into(), url, options)?;
+
+    let map = if options.source_map {
+        Some(SourceMapData::new(&mappings, sources, sources_content, loaded_files))
+    } else {
+        None
+    };
+
+    Ok((css, map))
+}
+
 /// Compile CSS from a path, additionally returning a [`SourceMapData`] when
 /// [`Options::source_map`] is enabled. See [`from_string_with_source_map`]
 /// for the general contract; unlike that function, `sources` entries here

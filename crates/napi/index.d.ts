@@ -140,6 +140,24 @@ export interface CompileOptions {
    * compile error rather than being awaited.
    */
   importers?: Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }>
+  /**
+   * Entrypoint canonical URL for `compileString`/`compileStringAsync`, per
+   * the Sass JS API's `StringOptions.url`. Seeds the base for the source
+   * string's own relative `@use`/`@import` (it is the `containingUrl`
+   * handed to custom importers for the entry's loads) and the source map's
+   * entrypoint `sources` entry. Ignored by the path entry points. When
+   * omitted, `compileString` behaves exactly as before (a synthetic
+   * `stdin`/`data:` entry).
+   */
+  url?: string
+  /**
+   * Entrypoint importer for `compileString`/`compileStringAsync`, per the
+   * Sass JS API's `StringOptions.importer` — the resolver consulted for the
+   * source string's OWN relative loads. Same two shapes as `importers`
+   * (`FileImporter` or full `Importer`), registered ahead of `importers`.
+   * Ignored by the path entry points.
+   */
+  importer?: { findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }
 }
 export interface CompileResult {
   css: string

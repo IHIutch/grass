@@ -741,4 +741,78 @@ await probeConcurrency(16);
   await probeImporterConcurrency(8);
 }
 
+// --- StringOptions.importer + url (todo #280 item 1) ---
+
+// url seeds the entrypoint importer's `containingUrl` for the source's own
+// relative loads, and the entrypoint `importer` resolves them (sync).
+{
+  const opts = {
+    url: "my://entry",
+    importer: {
+      canonicalize(url, context) {
+        assert.equal(context.containingUrl, "my://entry");
+        if (url === "dep") return "my://dep";
+        return null;
+      },
+      load(canonicalUrl) {
+        assert.equal(canonicalUrl, "my://dep");
+        return { contents: "$c: red;", syntax: "scss" };
+      },
+    },
+  };
+  const res = binding.compileString('@use "dep" as d;\na { b: d.$c; }', opts);
+  assert.equal(res.css, "a {\n  b: red;\n}\n");
+}
+
+// entrypoint `importer` alone (no url) resolves a custom-scheme load (sync).
+{
+  const opts = {
+    importer: {
+      canonicalize(url) {
+        return url === "db:x" ? "db:x" : null;
+      },
+      load() {
+        return { contents: "$c: blue;", syntax: "scss" };
+      },
+    },
+  };
+  const res = binding.compileString('@use "db:x" as x;\na { b: x.$c; }', opts);
+  assert.equal(res.css, "a {\n  b: blue;\n}\n");
+}
+
+// url + entrypoint importer over the ASYNC entry point.
+{
+  const opts = {
+    url: "my://entry",
+    importer: {
+      canonicalize(url, context) {
+        assert.equal(context.containingUrl, "my://entry");
+        return url === "dep" ? "my://dep" : null;
+      },
+      load() {
+        return { contents: "$c: green;", syntax: "scss" };
+      },
+    },
+  };
+  const res = await withTimeout(
+    binding.compileStringAsync('@use "dep" as d;\na { b: d.$c; }', opts),
+    10000,
+    "compileStringAsync url+importer",
+  );
+  assert.equal(res.css, "a {\n  b: green;\n}\n");
+}
+
+// url becomes the source map's entrypoint `sources` entry (not a data: URL).
+{
+  const res = binding.compileString("a { b: c }", {
+    url: "my://entry.scss",
+    sourceMap: true,
+  });
+  assert.ok(res.sourceMap, "expected a sourceMap");
+  assert.ok(
+    res.sourceMap.sources.includes("my://entry.scss"),
+    `sources should include the seeded url, got ${JSON.stringify(res.sourceMap.sources)}`,
+  );
+}
+
 console.log("ok");

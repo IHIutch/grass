@@ -8,8 +8,8 @@ use napi::Task;
 use napi_derive::napi;
 
 use grass_compiler::{
-    from_path_with_source_map, from_string_with_source_map, Deprecation, Options, OutputStyle,
-    SourceMapData,
+    from_path_with_source_map, from_string_with_source_map, from_string_with_url_and_source_map,
+    Deprecation, Options, OutputStyle, SourceMapData,
 };
 
 mod functions;
@@ -146,6 +146,23 @@ pub struct CompileOptions {
         ts_type = "Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }>"
     )]
     pub importers: Option<Vec<importers::ImporterRef>>,
+    /// Entrypoint canonical URL for `compileString`/`compileStringAsync`, per
+    /// the Sass JS API's `StringOptions.url`. Seeds the base for the source
+    /// string's own relative `@use`/`@import` (it is the `containingUrl`
+    /// handed to custom importers for the entry's loads) and the source map's
+    /// entrypoint `sources` entry. Ignored by the path entry points. When
+    /// omitted, `compileString` behaves exactly as before (a synthetic
+    /// `stdin`/`data:` entry).
+    pub url: Option<String>,
+    /// Entrypoint importer for `compileString`/`compileStringAsync`, per the
+    /// Sass JS API's `StringOptions.importer` — the resolver consulted for the
+    /// source string's OWN relative loads. Same two shapes as `importers`
+    /// (`FileImporter` or full `Importer`), registered ahead of `importers`.
+    /// Ignored by the path entry points.
+    #[napi(
+        ts_type = "{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }"
+    )]
+    pub importer: Option<importers::ImporterRef>,
 }
 
 #[napi(object)]
@@ -290,12 +307,20 @@ fn build_options_with_functions(
     mut options: Option<CompileOptions>,
 ) -> napi::Result<Options<'static>> {
     let funcs = options.as_mut().and_then(|o| o.functions.take());
+    let importer = options.as_mut().and_then(|o| o.importer.take());
     let imps = options.as_mut().and_then(|o| o.importers.take());
     let opts = build_options(options)?;
 
     let opts = match funcs {
         Some(f) if !f.is_empty() => functions::register_functions(opts, f)?,
         _ => opts,
+    };
+
+    // Entrypoint importer (`StringOptions.importer`) first, then the
+    // `importers` array — a single importer is just a one-element registration.
+    let opts = match importer {
+        Some(imp) => importers::register_importers(opts, vec![imp]),
+        None => opts,
     };
 
     let opts = match imps {
@@ -335,14 +360,17 @@ pub fn compile_string(
             .as_ref()
             .and_then(|o| o.source_map_include_sources)
             .unwrap_or(false);
+        let url = options.as_ref().and_then(|o| o.url.clone());
         let opts = build_options_with_functions(options)?;
 
-        // `from_string_with_source_map` produces a `data:` URL `sources`
-        // entry (matching `compileString` without a `url` option — see
-        // docs/design/source-maps.md), unlike the plain `from_string*`
-        // family, which uses a synthetic path purely for error messages.
-        let (css, map) = from_string_with_source_map(source, &opts)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        // With `url`, seed the entry's canonical URL / relative-import base
+        // (and the source-map `sources` entry). Without it, keep the existing
+        // synthetic `stdin`/`data:` behavior.
+        let (css, map) = match url.as_deref() {
+            Some(u) => from_string_with_url_and_source_map(source, u, &opts),
+            None => from_string_with_source_map(source, &opts),
+        }
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(CompileResult {
             css,
@@ -403,6 +431,19 @@ fn take_async_importers(
     }
 }
 
+/// Singular-`importer` counterpart to [`take_async_importers`] — upgrades the
+/// entrypoint `importer` (if any) to its async form on the JS thread, before
+/// the `AsyncTask` is constructed. See `take_async_importers`' doc comment for
+/// why this must run here and not inside `compute()`.
+fn take_async_importer(
+    options: &mut Option<CompileOptions>,
+) -> napi::Result<Option<importers::AsyncImporterRef>> {
+    match options.as_mut().and_then(|o| o.importer.take()) {
+        Some(imp) => Ok(Some(imp.into_threadsafe()?)),
+        None => Ok(None),
+    }
+}
+
 pub struct CompileTask {
     path: String,
     options: Option<CompileOptions>,
@@ -447,6 +488,8 @@ pub struct CompileStringTask {
     options: Option<CompileOptions>,
     async_functions: Option<HashMap<String, functions::AsyncJsFunctionRef>>,
     async_importers: Option<Vec<importers::AsyncImporterRef>>,
+    async_importer: Option<importers::AsyncImporterRef>,
+    url: Option<String>,
     /// Read once at task-construction time, since `compute()` consumes
     /// `options` via `take()` before `resolve()` runs.
     include_sources: bool,
@@ -462,14 +505,22 @@ impl Task for CompileStringTask {
             Some(f) if !f.is_empty() => functions::register_functions_async(opts, f)?,
             _ => opts,
         };
+        let opts = match self.async_importer.take() {
+            Some(imp) => importers::register_importers_async(opts, vec![imp]),
+            None => opts,
+        };
         let opts = match self.async_importers.take() {
             Some(list) if !list.is_empty() => importers::register_importers_async(opts, list),
             _ => opts,
         };
         let source = self.source.clone();
+        let url = self.url.take();
         catch(std::panic::AssertUnwindSafe(|| {
-            from_string_with_source_map(source, &opts)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+            match url.as_deref() {
+                Some(u) => from_string_with_url_and_source_map(source, u, &opts),
+                None => from_string_with_source_map(source, &opts),
+            }
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
         }))
     }
 
@@ -511,13 +562,17 @@ pub fn compile_string_async(
         .as_ref()
         .and_then(|o| o.source_map_include_sources)
         .unwrap_or(false);
+    let url = options.as_ref().and_then(|o| o.url.clone());
     let async_functions = take_async_functions(&mut options)?;
+    let async_importer = take_async_importer(&mut options)?;
     let async_importers = take_async_importers(&mut options)?;
     Ok(AsyncTask::new(CompileStringTask {
         source,
         options,
         async_functions,
+        async_importer,
         async_importers,
+        url,
         include_sources,
     }))
 }
@@ -539,6 +594,8 @@ mod tests {
             source_map_include_sources: None,
             functions: None,
             importers: None,
+            url: None,
+            importer: None,
         }
     }
 
@@ -674,6 +731,8 @@ mod tests {
             options: None,
             async_functions: None,
             async_importers: None,
+            async_importer: None,
+            url: None,
             include_sources: false,
         };
         assert!(task.compute().is_ok());
@@ -682,6 +741,8 @@ mod tests {
             options: None,
             async_functions: None,
             async_importers: None,
+            async_importer: None,
+            url: None,
             include_sources: false,
         };
         assert!(bad.compute().is_err());
@@ -744,6 +805,8 @@ mod tests {
             options: Some(opts),
             async_functions: None,
             async_importers: None,
+            async_importer: None,
+            url: None,
             include_sources: false,
         };
         let output = task.compute().unwrap();
