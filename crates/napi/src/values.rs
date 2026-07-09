@@ -125,7 +125,7 @@ impl SassList {
     }
 }
 
-fn to_unknown<T: ToNapiValue>(env: Env, val: T) -> Result<JsUnknown> {
+pub fn to_unknown<T: ToNapiValue>(env: Env, val: T) -> Result<JsUnknown> {
     unsafe {
         let raw = T::to_napi_value(env.raw(), val)?;
         JsUnknown::from_raw(env.raw(), raw)

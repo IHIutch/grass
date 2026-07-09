@@ -97,7 +97,15 @@ impl JsFunctionRef {
             js_args.push(sass_value_to_js(env, arg).map_err(|e| napi_err_to_sass(&e, span))?);
         }
 
-        match func.call(None, &js_args) {
+        // The JS-facing callback signature is `(args: Value[]) => Value`
+        // (matching the real Sass JS API) — a SINGLE array argument, not
+        // one JS argument per Sass argument. `JsFunction::call` passes each
+        // slice element as its own positional JS argument, so `js_args`
+        // must be wrapped into one array value first.
+        let args_array =
+            crate::values::to_unknown(env, js_args).map_err(|e| napi_err_to_sass(&e, span))?;
+
+        match func.call(None, &[args_array]) {
             Ok(js_return) => {
                 js_value_to_sass(env, js_return).map_err(|e| napi_err_to_sass(&e, span))
             }

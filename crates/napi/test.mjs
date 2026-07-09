@@ -152,4 +152,155 @@ assert.throws(() =>
   }),
 );
 
+// --- `functions` option (todo #221 slice 2) ---------------------------
+
+// Numeric custom function: unit is preserved through the round trip.
+{
+  const opts = {
+    functions: {
+      "double($n)": (args) => {
+        const n = args[0];
+        assert(n instanceof binding.SassNumber, "arg should be a SassNumber instance");
+        return new binding.SassNumber(n.value * 2, {
+          numeratorUnits: n.numeratorUnits,
+          denominatorUnits: n.denominatorUnits,
+        });
+      },
+    },
+  };
+  const res = binding.compileString("a { b: double(5px); }", opts);
+  assert.equal(res.css, "a {\n  b: 10px;\n}\n");
+}
+
+// String custom function: quoted/unquoted round-trips.
+{
+  const opts = {
+    functions: {
+      "shout($s)": (args) => {
+        const s = args[0];
+        assert(s instanceof binding.SassString, "arg should be a SassString instance");
+        return new binding.SassString(`${s.text.toUpperCase()}!`, s.hasQuotes);
+      },
+    },
+  };
+  const res = binding.compileString('a { b: shout("hi"); c: shout(hi); }', opts);
+  assert.equal(res.css, 'a {\n  b: "HI!";\n  c: HI!;\n}\n');
+}
+
+// List custom function: in/out, separator preserved.
+{
+  const opts = {
+    functions: {
+      "double-list($list)": (args) => {
+        const list = args[0];
+        assert(list instanceof binding.SassList, "arg should be a SassList instance");
+        const doubled = list.contents.map((v) => new binding.SassNumber(v.value * 2));
+        return new binding.SassList(doubled, list.separator, list.brackets);
+      },
+    },
+  };
+  const res = binding.compileString("a { b: double-list(1 2 3); }", opts);
+  assert.equal(res.css, "a {\n  b: 2 4 6;\n}\n");
+}
+
+// null/bool: mapped to plain JS null/true/false (grass-specific simplification,
+// see values.rs's marshalling table doc comment).
+{
+  const opts = {
+    functions: {
+      "negate($b)": (args) => {
+        assert.equal(typeof args[0], "boolean");
+        return !args[0];
+      },
+      "or-default($x, $fallback)": (args) => (args[0] === null ? args[1] : args[0]),
+    },
+  };
+  const res = binding.compileString(
+    "a { b: negate(true); c: negate(false); d: or-default(null, 5); e: or-default(9, 5); }",
+    opts,
+  );
+  assert.equal(res.css, "a {\n  b: false;\n  c: true;\n  d: 5;\n  e: 9;\n}\n");
+}
+
+// Rest-args signature: `$args...` collapses into a single SassList-shaped
+// argument (positional elements only — keywords are dropped, documented
+// divergence from the real `SassArgumentList`/`.keywords` API).
+{
+  const opts = {
+    functions: {
+      "sum-all($nums...)": (args) => {
+        const rest = args[0];
+        assert(rest instanceof binding.SassList, "rest arg should be SassList-shaped");
+        const total = rest.contents.reduce((acc, v) => acc + v.value, 0);
+        return new binding.SassNumber(total);
+      },
+    },
+  };
+  const res = binding.compileString("a { b: sum-all(1, 2, 3); }", opts);
+  assert.equal(res.css, "a {\n  b: 6;\n}\n");
+}
+
+// A bare JS Array is also accepted as an ergonomic convenience (becomes a
+// comma-separated, non-bracketed list) — real API requires an explicit
+// SassList, this is a grass-specific relaxation.
+{
+  const opts = {
+    functions: {
+      "make-list()": () => [new binding.SassNumber(1), new binding.SassNumber(2)],
+    },
+  };
+  const res = binding.compileString("a { b: make-list(); }", opts);
+  assert.equal(res.css, "a {\n  b: 1, 2;\n}\n");
+}
+
+// A thrown JS exception surfaces as a clean compile error (not a crash).
+{
+  const opts = {
+    functions: {
+      "boom()": () => {
+        throw new Error("kaboom");
+      },
+    },
+  };
+  assert.throws(() => binding.compileString("a { b: boom(); }", opts), /kaboom/);
+}
+
+// An unsupported argument type (SassColor isn't supported in slice 2)
+// produces a clear error naming the type, not a crash or silent misbehavior.
+{
+  const opts = {
+    functions: {
+      "identity($x)": (args) => args[0],
+    },
+  };
+  assert.throws(() => binding.compileString("a { b: identity(red); }", opts), /SassColor/);
+}
+
+// An unsupported return value shape (a plain object, not one of the
+// recognized shapes) also produces a clear error rather than a crash.
+{
+  const opts = {
+    functions: {
+      "bad-return()": () => ({ foo: "bar" }),
+    },
+  };
+  assert.throws(() => binding.compileString("a { b: bad-return(); }", opts));
+}
+
+// `functions` + `compileAsync`/`compileStringAsync`: not yet supported
+// (todo #221 slice 2 — see functions.rs's module doc comment), rejected
+// synchronously with a clear error rather than silently ignored or
+// (unsoundly) executed off the JS thread.
+{
+  const opts = { functions: { "noop()": () => null } };
+  assert.throws(
+    () => binding.compileAsync("a { b: c }", opts),
+    /functions is not yet supported with compileAsync/,
+  );
+  assert.throws(
+    () => binding.compileStringAsync("a { b: c }", opts),
+    /functions is not yet supported with compileStringAsync/,
+  );
+}
+
 console.log("ok");

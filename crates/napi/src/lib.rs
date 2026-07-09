@@ -94,6 +94,9 @@ pub struct CompileOptions {
     /// (see `crates/napi/src/functions.rs`'s module doc comment for why —
     /// the sync calling convention used here is not sound off the JS
     /// thread).
+    #[napi(
+        ts_type = "Record<string, (args: Array<SassNumber | SassString | SassList | boolean | null>) => SassNumber | SassString | SassList | boolean | null | Array<unknown>>"
+    )]
     pub functions: Option<HashMap<String, functions::JsFunctionRef>>,
 }
 
