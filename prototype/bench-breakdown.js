@@ -111,20 +111,45 @@ function benchWorkload(key) {
   //     the roadmap baseline actually measured, so it's used here too.
   // Both are sass-embedded's own behavior, not grass's -- out of scope for
   // todo #155, noted for a future sass-embedded-focused investigation.
-  const sassScript = resolve(__dirname, `_bench_sass_${key}.mjs`);
-  writeFileSync(
-    sassScript,
-    `import * as sass from "sass-embedded";\n` +
-      `await sass.compileAsync(${JSON.stringify(entryFile)}, { loadPaths: ${JSON.stringify(
-        loadPaths
-      )}, logger: sass.Logger.silent });\n`
-  );
-  const sassRes = runN("sass-embedded", () =>
-    execFileSync("node", [sassScript], { stdio: "ignore", cwd: __dirname })
-  );
+  // sass-embedded is an OPTIONAL reference engine: it's a devDependency that
+  // may not be installed (todo #277). If it can't be resolved, or a rep fails,
+  // skip it with a SKIPPED line and still bench the grass engines below -- a
+  // missing reference engine must never take down the whole run.
+  let sassRes = null;
+  let sassAvailable = true;
   try {
-    unlinkSync(sassScript);
-  } catch {}
+    require.resolve("sass-embedded");
+  } catch {
+    sassAvailable = false;
+  }
+  if (sassAvailable) {
+    const sassScript = resolve(__dirname, `_bench_sass_${key}.mjs`);
+    writeFileSync(
+      sassScript,
+      `import * as sass from "sass-embedded";\n` +
+        `await sass.compileAsync(${JSON.stringify(entryFile)}, { loadPaths: ${JSON.stringify(
+          loadPaths
+        )}, logger: sass.Logger.silent });\n`
+    );
+    try {
+      sassRes = runN("sass-embedded", () =>
+        execFileSync("node", [sassScript], { stdio: "ignore", cwd: __dirname })
+      );
+    } catch (e) {
+      console.log(
+        `  ${"sass-embedded".padEnd(24)} SKIPPED (run failed: ${
+          String(e.message).split("\n")[0]
+        })`
+      );
+    }
+    try {
+      unlinkSync(sassScript);
+    } catch {}
+  } else {
+    console.log(
+      `  ${"sass-embedded".padEnd(24)} SKIPPED (not installed -- run \`npm install\` in prototype/ to enable this comparison)`
+    );
+  }
   const wasmRes = runN("grass WASM", () =>
     grassWasm.compileString(source, { loadPaths, quiet: true })
   );
@@ -207,7 +232,11 @@ function benchWorkload(key) {
   console.log(`grass native (CLI, own process):   ${nativeRes.med.toFixed(0)}ms`);
   console.log(`grass napi-rs (in Node process):    ${napiRes.med.toFixed(0)}ms`);
   console.log(`grass WASM (in Node process):        ${wasmRes.med.toFixed(0)}ms`);
-  console.log(`sass-embedded (Dart VM, IPC):        ${sassRes.med.toFixed(0)}ms`);
+  console.log(
+    `sass-embedded (Dart VM, IPC):        ${
+      sassRes ? `${sassRes.med.toFixed(0)}ms` : "SKIPPED (not installed)"
+    }`
+  );
   console.log(``);
   console.log(`WASM-JS boundary crossings:         ${totalFsCalls} fs calls per compilation`);
   console.log(`Avg time per fs call (statSync):    ${(fsPerCall * 1000).toFixed(1)}µs`);
