@@ -544,6 +544,12 @@ impl<'a> Visitor<'a> {
     fn teardown_module_graph(&mut self) {
         let mut visited: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
         let mut stack: Vec<Rc<RefCell<Module>>> = Vec::new();
+        // DIAG(#278/#279): dedup sets so a scope-map shared by `new_closure()`
+        // (module env + every closure it spawned) is only mutated once.
+        let mut seen_fn_maps: FxHashSet<*const RefCell<FxHashMap<Identifier, SassFunction>>> =
+            FxHashSet::default();
+        let mut seen_mixin_maps: FxHashSet<*const RefCell<FxHashMap<Identifier, Mixin>>> =
+            FxHashSet::default();
 
         stack.extend(self.modules.values().cloned());
         stack.extend(self.import_cloned_modules.values().cloned());
@@ -575,6 +581,60 @@ impl<'a> Visitor<'a> {
                     if let Some(nested) = &env.nested_forwarded_modules {
                         for inner in nested.borrow().iter() {
                             stack.extend(inner.borrow().iter().cloned());
+                        }
+                    }
+
+                    // DIAG(#278/#279 causal probe): `SassFunction::UserDefined`/
+                    // `Mixin::UserDefined` closures embed a full `Environment`
+                    // captured via `Environment::new_closure()` at declaration
+                    // time. `new_closure()` element-wise `Rc::clone`s
+                    // `global_modules` into a brand-new, private `Vec` (unlike
+                    // `modules`/`forwarded_modules`/`imported_modules`, which
+                    // share the same `Rc<RefCell<..>>` as the declaring env and
+                    // so get cleared above "for free"). This walk never
+                    // followed `env.scopes.functions`/`.mixins` before, so
+                    // every closure's private `global_modules` snapshot (and
+                    // any nested-forwarded-modules copy) survived teardown
+                    // untouched, keeping the modules it points at alive.
+                    for map in env.scopes.functions_mut().iter() {
+                        let ptr = Rc::as_ptr(map);
+                        if !seen_fn_maps.insert(ptr) {
+                            continue;
+                        }
+                        for value in map.borrow_mut().values_mut() {
+                            if let SassFunction::UserDefined(udf) = value {
+                                stack.append(&mut udf.env.global_modules);
+                                stack.extend(udf.env.forwarded_modules.borrow().iter().cloned());
+                                stack.extend(udf.env.modules.borrow().0.values().cloned());
+                                stack.extend(udf.env.imported_modules.borrow().iter().cloned());
+                                if let Some(nested) = &udf.env.nested_forwarded_modules {
+                                    for inner in nested.borrow().iter() {
+                                        stack.extend(inner.borrow().iter().cloned());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for map in env.scopes.mixins_mut().iter() {
+                        let ptr = Rc::as_ptr(map);
+                        if !seen_mixin_maps.insert(ptr) {
+                            continue;
+                        }
+                        for value in map.borrow_mut().values_mut() {
+                            if let Mixin::UserDefined(_, closure_env, _) = value {
+                                stack.append(&mut closure_env.global_modules);
+                                stack.extend(
+                                    closure_env.forwarded_modules.borrow().iter().cloned(),
+                                );
+                                stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                stack
+                                    .extend(closure_env.imported_modules.borrow().iter().cloned());
+                                if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                    for inner in nested.borrow().iter() {
+                                        stack.extend(inner.borrow().iter().cloned());
+                                    }
+                                }
+                            }
                         }
                     }
 
