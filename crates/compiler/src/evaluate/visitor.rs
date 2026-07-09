@@ -26,7 +26,10 @@ use crate::{
         },
         BuiltinFn, GLOBAL_FUNCTIONS,
     },
-    common::{unvendor, BinaryOp, SmallOrderedMap, Identifier, ListSeparator, QuoteKind, UnaryOp},
+    common::{
+        unvendor, BinaryOp, Identifier, ListSeparator, NamedArgsView, QuoteKind, SmallOrderedMap,
+        UnaryOp,
+    },
     error::SassResult,
     interner::InternedString,
     lexer::Lexer,
@@ -4255,14 +4258,14 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<ArgumentResult> {
         let mut positional = Vec::with_capacity(arguments.positional.len());
 
-        for expr in &arguments.positional {
+        for expr in arguments.positional {
             let val = self.visit_expr_ref(expr)?;
             positional.push(self.without_slash(val, || Self::expr_span(expr, span))?);
         }
 
         let mut named = SmallOrderedMap::default();
 
-        for (key, expr) in &arguments.named {
+        for (key, expr) in arguments.named {
             let val = self.visit_expr_ref(expr)?;
             named.insert(*key, self.without_slash(val, || Self::expr_span(expr, span))?);
         }
@@ -4587,7 +4590,7 @@ impl<'a> Visitor<'a> {
                         rest = args.rest.as_ref();
 
                         let mut result = Vec::with_capacity(args.positional.len());
-                        for arg in &args.positional {
+                        for arg in args.positional {
                             let value = self.visit_expr_ref(arg)?;
 
                             // When calc() falls back to Plain function (due to
@@ -4768,7 +4771,7 @@ impl<'a> Visitor<'a> {
         let mut buffer = format!("{}(", fn_name);
 
         let mut first = true;
-        for arg in &args.positional {
+        for arg in args.positional {
             if first {
                 first = false;
             } else {
@@ -5167,10 +5170,10 @@ impl<'a> Visitor<'a> {
             return self.without_slash(value, || span);
         }
 
-        if_arguments().verify(if_expr.0.positional.len(), &if_expr.0.named, if_expr.0.span)?;
+        if_arguments().verify(if_expr.0.positional.len(), if_expr.0.named, if_expr.0.span)?;
 
-        let positional = &if_expr.0.positional;
-        let named = &if_expr.0.named;
+        let positional = if_expr.0.positional;
+        let named = if_expr.0.named;
 
         // Consume positional args left-to-right, falling back to named lookup
         // once positional is exhausted (mirrors ArgumentResult::get semantics
@@ -5182,7 +5185,7 @@ impl<'a> Visitor<'a> {
             next_idx += 1;
             v
         } else {
-            named.get(&Identifier::from("condition")).unwrap()
+            NamedArgsView::get(named, &Identifier::from("condition")).unwrap()
         };
 
         let if_true = if next_idx < positional.len() {
@@ -5190,13 +5193,13 @@ impl<'a> Visitor<'a> {
             next_idx += 1;
             v
         } else {
-            named.get(&Identifier::from("if_true")).unwrap()
+            NamedArgsView::get(named, &Identifier::from("if_true")).unwrap()
         };
 
         let if_false = if next_idx < positional.len() {
             &positional[next_idx]
         } else {
-            named.get(&Identifier::from("if_false")).unwrap()
+            NamedArgsView::get(named, &Identifier::from("if_false")).unwrap()
         };
 
         let chosen = if self.visit_expr_ref(condition)?.is_truthy() {

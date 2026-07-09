@@ -4,7 +4,7 @@ use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
 
 use crate::{
-    common::{SmallOrderedMap, Identifier, ListSeparator},
+    common::{NamedArgsView, SmallOrderedMap, Identifier, ListSeparator},
     error::SassResult,
     utils::to_sentence,
     value::Value,
@@ -32,10 +32,10 @@ impl<'a> ArgumentDeclaration<'a> {
         }
     }
 
-    pub fn verify<T>(
+    pub fn verify<T, N: NamedArgsView<Identifier, T> + ?Sized>(
         &self,
         num_positional: usize,
-        names: &SmallOrderedMap<Identifier, T>,
+        names: &N,
         span: Span,
     ) -> SassResult<()> {
         let mut named_used = 0;
@@ -125,8 +125,8 @@ impl<'a> ArgumentDeclaration<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ArgumentInvocation<'a> {
-    pub(crate) positional: Vec<AstExpr<'a>>,
-    pub(crate) named: SmallOrderedMap<Identifier, AstExpr<'a>>,
+    pub(crate) positional: &'a [AstExpr<'a>],
+    pub(crate) named: &'a [(Identifier, AstExpr<'a>)],
     pub(crate) rest: Option<AstExpr<'a>>,
     pub(crate) keyword_rest: Option<AstExpr<'a>>,
     pub(crate) span: Span,
@@ -135,8 +135,8 @@ pub struct ArgumentInvocation<'a> {
 impl<'a> ArgumentInvocation<'a> {
     pub fn empty(span: Span) -> Self {
         Self {
-            positional: Vec::new(),
-            named: SmallOrderedMap::default(),
+            positional: &[],
+            named: &[],
             rest: None,
             keyword_rest: None,
             span,

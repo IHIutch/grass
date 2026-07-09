@@ -2791,8 +2791,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.set_consume_newlines(was_consuming_newlines);
 
         Ok(ArgumentInvocation {
-            positional,
-            named,
+            positional: self.arena().alloc_slice_fill_iter(positional),
+            named: self.arena().alloc_slice_fill_iter(named),
             rest,
             keyword_rest,
             span: self.toks_mut().span_from(start),

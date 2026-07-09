@@ -3,7 +3,7 @@ use std::{cell::Cell, path::Path};
 use codemap::{Span, Spanned};
 
 use crate::{
-    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::{SmallOrderedMap, QuoteKind},
+    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind,
     deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token,
 };
 
@@ -253,8 +253,8 @@ impl<'a> CssParser<'a> {
             AstExpr::InterpolatedFunction(self.arena.alloc(InterpolatedFunction {
                 name: identifier,
                 arguments: ArgumentInvocation {
-                    positional: arguments,
-                    named: SmallOrderedMap::default(),
+                    positional: self.arena.alloc_slice_fill_iter(arguments),
+                    named: &[],
                     rest: None,
                     keyword_rest: None,
                     span: self.toks.span_from(before_args),

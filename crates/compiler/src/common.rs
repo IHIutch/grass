@@ -88,6 +88,74 @@ impl<K, V> IntoIterator for SmallOrderedMap<K, V> {
     }
 }
 
+/// Read-only interface shared by [`SmallOrderedMap`] (used by
+/// `ArgumentResult::named`, a runtime, mutable map) and a plain
+/// `[(K, V)]` slice (used by `ArgumentInvocation::named`, an immutable
+/// arena slice -- see Plan 091 / todo #276), so callers like
+/// [`ArgumentDeclaration::verify`](crate::ast::ArgumentDeclaration::verify)
+/// can accept either kind of "named arguments" container without caring
+/// which backing storage the caller has. Iteration order matches
+/// insertion order for both (dart `LinkedHashMap` parity).
+pub trait NamedArgsView<K, V> {
+    fn contains_key(&self, key: &K) -> bool;
+    fn get(&self, key: &K) -> Option<&V>;
+    fn is_empty(&self) -> bool;
+    fn len(&self) -> usize;
+    fn keys<'s>(&'s self) -> impl Iterator<Item = &'s K>
+    where
+        K: 's;
+}
+
+impl<K: PartialEq + Copy, V> NamedArgsView<K, V> for SmallOrderedMap<K, V> {
+    fn contains_key(&self, key: &K) -> bool {
+        SmallOrderedMap::contains_key(self, key)
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        SmallOrderedMap::get(self, key)
+    }
+
+    fn is_empty(&self) -> bool {
+        SmallOrderedMap::is_empty(self)
+    }
+
+    fn len(&self) -> usize {
+        SmallOrderedMap::len(self)
+    }
+
+    fn keys<'s>(&'s self) -> impl Iterator<Item = &'s K>
+    where
+        K: 's,
+    {
+        SmallOrderedMap::keys(self)
+    }
+}
+
+impl<K: PartialEq, V> NamedArgsView<K, V> for [(K, V)] {
+    fn contains_key(&self, key: &K) -> bool {
+        self.iter().any(|(k, _)| k == key)
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    fn is_empty(&self) -> bool {
+        <[(K, V)]>::is_empty(self)
+    }
+
+    fn len(&self) -> usize {
+        <[(K, V)]>::len(self)
+    }
+
+    fn keys<'s>(&'s self) -> impl Iterator<Item = &'s K>
+    where
+        K: 's,
+    {
+        self.iter().map(|(k, _)| k)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum UnaryOp {
     Plus,
