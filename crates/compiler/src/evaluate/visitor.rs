@@ -31,6 +31,7 @@ use crate::{
         UnaryOp,
     },
     error::SassResult,
+    importer::ImportResolution,
     interner::InternedString,
     lexer::Lexer,
     parse::{
@@ -2227,6 +2228,27 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
+    /// Walks `self.options.importers` in registration order, returning the
+    /// first result other than [`ImportResolution::NotFound`] (or `None` if
+    /// every importer declined, or none are registered).
+    fn resolve_via_importers(
+        &self,
+        path: &Path,
+        for_import: bool,
+    ) -> SassResult<Option<ImportResolution>> {
+        let url = path.to_str().unwrap_or_default();
+        let containing_url = self.current_import_path.to_str();
+
+        for importer in &self.options.importers {
+            match importer.canonicalize(url, for_import, containing_url)? {
+                ImportResolution::NotFound => continue,
+                other => return Ok(Some(other)),
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Searches the current directory of the file then searches in `load_paths` directories
     /// if the import has not yet been found.
     ///
@@ -2428,6 +2450,62 @@ impl<'a> Visitor<'a> {
             }
             Ok(None)
         };
+
+        // Custom importers (`Options::add_importer`) are checked ahead of
+        // the default filesystem/load-path resolution below, in
+        // registration order; the first one to return other than
+        // `NotFound` wins. This branch costs a single `Vec::is_empty()`
+        // check when no importers are registered.
+        if !self.options.importers.is_empty() {
+            if let Some(resolution) = self.resolve_via_importers(path, for_import)? {
+                return match resolution {
+                    ImportResolution::DelegateToPath(delegate_path) => {
+                        // A `FileImporter`-style result: treat it exactly
+                        // like a load path (partials/extensions/index
+                        // resolution on top), not like the current file's
+                        // own directory (which additionally fast-paths an
+                        // explicit .scss/.sass/.css extension below) —
+                        // matching the JS contract's "applies the normal
+                        // partial/extension/index-file resolution on top,
+                        // exactly like a load path".
+                        let delegate_path = Self::normalize_path(&delegate_path);
+                        if let Some(found) =
+                            resolve_with_conflicts(&delegate_path, for_import, context_dir, span)?
+                        {
+                            return Ok(Some(found));
+                        }
+                        if self.is_dir_fast(&delegate_path) {
+                            if let Some(found) = resolve_with_conflicts(
+                                &delegate_path.join("index"),
+                                for_import,
+                                context_dir,
+                                span,
+                            )? {
+                                return Ok(Some(found));
+                            }
+                        }
+                        Ok(None)
+                    }
+                    ImportResolution::Resolved { .. } => {
+                        // A full `Importer` (canonicalize+load) result.
+                        // Nothing registers one yet in this slice (only a
+                        // `FileImporter`, which can only ever produce
+                        // `DelegateToPath`/`NotFound`) — closing this gap
+                        // for real (todo #221 slice 5) needs
+                        // `find_import`'s `Option<PathBuf>` return type (or
+                        // a sibling method) to grow a third case that lets
+                        // `import_like_node` bypass `Fs`/path-based parsing
+                        // entirely: parse `contents` directly under
+                        // `syntax` and cache the resulting stylesheet under
+                        // `canonical_url` instead of a `PathBuf` key.
+                        Ok(None)
+                    }
+                    ImportResolution::NotFound => {
+                        unreachable!("resolve_via_importers filters out NotFound")
+                    }
+                };
+            }
+        }
 
         if path_buf.extension() == Some(OsStr::new("scss"))
             || path_buf.extension() == Some(OsStr::new("sass"))

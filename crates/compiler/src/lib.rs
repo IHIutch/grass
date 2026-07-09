@@ -74,6 +74,7 @@ pub use crate::error::{
     PublicSassErrorKind as ErrorKind, SassError as Error, SassResult as Result,
 };
 pub use crate::fs::{DirListing, Fs, NullFs, StdFs};
+pub use crate::importer::{ImportResolution, Importer};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
 pub use crate::source_map::{encode_uri, SourceMapData};
@@ -109,6 +110,7 @@ mod deprecation;
 mod error;
 mod evaluate;
 mod fs;
+mod importer;
 mod interner;
 mod lexer;
 mod logger;

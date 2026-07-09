@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{builtin::Builtin, Deprecation, Fs, Logger, StdFs, StdLogger};
+use crate::{builtin::Builtin, importer::Importer, Deprecation, Fs, Logger, StdFs, StdLogger};
 
 #[cfg(any(feature = "custom-builtin-fns", doc))]
 use std::sync::Arc;
@@ -23,6 +24,7 @@ pub struct Options<'a> {
     pub(crate) logger: &'a dyn Logger,
     pub(crate) style: OutputStyle,
     pub(crate) load_paths: Vec<PathBuf>,
+    pub(crate) importers: Vec<Rc<dyn Importer>>,
     pub(crate) allows_charset: bool,
     pub(crate) unicode_error_messages: bool,
     pub(crate) quiet: bool,
@@ -42,6 +44,7 @@ impl Default for Options<'_> {
             logger: &StdLogger,
             style: OutputStyle::Expanded,
             load_paths: Vec::new(),
+            importers: Vec::new(),
             allows_charset: true,
             unicode_error_messages: true,
             quiet: false,
@@ -136,6 +139,19 @@ impl<'a> Options<'a> {
             self.load_paths.push(path.as_ref().to_owned());
         }
 
+        self
+    }
+
+    /// Register a custom importer, checked (in registration order, ahead
+    /// of all other importers already registered and ahead of the default
+    /// filesystem/load-path resolution) whenever a `@use`/`@forward`/
+    /// `@import` URL needs to be resolved.
+    ///
+    /// See [`Importer`] for more information.
+    #[must_use]
+    #[inline]
+    pub fn add_importer(mut self, importer: Rc<dyn Importer>) -> Self {
+        self.importers.push(importer);
         self
     }
 
