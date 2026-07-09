@@ -244,7 +244,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
-                '$' => children.push(AstStmt::VariableDecl(Box::new(
+                '$' => children.push(AstStmt::VariableDecl(self.arena().alloc(
                     self.parse_variable_declaration_without_namespace(None, None)?,
                 ))),
                 '/' => match self.toks().peek_n(1) {
@@ -286,7 +286,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace_without_comments();
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
-                '$' => stmts.push(AstStmt::VariableDecl(Box::new(
+                '$' => stmts.push(AstStmt::VariableDecl(self.arena().alloc(
                     self.parse_variable_declaration_without_namespace(None, None)?,
                 ))),
                 '/' => match self.toks().peek_n(1) {
@@ -551,7 +551,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.flags_mut().set(ContextFlags::FOUND_CONTENT_RULE, true);
 
-        Ok(AstStmt::ContentRule(Box::new(AstContentRule { args })))
+        Ok(AstStmt::ContentRule(self.arena().alloc(AstContentRule { args })))
     }
 
     fn parse_debug_rule(&mut self) -> SassResult<AstStmt<'a>> {
@@ -601,7 +601,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::Each(Box::new(AstEach {
+        Ok(AstStmt::Each(self.arena().alloc(AstEach {
             variables,
             list,
             list_span,
@@ -725,7 +725,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::For(Box::new(AstFor {
+        Ok(AstStmt::For(self.arena().alloc(AstFor {
             variable,
             from,
             to,
@@ -821,7 +821,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let start = self.toks().cursor();
         if !self.toks_mut().next_char_is('@') {
             match self.parse_variable_declaration_with_namespace() {
-                Ok(decl) => return Ok(AstStmt::VariableDecl(Box::new(decl))),
+                Ok(decl) => return Ok(AstStmt::VariableDecl(self.arena().alloc(decl))),
                 Err(e) => {
                     self.toks_mut().set_cursor(start);
                     let stmt = match self.parse_declaration_or_style_rule() {
@@ -1287,7 +1287,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             self.expect_statement_separator(None)?;
         }
 
-        Ok(AstStmt::Include(Box::new(AstInclude {
+        Ok(AstStmt::Include(self.arena().alloc(AstInclude {
             namespace,
             name: Spanned {
                 node: name,
@@ -1505,7 +1505,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             ));
         }
 
-        Ok(AstStmt::UnknownAtRule(Box::new(AstUnknownAtRule {
+        Ok(AstStmt::UnknownAtRule(self.arena().alloc(AstUnknownAtRule {
             name,
             value,
             body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c)),
@@ -1749,7 +1749,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let at_rule_span = self.toks_mut().span_from(start);
         let children = self.with_children(Self::parse_statement)?;
 
-        Ok(AstStmt::Supports(Box::new(AstSupportsRule {
+        Ok(AstStmt::Supports(self.arena().alloc(AstSupportsRule {
             condition,
             body: self.alloc_stmts(children.node),
             span: children.span,
@@ -1790,7 +1790,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::While(Box::new(AstWhile { condition, body: self.alloc_stmts(body) })))
+        Ok(AstStmt::While(self.arena().alloc(AstWhile { condition, body: self.alloc_stmts(body) })))
     }
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         self.set_consume_newlines(true);
@@ -1847,7 +1847,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             if let (Some(shown_mixins_and_functions), Some(shown_variables)) =
                 (shown_mixins_and_functions, shown_variables)
             {
-                Box::new(AstForwardRule::show(
+                self.arena().alloc(AstForwardRule::show(
                     url,
                     shown_mixins_and_functions,
                     shown_variables,
@@ -1858,7 +1858,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             } else if let (Some(hidden_mixins_and_functions), Some(hidden_variables)) =
                 (hidden_mixins_and_functions, hidden_variables)
             {
-                Box::new(AstForwardRule::hide(
+                self.arena().alloc(AstForwardRule::hide(
                     url,
                     hidden_mixins_and_functions,
                     hidden_variables,
@@ -1867,7 +1867,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     span,
                 ))
             } else {
-                Box::new(AstForwardRule::new(url, prefix, config, span))
+                self.arena().alloc(AstForwardRule::new(url, prefix, config, span))
             },
         ))
     }
@@ -2076,7 +2076,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.expect_statement_separator(Some("@use rule"))?;
 
-        Ok(AstStmt::Use(Box::new(AstUseRule {
+        Ok(AstStmt::Use(self.arena().alloc(AstUseRule {
             url: path,
             namespace,
             configuration: configuration.unwrap_or_default(),
@@ -2234,7 +2234,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             match self.parse_variable_declaration_or_interpolation()? {
                 VariableDeclOrInterpolation::Interpolation(interpolation) => interpolation,
                 VariableDeclOrInterpolation::VariableDecl(decl) => {
-                    return Ok(AstStmt::VariableDecl(Box::new(decl)))
+                    return Ok(AstStmt::VariableDecl(self.arena().alloc(decl)))
                 }
             }
         } else {
@@ -2250,7 +2250,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let value = AstExpr::String(StringExpr(interpolation, QuoteKind::None), value_span)
                 .span(value_span);
             self.expect_statement_separator(Some("custom property"))?;
-            return Ok(AstStmt::Style(Box::new(AstStyle {
+            return Ok(AstStmt::Style(self.arena().alloc(AstStyle {
                 name,
                 value: Some(value),
                 body: &[],
@@ -2279,7 +2279,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
             let children = self.with_children(Self::parse_declaration_child)?.node;
 
-            return Ok(AstStmt::Style(Box::new(AstStyle {
+            return Ok(AstStmt::Style(self.arena().alloc(AstStyle {
                 name,
                 value: None,
                 body: self.alloc_stmts(children),
@@ -2309,7 +2309,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
             let children = self.with_children(Self::parse_declaration_child)?.node;
 
-            Ok(AstStmt::Style(Box::new(AstStyle {
+            Ok(AstStmt::Style(self.arena().alloc(AstStyle {
                 name,
                 value: Some(value),
                 body: self.alloc_stmts(children),
@@ -2318,7 +2318,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             })))
         } else {
             self.expect_statement_separator(None)?;
-            Ok(AstStmt::Style(Box::new(AstStyle {
+            Ok(AstStmt::Style(self.arena().alloc(AstStyle {
                 name,
                 value: Some(value),
                 body: &[],
@@ -2849,7 +2849,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         match variable_or_interpolation {
             VariableDeclOrInterpolation::Interpolation(int) => name_buffer.add_interpolation(int),
             VariableDeclOrInterpolation::VariableDecl(v) => {
-                return Ok(DeclarationOrBuffer::Stmt(AstStmt::VariableDecl(Box::new(v))))
+                return Ok(DeclarationOrBuffer::Stmt(AstStmt::VariableDecl(self.arena().alloc(v))))
             }
         }
 
@@ -2888,7 +2888,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 Some("custom property")
             };
             self.expect_statement_separator(separator_name)?;
-            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(Box::new(AstStyle {
+            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
                 name: name_buffer,
                 value: Some(
                     AstExpr::String(StringExpr(value, QuoteKind::None), value_span)
@@ -2926,7 +2926,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     .into());
             }
             let body = self.with_children(Self::parse_declaration_child)?.node;
-            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(Box::new(AstStyle {
+            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
                 name: name_buffer,
                 value: None,
                 span: self.toks_mut().span_from(start),
@@ -2983,7 +2983,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     .into());
             }
             let body = self.with_children(Self::parse_declaration_child)?.node;
-            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(Box::new(AstStyle {
+            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
                 name: name_buffer,
                 value: Some(value),
                 span: self.toks_mut().span_from(start),
@@ -2992,7 +2992,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             }))))
         } else {
             self.expect_statement_separator(None)?;
-            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(Box::new(AstStyle {
+            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
                 name: name_buffer,
                 value: Some(value),
                 span: self.toks_mut().span_from(start),
@@ -3056,7 +3056,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         match self.parse_variable_declaration_or_interpolation()? {
-            VariableDeclOrInterpolation::VariableDecl(var) => Ok(AstStmt::VariableDecl(Box::new(var))),
+            VariableDeclOrInterpolation::VariableDecl(var) => Ok(AstStmt::VariableDecl(self.arena().alloc(var))),
             VariableDeclOrInterpolation::Interpolation(int) => {
                 self.parse_style_rule(Some(int), Some(start))
             }

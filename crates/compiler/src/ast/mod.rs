@@ -50,3 +50,14 @@ pub(crate) unsafe fn erase_argument_declaration_lifetime<'a>(
 ) -> ArgumentDeclaration<'static> {
     std::mem::transmute(decl)
 }
+
+/// Safety: mirrors [`erase_stylesheet_lifetime`] — used when the evaluator
+/// arena-allocates a new node during evaluation (e.g. rebuilding an
+/// `IfCondition` while evaluating CSS-native `if()`), producing a reference
+/// tied to the `Visitor`'s real arena lifetime `'a` that must be widened to
+/// the `'static` erasure used throughout the AST/runtime boundary. Sound
+/// under the same invariant: the arena outlives the compilation that
+/// produced the reference.
+pub(crate) unsafe fn erase_ref_lifetime<T: ?Sized>(r: &T) -> &'static T {
+    std::mem::transmute(r)
+}

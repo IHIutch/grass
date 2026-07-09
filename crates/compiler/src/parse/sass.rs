@@ -673,7 +673,7 @@ impl<'a> SassParser<'a> {
             Some(Token {
                 kind: '\n' | '\r', ..
             }) => return Ok(None),
-            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(Box::new(
+            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(self.arena().alloc(
                 self.parse_variable_declaration_without_namespace(None, None)?,
             )),
             Some(Token { kind: '/', .. }) => match self.toks.peek_n(1) {

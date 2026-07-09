@@ -174,7 +174,7 @@ fn condition_has_raw(cond: &IfCondition<'static>) -> bool {
 /// Unwrap a Paren wrapper — used when simplifying And/Or to a single operand.
 fn unwrap_paren(cond: IfCondition<'static>) -> IfCondition<'static> {
     match cond {
-        IfCondition::Paren(inner) => *inner,
+        IfCondition::Paren(inner) => inner.clone(),
         other => other,
     }
 }
@@ -1023,7 +1023,7 @@ impl<'a> Visitor<'a> {
             // Converting those (declaration sites, not call sites) is out of
             // scope for this pass (see Plan 022).
             AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset.clone()),
-            AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt.clone()),
+            AstStmt::For(for_stmt) => self.visit_for_stmt((*for_stmt).clone()),
             AstStmt::Each(each_stmt) => self.visit_each_stmt(each_stmt),
             AstStmt::Media(media_rule) => self.visit_media_rule(media_rule),
             AstStmt::Include(include_stmt) => self.visit_include_stmt(include_stmt),
@@ -1037,20 +1037,20 @@ impl<'a> Visitor<'a> {
                 Ok(None)
             }
             AstStmt::ContentRule(content_rule) => self.visit_content_rule(content_rule),
-            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule(*unknown_at_rule.clone()),
+            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule((*unknown_at_rule).clone()),
             AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule.clone()),
             AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule.clone()),
             AstStmt::ImportRule(import_rule) => self.visit_import_rule(import_rule.clone()),
             AstStmt::Use(use_rule) => {
-                self.visit_use_rule(*use_rule.clone())?;
+                self.visit_use_rule((*use_rule).clone())?;
                 Ok(None)
             }
             AstStmt::Forward(forward_rule) => {
-                self.visit_forward_rule(*forward_rule.clone())?;
+                self.visit_forward_rule((*forward_rule).clone())?;
                 Ok(None)
             }
             AstStmt::Supports(supports_rule) => {
-                self.visit_supports_rule(*supports_rule.clone())?;
+                self.visit_supports_rule((*supports_rule).clone())?;
                 Ok(None)
             }
         }
@@ -5310,10 +5310,13 @@ impl<'a> Visitor<'a> {
                     ConditionResult::True => Ok(ConditionResult::False),
                     ConditionResult::False => Ok(ConditionResult::True),
                     ConditionResult::Css(inner_cond) => {
-                        Ok(ConditionResult::Css(IfCondition::Not(
-                            Box::new(inner_cond),
-                            *_span,
-                        )))
+                        // Safety: see `erase_ref_lifetime` — `self.arena` lives for
+                        // the whole compilation, so this reference is valid for
+                        // as long as any other 'static-erased AST reference.
+                        let inner_cond = unsafe {
+                            crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond))
+                        };
+                        Ok(ConditionResult::Css(IfCondition::Not(inner_cond, *_span)))
                     }
                 }
             }
@@ -5322,7 +5325,10 @@ impl<'a> Visitor<'a> {
                     ConditionResult::True => Ok(ConditionResult::True),
                     ConditionResult::False => Ok(ConditionResult::False),
                     ConditionResult::Css(inner_cond) => {
-                        Ok(ConditionResult::Css(IfCondition::Paren(Box::new(inner_cond))))
+                        let inner_cond = unsafe {
+                            crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond))
+                        };
+                        Ok(ConditionResult::Css(IfCondition::Paren(inner_cond)))
                     }
                 }
             }

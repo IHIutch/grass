@@ -35,10 +35,10 @@ pub enum IfConditionAtom<'a> {
 #[derive(Debug, Clone)]
 pub enum IfCondition<'a> {
     Atom(IfConditionAtom<'a>),
-    Not(Box<IfCondition<'a>>, Span),
+    Not(&'a IfCondition<'a>, Span),
     And(Vec<IfCondition<'a>>),
     Or(Vec<IfCondition<'a>>),
-    Paren(Box<IfCondition<'a>>),
+    Paren(&'a IfCondition<'a>),
     /// The `else` keyword — always true
     Else,
 }

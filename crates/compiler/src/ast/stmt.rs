@@ -528,36 +528,38 @@ pub struct AstSupportsRule<'a> {
     pub at_rule_span: Span,
 }
 
-/// AST statement node. Large variants are boxed to keep the enum small
-/// (~96 bytes instead of ~272 bytes), improving cache utilization and
-/// reducing the cost of cloning statements in loop bodies.
+/// AST statement node. Large variants are arena-referenced to keep the enum
+/// small, improving cache utilization and reducing the cost of cloning
+/// statements in loop bodies. Payloads live in the same bump arena as the
+/// rest of the AST (see Plan 091 / todo #276) rather than on the heap, so
+/// they die with the arena instead of leaking their backing allocation.
 #[derive(Debug, Clone)]
 pub enum AstStmt<'a> {
     If(AstIf<'a>),
-    For(Box<AstFor<'a>>),
+    For(&'a AstFor<'a>),
     Return(AstReturn<'a>),
     RuleSet(AstRuleSet<'a>),
-    Style(Box<AstStyle<'a>>),
-    Each(Box<AstEach<'a>>),
+    Style(&'a AstStyle<'a>),
+    Each(&'a AstEach<'a>),
     Media(AstMedia<'a>),
-    Include(Box<AstInclude<'a>>),
-    While(Box<AstWhile<'a>>),
-    VariableDecl(Box<AstVariableDecl<'a>>),
+    Include(&'a AstInclude<'a>),
+    While(&'a AstWhile<'a>),
+    VariableDecl(&'a AstVariableDecl<'a>),
     LoudComment(AstLoudComment<'a>),
     SilentComment(AstSilentComment),
     FunctionDecl(AstFunctionDecl<'a>),
     Mixin(AstMixin<'a>),
-    ContentRule(Box<AstContentRule<'a>>),
+    ContentRule(&'a AstContentRule<'a>),
     Warn(AstWarn<'a>),
-    UnknownAtRule(Box<AstUnknownAtRule<'a>>),
+    UnknownAtRule(&'a AstUnknownAtRule<'a>),
     ErrorRule(AstErrorRule<'a>),
     Extend(AstExtendRule<'a>),
     AtRootRule(AstAtRootRule<'a>),
     Debug(AstDebugRule<'a>),
     ImportRule(AstImportRule<'a>),
-    Use(Box<AstUseRule<'a>>),
-    Forward(Box<AstForwardRule<'a>>),
-    Supports(Box<AstSupportsRule<'a>>),
+    Use(&'a AstUseRule<'a>),
+    Forward(&'a AstForwardRule<'a>),
+    Supports(&'a AstSupportsRule<'a>),
 }
 
 #[derive(Debug, Clone)]

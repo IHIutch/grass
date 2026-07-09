@@ -218,7 +218,7 @@ fn parse_if_condition<'a>(
             check_not_followed_by_combinator(parser)?;
             check_not_followed_by_raw(parser)?;
 
-            return Ok(IfCondition::Not(Box::new(inner), span));
+            return Ok(IfCondition::Not(parser.arena().alloc(inner), span));
         }
         parser.toks_mut().set_cursor(start);
     }
@@ -681,7 +681,7 @@ fn parse_condition_primary<'a>(
         parser.whitespace()?;
         parser.expect_char(')')?;
         parser.set_consume_newlines(was_consuming);
-        return Ok(IfCondition::Paren(Box::new(inner)));
+        return Ok(IfCondition::Paren(parser.arena().alloc(inner)));
     }
 
     // `#{` → interpolation (may form function name if followed by `(`)
