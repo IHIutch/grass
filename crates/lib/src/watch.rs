@@ -77,6 +77,8 @@ pub(crate) struct WatchArgs<'a> {
     pub(crate) poll: bool,
 }
 
+type WatchCompileResult = (grass::Result<(String, Option<SourceMapData>)>, Option<Vec<PathBuf>>);
+
 /// Tracks the directories currently watched for a single `--watch` session
 /// and rebuilds that set after every compile from the compile's
 /// `loaded_files` (see the module doc comment). `-I`/`--load-path`
@@ -270,7 +272,7 @@ fn event_is_relevant(evt: &notify::Result<Event>) -> bool {
 /// use the dependency-only path so serializer mapping state stays disabled.
 fn compile_for_watch(
     args: &WatchArgs,
-) -> (grass::Result<(String, Option<SourceMapData>)>, Option<Vec<PathBuf>>) {
+) -> WatchCompileResult {
     if args.write_config.generate_source_map {
         let compile_result = from_path_with_source_map(args.input, args.options);
         let loaded_files = match &compile_result {
