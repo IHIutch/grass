@@ -210,6 +210,12 @@ pub(crate) fn run(args: WatchArgs) -> io::Result<()> {
 
     let loaded_files = compile_and_announce(&args)?;
     dep_watcher.update(loaded_files);
+    // The first compile can finish before the native watcher's stream has
+    // started delivering events. Recompile after the initial watch set has
+    // been registered so edits made before subscription are reflected before
+    // the readiness banner is emitted.
+    let loaded_files = compile_and_rescan(&args)?;
+    dep_watcher.update(loaded_files);
     // Printed exactly once, right after the first compile attempt --
     // verified via npx sass@1.97.3 (present even when the initial compile
     // fails).
@@ -279,6 +285,21 @@ fn compile_and_announce(args: &WatchArgs) -> io::Result<Option<Vec<PathBuf>>> {
     // On failure, the error was already printed to stderr by
     // `write_compile_result`; watch mode just keeps going.
 
+    io::stdout().flush()?;
+    Ok(loaded_files)
+}
+
+/// Recompile once after the initial watch registrations without emitting a
+/// second user-facing "Compiled" line. This closes the startup window in
+/// which an edit can happen before the native stream is subscribed.
+fn compile_and_rescan(args: &WatchArgs) -> io::Result<Option<Vec<PathBuf>>> {
+    let compile_result = from_path_with_source_map(args.input, args.options);
+    let loaded_files = match &compile_result {
+        Ok((_, Some(map))) => Some(map.loaded_files.clone()),
+        Ok((_, None)) | Err(_) => None,
+    };
+
+    let _ = write_compile_result(compile_result, &args.write_config)?;
     io::stdout().flush()?;
     Ok(loaded_files)
 }

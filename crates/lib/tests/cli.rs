@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,41 @@ fn wait_for<F: Fn() -> bool>(timeout: Duration, cond: F) -> bool {
         std::thread::sleep(Duration::from_millis(50));
     }
     false
+}
+
+fn spawn_watch(input: &Path, output: &Path) -> (KillOnDrop, std::sync::mpsc::Receiver<String>) {
+    let mut child = grass_cmd()
+        .args([
+            "--watch",
+            "--no-source-map",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn grass --watch");
+
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        for line in BufReader::new(stdout).lines().flatten() {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    (KillOnDrop(child), rx)
+}
+
+fn wait_for_watch_ready(output: &std::sync::mpsc::Receiver<String>) -> bool {
+    wait_for(Duration::from_secs(10), || {
+        output
+            .try_iter()
+            .any(|line| line == "Sass is watching for changes. Press Ctrl-C to stop.")
+    })
 }
 
 fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
@@ -764,18 +800,12 @@ fn watch_recompiles_on_input_change() {
     let out_path = dir.path().join("out.css");
     std::fs::write(&in_path, "a { b: c }").unwrap();
 
-    let child = grass_cmd()
-        .args([
-            "--watch",
-            "--no-source-map",
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn grass --watch");
-    let _guard = KillOnDrop(child);
+    let (_guard, watch_output) = spawn_watch(&in_path, &out_path);
+
+    assert!(
+        wait_for_watch_ready(&watch_output),
+        "watcher did not become ready within 10s"
+    );
 
     assert!(
         wait_for(Duration::from_secs(10), || {
@@ -806,18 +836,12 @@ fn watch_recompiles_on_dependency_change() {
     std::fs::write(&dep_path, "$x: 1;\n").unwrap();
     std::fs::write(&in_path, "@use \"dep\";\na { b: dep.$x; }\n").unwrap();
 
-    let child = grass_cmd()
-        .args([
-            "--watch",
-            "--no-source-map",
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn grass --watch");
-    let _guard = KillOnDrop(child);
+    let (_guard, watch_output) = spawn_watch(&in_path, &out_path);
+
+    assert!(
+        wait_for_watch_ready(&watch_output),
+        "watcher did not become ready within 10s"
+    );
 
     assert!(
         wait_for(Duration::from_secs(10), || {
@@ -847,18 +871,12 @@ fn watch_recovers_from_error() {
     let out_path = dir.path().join("out.css");
     std::fs::write(&in_path, "a { b: c }").unwrap();
 
-    let child = grass_cmd()
-        .args([
-            "--watch",
-            "--no-source-map",
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn grass --watch");
-    let _guard = KillOnDrop(child);
+    let (_guard, watch_output) = spawn_watch(&in_path, &out_path);
+
+    assert!(
+        wait_for_watch_ready(&watch_output),
+        "watcher did not become ready within 10s"
+    );
 
     assert!(
         wait_for(Duration::from_secs(10), || {
@@ -912,18 +930,12 @@ fn watch_recompiles_on_variable_only_partial_in_sibling_dir() {
     std::fs::write(&vars_path, "$x: 1;\n").unwrap();
     std::fs::write(&in_path, "@use \"../shared/vars\" as vars;\na { b: vars.$x; }\n").unwrap();
 
-    let child = grass_cmd()
-        .args([
-            "--watch",
-            "--no-source-map",
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn grass --watch");
-    let _guard = KillOnDrop(child);
+    let (_guard, watch_output) = spawn_watch(&in_path, &out_path);
+
+    assert!(
+        wait_for_watch_ready(&watch_output),
+        "watcher did not become ready within 10s"
+    );
 
     assert!(
         wait_for(Duration::from_secs(10), || {
@@ -964,18 +976,12 @@ fn watch_ignores_unrelated_sibling_dir() {
     std::fs::write(&noise_path, "$noise: 1;\n").unwrap();
     std::fs::write(&in_path, "a { b: c; }\n").unwrap();
 
-    let child = grass_cmd()
-        .args([
-            "--watch",
-            "--no-source-map",
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn grass --watch");
-    let _guard = KillOnDrop(child);
+    let (_guard, watch_output) = spawn_watch(&in_path, &out_path);
+
+    assert!(
+        wait_for_watch_ready(&watch_output),
+        "watcher did not become ready within 10s"
+    );
 
     assert!(
         wait_for(Duration::from_secs(10), || {
@@ -987,11 +993,12 @@ fn watch_ignores_unrelated_sibling_dir() {
     let compiled_at = std::fs::metadata(&out_path).unwrap().modified().unwrap();
 
     std::fs::write(&noise_path, "$noise: 2;\n").unwrap();
-    std::thread::sleep(Duration::from_millis(750));
-
-    let unchanged_at = std::fs::metadata(&out_path).unwrap().modified().unwrap();
-    assert_eq!(
-        compiled_at, unchanged_at,
+    assert!(
+        !wait_for(Duration::from_millis(750), || {
+            std::fs::metadata(&out_path)
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified != compiled_at)
+        }),
         "editing an unrelated sibling directory should not have triggered a recompile"
     );
 
