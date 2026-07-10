@@ -341,11 +341,10 @@ fn parse_deprecations(
 }
 
 /// Resolves `raw` (as given on the command line, relative or absolute) to an
-/// absolute, symlink-resolved path, for use in source-map `sources` URL
-/// construction. Falls back to the un-canonicalized absolute join if
-/// `canonicalize` fails (broken symlink, file since removed, etc.) rather
-/// than erroring — a source-map URL that's merely un-resolved is much
-/// better than aborting a successful compile over it.
+/// absolute, lexically normalized path for source-map `sources` URL
+/// construction. This intentionally does not resolve symlinks: dart-sass
+/// uses both source and output paths as given, so `/var` and `/private/var`
+/// remain distinct forms even when they refer to the same directory.
 fn absolute_source_path(raw: &str, cwd: &Path) -> PathBuf {
     let p = Path::new(raw);
     let joined = if p.is_absolute() {
@@ -353,14 +352,13 @@ fn absolute_source_path(raw: &str, cwd: &Path) -> PathBuf {
     } else {
         cwd.join(p)
     };
-    std::fs::canonicalize(&joined).unwrap_or(joined)
+    normalize_path_lexically(&joined)
 }
 
 /// Lexically removes `.` and `..` components without requiring the final path
-/// to exist. This intentionally does not resolve symlinks by itself: when a
-/// missing output path contains no lexical components to normalize, retaining
-/// the original path preserves the documented never-abort fallback and dart-
-/// sass's source-map behavior for symlinked output directories.
+/// to exist. This intentionally does not resolve symlinks: dart-sass uses
+/// both source and output paths as given, preserving divergent symlink forms
+/// for relative source-map URL calculation.
 fn normalize_path_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
 
@@ -384,12 +382,10 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Resolves an output path for source-map URL construction. Unlike source
-/// paths, the output file is guaranteed not to exist yet when its map is
-/// assembled, so canonicalize the full path first and then normalize its
-/// directory lexically. If normalization changed the path, canonicalize the
-/// now-existing directory to retain symlink resolution where it is
-/// unambiguous; otherwise preserve the original missing-path fallback.
+/// Resolves an output path for source-map URL construction using the same
+/// as-given policy as `absolute_source_path`: absolutize relative paths and
+/// normalize lexically, without resolving symlinks. This matches dart-sass
+/// for both missing and pre-existing output files.
 fn absolute_output_path(raw: &str, cwd: &Path) -> PathBuf {
     let p = Path::new(raw);
     let joined = if p.is_absolute() {
@@ -398,19 +394,7 @@ fn absolute_output_path(raw: &str, cwd: &Path) -> PathBuf {
         cwd.join(p)
     };
 
-    let Ok(canonical) = std::fs::canonicalize(&joined) else {
-        let normalized = normalize_path_lexically(&joined);
-        if normalized != joined {
-            if let (Some(file_name), Some(parent)) = (normalized.file_name(), normalized.parent()) {
-                if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
-                    return canonical_parent.join(file_name);
-                }
-            }
-        }
-        return normalized;
-    };
-
-    canonical
+    normalize_path_lexically(&joined)
 }
 
 /// Computes a `/`-joined relative path from directory `base_dir` to file
