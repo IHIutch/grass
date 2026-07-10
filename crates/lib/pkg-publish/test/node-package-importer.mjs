@@ -76,6 +76,21 @@ try {
   const fallbackResult = grass.compile(fallbackEntry, { importers: [new grass.NodePackageImporter(fallbackRoot)] });
   assert.equal(fallbackResult.css, referenceCss(fallbackEntry));
 
+  // Sass 1.101.0: @import selects an existing import-only sibling declared by
+  // a package sass/style/exports target, while @use keeps the normal target.
+  const importOnlyRoot = join(root, "import-only");
+  mkdirSync(importOnlyRoot, { recursive: true });
+  const importOnlyEntry = join(importOnlyRoot, "entry.scss");
+  writeFileSync(importOnlyEntry, '@import "pkg:import-only-theme";\n');
+  writePackage(importOnlyRoot, "import-only-theme", { sass: "./src/theme.scss" }, {
+    "src/theme.scss": ".normal { color: red; }\n",
+    "src/theme.import.scss": ".import-only { color: blue; }\n",
+  });
+  const importOnlyResult = grass.compile(importOnlyEntry, {
+    importers: [new grass.NodePackageImporter(importOnlyRoot)],
+  });
+  assert.equal(importOnlyResult.css, referenceCss(importOnlyEntry));
+
   // F-307(3): an explicit entryPointDirectory controls the node_modules search parent.
   const explicitRoot = join(root, "explicit");
   mkdirSync(explicitRoot, { recursive: true });

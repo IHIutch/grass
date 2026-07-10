@@ -108,7 +108,7 @@ function packageRootFrom(baseDirectory, packageName) {
   }
 }
 
-function packageTarget(packageRoot, target, { exportTarget = false, pattern = null } = {}) {
+function packageTarget(packageRoot, target, { exportTarget = false, pattern = null, fromImport = false } = {}) {
   if (typeof target !== "string") {
     throw new Error(`Invalid package target in ${packageRoot}/package.json`);
   }
@@ -129,14 +129,20 @@ function packageTarget(packageRoot, target, { exportTarget = false, pattern = nu
     );
   }
 
-  return pathToFileURL(targetPath).href;
+  let resolvedTarget = targetPath;
+  if (fromImport && /\.(?:scss|sass)$/i.test(targetPath)) {
+    const importOnlyTarget = targetPath.replace(/\.(scss|sass)$/i, ".import.$1");
+    if (existsSync(importOnlyTarget)) resolvedTarget = importOnlyTarget;
+  }
+
+  return pathToFileURL(resolvedTarget).href;
 }
 
-function resolveConditionalExport(packageRoot, value, pattern = null) {
-  if (typeof value === "string") return packageTarget(packageRoot, value, { exportTarget: true, pattern });
+function resolveConditionalExport(packageRoot, value, pattern = null, fromImport = false) {
+  if (typeof value === "string") return packageTarget(packageRoot, value, { exportTarget: true, pattern, fromImport });
   if (Array.isArray(value)) {
     for (const candidate of value) {
-      const resolved = resolveConditionalExport(packageRoot, candidate, pattern);
+      const resolved = resolveConditionalExport(packageRoot, candidate, pattern, fromImport);
       if (resolved !== null) return resolved;
     }
     return null;
@@ -149,20 +155,20 @@ function resolveConditionalExport(packageRoot, value, pattern = null) {
   // Sass deliberately selects the first relevant condition in manifest order.
   for (const [condition, candidate] of Object.entries(value)) {
     if (condition !== "sass" && condition !== "style" && condition !== "default") continue;
-    return resolveConditionalExport(packageRoot, candidate, pattern);
+    return resolveConditionalExport(packageRoot, candidate, pattern, fromImport);
   }
   return null;
 }
 
-function resolvePackageExport(packageRoot, exports, subpath) {
+function resolvePackageExport(packageRoot, exports, subpath, fromImport) {
   if (subpath === "") {
     if (typeof exports === "string" || Array.isArray(exports)) {
-      return resolveConditionalExport(packageRoot, exports);
+      return resolveConditionalExport(packageRoot, exports, null, fromImport);
     }
     if (exports && typeof exports === "object" && "." in exports) {
-      return resolveConditionalExport(packageRoot, exports["."]);
+      return resolveConditionalExport(packageRoot, exports["."], null, fromImport);
     }
-    return resolveConditionalExport(packageRoot, exports);
+    return resolveConditionalExport(packageRoot, exports, null, fromImport);
   }
 
   if (!exports || typeof exports !== "object" || Array.isArray(exports)) return null;
@@ -171,7 +177,7 @@ function resolvePackageExport(packageRoot, exports, subpath) {
   // Exact keys always take precedence over pattern keys in Node package maps.
   for (const candidate of candidates) {
     if (Object.prototype.hasOwnProperty.call(exports, candidate)) {
-      return resolveConditionalExport(packageRoot, exports[candidate]);
+      return resolveConditionalExport(packageRoot, exports[candidate], null, fromImport);
     }
   }
 
@@ -183,7 +189,7 @@ function resolvePackageExport(packageRoot, exports, subpath) {
     for (const candidate of candidates) {
       if (candidate.startsWith(prefix) && candidate.endsWith(suffix) && candidate.length >= prefix.length + suffix.length) {
         const match = candidate.slice(prefix.length, candidate.length - suffix.length || undefined);
-        return resolveConditionalExport(packageRoot, value, match);
+        return resolveConditionalExport(packageRoot, value, match, fromImport);
       }
     }
   }
@@ -251,12 +257,12 @@ export class NodePackageImporter {
     }
 
     if (manifest.exports !== undefined) {
-      return resolvePackageExport(packageRoot, manifest.exports, parsed.subpath);
+      return resolvePackageExport(packageRoot, manifest.exports, parsed.subpath, context?.fromImport === true);
     }
 
     if (parsed.subpath === "") {
       const entry = manifest.sass || manifest.style;
-      if (entry) return packageTarget(packageRoot, entry);
+      if (entry) return packageTarget(packageRoot, entry, { fromImport: context?.fromImport === true });
       return pathToFileURL(resolve(packageRoot, "index")).href;
     }
 
