@@ -77,16 +77,6 @@ pub(crate) fn selector_nest(args: ArgumentResult, visitor: &mut Visitor) -> Sass
         .map(|sel| sel.node.to_selector_unnamed(visitor, true, span))
         .collect::<SassResult<Vec<Selector>>>()?;
 
-    if let Some(first) = parsed_selectors.first() {
-        if first.contains_parent_selector() {
-            return Err((
-                "Parent selectors aren't allowed here.",
-                span,
-            )
-                .into());
-        }
-    }
-
     Ok(parsed_selectors
         .into_iter()
         .try_fold(

@@ -260,6 +260,7 @@ impl<'a> AstExpr<'a> {
         match self {
             Self::Number { .. } => true,
             Self::Calculation(calc) => calc.name == CalculationName::Calc,
+            Self::CalculationWithFallback(calc) => calc.name.as_str() == "calc",
             Self::BinaryOp(binop) => binop.allows_slash,
             _ => false,
         }

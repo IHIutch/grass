@@ -5211,7 +5211,7 @@ impl<'a> Visitor<'a> {
         if name == CalculationName::Calc && args.is_empty() {
             return Err(("Missing argument.", span).into());
         }
-        if name == CalculationName::Clamp && args.len() != 3 {
+        if name == CalculationName::Clamp && args.is_empty() {
             return Err(("Missing argument.", span).into());
         }
 
