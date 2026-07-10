@@ -110,12 +110,48 @@ jobs:
         working-directory: crates/napi
         run: node test.mjs
 
-  # The pkg-publish WASM smoke test (see release_napi.yml's "Smoke test
-  # package before publish" step) is intentionally NOT duplicated here: a
-  # release-profile `wasm-pack build` (LTO + wasm-opt -O4 over the whole
-  # grass_compiler crate) plus a cold wasm-pack/wasm32 toolchain install
-  # realistically exceeds the "cheap in PR CI" bar this job is held to, so
-  # WASM regressions are still only caught at release-tag time.
+  # package-wasm (below) runs the pkg-publish suite on every PR against a
+  # dev-profile `wasm-pack build` (no LTO/wasm-opt), which stays within the
+  # "cheap in PR CI" bar. The release-profile smoke test (LTO + wasm-opt -O4,
+  # all native bindings present) still runs separately in release_napi.yml's
+  # "Smoke test package before publish" step, right before publish.
+  package-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM (dev profile)
+        run: |
+          cd crates/lib
+          wasm-pack build --dev --target web --out-name grass --no-default-features --features wasm-exports,random
+
+      - name: Copy WASM artifacts to pkg-publish
+        run: |
+          cp crates/lib/pkg/grass.js crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass.d.ts crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass_bg.wasm crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass_bg.wasm.d.ts crates/lib/pkg-publish/
+
+      - name: Test package (WASM fallback, forced-wasm, persistent-instance, pack-exports)
+        run: |
+          cd crates/lib/pkg-publish
+          npm test
 
   sass-spec:
     continue-on-error: true
