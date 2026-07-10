@@ -12,7 +12,7 @@ jobs:
 
     steps:
     - name: 'Checkout Repository'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
         
     - name: 'Install wasm-pack'
       run: |
@@ -36,7 +36,7 @@ jobs:
         find crates/lib/pkg -type f \( -name "*.js" -o -name "*.d.ts" -o -name "*.wasm" \) -exec cp {} artifacts \;
         
     - name: 'Upload Artifacts'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: 'wasm'
         path: artifacts/*

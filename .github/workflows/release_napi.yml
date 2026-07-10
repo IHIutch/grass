@@ -40,10 +40,10 @@ jobs:
     name: Build - ${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20.20.2
 
@@ -63,7 +63,22 @@ jobs:
 
       - name: Build native module
         working-directory: crates/napi
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl-gcc' || '' }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-musl' && 'musl-gcc' || '' }}
+          CC_x86_64_unknown_linux_musl: ${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl-gcc' || '' }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.target == 'aarch64-unknown-linux-musl' && 'musl-gcc' || '' }}
+          RUSTFLAGS: ${{ contains(matrix.target, 'musl') && '-C target-feature=-crt-static' || '' }}
         run: npx napi build --platform --profile release-napi --target ${{ matrix.target }}
+
+      - name: Verify musl linkage
+        if: contains(matrix.target, 'musl')
+        working-directory: crates/napi
+        run: |
+          if readelf -d grass.*.node | grep -q "ld-linux"; then
+            echo "ERROR: musl artifact references the glibc loader"; exit 1
+          fi
+          readelf -d grass.*.node | head -20
 
       # Rename .node file to include platform suffix
       - name: Rename artifact
@@ -121,7 +136,7 @@ jobs:
         run: node test.mjs
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bindings-${{ matrix.node-suffix }}
           path: crates/napi/grass.${{ matrix.node-suffix }}.node
@@ -137,10 +152,10 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20.20.2
 
@@ -170,7 +185,7 @@ jobs:
           cp crates/lib/pkg/grass.js crates/lib/pkg-publish/
 
       - name: Download all native bindings
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: native-artifacts
 
