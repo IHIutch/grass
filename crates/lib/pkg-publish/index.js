@@ -1,5 +1,5 @@
 import { readFileSync, statSync, realpathSync, existsSync, readdirSync } from "fs";
-import { resolve, dirname } from "path";
+import { resolve, dirname, relative } from "path";
 import { pathToFileURL, fileURLToPath } from "url";
 import { createRequire } from "module";
 
@@ -70,6 +70,201 @@ nativeBinding = process.env.GRASS_FORCE_WASM === "1" ? null : tryLoadNative();
 export const SassNumber = nativeBinding ? nativeBinding.SassNumber : undefined;
 export const SassString = nativeBinding ? nativeBinding.SassString : undefined;
 export const SassList = nativeBinding ? nativeBinding.SassList : undefined;
+
+// --- Node package importer ---
+
+const sassFileExtension = /\.(?:scss|sass|css)$/i;
+
+function packageSubpathCandidates(subpath) {
+  const candidates = [subpath];
+  const extensions = [".scss", ".sass", ".css"];
+  const hasExtension = extensions.some((extension) => subpath.endsWith(extension));
+  const slash = subpath.lastIndexOf("/");
+  const parent = slash === -1 ? "" : subpath.slice(0, slash + 1);
+  const leaf = slash === -1 ? subpath : subpath.slice(slash + 1);
+
+  if (!hasExtension) {
+    for (const extension of extensions) candidates.push(`${subpath}${extension}`);
+    candidates.push(`${parent}${leaf}/index`);
+    for (const extension of extensions) candidates.push(`${parent}${leaf}/index${extension}`);
+    candidates.push(`${parent}_${leaf}`);
+    for (const extension of extensions) candidates.push(`${parent}_${leaf}${extension}`);
+  }
+
+  return candidates.map((candidate) => `./${candidate}`);
+}
+
+function packageRootFrom(baseDirectory, packageName) {
+  let directory = resolve(baseDirectory);
+  while (true) {
+    const candidate = resolve(directory, "node_modules", packageName);
+    try {
+      if (statSync(candidate).isDirectory()) return candidate;
+    } catch {}
+
+    const parent = dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+function packageTarget(packageRoot, target, { exportTarget = false, pattern = null } = {}) {
+  if (typeof target !== "string") {
+    throw new Error(`Invalid package target in ${packageRoot}/package.json`);
+  }
+
+  if (pattern !== null) target = target.replaceAll("*", pattern);
+  if (!target.startsWith("./")) {
+    throw new Error(`Invalid package target ${JSON.stringify(target)} in ${packageRoot}/package.json`);
+  }
+
+  const targetPath = resolve(packageRoot, target);
+  const outsidePackage = relative(packageRoot, targetPath).startsWith("..");
+  if (outsidePackage) {
+    throw new Error(`Invalid package target ${JSON.stringify(target)} in ${packageRoot}/package.json`);
+  }
+  if (exportTarget && !sassFileExtension.test(targetPath)) {
+    throw new Error(
+      `The export in ${packageRoot}/package.json resolved to ${JSON.stringify(targetPath)}, which is not a '.scss', '.sass', or '.css' file.`
+    );
+  }
+
+  return pathToFileURL(targetPath).href;
+}
+
+function resolveConditionalExport(packageRoot, value, pattern = null) {
+  if (typeof value === "string") return packageTarget(packageRoot, value, { exportTarget: true, pattern });
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const resolved = resolveConditionalExport(packageRoot, candidate, pattern);
+      if (resolved !== null) return resolved;
+    }
+    return null;
+  }
+  if (value === null) return null;
+  if (typeof value !== "object") {
+    throw new Error(`Invalid package target in ${packageRoot}/package.json`);
+  }
+
+  // Sass deliberately selects the first relevant condition in manifest order.
+  for (const [condition, candidate] of Object.entries(value)) {
+    if (condition !== "sass" && condition !== "style" && condition !== "default") continue;
+    return resolveConditionalExport(packageRoot, candidate, pattern);
+  }
+  return null;
+}
+
+function resolvePackageExport(packageRoot, exports, subpath) {
+  if (subpath === "") {
+    if (typeof exports === "string" || Array.isArray(exports)) {
+      return resolveConditionalExport(packageRoot, exports);
+    }
+    if (exports && typeof exports === "object" && "." in exports) {
+      return resolveConditionalExport(packageRoot, exports["."]);
+    }
+    return resolveConditionalExport(packageRoot, exports);
+  }
+
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) return null;
+  const candidates = packageSubpathCandidates(subpath);
+
+  // Exact keys always take precedence over pattern keys in Node package maps.
+  for (const candidate of candidates) {
+    if (Object.prototype.hasOwnProperty.call(exports, candidate)) {
+      return resolveConditionalExport(packageRoot, exports[candidate]);
+    }
+  }
+
+  for (const [key, value] of Object.entries(exports)) {
+    const star = key.indexOf("*");
+    if (star === -1) continue;
+    const prefix = key.slice(0, star);
+    const suffix = key.slice(star + 1);
+    for (const candidate of candidates) {
+      if (candidate.startsWith(prefix) && candidate.endsWith(suffix) && candidate.length >= prefix.length + suffix.length) {
+        const match = candidate.slice(prefix.length, candidate.length - suffix.length || undefined);
+        return resolveConditionalExport(packageRoot, value, match);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parsePackageUrl(url) {
+  if (!url.startsWith("pkg:")) return null;
+  const specifier = url.slice(4);
+  const parts = specifier.split("/");
+  const packageParts = specifier.startsWith("@") ? 2 : 1;
+  if (parts.length < packageParts || parts.slice(0, packageParts).some((part) => !part)) return null;
+
+  const packageName = parts.slice(0, packageParts).join("/");
+  const subpath = parts.slice(packageParts).join("/");
+  if (packageName.includes("\\") || packageName.includes("..")) return null;
+  return { packageName, subpath };
+}
+
+function containingDirectory(context, fallback) {
+  if (context?.containingUrl?.startsWith("file:")) {
+    try { return dirname(fileURLToPath(context.containingUrl)); } catch {}
+  }
+  return fallback;
+}
+
+function lowerNodePackageImporters(importers) {
+  if (!importers) return importers;
+  return importers.map((importer) => {
+    if (!(importer instanceof NodePackageImporter)) return importer;
+    return {
+      findFileUrl(url, context) {
+        return importer.findFileUrl(url, context);
+      },
+    };
+  });
+}
+
+export class NodePackageImporter {
+  constructor(entryPointDirectory) {
+    if (entryPointDirectory === undefined) {
+      if (!process.argv[1]) {
+        throw new Error("NodePackageImporter requires a Node.js entrypoint directory");
+      }
+      entryPointDirectory = dirname(resolve(process.argv[1]));
+    } else {
+      entryPointDirectory = resolve(entryPointDirectory);
+    }
+    this.entryPointDirectory = entryPointDirectory;
+  }
+
+  findFileUrl(url, context) {
+    const parsed = parsePackageUrl(url);
+    if (!parsed) return null;
+
+    const baseDirectory = containingDirectory(context, this.entryPointDirectory);
+    const packageRoot = packageRootFrom(baseDirectory, parsed.packageName);
+    if (!packageRoot) return null;
+
+    let manifest = {};
+    const manifestPath = resolve(packageRoot, "package.json");
+    if (existsSync(manifestPath)) {
+      manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    }
+
+    if (manifest.exports !== undefined) {
+      return resolvePackageExport(packageRoot, manifest.exports, parsed.subpath);
+    }
+
+    if (parsed.subpath === "") {
+      const entry = manifest.sass || manifest.style;
+      if (entry) return packageTarget(packageRoot, entry);
+      return pathToFileURL(resolve(packageRoot, "index")).href;
+    }
+
+    const subpath = resolve(packageRoot, parsed.subpath);
+    if (relative(packageRoot, subpath).startsWith("..")) return null;
+    return pathToFileURL(subpath).href;
+  }
+}
 
 // --- WASM fallback ---
 
@@ -181,7 +376,7 @@ export function compile(path, options = {}) {
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
         functions: opts.functions,
-        importers: opts.importers,
+        importers: lowerNodePackageImporters(opts.importers),
       });
       return makeResult(result.css, path, result.sourceMap);
     } catch (e) {
@@ -220,7 +415,7 @@ export function compileString(source, options = {}) {
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
         functions: opts.functions,
-        importers: opts.importers,
+        importers: lowerNodePackageImporters(opts.importers),
         url: options.url,
         importer: options.importer,
       });
@@ -260,7 +455,7 @@ export function compileAsync(path, options = {}) {
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
         functions: opts.functions,
-        importers: opts.importers,
+        importers: lowerNodePackageImporters(opts.importers),
       })
       .then(
         (result) => makeResult(result.css, path, result.sourceMap),
@@ -285,7 +480,7 @@ export function compileStringAsync(source, options = {}) {
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
         functions: opts.functions,
-        importers: opts.importers,
+        importers: lowerNodePackageImporters(opts.importers),
         url: options.url,
         importer: options.importer,
       })
