@@ -27,10 +27,10 @@ jobs:
             os: ubuntu-latest
             node-suffix: linux-x64-musl
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             node-suffix: linux-arm64-gnu
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             node-suffix: linux-arm64-musl
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -45,7 +45,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.20.2
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
@@ -58,25 +58,11 @@ jobs:
         run: npm ci
 
       - name: Install musl-tools
-        if: contains(matrix.target, 'musl') && !contains(matrix.target, 'aarch64')
+        if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Install aarch64 cross-compilation tools
-        if: contains(matrix.target, 'aarch64-unknown-linux')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          if [[ "${{ matrix.target }}" == *"musl"* ]]; then
-            sudo apt-get install -y musl-tools
-          fi
 
       - name: Build native module
         working-directory: crates/napi
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ contains(matrix.target, 'aarch64-unknown-linux-gnu') && 'aarch64-linux-gnu-gcc' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ contains(matrix.target, 'aarch64-unknown-linux-musl') && 'aarch64-linux-gnu-gcc' || '' }}
-          CC_aarch64_unknown_linux_gnu: ${{ contains(matrix.target, 'aarch64-unknown-linux-gnu') && 'aarch64-linux-gnu-gcc' || '' }}
-          CC_aarch64_unknown_linux_musl: ${{ contains(matrix.target, 'aarch64-unknown-linux-musl') && 'aarch64-linux-gnu-gcc' || '' }}
         run: npx napi build --platform --profile release-napi --target ${{ matrix.target }}
 
       # Rename .node file to include platform suffix
@@ -91,8 +77,46 @@ jobs:
             fi
           done
 
-      - name: Test native module
-        if: contains(fromJSON('["aarch64-apple-darwin","x86_64-unknown-linux-gnu","x86_64-pc-windows-msvc"]'), matrix.target)
+      - name: Test native module (x86_64 macOS under Rosetta 2)
+        if: matrix.target == 'x86_64-apple-darwin'
+        working-directory: crates/napi
+        shell: bash
+        run: |
+          version="v20.20.2"
+          archive="node-${version}-darwin-x64.tar.gz"
+          # Node v20.20.2 darwin-x64 tarball; SHA-256 verified against the official SHASUMS256.txt.
+          curl -fsSLo "$RUNNER_TEMP/$archive" "https://nodejs.org/dist/${version}/$archive"
+          echo "8be6f5e4bb128c82774f8a0b8d7a1cc1365a7977d9657cece0ca647b3fe04e61  $RUNNER_TEMP/$archive" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          arch -x86_64 "$RUNNER_TEMP/node-${version}-darwin-x64/bin/node" test.mjs
+
+      - name: Test native module (aarch64 macOS)
+        if: matrix.target == 'aarch64-apple-darwin'
+        working-directory: crates/napi
+        run: node test.mjs
+
+      - name: Test native module (x86_64 Linux GNU)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: crates/napi
+        run: node test.mjs
+
+      - name: Test native module (x86_64 Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        shell: bash
+        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node test.mjs
+
+      - name: Test native module (aarch64 Linux GNU)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        working-directory: crates/napi
+        run: node test.mjs
+
+      - name: Test native module (aarch64 Linux musl)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        shell: bash
+        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node test.mjs
+
+      - name: Test native module (x86_64 Windows)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
         working-directory: crates/napi
         run: node test.mjs
 
@@ -107,6 +131,7 @@ jobs:
     name: Publish ihiutch-grass
     runs-on: ubuntu-latest
     needs: build
+    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       id-token: write
@@ -117,7 +142,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.20.2
 
       - name: Install npm 11.18.0 (trusted publishing requires >= 11.5.1)
         run: npm install -g npm@11.18.0 && npm --version
