@@ -11,9 +11,14 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use clap::{builder::PossibleValue, parser::ValueSource, value_parser, Arg, ArgAction, Command, ValueEnum};
+use clap::{
+    builder::PossibleValue, parser::ValueSource, value_parser, Arg, ArgAction, Command, ValueEnum,
+};
 
-use grass::{from_path_with_source_map, from_string_with_source_map, Deprecation, Options, OutputStyle, SourceMapData};
+use grass::{
+    from_path_with_source_map, from_string_with_source_map, Deprecation, Options, OutputStyle,
+    SourceMapData,
+};
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum Style {
@@ -284,7 +289,10 @@ fn cli() -> Command {
 fn looks_like_version(s: &str) -> bool {
     let core = s.split(['-', '+']).next().unwrap_or(s);
     let parts: Vec<&str> = core.split('.').collect();
-    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Parses the `major.minor.patch` core of a version string already
@@ -340,7 +348,11 @@ fn parse_deprecations(
 /// better than aborting a successful compile over it.
 fn absolute_source_path(raw: &str, cwd: &Path) -> PathBuf {
     let p = Path::new(raw);
-    let joined = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    };
     std::fs::canonicalize(&joined).unwrap_or(joined)
 }
 
@@ -356,7 +368,10 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                if matches!(normalized.components().next_back(), Some(Component::Normal(_))) {
+                if matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                ) {
                     normalized.pop();
                 } else if !path.is_absolute() {
                     normalized.push(component.as_os_str());
@@ -377,7 +392,11 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
 /// unambiguous; otherwise preserve the original missing-path fallback.
 fn absolute_output_path(raw: &str, cwd: &Path) -> PathBuf {
     let p = Path::new(raw);
-    let joined = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    };
 
     let Ok(canonical) = std::fs::canonicalize(&joined) else {
         let normalized = normalize_path_lexically(&joined);
@@ -425,7 +444,10 @@ fn relative_source_url(base_dir: &Path, target: &Path) -> String {
 /// same way dart-sass does (verified via `sass --source-map-urls=absolute`
 /// against a path containing a space).
 fn absolute_source_url(target: &Path) -> String {
-    format!("file://{}", grass_compiler::encode_uri(&target.to_string_lossy()))
+    format!(
+        "file://{}",
+        grass_compiler::encode_uri(&target.to_string_lossy())
+    )
 }
 
 /// Rewrites every non-`data:` entry in `map.sources` to either an absolute
@@ -434,7 +456,12 @@ fn absolute_source_url(target: &Path) -> String {
 /// `--embed-source-map` (the one case dart-sass allows without an output
 /// file) — relative URLs are impossible there, so absolute is used
 /// regardless of `urls`, matching the observed fallback behavior.
-fn rewrite_source_map_sources(map: &mut SourceMapData, urls: &SourceMapUrls, output_dir: Option<&Path>, cwd: &Path) {
+fn rewrite_source_map_sources(
+    map: &mut SourceMapData,
+    urls: &SourceMapUrls,
+    output_dir: Option<&Path>,
+    cwd: &Path,
+) {
     for source in map.sources.iter_mut() {
         // stdin's `data:` URL sources entry (built by
         // `from_string_with_source_map`) is never rewritten — there is no
@@ -489,7 +516,9 @@ fn validate_source_map_flags(matches: &clap::ArgMatches, writing_to_stdout: bool
         }
         if !embed_source_map {
             if urls_explicit {
-                eprintln!("When printing to stdout, --source-map-urls requires --embed-source-map.");
+                eprintln!(
+                    "When printing to stdout, --source-map-urls requires --embed-source-map."
+                );
                 std::process::exit(1);
             }
             if embed_sources {
@@ -537,7 +566,10 @@ pub(crate) fn write_compile_result(
             eprintln!("{}", e);
             if let Some(path) = cfg.output_arg {
                 if cfg.error_css_enabled {
-                    std::fs::write(path, error_css::synthesize(&e.to_string(), cfg.unicode_error_messages))?;
+                    std::fs::write(
+                        path,
+                        error_css::synthesize(&e.to_string(), cfg.unicode_error_messages),
+                    )?;
                 } else if Path::new(path).exists() {
                     std::fs::remove_file(path)?;
                 }
@@ -575,14 +607,23 @@ pub(crate) fn write_compile_result(
             let json = map.to_json(file_key.as_deref(), cfg.embed_sources);
 
             if cfg.embed_source_map {
-                bytes.extend_from_slice(b"\n/*# sourceMappingURL=data:application/json;charset=utf-8,");
+                bytes.extend_from_slice(
+                    b"\n/*# sourceMappingURL=data:application/json;charset=utf-8,",
+                );
                 bytes.extend_from_slice(grass_compiler::encode_uri(&json).as_bytes());
                 bytes.extend_from_slice(b" */\n");
             } else {
                 // `generate_source_map` guarantees `output_arg` is `Some` here:
                 // stdout output only reaches this branch via --embed-source-map.
-                let output_path = output_path.expect("non-stdout output guaranteed by validate_source_map_flags");
-                let map_file_name = format!("{}.map", output_path.file_name().unwrap_or_default().to_string_lossy());
+                let output_path =
+                    output_path.expect("non-stdout output guaranteed by validate_source_map_flags");
+                let map_file_name = format!(
+                    "{}.map",
+                    output_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                );
                 let map_path = output_path.with_file_name(&map_file_name);
                 std::fs::write(&map_path, json)?;
 
@@ -672,21 +713,24 @@ fn main() -> std::io::Result<()> {
     let generate_source_map = validate_source_map_flags(&matches, writing_to_stdout);
     let embed_source_map = matches.get_flag("EMBED_SOURCE_MAP");
     let embed_sources = matches.get_flag("EMBED_SOURCES");
-    let source_map_urls = matches.get_one::<SourceMapUrls>("SOURCE_MAP_URLS").unwrap().clone();
+    let source_map_urls = matches
+        .get_one::<SourceMapUrls>("SOURCE_MAP_URLS")
+        .unwrap()
+        .clone();
     let unicode_error_messages = !matches.get_flag("NO_UNICODE");
 
-    // `--watch` always requests the underlying `SourceMapData` (regardless
-    // of whether the user passed `--source-map`) so it can read
-    // `SourceMapData::loaded_files` for precise dependency tracking -- see
-    // `watch.rs`. This is independent of whether a `.map` actually gets
-    // written to disk, which stays gated on `write_config.generate_source_map`.
+    // `--watch` enables the compiler's dependency-only load tracking, while
+    // `--source-map` alone controls serializer mappings and map-file output.
+    // `watch.rs` selects the existing source-map path when both flags are
+    // present, preserving explicit `--source-map --watch` output byte-for-byte.
     let mut options = Options::default()
         .load_paths(&load_paths)
         .style(style)
         .quiet(matches.get_flag("QUIET"))
         .unicode_error_messages(unicode_error_messages)
         .allows_charset(!matches.get_flag("NO_CHARSET"))
-        .source_map(generate_source_map || watch);
+        .source_map(generate_source_map)
+        .dependency_tracking(watch);
 
     for deprecation in parse_deprecations(&matches, "SILENCE_DEPRECATION", false) {
         options = options.silence_deprecation(deprecation);

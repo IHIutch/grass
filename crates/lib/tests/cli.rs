@@ -34,13 +34,21 @@ fn wait_for<F: Fn() -> bool>(timeout: Duration, cond: F) -> bool {
 }
 
 fn spawn_watch(input: &Path, output: &Path) -> (KillOnDrop, std::sync::mpsc::Receiver<String>) {
-    let mut child = grass_cmd()
-        .args([
-            "--watch",
-            "--no-source-map",
-            input.to_str().unwrap(),
-            output.to_str().unwrap(),
-        ])
+    spawn_watch_with_source_map(input, output, false)
+}
+
+fn spawn_watch_with_source_map(
+    input: &Path,
+    output: &Path,
+    source_map: bool,
+) -> (KillOnDrop, std::sync::mpsc::Receiver<String>) {
+    let mut command = grass_cmd();
+    command.arg("--watch");
+    if !source_map {
+        command.arg("--no-source-map");
+    }
+    let mut child = command
+        .args([input.to_str().unwrap(), output.to_str().unwrap()])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -58,6 +66,30 @@ fn spawn_watch(input: &Path, output: &Path) -> (KillOnDrop, std::sync::mpsc::Rec
     });
 
     (KillOnDrop(child), rx)
+}
+
+#[test]
+fn watch_source_map_output_matches_single_shot_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let in_path = dir.path().join("in.scss");
+    let out_path = dir.path().join("out.css");
+    std::fs::write(&in_path, "a {\n  b: c;\n}\n").unwrap();
+
+    let (_guard, watch_output) = spawn_watch_with_source_map(&in_path, &out_path, true);
+    assert!(
+        wait_for_watch_ready(&watch_output),
+        "watcher did not become ready within 10s"
+    );
+    assert!(wait_for(Duration::from_secs(10), || out_path.exists()));
+
+    assert_eq!(
+        std::fs::read_to_string(&out_path).unwrap(),
+        "a {\n  b: c;\n}\n\n/*# sourceMappingURL=out.css.map */\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("out.css.map")).unwrap(),
+        "{\"version\":3,\"sourceRoot\":\"\",\"sources\":[\"in.scss\"],\"names\":[],\"mappings\":\"AAAA;EACE\",\"file\":\"out.css\"}"
+    );
 }
 
 fn wait_for_watch_ready(output: &std::sync::mpsc::Receiver<String>) -> bool {
@@ -161,7 +193,11 @@ fn load_path() {
     std::fs::write(&in_path, "@use \"dep\";").unwrap();
 
     let output = grass_cmd()
-        .args(["-I", dir.path().to_str().unwrap(), in_path.to_str().unwrap()])
+        .args([
+            "-I",
+            dir.path().to_str().unwrap(),
+            in_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
 
@@ -220,7 +256,11 @@ fn broken_recompile_overwrites_existing_output_file_with_error_css() {
 
     std::fs::write(&in_path, "a { b: c }").unwrap();
     let good = grass_cmd()
-        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert!(good.status.success());
@@ -229,7 +269,11 @@ fn broken_recompile_overwrites_existing_output_file_with_error_css() {
 
     std::fs::write(&in_path, "a { b: ").unwrap();
     let broken = grass_cmd()
-        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert_eq!(broken.status.code(), Some(1));
@@ -237,7 +281,8 @@ fn broken_recompile_overwrites_existing_output_file_with_error_css() {
 
     let contents_after_failure = std::fs::read_to_string(&out_path).unwrap();
     assert_ne!(
-        contents_after_failure, String::from_utf8(good_contents).unwrap(),
+        contents_after_failure,
+        String::from_utf8(good_contents).unwrap(),
         "output file must be overwritten (not preserved) by a failed recompile"
     );
     // dart-sass's exact error-CSS template (verified via npx): a `/* ... */`
@@ -259,7 +304,11 @@ fn broken_recompile_deletes_output_file_under_no_error_css() {
 
     std::fs::write(&in_path, "a { b: c }").unwrap();
     let good = grass_cmd()
-        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert!(good.status.success());
@@ -341,12 +390,19 @@ fn broken_recompile_preserves_existing_map_file_under_no_error_css() {
 
     std::fs::write(&in_path, "a { b: ").unwrap();
     let broken = grass_cmd()
-        .args(["--no-error-css", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-error-css",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert_eq!(broken.status.code(), Some(1));
 
-    assert!(!out_path.exists(), "css output must be deleted under --no-error-css");
+    assert!(
+        !out_path.exists(),
+        "css output must be deleted under --no-error-css"
+    );
     let map_contents_after_failure = std::fs::read(&map_path).unwrap();
     assert_eq!(
         map_contents_after_failure, good_map_contents,
@@ -365,7 +421,11 @@ fn error_css_flag_overrides_earlier_no_error_css() {
 
     std::fs::write(&in_path, "a { b: c }").unwrap();
     let good = grass_cmd()
-        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert!(good.status.success());
@@ -384,7 +444,10 @@ fn error_css_flag_overrides_earlier_no_error_css() {
     assert_eq!(broken.status.code(), Some(1));
 
     let contents = std::fs::read_to_string(&out_path).unwrap();
-    assert!(contents.starts_with("/* Error:"), "--error-css should win: {contents}");
+    assert!(
+        contents.starts_with("/* Error:"),
+        "--error-css should win: {contents}"
+    );
 }
 
 // A failed compile on a target that never previously existed still gets an
@@ -397,7 +460,11 @@ fn broken_compile_creates_error_css_for_nonexistent_target() {
 
     std::fs::write(&in_path, "a { b: ").unwrap();
     let broken = grass_cmd()
-        .args(["--no-source-map", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "--no-source-map",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to spawn grass");
     assert_eq!(broken.status.code(), Some(1));
@@ -511,7 +578,9 @@ fn silence_deprecation_comma_and_repeat_forms() {
         "$a: 1;\nb { c: $a/2; }",
     );
     assert!(comma.status.success());
-    assert!(!String::from_utf8(comma.stderr).unwrap().contains("slash-div"));
+    assert!(!String::from_utf8(comma.stderr)
+        .unwrap()
+        .contains("slash-div"));
 
     let repeated = run_with_stdin(
         &[
@@ -608,10 +677,7 @@ fn unknown_deprecation_id_is_a_hard_failure() {
 // `false` for all 16 IDs), so this only exercises flag acceptance.
 #[test]
 fn future_deprecation_flag_is_accepted() {
-    let output = run_with_stdin(
-        &["--stdin", "--future-deprecation=slash-div"],
-        "a { b: c }",
-    );
+    let output = run_with_stdin(&["--stdin", "--future-deprecation=slash-div"], "a { b: c }");
     assert!(output.status.success());
 }
 
@@ -787,7 +853,10 @@ fn watch_prints_compiled_message_then_banner() {
         "line0: {}",
         lines[0]
     );
-    assert_eq!(lines[1], "Sass is watching for changes. Press Ctrl-C to stop.");
+    assert_eq!(
+        lines[1],
+        "Sass is watching for changes. Press Ctrl-C to stop."
+    );
 }
 
 // End-to-end: editing the watched input file triggers a recompile with the
@@ -928,7 +997,11 @@ fn watch_recompiles_on_variable_only_partial_in_sibling_dir() {
     // file contributes zero emitted CSS and would be invisible to a
     // `sources`-based (mapping-emission-scoped) watch set.
     std::fs::write(&vars_path, "$x: 1;\n").unwrap();
-    std::fs::write(&in_path, "@use \"../shared/vars\" as vars;\na { b: vars.$x; }\n").unwrap();
+    std::fs::write(
+        &in_path,
+        "@use \"../shared/vars\" as vars;\na { b: vars.$x; }\n",
+    )
+    .unwrap();
 
     let (_guard, watch_output) = spawn_watch(&in_path, &out_path);
 
