@@ -188,6 +188,9 @@ all native bindings before publishing.
   `url` and `importer` are available on the two `compileString` functions.
   These options require the native binding; on the Node WASM fallback they
   throw a clear native-binding error instead of being silently ignored.
+- `NodePackageImporter` enables Node package `pkg:` URLs. Add
+  `new NodePackageImporter()` to `importers` to resolve a package's Sass entrypoint:
+  `compileString('@use "pkg:theme" as theme;', {importers: [new NodePackageImporter()]})`.
 - `SassNumber`, `SassString`, and `SassList` are exported by the Node entrypoint
   for custom-function return values. They are `undefined` when the Node
   entrypoint is using the WASM fallback, where custom functions and importers

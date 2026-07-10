@@ -6,6 +6,7 @@ import {
   SassList,
   SassNumber,
   SassString,
+  NodePackageImporter,
   type FileImporter,
   type Importer,
 } from "ihiutch-grass";
@@ -34,9 +35,11 @@ const functions = {
     new SassNumber(1, "px"),
 };
 
+const nodePackageImporter = new NodePackageImporter();
+
 const fileOptions = {
   functions,
-  importers: [fileImporter, importer],
+  importers: [fileImporter, importer, nodePackageImporter],
   sourceMap: true,
   sourceMapIncludeSources: true,
 };
@@ -63,5 +66,9 @@ await workers.compileStringAsync("a { color: red; }", { sourceMap: true });
 // Browser and Workers are WASM-only surfaces.
 // @ts-expect-error browser options do not accept JavaScript functions.
 browser.compileString("a { color: red; }", { functions: {} });
+// @ts-expect-error browser does not expose the Node package importer.
+new browser.NodePackageImporter();
+// @ts-expect-error Workers do not expose the Node package importer.
+new workers.NodePackageImporter();
 // @ts-expect-error Workers do not expose path-based compileAsync.
  workers.compileAsync("styles.scss");

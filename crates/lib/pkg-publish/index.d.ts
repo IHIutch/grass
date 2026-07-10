@@ -64,6 +64,14 @@ export interface CanonicalizeContext {
   containingUrl?: string;
 }
 
+/**
+ * Resolves `pkg:` URLs from Node packages and delegates stylesheet loading to
+ * the native FileImporter bridge. This is available only from the Node entrypoint.
+ */
+export class NodePackageImporter {
+  constructor(entryPointDirectory?: string);
+}
+
 export type FileImporter = {
   findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined;
 };
@@ -103,7 +111,7 @@ export interface Options {
    * API's `importers` option. Checked in array order, ahead of `loadPaths`.
    * Requires the native binding — throws on the WASM fallback (see README).
    */
-  importers?: Array<FileImporter | Importer>;
+  importers?: Array<FileImporter | Importer | NodePackageImporter>;
 }
 
 export interface StringOptions extends Options {
