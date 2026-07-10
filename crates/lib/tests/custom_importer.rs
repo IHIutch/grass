@@ -207,3 +207,76 @@ fn custom_importer_resolved_hits_cache_across_contexts() {
     );
     assert_eq!(importer.calls.get(), 2);
 }
+
+#[derive(Debug)]
+struct ContextSensitiveImporter {
+    calls: Cell<u32>,
+}
+
+impl Importer for ContextSensitiveImporter {
+    fn canonicalize(
+        &self,
+        url: &str,
+        _from_import: bool,
+        containing_url: Option<&str>,
+        _span: Span,
+    ) -> SassResult<ImportResolution> {
+        if url != "virtual:context-sensitive" {
+            return Ok(ImportResolution::NotFound);
+        }
+
+        self.calls.set(self.calls.get() + 1);
+        let containing_url = containing_url.expect("context-sensitive import has a parent");
+        let (canonical_url, contents) = if containing_url.ends_with(
+            "custom_importer_context_sensitive__first.scss",
+        ) {
+            (
+                "virtual:context-sensitive-first",
+                ".first { color: red; }",
+            )
+        } else if containing_url.ends_with("custom_importer_context_sensitive__second.scss") {
+            (
+                "virtual:context-sensitive-second",
+                ".second { color: blue; }",
+            )
+        } else {
+            panic!("unexpected containing URL: {containing_url}");
+        };
+
+        Ok(ImportResolution::Resolved {
+            canonical_url: canonical_url.to_owned(),
+            contents: contents.to_owned(),
+            syntax: InputSyntax::Scss,
+        })
+    }
+}
+
+#[test]
+fn custom_importer_cache_includes_containing_url() {
+    tempfile!(
+        "custom_importer_context_sensitive__first.scss",
+        "@import \"virtual:context-sensitive\";\n@import \"virtual:context-sensitive\";",
+        dir = "dir-custom_importer_context_sensitive"
+    );
+    tempfile!(
+        "custom_importer_context_sensitive__second.scss",
+        "@import \"virtual:context-sensitive\";",
+        dir = "dir-custom_importer_context_sensitive"
+    );
+
+    let importer = Rc::new(ContextSensitiveImporter { calls: Cell::new(0) });
+    let options = Options::default()
+        .add_importer(Rc::clone(&importer) as Rc<dyn Importer>)
+        .load_path(std::path::Path::new("dir-custom_importer_context_sensitive"));
+
+    let css = grass::from_string(
+        "@import \"custom_importer_context_sensitive__first\";\n@import \"custom_importer_context_sensitive__second\";"
+            .to_owned(),
+        &options,
+    )
+    .unwrap();
+
+    assert_eq!(css.matches(".first {\n  color: red;\n}").count(), 2);
+    assert_eq!(css.matches(".second {\n  color: blue;\n}").count(), 1);
+    assert_eq!(importer.calls.get(), 2);
+}

@@ -322,8 +322,9 @@ pub struct Visitor<'a> {
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
     files_seen: FxHashSet<PathBuf>,
-    /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
-    /// Avoids redundant filesystem probing for the same import path from the same context.
+    /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
+    /// flag). Avoids redundant importer calls and filesystem probing for the same import path
+    /// from the same context without conflating files that share a directory.
     import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<ImportSource>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
@@ -2338,14 +2339,9 @@ impl<'a> Visitor<'a> {
         for_import: bool,
         span: Span,
     ) -> SassResult<Option<ImportSource>> {
-        // Cache key must include the import context (parent dir of current file)
-        // because the same relative path resolves differently from different files
-        let context_dir = self
-            .current_import_path
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_path_buf();
-        let cache_key = (context_dir, path.to_path_buf(), for_import);
+        // Cache key must include the full containing URL because a custom importer can resolve
+        // the same requested path differently from two files in the same directory.
+        let cache_key = (self.current_import_path.clone(), path.to_path_buf(), for_import);
         if let Some(result) = self.import_path_cache.get(&cache_key) {
             return result.clone();
         }
