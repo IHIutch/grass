@@ -8,7 +8,7 @@ test!(
 );
 error!(
     calc_newline,
-    "a {\n  color: calc(\n);\n}\n", "Error: Expected number, variable, function, or calculation."
+    "a {\n  color: calc(\n);\n}\n", "Error: Missing argument."
 );
 error!(
     calc_multiple_args,
@@ -40,7 +40,7 @@ error!(
 );
 error!(
     calc_retains_multiline_comment,
-    "a {\n  color: calc(/**/);\n}\n", "Error: Expected number, variable, function, or calculation."
+    "a {\n  color: calc(/**/);\n}\n", "Error: Missing argument."
 );
 error!(
     calc_complex_unit,
