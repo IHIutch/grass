@@ -764,6 +764,200 @@ await probeConcurrency(16);
   await probeImporterConcurrency(8);
 }
 
+// --- path-based compileAsync callback combinations --------------------
+
+// A path-based async compile invokes a custom function and preserves its
+// numeric units just like compileStringAsync.
+{
+  const path = join(tmpdir(), `grass-napi-compile-async-function-${process.pid}.scss`);
+  writeFileSync(path, "a { b: double(5px); }");
+  try {
+    const res = await withTimeout(
+      binding.compileAsync(path, {
+        functions: {
+          "double($n)": (args) => {
+            const n = args[0];
+            assert(n instanceof binding.SassNumber);
+            return new binding.SassNumber(n.value * 2, {
+              numeratorUnits: n.numeratorUnits,
+              denominatorUnits: n.denominatorUnits,
+            });
+          },
+        },
+      }),
+      10000,
+      "path async custom function",
+    );
+    assert.equal(res.css, "a {\n  b: 10px;\n}\n");
+  } finally {
+    rmSync(path);
+  }
+}
+
+// A path-based async compile supports a FileImporter redirect to a temporary
+// file on disk.
+{
+  const entryPath = join(tmpdir(), `grass-napi-compile-async-file-importer-${process.pid}.scss`);
+  const importedPath = join(tmpdir(), `grass-napi-compile-async-file-imported-${process.pid}.scss`);
+  writeFileSync(entryPath, '@use "virtual:async-file" as imported;\na { b: imported.$a; }');
+  writeFileSync(importedPath, "$a: teal;");
+  try {
+    const res = await withTimeout(
+      binding.compileAsync(entryPath, {
+        importers: [
+          {
+            findFileUrl(url) {
+              return url === "virtual:async-file" ? pathToFileURL(importedPath).href : null;
+            },
+          },
+        ],
+      }),
+      10000,
+      "path async FileImporter",
+    );
+    assert.equal(res.css, "a {\n  b: teal;\n}\n");
+  } finally {
+    rmSync(entryPath);
+    rmSync(importedPath);
+  }
+}
+
+// A path-based async compile supports the full canonicalize+load Importer
+// shape, including its two sequential callback round trips.
+{
+  const path = join(tmpdir(), `grass-napi-compile-async-importer-${process.pid}.scss`);
+  writeFileSync(path, '@use "db:async-colors" as colors;\na { b: colors.$c; }');
+  try {
+    const res = await withTimeout(
+      binding.compileAsync(path, {
+        importers: [
+          {
+            canonicalize(url) {
+              return url === "db:async-colors" ? "db:async-colors" : null;
+            },
+            load(canonicalUrl) {
+              assert.equal(canonicalUrl, "db:async-colors");
+              return { contents: "$c: purple;", syntax: "scss" };
+            },
+          },
+        ],
+      }),
+      10000,
+      "path async full Importer",
+    );
+    assert.equal(res.css, "a {\n  b: purple;\n}\n");
+  } finally {
+    rmSync(path);
+  }
+}
+
+// A FileImporter may decline a path-based async load and let loadPaths
+// resolve it normally.
+{
+  const entryPath = join(tmpdir(), `grass-napi-compile-async-decline-${process.pid}.scss`);
+  const dir = join(tmpdir(), `grass-napi-compile-async-decline-dir-${process.pid}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(entryPath, '@import "real-thing";\na { b: $b; }');
+  writeFileSync(join(dir, "real-thing.scss"), "$b: blue;");
+  try {
+    const res = await withTimeout(
+      binding.compileAsync(entryPath, {
+        importers: [{ findFileUrl: () => null }],
+        loadPaths: [dir],
+      }),
+      10000,
+      "path async importer decline",
+    );
+    assert.equal(res.css, "a {\n  b: blue;\n}\n");
+  } finally {
+    rmSync(entryPath);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A thrown path-based FileImporter callback rejects cleanly without
+// terminating the process.
+{
+  const path = join(tmpdir(), `grass-napi-compile-async-throw-${process.pid}.scss`);
+  writeFileSync(path, '@import "virtual:throw";');
+  try {
+    await assert.rejects(
+      withTimeout(
+        binding.compileAsync(path, {
+          importers: [{ findFileUrl: () => { throw new Error("path importer kaboom"); } }],
+        }),
+        10000,
+        "path async importer throw",
+      ),
+      /path importer kaboom/,
+    );
+  } finally {
+    rmSync(path);
+  }
+}
+
+// A missing path rejects as a normal async error rather than throwing
+// synchronously or aborting the process.
+{
+  const path = join(tmpdir(), `grass-napi-compile-async-missing-${process.pid}.scss`);
+  await assert.rejects(
+    withTimeout(binding.compileAsync(path, null), 10000, "path async missing file"),
+  );
+}
+
+// Path-based async source maps retain the same result shape as the string
+// entry point, including embedded source text when requested.
+{
+  const path = join(tmpdir(), `grass-napi-compile-async-source-map-${process.pid}.scss`);
+  const source = "a {\n  b: c;\n}\n";
+  writeFileSync(path, source);
+  try {
+    const res = await withTimeout(
+      binding.compileAsync(path, { sourceMap: true, sourceMapIncludeSources: true }),
+      10000,
+      "path async source map",
+    );
+    assert.equal(typeof res.sourceMap, "object");
+    assert.equal(res.sourceMap.version, 3);
+    assert.equal(res.sourceMap.sourceRoot, "");
+    assert.deepEqual(res.sourceMap.names, []);
+    assert.equal(typeof res.sourceMap.mappings, "string");
+    assert.equal(res.sourceMap.file, undefined);
+    assert.equal(res.sourceMap.sources.length, 1);
+    assert.deepEqual(res.sourceMap.sourcesContent, [source]);
+  } finally {
+    rmSync(path);
+  }
+}
+
+// Independent callbacks remain attached to their own concurrent path-based
+// compileAsync tasks.
+{
+  const firstPath = join(tmpdir(), `grass-napi-compile-async-concurrent-one-${process.pid}.scss`);
+  const secondPath = join(tmpdir(), `grass-napi-compile-async-concurrent-two-${process.pid}.scss`);
+  writeFileSync(firstPath, "a { b: marker(); }");
+  writeFileSync(secondPath, "a { b: marker(); }");
+  try {
+    const results = await withTimeout(
+      Promise.all([
+        binding.compileAsync(firstPath, {
+          functions: { "marker()": () => new binding.SassString("one", false) },
+        }),
+        binding.compileAsync(secondPath, {
+          functions: { "marker()": () => new binding.SassString("two", false) },
+        }),
+      ]),
+      20000,
+      "path async callback concurrency",
+    );
+    assert.equal(results[0].css, "a {\n  b: one;\n}\n");
+    assert.equal(results[1].css, "a {\n  b: two;\n}\n");
+  } finally {
+    rmSync(firstPath);
+    rmSync(secondPath);
+  }
+}
+
 // --- StringOptions.importer + url (todo #280 item 1) ---
 
 // url seeds the entrypoint importer's `containingUrl` for the source's own
