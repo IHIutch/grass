@@ -534,6 +534,64 @@ await probeConcurrency(16);
   }
 }
 
+// FileImporter entries are consulted in array order before loadPaths, while a
+// load-path entry still supplies normal partial resolution after they decline.
+{
+  const dir = join(tmpdir(), `grass-napi-loadpaths-ordering-${process.pid}`);
+  const importedPath = join(tmpdir(), `grass-napi-loadpaths-theme-${process.pid}.scss`);
+  const calls = [];
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "_virtual-fallback.scss"), "$color: magenta;");
+  writeFileSync(join(dir, "_real-dep.scss"), "$color: orange;");
+  writeFileSync(importedPath, "$color: teal;");
+  try {
+    const opts = {
+      importers: [
+        {
+          findFileUrl(url) {
+            calls.push(["first", url]);
+            return null;
+          },
+        },
+        {
+          findFileUrl(url) {
+            calls.push(["second", url]);
+            return url === "virtual:theme" ? pathToFileURL(importedPath).href : null;
+          },
+        },
+      ],
+      loadPaths: [dir],
+    };
+    const res = binding.compileString(
+      '@use "virtual:theme" as theme;\n@use "real-dep" as real;\na { color: theme.$color; border-color: real.$color; }',
+      opts,
+    );
+    assert.deepEqual(
+      calls.filter(([, url]) => url === "virtual:theme").map(([name]) => name),
+      ["first", "second"],
+    );
+    assert.equal(res.css, "a {\n  color: teal;\n  border-color: orange;\n}\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(importedPath, { force: true });
+  }
+}
+
+// Load-path sugar declines schemed URLs instead of treating the scheme as a
+// filesystem path.
+{
+  const dir = join(tmpdir(), `grass-napi-loadpaths-scheme-${process.pid}`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    assert.throws(
+      () => binding.compileString('@use "pkg:whatever" as whatever;', { loadPaths: [dir] }),
+      /Can't find stylesheet to import/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // A thrown JS exception inside findFileUrl surfaces as a clean compile
 // error (not a crash), same as a thrown `functions` callback.
 {
@@ -875,6 +933,55 @@ await probeConcurrency(16);
   }
 }
 
+// The ordered FileImporter chain and load-path partial fallback also hold for
+// the path-based async entry point.
+{
+  const entryPath = join(tmpdir(), `grass-napi-loadpaths-ordering-async-${process.pid}.scss`);
+  const importedPath = join(tmpdir(), `grass-napi-loadpaths-theme-async-${process.pid}.scss`);
+  const dir = join(tmpdir(), `grass-napi-loadpaths-ordering-async-dir-${process.pid}`);
+  const calls = [];
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    entryPath,
+    '@use "virtual:theme" as theme;\n@use "real-dep" as real;\na { color: theme.$color; border-color: real.$color; }',
+  );
+  writeFileSync(join(dir, "_virtual-fallback.scss"), "$color: magenta;");
+  writeFileSync(join(dir, "_real-dep.scss"), "$color: orange;");
+  writeFileSync(importedPath, "$color: teal;");
+  try {
+    const res = await withTimeout(
+      binding.compileAsync(entryPath, {
+        importers: [
+          {
+            findFileUrl(url) {
+              calls.push(["first", url]);
+              return null;
+            },
+          },
+          {
+            findFileUrl(url) {
+              calls.push(["second", url]);
+              return url === "virtual:theme" ? pathToFileURL(importedPath).href : null;
+            },
+          },
+        ],
+        loadPaths: [dir],
+      }),
+      10000,
+      "path async loadPaths ordering",
+    );
+    assert.deepEqual(
+      calls.filter(([, url]) => url === "virtual:theme").map(([name]) => name),
+      ["first", "second"],
+    );
+    assert.equal(res.css, "a {\n  color: teal;\n  border-color: orange;\n}\n");
+  } finally {
+    rmSync(entryPath, { force: true });
+    rmSync(importedPath, { force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // A thrown path-based FileImporter callback rejects cleanly without
 // terminating the process.
 {
@@ -995,6 +1102,97 @@ await probeConcurrency(16);
   };
   const res = binding.compileString('@use "db:x" as x;\na { b: x.$c; }', opts);
   assert.equal(res.css, "a {\n  b: blue;\n}\n");
+}
+
+// StringOptions.importer handles the source's own relative load before the
+// importers array, and the array remains ahead of loadPaths after it declines.
+{
+  const arrayPath = join(tmpdir(), `grass-napi-entrypoint-array-${process.pid}.scss`);
+  const loadPathDir = join(tmpdir(), `grass-napi-entrypoint-loadpath-${process.pid}`);
+  let entryDeclines = false;
+  mkdirSync(loadPathDir, { recursive: true });
+  writeFileSync(arrayPath, "$color: blue;");
+  writeFileSync(join(loadPathDir, "_dep.scss"), "$color: green;");
+  try {
+    const opts = {
+      url: "my://entry",
+      importer: {
+        canonicalize(url, context) {
+          assert.equal(context.containingUrl, "my://entry");
+          return !entryDeclines && url === "dep" ? "my://dep" : null;
+        },
+        load(canonicalUrl) {
+          assert.equal(canonicalUrl, "my://dep");
+          return { contents: "$color: red;", syntax: "scss" };
+        },
+      },
+      importers: [
+        {
+          findFileUrl(url) {
+            return url === "dep" ? pathToFileURL(arrayPath).href : null;
+          },
+        },
+      ],
+      loadPaths: [loadPathDir],
+    };
+    const source = '@use "dep" as d;\na { color: d.$color; }';
+    assert.equal(binding.compileString(source, opts).css, "a {\n  color: red;\n}\n");
+    entryDeclines = true;
+    assert.equal(binding.compileString(source, opts).css, "a {\n  color: blue;\n}\n");
+  } finally {
+    rmSync(arrayPath, { force: true });
+    rmSync(loadPathDir, { recursive: true, force: true });
+  }
+}
+
+// The same entrypoint-importer precedence is preserved by compileStringAsync.
+{
+  const arrayPath = join(tmpdir(), `grass-napi-entrypoint-array-async-${process.pid}.scss`);
+  const loadPathDir = join(tmpdir(), `grass-napi-entrypoint-loadpath-async-${process.pid}`);
+  let entryDeclines = false;
+  mkdirSync(loadPathDir, { recursive: true });
+  writeFileSync(arrayPath, "$color: blue;");
+  writeFileSync(join(loadPathDir, "_dep.scss"), "$color: green;");
+  try {
+    const opts = {
+      url: "my://entry",
+      importer: {
+        canonicalize(url, context) {
+          assert.equal(context.containingUrl, "my://entry");
+          return !entryDeclines && url === "dep" ? "my://dep" : null;
+        },
+        load(canonicalUrl) {
+          assert.equal(canonicalUrl, "my://dep");
+          return { contents: "$color: red;", syntax: "scss" };
+        },
+      },
+      importers: [
+        {
+          findFileUrl(url) {
+            return url === "dep" ? pathToFileURL(arrayPath).href : null;
+          },
+        },
+      ],
+      loadPaths: [loadPathDir],
+    };
+    const source = '@use "dep" as d;\na { color: d.$color; }';
+    const first = await withTimeout(
+      binding.compileStringAsync(source, opts),
+      10000,
+      "string async entrypoint importer",
+    );
+    assert.equal(first.css, "a {\n  color: red;\n}\n");
+    entryDeclines = true;
+    const second = await withTimeout(
+      binding.compileStringAsync(source, opts),
+      10000,
+      "string async importer-array precedence",
+    );
+    assert.equal(second.css, "a {\n  color: blue;\n}\n");
+  } finally {
+    rmSync(arrayPath, { force: true });
+    rmSync(loadPathDir, { recursive: true, force: true });
+  }
 }
 
 // url + entrypoint importer over the ASYNC entry point.
