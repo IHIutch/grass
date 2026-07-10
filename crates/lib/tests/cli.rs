@@ -492,7 +492,7 @@ fn successful_recompile_overwrites_output_and_map_file() {
     let first_contents = std::fs::read(&out_path).unwrap();
     let first_map_contents = std::fs::read(&map_path).unwrap();
 
-    std::fs::write(&in_path, "a { b: d }").unwrap();
+    std::fs::write(&in_path, "a {\n  b: d;\n  e: f;\n}").unwrap();
     let second = grass_cmd()
         .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
         .output()

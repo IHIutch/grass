@@ -43,6 +43,26 @@ fn default_file_output_writes_relative_map_matching_dart_sass() {
     );
 }
 
+// Ground truth: `npx sass@1.101.0 <absolute>/in.scss <absolute>/out.css`
+// in a macOS tempfile whose `/var` spelling is symlinked -> sources:
+// ["in.scss"] on the first compile.
+#[test]
+fn first_compile_into_absolute_tempdir_uses_relative_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let in_path = tmp.path().join("in.scss");
+    let out_path = tmp.path().join("out.css");
+    std::fs::write(&in_path, INPUT).unwrap();
+
+    let output = grass_cmd()
+        .args([in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(map.contains("\"sources\":[\"in.scss\"]"), "got: {map}");
+}
+
 // Ground truth: `npx sass@1.97.3 src/in.scss build/out.css` (run from a
 // directory containing both `src/` and `build/`) -> sources: ["../src/in.scss"]
 #[test]
@@ -96,6 +116,31 @@ fn missing_output_in_symlinked_dir_preserves_relative_source_behavior() {
     std::fs::create_dir(tmp.path().join("actual")).unwrap();
     std::os::unix::fs::symlink("actual", tmp.path().join("linked")).unwrap();
     std::fs::write(tmp.path().join("actual/in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["actual/in.scss", "linked/out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("actual/out.css.map")).unwrap();
+    assert!(
+        map.contains("\"sources\":[\"../actual/in.scss\"]"),
+        "got: {map}"
+    );
+}
+
+// Ground truth: `npx sass@1.101.0 actual/in.scss linked/out.css` with an
+// existing linked/out.css -> sources: ["../actual/in.scss"].
+#[cfg(unix)]
+#[test]
+fn existing_output_in_symlinked_dir_preserves_relative_source_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join("actual")).unwrap();
+    std::os::unix::fs::symlink("actual", tmp.path().join("linked")).unwrap();
+    std::fs::write(tmp.path().join("actual/in.scss"), INPUT).unwrap();
+    std::fs::write(tmp.path().join("actual/out.css"), "existing\n").unwrap();
 
     let output = grass_cmd()
         .current_dir(tmp.path())
