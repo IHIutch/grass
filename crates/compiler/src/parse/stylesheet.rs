@@ -783,9 +783,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 .into());
         }
 
-        // Use the raw (un-normalized) name for the reserved check so that
-        // names like `-moz_calc` and `_moz-calc` are not incorrectly rejected.
-        if RESERVED_IDENTIFIERS.contains(&unvendor(&raw_name)) {
+        // Only unprefixed names are reserved, except that lowercase
+        // `-a-element` retains the legacy invalid-function behavior. The
+        // uppercase vendor-prefixed form is a deprecated compatibility case.
+        if RESERVED_IDENTIFIERS.contains(&raw_name.as_str()) || unvendor(&raw_name) == "element" {
             return Err(("Invalid function name.", self.toks_mut().span_from(start)).into());
         }
 

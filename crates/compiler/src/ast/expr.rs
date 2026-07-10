@@ -93,7 +93,8 @@ pub struct InterpolatedFunction<'a> {
 /// treats as shadowable: a user-defined or module function of the same name takes
 /// precedence over the calculation at evaluation time (scope isn't known at parse
 /// time). Carries both parses of the same argument text so the evaluator can pick
-/// one without reparsing. `calc` and `clamp` are reserved names and never use this.
+/// one without reparsing. `calc` and `clamp` use this as well, since
+/// user-defined functions with those names shadow the calculation syntax.
 #[derive(Debug, Clone)]
 pub struct CalculationWithFallbackExpr<'a> {
     /// Lowercased function name, used to look up a possible override in scope.

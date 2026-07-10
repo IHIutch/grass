@@ -1520,7 +1520,9 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 }
             }
 
-            if let Some(func) = ValueParser::try_parse_special_function(parser, lower_ref, start)? {
+            if let Some(func) =
+                ValueParser::try_parse_special_function(parser, lower_ref, plain, start)?
+            {
                 return Ok(func);
             }
         }
@@ -1556,10 +1558,15 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     )?;
 
                     let is_css_custom = plain.starts_with("--");
+                    let original_name = if plain.eq_ignore_ascii_case("url") {
+                        "url"
+                    } else {
+                        plain
+                    };
                     Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
                         namespace: None,
                         name: Identifier::from(plain),
-                        original_name: CompactString::from(plain),
+                        original_name: CompactString::from(original_name),
                         arguments: parser.arena().alloc(arguments),
                         span: parser.toks_mut().span_from(start),
                         is_css_custom_function: is_css_custom,
@@ -1763,9 +1770,18 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
     pub(crate) fn try_parse_special_function(
         parser: &mut P,
         name: &str,
+        original_name: &str,
         start: usize,
     ) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
         let normalized = unvendor(name);
+
+        let before_special_function = parser.toks().cursor();
+        if normalized == "url" && original_name != name {
+            let was_consuming_newlines = parser.is_consuming_newlines();
+            parser.set_consume_newlines(true);
+            parser.whitespace()?;
+            parser.set_consume_newlines(was_consuming_newlines);
+        }
 
         if matches!(parser.toks().peek(), Some(Token { kind: '(', .. })) {
             if let Some(calculation) = ValueParser::try_parse_calculation(parser, name, start)? {
@@ -1780,6 +1796,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             if name == "calc" {
                 return Ok(None);
             }
+        } else {
+            parser.toks_mut().set_cursor(before_special_function);
         }
 
         let mut buffer;
@@ -1832,7 +1850,17 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 buffer.add_char('(');
             }
             "url" => {
-                return Ok(parser.try_url_contents(None)?.map(|contents| {
+                let contents = parser.try_url_contents(None)?;
+                if contents.is_some() && normalized == "url" && name != "url" {
+                    let span = parser.toks_mut().span_from(start);
+                    parser.parse_time_warnings_mut().push((
+                        Deprecation::FunctionName,
+                        span,
+                        "Vendor-prefixed url() functions will no longer have special parsing in a future release of Dart Sass. Once that happens, this argument will be parsed as SassScript. To preserve current behavior:\n\nnull(#{\"url()\"})\n\nMore info: https://sass-lang.com/d/function-name"
+                            .to_string(),
+                    ));
+                }
+                return Ok(contents.map(|contents| {
                     AstExpr::String(
                         StringExpr(contents.finish(parser.arena()), QuoteKind::None),
                         parser.toks_mut().span_from(start),
@@ -1846,6 +1874,17 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         buffer.add_interpolation(parser.parse_interpolated_declaration_value(false, true, true)?);
         parser.expect_char(')')?;
         buffer.add_char(')');
+
+        if normalized == "expression" && name != "expression" {
+            let span = parser.toks_mut().span_from(start);
+            parser.parse_time_warnings_mut().push((
+                Deprecation::FunctionName,
+                span,
+                format!(
+                    "Vendor-prefixed expression() functions will no longer have special parsing in a future release of Dart Sass. Once that happens, this argument will be parsed as SassScript. To preserve current behavior:\n\n{name}(#{{\"\"}})\n\nMore info: https://sass-lang.com/d/function-name"
+                ),
+            ));
+        }
 
         Ok(Some(
             AstExpr::String(
@@ -2359,7 +2398,23 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             parser.toks_mut().set_cursor(before_args);
                             return Ok(None);
                         }
-                        return Err(e);
+                        parser.toks_mut().set_cursor(before_args);
+                        let invocation = match parser.parse_argument_invocation(false, false) {
+                            Ok(invocation) => invocation,
+                            Err(_) => return Err(e),
+                        };
+                        let calculation = Self::make_calculation(
+                            parser,
+                            CalculationName::Calc,
+                            Vec::new(),
+                            start,
+                        );
+                        return Ok(Some(Self::make_calculation_with_fallback(
+                            parser,
+                            name,
+                            calculation,
+                            invocation,
+                        )));
                     }
                 }
             }
@@ -2388,8 +2443,29 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 )
             }
             "clamp" => {
-                let args = ValueParser::parse_calculation_arguments(parser, Some(3), start)?;
-                Self::make_calculation(parser, CalculationName::Clamp, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(3), start) {
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Clamp, args, start),
+                    Err(e) => {
+                        parser.toks_mut().set_cursor(before_args);
+                        let invocation = match parser.parse_argument_invocation(false, false) {
+                            Ok(invocation) => invocation,
+                            Err(_) => return Err(e),
+                        };
+                        let calculation = Self::make_calculation(
+                            parser,
+                            CalculationName::Clamp,
+                            Vec::new(),
+                            start,
+                        );
+                        return Ok(Some(Self::make_calculation_with_fallback(
+                            parser,
+                            name,
+                            calculation,
+                            invocation,
+                        )));
+                    }
+                }
             }
             "abs" => {
                 let before_args = parser.toks().cursor();
@@ -2456,13 +2532,23 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             _ => return Ok(None),
         };
 
-        // calc() and clamp() are reserved names in dart-sass: `@function calc(...)`
-        // is a parse error, so they can never be shadowed by a user/module function.
-        if matches!(name, "calc" | "clamp") {
-            return Ok(Some(calculation));
-        }
-
         Self::try_parse_calculation_fallback(parser, name, call_start, calculation).map(Some)
+    }
+
+    fn make_calculation_with_fallback(
+        parser: &mut P,
+        name: &str,
+        calculation: Spanned<AstExpr<'a>>,
+        invocation: ArgumentInvocation<'a>,
+    ) -> Spanned<AstExpr<'a>> {
+        let span = calculation.span;
+        AstExpr::CalculationWithFallback(parser.arena().alloc(CalculationWithFallbackExpr {
+            name: Identifier::from(name),
+            calculation: calculation.node,
+            invocation: parser.arena().alloc(invocation),
+            span,
+        }))
+        .span(span)
     }
 
     /// For CSS math function names other than calc/clamp, dart-sass lets a
@@ -2490,15 +2576,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             Err(_) => return Ok(calculation),
         };
 
-        let span = calculation.span;
-
-        Ok(AstExpr::CalculationWithFallback(parser.arena().alloc(CalculationWithFallbackExpr {
-            name: Identifier::from(name),
-            calculation: calculation.node,
-            invocation: parser.arena().alloc(invocation),
-            span,
-        }))
-        .span(span))
+        Ok(Self::make_calculation_with_fallback(
+            parser,
+            name,
+            calculation,
+            invocation,
+        ))
     }
 
     fn reset_state(&mut self, parser: &mut P) -> SassResult<()> {

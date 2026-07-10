@@ -5208,6 +5208,13 @@ impl<'a> Visitor<'a> {
             Err(e) => return Err(e),
         };
 
+        if name == CalculationName::Calc && args.is_empty() {
+            return Err(("Missing argument.", span).into());
+        }
+        if name == CalculationName::Clamp && args.len() != 3 {
+            return Err(("Missing argument.", span).into());
+        }
+
         if self.flags.in_supports_declaration() {
             return Ok(Value::Calculation(SassCalculation::unsimplified(
                 name, args,

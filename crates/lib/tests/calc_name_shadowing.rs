@@ -4,9 +4,8 @@ mod macros;
 // User-defined/module functions shadow CSS math-function names (min, max,
 // sqrt, round, atan2, calc-size, ...) at evaluation time, matching dart-sass's
 // `getFunction`-then-switch order in `visitFunctionExpression`
-// (lib/src/visitor/async_evaluate.dart:3042). `calc` and `clamp` are reserved
-// names and can never be overridden. All expectations verified against
-// `npx sass@1.97.3 --stdin --style=expanded`.
+// (lib/src/visitor/async_evaluate.dart:3042). All expectations are verified
+// against `npx sass@1.101.0 --stdin --style=expanded`.
 
 test!(
     min_overridden_by_user_function,
@@ -86,14 +85,19 @@ test!(
     "a {\n  b: min(nested-overridden, 3);\n}\n"
 );
 
-// calc() and clamp() are reserved names in dart-sass and can never be
-// shadowed; `@function calc`/`@function clamp` is a parse-time error in both
-// implementations.
-error!(
-    calc_cannot_be_overridden,
-    "@function calc($a) { @return overridden; }\n", "Error: Invalid function name."
+// calc() and clamp() are also shadowable as of dart-sass 1.99.0.
+test!(
+    calc_overridden_by_user_function,
+    "@function calc() { @return overridden; }\na { b: calc(); }\n",
+    "a {\n  b: overridden;\n}\n"
 );
-error!(
-    clamp_cannot_be_overridden,
-    "@function clamp($a) { @return overridden; }\n", "Error: Invalid function name."
+test!(
+    calc_with_argument_overridden_by_user_function,
+    "@function calc($a) { @return $a * 2; }\na { b: calc(3); }\n",
+    "a {\n  b: 6;\n}\n"
+);
+test!(
+    clamp_overridden_by_user_function,
+    "@function clamp() { @return overridden; }\na { b: clamp(); }\n",
+    "a {\n  b: overridden;\n}\n"
 );

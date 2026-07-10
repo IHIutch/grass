@@ -211,7 +211,9 @@ impl<'a> CssParser<'a> {
             }
         }
 
-        if let Some(special_fn) = ValueParser::try_parse_special_function(self, &lower, start)? {
+        if let Some(special_fn) =
+            ValueParser::try_parse_special_function(self, &lower, plain, start)?
+        {
             return Ok(special_fn);
         }
 

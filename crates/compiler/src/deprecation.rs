@@ -59,6 +59,8 @@ pub enum Deprecation {
     /// Writing `!default` or `!global` more than once for the same variable
     /// declaration.
     DuplicateVarFlags,
+    /// Using a custom or vendor-prefixed function name with special parsing.
+    FunctionName,
 }
 
 impl Deprecation {
@@ -85,6 +87,7 @@ impl Deprecation {
             Self::AbsPercent => "abs-percent",
             Self::FunctionUnits => "function-units",
             Self::DuplicateVarFlags => "duplicate-var-flags",
+            Self::FunctionName => "function-name",
         }
     }
 
@@ -118,6 +121,7 @@ impl Deprecation {
             "abs-percent" => Self::AbsPercent,
             "function-units" => Self::FunctionUnits,
             "duplicate-var-flags" => Self::DuplicateVarFlags,
+            "function-name" => Self::FunctionName,
             _ => return None,
         })
     }
@@ -143,6 +147,7 @@ impl Deprecation {
         Self::AbsPercent,
         Self::FunctionUnits,
         Self::DuplicateVarFlags,
+        Self::FunctionName,
     ];
 
     /// The Dart Sass version this deprecation was first introduced in, as a
@@ -171,6 +176,7 @@ impl Deprecation {
             Self::MisplacedRest => (1, 91, 0),
             Self::WithPrivate => (1, 92, 0),
             Self::IfFunction => (1, 95, 0),
+            Self::FunctionName => (1, 99, 0),
         }
     }
 
@@ -214,6 +220,7 @@ impl Deprecation {
             | Self::AbsPercent
             | Self::FunctionUnits
             | Self::DuplicateVarFlags => false,
+            Self::FunctionName => false,
         }
     }
 
