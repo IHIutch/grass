@@ -5,6 +5,8 @@ edition = "2021"
 description = "Native Node.js binding for the grass Sass compiler"
 license = "MIT"
 publish = false
+# MSRV: napi-build 2.3.2 requires Rust 1.88.
+rust-version = "1.88"
 
 [lib]
 crate-type = ["cdylib"]

@@ -4,6 +4,8 @@ authors = ["Automatically generated"]
 edition = "2021"
 name = "grass-fuzz"
 publish = false
+# MSRV: ar_archive_writer 0.5.2 (via grass's psm/stacker tree) requires Rust 1.88.
+rust-version = "1.88"
 version = "0.0.0"
 
 [package.metadata]
