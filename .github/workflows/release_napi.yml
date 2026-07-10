@@ -131,7 +131,8 @@ jobs:
       - name: Test native module (x86_64 Linux musl)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         shell: bash
-        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node test.mjs
+        # V8 stack-limit experiment for the musl callback RangeError (todo #310).
+        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node --stack-size=3000 test.mjs
 
       - name: Test native module (aarch64 Linux GNU)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -141,7 +142,8 @@ jobs:
       - name: Test native module (aarch64 Linux musl)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         shell: bash
-        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node test.mjs
+        # V8 stack-limit experiment for the musl callback RangeError (todo #310).
+        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node --stack-size=3000 test.mjs
 
       - name: Test native module (x86_64 Windows)
         if: matrix.target == 'x86_64-pc-windows-msvc'
