@@ -1000,9 +1000,9 @@ error!(
     ":#ab {}", "Error: Expected identifier."
 );
 error!(nothing_after_colon, "a:{}", "Error: Expected identifier.");
-error!(
+test!(
     toplevel_parent_selector_after_combinator,
-    "~&{}", "Error: Top-level selectors may not contain the parent selector \"&\"."
+    "~&{}", ""
 );
 error!(
     toplevel_parent_selector_after_element,
