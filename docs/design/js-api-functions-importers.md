@@ -10,6 +10,30 @@ the package's shipped `.d.ts` files (not executed); **[inferred]** = my
 conclusion from combining the above with grass's source, not directly
 observed.
 
+## Plan 070 boundary and pinned source record
+
+This section supersedes the stale future-work wording below for the remaining
+parity slice. The target is **Dart Sass 1.97.3**, not the current rolling Sass
+website. The exact package artifacts used for the API-shape decisions are the
+[`sass@1.97.3` `types/options.d.ts`](https://app.unpkg.com/sass@1.97.3/files/types/options.d.ts),
+[`sass@1.97.3` `types/importer.d.ts`](https://app.unpkg.com/sass@1.97.3/files/types/importer.d.ts),
+and [`sass@1.97.3` `types/package.json`](https://app.unpkg.com/sass@1.97.3/files/package.json).
+The corresponding narrative references are the Sass
+[`Options`](https://sass-lang.com/documentation/js-api/interfaces/options/),
+[`Importer`](https://sass-lang.com/documentation/js-api/interfaces/importer/),
+[`CanonicalizeContext`](https://sass-lang.com/documentation/js-api/interfaces/canonicalizecontext/),
+and [`NodePackageImporter`](https://sass-lang.com/documentation/js-api/classes/nodepackageimporter/)
+pages.
+
+`StringOptions.importer` and `StringOptions.url` are already shipped by the
+native binding (see `crates/napi/index.d.ts` and todo #280). They are not
+remaining implementation work here. This plan designs only: (a) load-path
+sugar and ordering, (b) Node package importer ownership and `pkg:` behavior,
+(c) `nonCanonicalScheme`, and (d) a future-compatible direction for Promise
+callbacks. The contract fixtures in
+[`crates/napi/test-design/js-api-parity.md`](../../crates/napi/test-design/js-api-parity.md)
+are executable-plan fixtures, not feature-completion tests.
+
 ## 1. Probed Contracts
 
 ### 1.1 `functions`
@@ -90,25 +114,37 @@ observed.
   `null` **[read-from-types]**. Confirmed end-to-end: `findFileUrl` mapping
   `~pkg` → `pathToFileURL('.../pkg')` let `@use "~pkg" as p` resolve and load
   `pkg.scss` from disk with normal extension inference **[probed]**.
-- Resolution order across the whole option surface, straight from the type
-  doc **[read-from-types]**: (1) relative-URL resolution against the loading
-  stylesheet's own importer, (2) each entry of `Options.importers` in array
-  order (`Importer`/`FileImporter`/`NodePackageImporter` all interleave in
-  the order given), (3) `Options.loadPaths` entries, each treated as sugar
-  for a `FileImporter` that only resolves relative URLs under that path.
-- `StringOptions.importer` (singular) + `StringOptions.url`: for
-  `compileString`, an entrypoint-specific importer/canonical-URL pair that
-  seeds how the entrypoint's own relative loads resolve; if `url` is a
-  `file:` URL and no `importer` given, filesystem loading is the default
-  **[read-from-types]**.
+- Resolution order across the whole option surface, straight from the pinned
+  type doc **[read-from-types]**: (1) for a relative URL only, resolve against
+  the loading stylesheet's canonical URL and invoke the importer that loaded
+  that stylesheet; (2) for `compileString`, apply the already-shipped
+  `StringOptions.url`/`StringOptions.importer` entrypoint rule; (3) each entry
+  of `Options.importers` in array order
+  (`Importer`/`FileImporter`/`NodePackageImporter` interleave in the order
+  given); (4) `Options.loadPaths` entries, each treated as sugar for a
+  `FileImporter` that only resolves relative URLs under that path. A decline
+  (`null`/`undefined`) advances to the next step; a callback exception stops
+  resolution and is reported as a Sass error.
+- `StringOptions.importer` (singular) + `StringOptions.url` are shipped
+  behavior, not a future design: for `compileString`, they define the
+  entrypoint-specific importer/canonical-URL pair that seeds the source's own
+  relative loads. If `url` is a `file:` URL and no `importer` is given,
+  filesystem loading is the default **[read-from-types]**. If an importer is
+  supplied without a URL, the relative rule is passed to that importer as-is;
+  this is the 1.97.3 contract and must not be replaced by a synthetic file
+  URL.
 - Errors thrown from `canonicalize`/`load`/`findFileUrl` are wrapped the same
   way as function errors (message/sassMessage/span on the `@use`/`@import`
   site) **[read-from-types]**, consistent with the function error behavior
   observed above.
-- `nonCanonicalScheme` lets an importer register schemes it promises never to
-  return from `canonicalize`, which changes when `containingUrl` is
-  populated for schemed URLs **[read-from-types]** — a corner not
-  independently probed at runtime.
+- `nonCanonicalScheme?: string | string[]` lets an importer register schemes
+  (without `:`) it promises never to return from `canonicalize`. If a load has
+  one of those schemes, Sass passes the known `containingUrl`; returning a
+  canonical URL with a registered scheme is an error **[read-from-types]**.
+  Values must be non-empty and contain only lowercase ASCII letters, digits,
+  `+`, `-`, and `.`. This is a validation/context contract, not a new
+  resolution source. It remains an unimplemented follow-up and is covered by
+  a design fixture rather than claimed runtime support.
 
 ## 2. Existing Machinery (grass, read at HEAD `1c7174e`)
 
@@ -419,12 +455,76 @@ the same Rust `Importer` trait:
   `for_import: bool` parameter and grass's `current_import_path` tracking
   (`visitor.rs`) respectively — both pieces of data already exist in
   `Visitor`, just need to reach this new call site.
-- `NodePackageImporter` (`pkg:` resolution) is pure Node.js module-resolution
-  logic with no Sass-specific behavior beyond producing a `file:` URL —
-  **[inferred]**, this could plausibly be implemented as ordinary
-  napi-side JS/TS shipped alongside the binding rather than in Rust at all,
-  since it doesn't need to cross the Rust boundary except as a degenerate
-  `FileImporter`.
+- **Placement decision: `NodePackageImporter` belongs in the Node JS package
+  layer, not Rust.** The 1.97.3 class is Node-only and its behavior is the
+  standard Node package-resolution algorithm for `pkg:` URLs. The adapter
+  should be ordinary JS/TS in `crates/lib/pkg-publish`'s Node entrypoint. It
+  exposes the public class/constructor shape and lowers each instance to the
+  existing `FileImporter` bridge: `findFileUrl(url, context)` returns an
+  absolute `file:` URL (or `null` to decline), after Node resolution applies
+  the package `exports` `sass`/`style`/`default` conditions, package-root
+  `sass`/`style` fallbacks, and partial/extension/index resolution. No Rust
+  compiler trait, `pkg:` scheme, or browser/Wasm/Workers implementation is
+  needed. This is a design decision based on the pinned class contract and
+  the already-shipped FileImporter bridge **[read-from-types] [inferred]**.
+
+## 5.3 Plan 070 support and ownership boundaries
+
+The compatibility target and the repository's split entrypoints impose these
+boundaries:
+
+| Surface | `loadPaths` | custom `importer`/`importers` | `NodePackageImporter` | URL ownership |
+|---|---|---|---|---|
+| Native Node (`crates/napi`) | Rust compiler, ordered after importers; relative URLs only | JS callbacks through the native bridge; sync callbacks on sync APIs, current async bridge only supports callbacks that return immediately | Node JS package layer, lowered to FileImporter | Rust owns copied canonical URL strings; callback context and canonical URLs are reconstructed per call |
+| Pure Wasm browser | Existing Wasm path/FS behavior only | Unsupported until a callback bridge exists; the surface must reject these options clearly, never ignore them | Unsupported; Node resolution is unavailable | Host-provided filesystem paths/URLs only |
+| Pure Wasm Workers | Existing Wasm path/FS behavior only | Unsupported until a callback bridge exists; the surface must reject these options clearly, never ignore them | Unsupported; Node resolution is unavailable | Host-provided filesystem paths/URLs only |
+
+The browser and Workers declarations currently omit the native callback
+fields, while the Node declaration exposes them. Any future shared option
+normalization must retain that distinction: an option that is present but
+unsupported on a runtime is an explicit error, not a no-op. `loadPaths` is
+only effective where the selected Wasm host can actually resolve/read a path;
+the contract fixture records this as a host capability rather than inventing
+Node module semantics for Wasm.
+
+For the native bridge, URL lifetime is deliberately value-based. Rust must
+copy the canonical URL and containing URL before returning from a callback;
+JS must not retain a borrowed pointer or receive a mutable Rust-owned object.
+The current grass wire surface uses URL strings, including `containingUrl` and
+`canonicalUrl`, while the reference Sass API uses `URL` objects for those
+positions. This is an existing, documented wire-level deviation; this plan
+does not silently change it while implementing #306–#308. A future URL-object
+parity change must be a separately versioned API decision and must update both
+sync and async bridges together.
+
+## 5.4 Promise-returning callback direction
+
+The pinned declarations permit `PromiseOr` results for async `Importer`,
+`FileImporter`, and `CustomFunction` callbacks and restrict those callbacks
+to `compileAsync`/`compileStringAsync` **[read-from-types]**. Grass currently
+uses a `ThreadsafeFunction` plus a blocking channel while Rust's async task
+computes. That protocol can service a synchronous callback, but it cannot
+wait for a JS Promise without holding a worker thread and risking deadlock or
+re-entrancy failures. The current clear Promise-return error is therefore a
+documented limitation, not an accidental API behavior.
+
+The implementation direction is a separate async-bridge slice:
+
+1. Keep sync entrypoints and sync callbacks direct and rejecting Promise
+   results.
+2. For async entrypoints, add an awaitable callback protocol that suspends the
+   Sass operation until JS settles the Promise; it must not block the worker
+   thread on a Promise. The protocol must carry callback identity, copied
+   arguments, resolved value, thrown/rejected value, and cancellation/error
+   state.
+3. Prove concurrent compilations, callback ordering, thrown/rejected errors,
+   and nested compilation before changing the public async declarations.
+4. Only then widen the generated types to `PromiseOr` and remove the current
+   Promise-return guard. Importer and function callbacks should use the same
+   protocol so the behavior does not diverge by callback kind.
+
+This work is intentionally not part of #306–#308 and is not implemented by
+the design fixtures.
 
 ## 6. Phasing
 
@@ -436,7 +536,43 @@ the same Rust `Importer` trait:
 | **3. napi async functions bridge** | Extend slice 2 to `compileAsync`/`compileStringAsync`: `ThreadsafeFunction` + blocking-channel round trip (§4.2's `ThreadsafeBlocking` arm), threaded through `CompileTask`/`CompileStringTask`'s `compute()`. | M | Slice 2 |
 | **4. Importer trait + `FileImporter` bridge** | New `Importer` trait + `ImportResolution` enum (§5.1) in `grass_compiler`; wire into `find_import`/`find_import_uncached`'s priority chain ahead of path-candidate resolution; fix `import_cache`'s key to distinguish path vs. canonical-URL sources. napi-side: wire only the `FileImporter` (`findFileUrl`) shape first, since it delegates back into existing path machinery and needs no new stylesheet-parsing plumbing. Sync entry points only. | L | Slice 1 (shares the sync/async calling-convention split) |
 | **5. Full `Importer` bridge (canonicalize+load) + async** | Wire the `canonicalize`+`load` JS shape (arbitrary schemes, `ImportResolution::Resolved`), `CanonicalizeContext` threading (`fromImport`/`containingUrl`), and extend both importer shapes to the async entry points. | L | Slice 4, Slice 3 |
-| **6. `StringOptions.importer`/`url`, `loadPaths`-as-sugar parity, `NodePackageImporter`** | Entrypoint-specific importer for `compileString`, confirm `loadPaths` semantics are unchanged, decide on `NodePackageImporter` (§5.2, likely non-Rust). | S–M | Slice 5 |
+| **6. `StringOptions.importer`/`url`, `loadPaths`-as-sugar parity, `NodePackageImporter`** | Historical grouping. `StringOptions.importer`/`url` are shipped; the remaining work is split below so load-path verification and Node package resolution have independent ownership. | S–M | Slice 5 |
+
+### Current implementation sequence for #306–#308
+
+1. **#306 — verify load-path sugar and ordering.** Add the design fixture's
+   combined case to the eventual N-API runtime test: an ordered custom
+   importer declines, a later importer resolves, and a load-path candidate is
+   only consulted after every importer declines. Include the entrypoint
+   `importer` case so the shipped singular importer remains ahead of the
+   array and load paths. This is verify-first and should produce no production
+   change if the existing `find_import_uncached` chain matches the contract.
+2. **#307 — ship the Node-only package adapter.** Implement and test the
+   `NodePackageImporter(entryPointDirectory?)` public helper in the Node
+   package layer. Resolve `pkg:` using Node's package entrypoint rules, return
+   a copied absolute `file:` URL to the existing FileImporter path, and keep
+   the helper out of Rust and non-Node bundles. Test root package, subpath,
+   `exports` condition, explicit `entryPointDirectory`, fallback, and
+   decline/error behavior. The adapter must not bypass the importer's array
+   order or duplicate Sass partial resolution in JS.
+3. **#308 — thread the importer hint.** Add the optional
+   `nonCanonicalScheme: string | string[]` contract to the full Importer
+   shape, validate its grammar, pass `containingUrl` for matching incoming
+   schemes, and error if canonicalize returns a URL using a declared
+   non-canonical scheme. Keep this out of FileImporter, which always receives
+   a known containing URL when one exists. Exercise sync and current async
+   callback paths with the same context assertions.
+4. **Promise callbacks — separate architecture follow-up.** Design and prove
+   the non-blocking awaitable protocol described in §5.4 before changing
+   declarations or removing the current guard. Its completion is not a
+   prerequisite for the verify-only #306 case, but it is a prerequisite for
+   claiming full 1.97.3 async parity.
+
+The dependency graph is therefore `#306 → none` (verification of the shipped
+chain), `#307 → existing FileImporter bridge + Node package layer`, and
+`#308 → existing full Importer context plumbing`. Promise support depends on
+the callback bridge and concurrency/re-entrancy tests, not on Node package
+resolution.
 
 **First slice to hand an executor**: **Slice 1** — it's pure `grass_compiler`
 work (no napi, no JS, no threading concerns), has a crisp Rust-only test
@@ -484,13 +620,20 @@ NOT touch `crates/napi` at all.
    claims parity; not verified against the parser's actual grammar coverage
    in this spike, only confirmed the parser exists and is the right thing to
    reuse.
-6. **`NodePackageImporter` scope**: whether to implement `pkg:` resolution
-   in Rust at all, or ship it as importer-registry sugar living in the
-   napi/JS wrapper layer only (§5.2) — deferred to slice 6, flagged here so
-   it isn't silently dropped.
+6. **`NodePackageImporter` is no longer an open placement question.** The
+   decision is Node JS package-layer ownership (§5.2): a helper/class lowers
+   to the existing FileImporter bridge and is absent from Wasm, browser, and
+   Workers bundles. The remaining implementation questions are the exact
+   Node package-resolution error/exports cases, which belong in #307's package
+   tests rather than Rust importer design.
 7. **Perf cost of the new `find_import` pre-check**: even when no JS
    importers are registered, slice 4 adds a new "walk `options.importers`"
    step to every `find_import_uncached` call. Needs to be a zero-cost no-op
    (empty `Vec` check) verified against `prototype/perf-check.sh`, matching
    how `custom_fns`/`GLOBAL_FUNCTIONS` lookups already sit ahead of hot paths
    without regressing USWDS/Bootstrap compiles.
+8. **Promise callback architecture**: the pinned target allows Promise
+   results on async entrypoints, but the current grass bridge blocks a worker
+   thread. The non-blocking suspension protocol, cancellation behavior, and
+   nested async compilation semantics remain to be designed and tested before
+   this limitation can be removed (§5.4).
