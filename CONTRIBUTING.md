@@ -72,7 +72,7 @@ echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
 - **Never change a test's expected output based on reasoning alone.** Verify
   against dart-sass first:
   ```bash
-  echo 'a { color: rgb(1.5, 1.5, 1.5); }' | npx sass@1.97.3 --stdin --style=expanded
+  echo 'a { color: rgb(1.5, 1.5, 1.5); }' | npx sass@1.101.0 --stdin --style=expanded
   ```
   Use that exact output as the expected value, and note in the commit
   message that expectations were verified against dart-sass (which version).
@@ -80,7 +80,7 @@ echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
   dart-sass — only the resulting CSS (and warnings/errors' presence) needs
   to match.
 - If you find a sass-spec test whose expected output doesn't match
-  dart-sass 1.97.3, don't spend time chasing it — it's likely a stale
+  dart-sass 1.101.0, don't spend time chasing it — it's likely a stale
   fixture. File it as an issue (see below) instead.
 
 ## Performance Gate

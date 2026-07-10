@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run sass-spec and reject failures not listed in the checked-in baseline."""
+"""Run sass-spec 1.101.0 fixtures and reject failures not in the baseline."""
 
 from __future__ import annotations
 

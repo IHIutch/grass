@@ -1,6 +1,6 @@
-# sass-spec baseline for dart-sass 1.97.3, the grass release binary, and the
-# pinned sass-spec submodule revision. Keep one stable runner identifier per line.
-# The baseline currently allows 39 failures out of 13,801 tests. Update this
+# sass-spec baseline for dart-sass 1.101.0, the grass release binary, and the
+# pinned sass-spec submodule revision a2ead92. Keep one stable runner identifier per line.
+# The baseline currently allows 39 failures out of 13,888 tests. Update this
 # file deliberately when the compiler or sass-spec target changes.
 core_functions/color/to_space/hsl/display_p3_linear.hrx::out_of_range/far
 core_functions/color/to_space/hsl/oklab.hrx::out_of_range/far

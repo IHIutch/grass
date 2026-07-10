@@ -5159,6 +5159,9 @@ impl<'a> Visitor<'a> {
                     }
                 }
             }
+            AstExpr::List(..) => {
+                return Err(("This expression can't be used in a calculation.", span).into())
+            }
             v => unreachable!("{:?}", v),
         })
     }

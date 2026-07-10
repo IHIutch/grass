@@ -2401,12 +2401,20 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         parser.toks_mut().set_cursor(before_args);
                         let invocation = match parser.parse_argument_invocation(false, false) {
                             Ok(invocation) => invocation,
-                            Err(_) => return Err(e),
+                            Err(_) => {
+                                parser.toks_mut().set_cursor(before_args);
+                                parser.expect_char('(')?;
+                                parser.whitespace()?;
+                                if !parser.scan_char(')') {
+                                    return Err(e);
+                                }
+                                ArgumentInvocation::empty(parser.toks_mut().span_from(start))
+                            }
                         };
                         let calculation = Self::make_calculation(
                             parser,
                             CalculationName::Calc,
-                            Vec::new(),
+                            invocation.positional.to_vec(),
                             start,
                         );
                         return Ok(Some(Self::make_calculation_with_fallback(
@@ -2450,12 +2458,20 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         parser.toks_mut().set_cursor(before_args);
                         let invocation = match parser.parse_argument_invocation(false, false) {
                             Ok(invocation) => invocation,
-                            Err(_) => return Err(e),
+                            Err(_) => {
+                                parser.toks_mut().set_cursor(before_args);
+                                parser.expect_char('(')?;
+                                parser.whitespace()?;
+                                if !parser.scan_char(')') {
+                                    return Err(e);
+                                }
+                                ArgumentInvocation::empty(parser.toks_mut().span_from(start))
+                            }
                         };
                         let calculation = Self::make_calculation(
                             parser,
                             CalculationName::Clamp,
-                            Vec::new(),
+                            invocation.positional.to_vec(),
                             start,
                         );
                         return Ok(Some(Self::make_calculation_with_fallback(

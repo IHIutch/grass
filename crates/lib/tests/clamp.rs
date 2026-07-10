@@ -3,12 +3,12 @@ mod macros;
 
 error!(
     clamp_empty_args,
-    "a {\n  color: clamp();\n}\n", "Error: Expected number, variable, function, or calculation."
+    "a {\n  color: clamp();\n}\n", "Error: Missing argument."
 );
 error!(
     clamp_parens_in_args,
     "a {\n  color: clamp((()));\n}\n",
-    "Error: Expected number, variable, function, or calculation."
+    "Error: This expression can't be used in a calculation."
 );
 error!(
     clamp_single_arg,
