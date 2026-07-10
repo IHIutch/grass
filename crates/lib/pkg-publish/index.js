@@ -59,7 +59,7 @@ function tryLoadNative() {
   return null;
 }
 
-nativeBinding = tryLoadNative();
+nativeBinding = process.env.GRASS_FORCE_WASM === "1" ? null : tryLoadNative();
 
 // Value classes for `options.functions`/`options.importers` return values.
 // The native binding validates callback return values by identity against
