@@ -1914,7 +1914,7 @@ impl<'a> Serializer<'a> {
         // mapping at all, matching `write_inline_comment`'s existing
         // no-mapping convention — so only record when the buffer is
         // genuinely at the start of a fresh output line.
-        if self.buffer.last().map_or(true, |&b| b == b'\n') {
+        if self.buffer.last().is_none_or(|&b| b == b'\n') {
             self.record_mapping(span.low());
         }
 
