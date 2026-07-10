@@ -333,8 +333,8 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
     let mut selections: Vec<Vec<Option<T>>> = vec![vec![None; list_two.len()]; list_one.len()];
 
     for i in 0..list_one.len() {
-        for j in 0..list_two.len() {
-            let selection = select(&list_one[i], &list_two[j]);
+        for (j, list_two_item) in list_two.iter().enumerate() {
+            let selection = select(&list_one[i], list_two_item);
             lengths[i + 1][j + 1] = if selection.is_none() {
                 std::cmp::max(lengths[i + 1][j], lengths[i][j + 1])
             } else {

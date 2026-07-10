@@ -19,7 +19,7 @@ impl fmt::Display for Namespace {
         match self {
             Self::Empty => write!(f, "|"),
             Self::Asterisk => write!(f, "*|"),
-            Self::Other(namespace) => write!(f, "{}|", namespace),
+            Self::Other(namespace) => write!(f, "{namespace}|"),
             Self::None => Ok(()),
         }
     }

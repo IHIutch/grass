@@ -45,7 +45,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
 
             if values.contains_key(&name) {
                 return Err((
-                    format!("The variable {name} was configured twice.", name = name),
+                    format!("The variable {name} was configured twice."),
                     key.span,
                 )
                     .into());
@@ -84,7 +84,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
     if let Some(ref configuration) = configuration {
         if is_builtin && !configuration.borrow().is_implicit() {
             return Err((
-                format!("Built-in module {} can't be configured.", url),
+                format!("Built-in module {url} can't be configured."),
                 configuration.borrow().span.unwrap(),
             )
                 .into());

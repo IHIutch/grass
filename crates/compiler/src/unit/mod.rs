@@ -308,7 +308,7 @@ impl fmt::Display for Unit {
             Unit::Dpcm => write!(f, "dpcm"),
             Unit::Dppx => write!(f, "dppx"),
             Unit::Fr => write!(f, "fr"),
-            Unit::Unknown(s) => write!(f, "{}", s),
+            Unit::Unknown(s) => write!(f, "{s}"),
             Unit::None => Ok(()),
             Unit::Complex(complex) => {
                 let numer = &complex.numer;
@@ -331,15 +331,15 @@ impl fmt::Display for Unit {
                     .join("*");
 
                 if denom.is_empty() {
-                    write!(f, "{}", numer_rendered)
+                    write!(f, "{numer_rendered}")
                 } else if numer.is_empty() && denom.len() == 1 {
-                    write!(f, "{}^-1", denom_rendered)
+                    write!(f, "{denom_rendered}^-1")
                 } else if numer.is_empty() {
-                    write!(f, "({})^-1", denom_rendered)
+                    write!(f, "({denom_rendered})^-1")
                 } else if denom.len() > 1 {
-                    write!(f, "{}/({})", numer_rendered, denom_rendered)
+                    write!(f, "{numer_rendered}/({denom_rendered})")
                 } else {
-                    write!(f, "{}/{}", numer_rendered, denom_rendered)
+                    write!(f, "{numer_rendered}/{denom_rendered}")
                 }
             }
         }

@@ -306,8 +306,7 @@ impl ExtensionStore {
 
                     return Err((
                         format!(
-                            "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
-                            target
+                            "The target selector was not found.\nUse \"@extend {target} !optional\" to avoid this error."
                         ),
                         extension.span,
                     )
@@ -352,7 +351,7 @@ impl ExtensionStore {
                 if complex.components.len() == 1 {
                     Ok(complex.components.first().unwrap().as_compound().clone())
                 } else {
-                    Err((format!("Can't extend complex selector {}.", complex), span).into())
+                    Err((format!("Can't extend complex selector {complex}."), span).into())
                 }
             })
             .collect::<SassResult<Vec<CompoundSelector>>>()?;

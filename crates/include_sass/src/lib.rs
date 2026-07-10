@@ -106,7 +106,7 @@ pub fn include_sass(item: TokenStream) -> TokenStream {
     ) {
         Ok(css) => css,
         Err(e) => {
-            let err = syn::Error::new(input.span(), format!("Failed to compile Sass\n{}", e));
+            let err = syn::Error::new(input.span(), format!("Failed to compile Sass\n{e}"));
             return syn::Error::into_compile_error(err).into();
         }
     };

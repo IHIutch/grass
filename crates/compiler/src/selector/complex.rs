@@ -100,7 +100,7 @@ impl fmt::Display for ComplexSelector {
                     f.write_char(' ')?;
                 }
             }
-            write!(f, "{}", component)?;
+            write!(f, "{component}")?;
             last_component = Some(component);
         }
         Ok(())
@@ -534,8 +534,8 @@ impl ComplexSelectorComponent {
 impl Display for ComplexSelectorComponent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Compound(c) => write!(f, "{}", c),
-            Self::Combinator(c) => write!(f, "{}", c),
+            Self::Compound(c) => write!(f, "{c}"),
+            Self::Combinator(c) => write!(f, "{c}"),
         }
     }
 }

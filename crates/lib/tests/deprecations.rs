@@ -72,8 +72,7 @@ fn import_does_not_warn_for_css_passthrough() {
         assert_eq!(
             &[] as &[String],
             logger.warning_messages().as_slice(),
-            "unexpected warning for {}",
-            input
+            "unexpected warning for {input}"
         );
     }
 }
@@ -402,7 +401,7 @@ fn slash_div_recommendation_nested_division_in_parens() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {:?}", warnings);
+    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {warnings:?}");
     assert!(warnings[0].contains("Recommendation: math.div(12, $n)"));
     assert!(warnings[1].contains("Recommendation: math.div(12 / $n, 2)"));
 }
@@ -421,7 +420,7 @@ fn slash_div_dedupes_repeated_call_site() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 1, "expected 1 warning, got {:?}", warnings);
+    assert_eq!(warnings.len(), 1, "expected 1 warning, got {warnings:?}");
     assert!(warnings[0].contains("math.div(12, $n)"));
 }
 
@@ -437,7 +436,7 @@ fn slash_div_warns_per_distinct_variable_decl() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {:?}", warnings);
+    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {warnings:?}");
     assert!(warnings[0].contains("math.div(16, 12)"));
     assert!(warnings[1].contains("math.div(18, 14)"));
 }
@@ -1172,7 +1171,7 @@ fn abs_percent_warns_once_per_distinct_call_site() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {:?}", warnings);
+    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {warnings:?}");
     assert!(warnings[0].contains("math.abs(-50%)"));
     assert!(warnings[1].contains("math.abs(-25%)"));
 }

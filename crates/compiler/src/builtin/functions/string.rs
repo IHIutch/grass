@@ -162,7 +162,7 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         let limit_int = limit.assert_int_with_name("limit", args.span())?;
         if limit_int < 1 {
             return Err((
-                format!("$limit: Must be 1 or greater, was {}.", limit_int),
+                format!("$limit: Must be 1 or greater, was {limit_int}."),
                 args.span(),
             )
                 .into());
@@ -260,7 +260,7 @@ pub(crate) fn unique_id(args: ArgumentResult, _: &mut Visitor) -> SassResult<Val
         .map(char::from)
         .take(12)
         .collect();
-    Ok(Value::String(format!("id-{}", string).into(), QuoteKind::None))
+    Ok(Value::String(format!("id-{string}").into(), QuoteKind::None))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

@@ -66,13 +66,13 @@ pub(super) fn parse_space_arg(
     match args.get(pos, "space") {
         Some(space_val) => match &space_val.node {
             Value::String(s, QuoteKind::Quoted) => Err((
-                format!("$space: Expected {} to be an unquoted string.", s),
+                format!("$space: Expected {s} to be an unquoted string."),
                 span,
             )
                 .into()),
             Value::String(s, QuoteKind::None) => {
                 let space = ColorSpace::from_name(s)
-                    .ok_or_else(|| (format!("$space: Unknown color space \"{}\".", s), span))?;
+                    .ok_or_else(|| (format!("$space: Unknown color space \"{s}\"."), span))?;
                 Ok(Some(space))
             }
             Value::Null => Ok(None),
@@ -98,7 +98,7 @@ pub(crate) fn function_string(
         .collect::<SassResult<Vec<_>>>()?
         .join(", ");
 
-    Ok(format!("{}({})", name, args))
+    Ok(format!("{name}({args})"))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {

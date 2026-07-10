@@ -60,7 +60,7 @@ impl fmt::Display for SelectorList {
                     f.write_char(' ')?;
                 }
             }
-            write!(f, "{}", complex)?;
+            write!(f, "{complex}")?;
         }
         Ok(())
     }

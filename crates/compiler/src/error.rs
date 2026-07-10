@@ -128,7 +128,7 @@ impl Display for SassError {
                 unicode,
             } => (message, loc, *unicode),
             SassErrorKind::FromUtf8Error(..) => return writeln!(f, "Error: Invalid UTF-8."),
-            SassErrorKind::IoError(s) => return writeln!(f, "Error: {}", s),
+            SassErrorKind::IoError(s) => return writeln!(f, "Error: {s}"),
             SassErrorKind::Raw(..) => unreachable!(),
         };
 
@@ -139,11 +139,11 @@ impl Display for SassError {
 
         let line = loc.begin.line + 1;
         let col = loc.begin.column + 1;
-        writeln!(f, "Error: {}", message)?;
-        let padding = vec![' '; format!("{}", line).len() + 1]
+        writeln!(f, "Error: {message}")?;
+        let padding = vec![' '; format!("{line}").len() + 1]
             .iter()
             .collect::<String>();
-        writeln!(f, "{}{}", padding, first_bar)?;
+        writeln!(f, "{padding}{first_bar}")?;
         writeln!(
             f,
             "{} {} {}",
@@ -161,7 +161,7 @@ impl Display for SassError {
                 .iter()
                 .collect::<String>()
         )?;
-        writeln!(f, "{}{}", padding, fourth_bar)?;
+        writeln!(f, "{padding}{fourth_bar}")?;
 
         if unicode {
             writeln!(f, "./{}:{}:{}", loc.file.name(), line, col)?;

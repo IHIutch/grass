@@ -283,7 +283,7 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
 
     match func {
         Some(func) => Ok(Value::FunctionRef(Box::new(func))),
-        None => Err((format!("Function not found: {}", name), args.span()).into()),
+        None => Err((format!("Function not found: {name}"), args.span()).into()),
     }
 }
 
@@ -340,7 +340,7 @@ pub(crate) fn get_mixin(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
     match mixin {
         Some(mixin) => Ok(Value::MixinRef(Box::new(SassMixin { name, mixin }))),
-        None => Err((format!("Mixin not found: {}", name), args.span()).into()),
+        None => Err((format!("Mixin not found: {name}"), args.span()).into()),
     }
 }
 

@@ -276,7 +276,7 @@ pub(crate) trait BaseParser {
             buf.push(' ');
             Ok(buf)
         } else {
-            Ok(format!("\\{}", c))
+            Ok(format!("\\{c}"))
         }
     }
 
@@ -287,7 +287,7 @@ pub(crate) trait BaseParser {
                 Ok(())
             }
             Some(..) | None => {
-                Err((format!("expected \"{}\".", c), self.toks().current_span()).into())
+                Err((format!("expected \"{c}\"."), self.toks().current_span()).into())
             }
         }
     }
@@ -298,7 +298,7 @@ pub(crate) trait BaseParser {
                 self.toks_mut().next();
                 Ok(())
             }
-            Some(..) | None => Err((format!("expected {}.", msg), self.toks().prev_span()).into()),
+            Some(..) | None => Err((format!("expected {msg}."), self.toks().prev_span()).into()),
         }
     }
 
@@ -343,7 +343,7 @@ pub(crate) trait BaseParser {
 
         if !found_matching_quote {
             return Err((
-                format!("Expected {quote}.", quote = quote),
+                format!("Expected {quote}."),
                 self.toks().current_span(),
             )
                 .into());
@@ -665,7 +665,7 @@ pub(crate) trait BaseParser {
             return Ok(());
         }
 
-        Err((format!("Expected \"{}\".", c), self.toks().current_span()).into())
+        Err((format!("Expected \"{c}\"."), self.toks().current_span()).into())
     }
 
     fn looking_at_identifier_body(&mut self) -> bool {
@@ -683,7 +683,7 @@ pub(crate) trait BaseParser {
         for c in ident.chars() {
             if !self.scan_ident_char(c, case_sensitive)? {
                 return Err((
-                    format!("Expected \"{}\".", ident),
+                    format!("Expected \"{ident}\"."),
                     self.toks_mut().span_from(start),
                 )
                     .into());
@@ -695,7 +695,7 @@ pub(crate) trait BaseParser {
         }
 
         Err((
-            format!("Expected \"{}\".", ident),
+            format!("Expected \"{ident}\"."),
             self.toks_mut().span_from(start),
         )
             .into())

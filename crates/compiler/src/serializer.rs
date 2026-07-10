@@ -356,7 +356,7 @@ impl<'a> Serializer<'a> {
                 self.write_namespace(&name.namespace);
                 self.buffer.extend_from_slice(name.ident.as_bytes());
             }
-            SimpleSelector::Attribute(attr) => write!(&mut self.buffer, "{}", attr).unwrap(),
+            SimpleSelector::Attribute(attr) => write!(&mut self.buffer, "{attr}").unwrap(),
             SimpleSelector::Parent(suffix) => {
                 self.buffer.push(b'&');
                 if let Some(s) = suffix {
@@ -591,9 +591,9 @@ impl<'a> Serializer<'a> {
         } else if val.is_infinite() {
             let sign = if val.is_sign_negative() { "-" } else { "" };
             if has_percent {
-                write!(&mut self.buffer, "calc({}infinity * 1%)", sign).unwrap();
+                write!(&mut self.buffer, "calc({sign}infinity * 1%)").unwrap();
             } else {
-                write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
+                write!(&mut self.buffer, "calc({sign}infinity)").unwrap();
             }
         } else {
             self.write_float(val);
@@ -1070,13 +1070,13 @@ impl<'a> Serializer<'a> {
             if val.is_infinite() {
                 let sign = if val.is_sign_negative() { "-" } else { "" };
                 if channel_defs[index].is_polar {
-                    write!(&mut self.buffer, "calc({}infinity * 1deg)", sign)
+                    write!(&mut self.buffer, "calc({sign}infinity * 1deg)")
                         .unwrap();
                 } else if channel_defs[index].name == "lightness" {
-                    write!(&mut self.buffer, "calc({}infinity * 1%)", sign)
+                    write!(&mut self.buffer, "calc({sign}infinity * 1%)")
                         .unwrap();
                 } else {
-                    write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
+                    write!(&mut self.buffer, "calc({sign}infinity)").unwrap();
                 }
                 return;
             }
@@ -1132,10 +1132,10 @@ impl<'a> Serializer<'a> {
     ///   ` * 1a * 1b / 1c / 1d`
     fn write_complex_unit_suffix(&mut self, numer: &[Unit], denom: &[Unit]) {
         for unit in numer {
-            let _ = write!(&mut self.buffer, " * 1{}", unit);
+            let _ = write!(&mut self.buffer, " * 1{unit}");
         }
         for unit in denom {
-            let _ = write!(&mut self.buffer, " / 1{}", unit);
+            let _ = write!(&mut self.buffer, " / 1{unit}");
         }
     }
 
@@ -1167,10 +1167,10 @@ impl<'a> Serializer<'a> {
                 let sign = if f.is_sign_negative() { "-" } else { "" };
                 let (numer, denom) = number.unit.clone().numer_and_denom();
                 if self.in_calculation {
-                    write!(&mut self.buffer, "{}infinity", sign)?;
+                    write!(&mut self.buffer, "{sign}infinity")?;
                     self.write_complex_unit_suffix(&numer, &denom);
                 } else {
-                    write!(&mut self.buffer, "calc({}infinity", sign)?;
+                    write!(&mut self.buffer, "calc({sign}infinity")?;
                     self.write_complex_unit_suffix(&numer, &denom);
                     self.buffer.push(b')');
                 }
@@ -1189,25 +1189,25 @@ impl<'a> Serializer<'a> {
             if self.in_calculation {
                 self.write_float(number.num.0);
                 if let Some(first) = numer.first() {
-                    write!(&mut self.buffer, "{}", first)?;
+                    write!(&mut self.buffer, "{first}")?;
                 }
                 for unit in numer.iter().skip(1) {
-                    write!(&mut self.buffer, " * 1{}", unit)?;
+                    write!(&mut self.buffer, " * 1{unit}")?;
                 }
                 for unit in &denom {
-                    write!(&mut self.buffer, " / 1{}", unit)?;
+                    write!(&mut self.buffer, " / 1{unit}")?;
                 }
             } else {
                 self.buffer.extend_from_slice(b"calc(");
                 self.write_float(number.num.0);
                 if let Some(first) = numer.first() {
-                    write!(&mut self.buffer, "{}", first)?;
+                    write!(&mut self.buffer, "{first}")?;
                 }
                 for unit in numer.iter().skip(1) {
-                    write!(&mut self.buffer, " * 1{}", unit)?;
+                    write!(&mut self.buffer, " * 1{unit}")?;
                 }
                 for unit in &denom {
-                    write!(&mut self.buffer, " / 1{}", unit)?;
+                    write!(&mut self.buffer, " / 1{unit}")?;
                 }
                 self.buffer.push(b')');
             }
@@ -1261,10 +1261,10 @@ impl<'a> Serializer<'a> {
             // reconstructing from the shortest-round-trip `{:e}` mantissa,
             // which may omit true non-zero low digits and get zero-padded
             // incorrectly above 2^53.
-            let formatted = format!("{:.0}", num);
+            let formatted = format!("{num:.0}");
             self.buffer.extend_from_slice(formatted.as_bytes());
         } else if num >= I64_SATURATION_BOUNDARY && num.fract() == 0.0 {
-            let s = format!("{:e}", num);
+            let s = format!("{num:e}");
             if let Some(e_pos) = s.find('e') {
                 let mantissa = &s[..e_pos];
                 let exp: usize = s[e_pos + 1..].parse().unwrap_or(0);
@@ -1282,7 +1282,7 @@ impl<'a> Serializer<'a> {
                     self.buffer.extend_from_slice(&digits.as_bytes()[..exp + 1]);
                 }
             } else {
-                let formatted = format!("{:.10}", num);
+                let formatted = format!("{num:.10}");
                 let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
                 self.buffer.extend_from_slice(trimmed.as_bytes());
             }
@@ -1296,7 +1296,7 @@ impl<'a> Serializer<'a> {
             let fixed;
             let trimmed = if short.contains('e') || short.contains('E') {
                 // ryu used scientific notation — CSS needs decimal form
-                fixed = format!("{:.10}", num);
+                fixed = format!("{num:.10}");
                 fixed.trim_end_matches('0').trim_end_matches('.')
             } else if let Some(dot_pos) = short.find('.') {
                 let short_decimals = short.len() - dot_pos - 1;
@@ -1884,7 +1884,7 @@ impl<'a> Serializer<'a> {
             self.record_mapping(span.low());
         }
         self.buffer.extend_from_slice(b"@import ");
-        write!(&mut self.buffer, "{}", import)?;
+        write!(&mut self.buffer, "{import}")?;
 
         if let Some(modifiers) = modifiers {
             self.buffer.push(b' ');
@@ -2439,7 +2439,7 @@ fn is_private_use(c: char) -> bool {
 /// character is a hex digit, space, or tab.
 fn write_hex_escape(buffer: &mut Vec<u8>, code_point: u32, next: Option<char>) {
     buffer.push(b'\\');
-    let hex = format!("{:x}", code_point);
+    let hex = format!("{code_point:x}");
     buffer.extend_from_slice(hex.as_bytes());
 
     if let Some(next_ch) = next {

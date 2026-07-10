@@ -20,7 +20,7 @@ fn null_fs_cannot_import() {
             ()
         }
         Ok(..) => panic!("did not fail"),
-        Err(e) => panic!("failed in the wrong way: {}", e),
+        Err(e) => panic!("failed in the wrong way: {e}"),
     }
 }
 

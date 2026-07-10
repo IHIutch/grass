@@ -336,7 +336,7 @@ pub(crate) fn parse_channels(
         } else {
             let argument = arg_names[list.len()];
             return Err((
-                format!("Missing element ${argument}.", argument = argument),
+                format!("Missing element ${argument}."),
                 span,
             )
                 .into());

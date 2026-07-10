@@ -449,7 +449,7 @@ fn update_components(
         let space_str = match &space_val.node {
             Value::String(s, QuoteKind::Quoted) => {
                 return Err((
-                    format!("$space: Expected {} to be an unquoted string.", s),
+                    format!("$space: Expected {s} to be an unquoted string."),
                     span,
                 )
                     .into());
@@ -473,7 +473,7 @@ fn update_components(
 
         let working_space = ColorSpace::from_name(&space_str).ok_or_else(|| {
             (
-                format!("$space: Unknown color space \"{}\".", space_str),
+                format!("$space: Unknown color space \"{space_str}\"."),
                 span,
             )
         })?;
@@ -629,16 +629,14 @@ fn update_components(
         let argument_names = to_sentence(
             args.named
                 .keys()
-                .map(|key| format!("${key}", key = key))
+                .map(|key| format!("${key}"))
                 .collect(),
             "or",
         );
 
         return Err((
             format!(
-                "No {argument_word} named {argument_names}.",
-                argument_word = argument_word,
-                argument_names = argument_names
+                "No {argument_word} named {argument_names}."
             ),
             span,
         )
@@ -653,8 +651,7 @@ fn update_components(
         let param_type = if has_wb { "HWB" } else { "HSL" };
         return Err((
             format!(
-                "RGB parameters may not be passed along with {} parameters.",
-                param_type
+                "RGB parameters may not be passed along with {param_type} parameters."
             ),
             span,
         )

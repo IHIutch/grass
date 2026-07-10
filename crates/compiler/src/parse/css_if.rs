@@ -618,8 +618,7 @@ fn try_extend_with_raw<'a>(
                 if matches!(lower.as_str(), "and" | "or") && !parser.looking_at_identifier_body() {
                     return Err((
                         format!(
-                            "Whitespace is required between \"{}\" and \"(\"",
-                            name
+                            "Whitespace is required between \"{name}\" and \"(\""
                         ),
                         parser.toks().current_span(),
                     )
@@ -634,7 +633,7 @@ fn try_extend_with_raw<'a>(
                 if had_whitespace {
                     buffer.add_char(' ');
                 }
-                buffer.add_string(format!("{}(", name));
+                buffer.add_string(format!("{name}("));
                 buffer.add_interpolation(content);
                 buffer.add_char(')');
                 has_extra = true;
@@ -746,8 +745,7 @@ fn parse_condition_primary<'a>(
             if parser.toks().next_char_is('(') {
                 return Err((
                     format!(
-                        "Whitespace is required between \"{}\" and \"(\"",
-                        name
+                        "Whitespace is required between \"{name}\" and \"(\""
                     ),
                     parser.toks().current_span(),
                 )
@@ -794,7 +792,7 @@ fn parse_condition_primary<'a>(
             parser.expect_char(')')?;
             parser.set_consume_newlines(was_consuming);
 
-            let mut interp = InterpolationBuilder::new_plain(format!("{}(", name));
+            let mut interp = InterpolationBuilder::new_plain(format!("{name}("));
             interp.add_interpolation(content);
             interp.add_char(')');
             let span = parser.toks_mut().span_from(ident_start);

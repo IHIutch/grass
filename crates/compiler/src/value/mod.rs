@@ -357,7 +357,7 @@ impl Value {
                 }) => {
                     if !unit.comparable(unit2) {
                         return Err(
-                            (format!("Incompatible units {} and {}.", unit2, unit), span).into(),
+                            (format!("Incompatible units {unit2} and {unit}."), span).into(),
                         );
                     }
                     if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {

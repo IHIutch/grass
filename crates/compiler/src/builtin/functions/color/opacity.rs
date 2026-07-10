@@ -65,7 +65,7 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
 
         if let Value::String(s, QuoteKind::None) = &color {
             if is_ms_filter(s) {
-                return Ok(Value::String(format!("alpha({})", s).into(), QuoteKind::None));
+                return Ok(Value::String(format!("alpha({s})").into(), QuoteKind::None));
             }
         }
 

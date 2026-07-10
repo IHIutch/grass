@@ -247,7 +247,7 @@ impl Modules {
     ) -> SassResult<()> {
         if self.0.contains_key(&name) {
             return Err((
-                format!("There's already a module with namespace \"{}\".", name),
+                format!("There's already a module with namespace \"{name}\"."),
                 span,
             )
                 .into());

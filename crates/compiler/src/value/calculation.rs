@@ -1118,7 +1118,7 @@ impl SassCalculation {
                         CalculationArg::String(ref s) | CalculationArg::Interpolation(ref s)
                             if Self::needs_calc_parens(s) =>
                         {
-                            CalculationArg::String(format!("({})", s))
+                            CalculationArg::String(format!("({s})"))
                         }
                         other => other,
                     }
@@ -1144,9 +1144,9 @@ impl SassCalculation {
             CalculationArg::Calculation(mut calc) if calc.name == CalculationName::Calc => {
                 let inner = calc.args.remove(0);
                 match inner {
-                    CalculationArg::String(s) => CalculationArg::String(format!("({})", s)),
+                    CalculationArg::String(s) => CalculationArg::String(format!("({s})")),
                     CalculationArg::Interpolation(s) => {
-                        CalculationArg::String(format!("({})", s))
+                        CalculationArg::String(format!("({s})"))
                     }
                     other => other,
                 }

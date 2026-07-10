@@ -1044,8 +1044,7 @@ impl<'a> Visitor<'a> {
 
             return Err((
                 format!(
-                    "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
-                    target_str
+                    "The target selector was not found.\nUse \"@extend {target_str} !optional\" to avoid this error."
                 ),
                 ext.span,
             )
@@ -1268,7 +1267,7 @@ impl<'a> Visitor<'a> {
         let mut name = self.perform_interpolation_ref(&style.name, true)?;
 
         if let Some(declaration_name) = &self.declaration_name {
-            name = format!("{}-{}", declaration_name, name);
+            name = format!("{declaration_name}-{name}");
         }
 
         if let Some(value) = style
@@ -2282,8 +2281,7 @@ impl<'a> Visitor<'a> {
 
         let msg = if name_in_error {
             format!(
-                "${name} was not declared with !default in the @used module.",
-                name = name
+                "${name} was not declared with !default in the @used module."
             )
         } else {
             "This variable was not declared with !default in the @used module.".to_owned()
@@ -4720,16 +4718,14 @@ impl<'a> Visitor<'a> {
                     evaluated
                         .named
                         .keys()
-                        .map(|key| format!("${key}", key = key))
+                        .map(|key| format!("${key}"))
                         .collect(),
                     "or",
                 );
 
                 Err((
                     format!(
-                        "No {argument_word} named {argument_names}.",
-                        argument_word = argument_word,
-                        argument_names = argument_names
+                        "No {argument_word} named {argument_names}."
                     ),
                     span,
                 )
@@ -4833,7 +4829,7 @@ impl<'a> Visitor<'a> {
                     );
                 }
 
-                let mut buffer = format!("{}(", original_name);
+                let mut buffer = format!("{original_name}(");
                 let mut first = true;
 
                 for argument in arguments {
@@ -4982,7 +4978,7 @@ impl<'a> Visitor<'a> {
             return Err(("Plain CSS functions don't support keyword arguments.", span).into());
         }
 
-        let mut buffer = format!("{}(", fn_name);
+        let mut buffer = format!("{fn_name}(");
 
         let mut first = true;
         for arg in args.positional {
@@ -5096,10 +5092,10 @@ impl<'a> Visitor<'a> {
 
                 match result {
                     CalculationArg::String(text) => {
-                        CalculationArg::String(format!("({})", text))
+                        CalculationArg::String(format!("({text})"))
                     }
                     CalculationArg::Interpolation(text) => {
-                        CalculationArg::String(format!("({})", text))
+                        CalculationArg::String(format!("({text})"))
                     }
                     other => other,
                 }
@@ -5479,7 +5475,7 @@ impl<'a> Visitor<'a> {
         // Add the first remaining clause
         let cond_str = self.serialize_if_condition(first_remaining)?;
         let val_str = self.evaluate_to_css(&first_clause.value, QuoteKind::None, css_if.span)?;
-        parts.push(format!("{}: {}", cond_str, val_str));
+        parts.push(format!("{cond_str}: {val_str}"));
 
         // Find remaining clauses after the first CSS one
         let first_idx = css_if
@@ -5496,7 +5492,7 @@ impl<'a> Visitor<'a> {
                         QuoteKind::None,
                         css_if.span,
                     )?;
-                    parts.push(format!("else: {}", val_str));
+                    parts.push(format!("else: {val_str}"));
                 }
                 other => {
                     match self.eval_if_condition(other)? {
@@ -5508,7 +5504,7 @@ impl<'a> Visitor<'a> {
                                 css_if.span,
                             )?;
                             // Replace all remaining with just this value
-                            parts.push(format!("else: {}", val_str));
+                            parts.push(format!("else: {val_str}"));
                             break;
                         }
                         ConditionResult::False => {
@@ -5522,7 +5518,7 @@ impl<'a> Visitor<'a> {
                                 QuoteKind::None,
                                 css_if.span,
                             )?;
-                            parts.push(format!("{}: {}", cond_str, val_str));
+                            parts.push(format!("{cond_str}: {val_str}"));
                         }
                     }
                 }
@@ -5698,6 +5694,8 @@ impl<'a> Visitor<'a> {
         }
     }
 
+    // `self` is required for recursive calls; this is a 1.88 clippy gate allowance.
+    #[allow(clippy::only_used_in_recursion)]
     fn serialize_if_condition(&mut self, condition: &IfCondition<'static>) -> SassResult<String> {
         match condition {
             IfCondition::Else => Ok("else".to_string()),
@@ -5715,11 +5713,11 @@ impl<'a> Visitor<'a> {
             },
             IfCondition::Not(inner, _) => {
                 let inner_str = self.serialize_if_condition(inner)?;
-                Ok(format!("not {}", inner_str))
+                Ok(format!("not {inner_str}"))
             }
             IfCondition::Paren(inner) => {
                 let inner_str = self.serialize_if_condition(inner)?;
-                Ok(format!("({})", inner_str))
+                Ok(format!("({inner_str})"))
             }
             IfCondition::And(operands) => {
                 let parts: Vec<String> = operands

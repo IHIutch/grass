@@ -534,7 +534,7 @@ pub(crate) fn write_compile_result(
     let (css, map) = match compile_result {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("{e}");
             if let Some(path) = cfg.output_arg {
                 if cfg.error_css_enabled {
                     std::fs::write(path, error_css::synthesize(&e.to_string(), cfg.unicode_error_messages))?;

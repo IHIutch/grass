@@ -86,17 +86,17 @@ impl SimpleSelector {
 impl fmt::Display for SimpleSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Id(name) => write!(f, "#{}", name),
-            Self::Class(name) => write!(f, ".{}", name),
-            Self::Placeholder(name) => write!(f, "%{}", name),
-            Self::Universal(namespace) => write!(f, "{}*", namespace),
-            Self::Pseudo(pseudo) => write!(f, "{}", pseudo),
-            Self::Type(name) => write!(f, "{}", name),
-            Self::Attribute(attr) => write!(f, "{}", attr),
+            Self::Id(name) => write!(f, "#{name}"),
+            Self::Class(name) => write!(f, ".{name}"),
+            Self::Placeholder(name) => write!(f, "%{name}"),
+            Self::Universal(namespace) => write!(f, "{namespace}*"),
+            Self::Pseudo(pseudo) => write!(f, "{pseudo}"),
+            Self::Type(name) => write!(f, "{name}"),
+            Self::Attribute(attr) => write!(f, "{attr}"),
             Self::Parent(suffix) => {
                 write!(f, "&")?;
                 if let Some(s) = suffix {
-                    write!(f, "{}", s)?;
+                    write!(f, "{s}")?;
                 }
                 Ok(())
             }
@@ -175,7 +175,7 @@ impl SimpleSelector {
                 ..
             }) => name.push_str(suffix),
             // todo: add test for this?
-            _ => return Err((format!("Invalid parent selector \"{}\"", self), span).into()),
+            _ => return Err((format!("Invalid parent selector \"{self}\""), span).into()),
         };
         Ok(())
     }
@@ -597,7 +597,7 @@ impl fmt::Display for Pseudo {
         }
 
         if let Some(sel) = &self.selector {
-            write!(f, "{}", sel)?;
+            write!(f, "{sel}")?;
         }
 
         f.write_char(')')

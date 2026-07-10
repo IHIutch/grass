@@ -24,13 +24,13 @@ impl fmt::Display for CompoundSelector {
         let mut did_write = false;
         for simple in &self.components {
             if did_write {
-                write!(f, "{}", simple)?;
+                write!(f, "{simple}")?;
             } else {
                 let s = simple.to_string();
                 if !s.is_empty() {
                     did_write = true;
                 }
-                write!(f, "{}", s)?;
+                write!(f, "{s}")?;
             }
         }
 
@@ -238,7 +238,7 @@ impl CompoundSelector {
                         c.clone()
                     } else {
                         return Err((
-                            format!("Parent \"{}\" is incompatible with this selector.", complex),
+                            format!("Parent \"{complex}\" is incompatible with this selector."),
                             span,
                         )
                             .into());

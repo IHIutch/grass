@@ -1149,7 +1149,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let span = self.toks_mut().span_from(start);
 
             // Wrap the unquoted URL in double quotes, matching dart-sass behavior
-            let quoted_url = format!("\"{}\"", url);
+            let quoted_url = format!("\"{url}\"");
 
             if is_plain_css_import(&url) || modifiers.is_some() {
                 return Ok(AstImport::Plain(AstPlainCssImport {
@@ -1377,7 +1377,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         if !found_match {
             return Err((
-                format!("Expected {quote}.", quote = quote),
+                format!("Expected {quote}."),
                 self.toks().current_span(),
             )
                 .into());
@@ -1970,8 +1970,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             _ => {
                 Err((
                     format!(
-                        "The default namespace \"{namespace}\" is not a valid Sass identifier.\n\nRecommendation: add an \"as\" clause to define an explicit namespace.", 
-                        namespace = namespace
+                        "The default namespace \"{namespace}\" is not a valid Sass identifier.\n\nRecommendation: add an \"as\" clause to define an explicit namespace."
                     ),
                     self.toks_mut().span_from(start)
                 ).into())

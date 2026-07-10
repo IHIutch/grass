@@ -108,7 +108,7 @@ impl<'a> ArgumentDeclaration<'a> {
                         to_sentence(
                             unknown_names
                                 .into_iter()
-                                .map(|name| format!("${name}", name = name))
+                                .map(|name| format!("${name}"))
                                 .collect(),
                             "or"
                         )
@@ -218,7 +218,7 @@ impl ArgumentResult {
             Some(v) => Ok(v.node),
             None => match self.get_positional(position) {
                 Some(v) => Ok(v.node),
-                None => Err((format!("Missing argument ${}.", name), self.span()).into()),
+                None => Err((format!("Missing argument ${name}."), self.span()).into()),
             },
         }
     }
@@ -253,7 +253,7 @@ impl ArgumentResult {
         if len > max {
             let mut err = String::with_capacity(50);
             #[allow(unknown_lints, clippy::format_push_string)]
-            err.push_str(&format!("Only {max} argument", max = max));
+            err.push_str(&format!("Only {max} argument"));
             if max != 1 {
                 err.push('s');
             }
@@ -290,14 +290,14 @@ impl ArgumentResult {
     /// Error if any named arguments remain unconsumed.
     pub(crate) fn no_remaining_named(&self) -> SassResult<()> {
         if let Some((name, _)) = self.named.iter().next() {
-            return Err((format!("No argument named ${}.", name), self.span).into());
+            return Err((format!("No argument named ${name}."), self.span).into());
         }
         Ok(())
     }
 
     pub(crate) fn get_variadic(self) -> SassResult<Vec<Spanned<Value>>> {
         if let Some((name, _)) = self.named.iter().next() {
-            return Err((format!("No argument named ${}.", name), self.span).into());
+            return Err((format!("No argument named ${name}."), self.span).into());
         }
 
         let Self {

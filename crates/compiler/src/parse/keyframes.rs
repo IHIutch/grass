@@ -9,7 +9,7 @@ impl fmt::Display for KeyframesSelector {
         match self {
             KeyframesSelector::To => f.write_str("to"),
             KeyframesSelector::From => f.write_str("from"),
-            KeyframesSelector::Percent(p) => write!(f, "{}%", p),
+            KeyframesSelector::Percent(p) => write!(f, "{p}%"),
         }
     }
 }

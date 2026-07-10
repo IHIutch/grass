@@ -138,7 +138,7 @@ impl Number {
                 } else {
                     format!("{}", self.0)
                 };
-                Err((format!("{} is not an int.", display), span).into())
+                Err((format!("{display} is not an int."), span).into())
             }
         }
     }
@@ -185,7 +185,7 @@ impl Number {
             return self;
         }
 
-        debug_assert!(from.comparable(to), "from: {:?}, to: {:?}", from, to);
+        debug_assert!(from.comparable(to), "from: {from:?}, to: {to:?}");
 
         // For complex units, multiply conversion factors for each pair. Units are
         // matched by comparability rather than position, since compound units are
@@ -345,14 +345,14 @@ impl Number {
         // notation and has <= 10 decimal places; otherwise fall back to {:.10}
         let formatted;
         let trimmed = if short.contains('e') || short.contains('E') {
-            formatted = format!("{:.10}", num);
+            formatted = format!("{num:.10}");
             formatted.trim_end_matches('0').trim_end_matches('.')
         } else if let Some(dot_pos) = short.find('.') {
             let short_decimals = short.len() - dot_pos - 1;
             if short_decimals <= 10 {
                 short.trim_end_matches('0').trim_end_matches('.')
             } else {
-                formatted = format!("{:.10}", num);
+                formatted = format!("{num:.10}");
                 formatted.trim_end_matches('0').trim_end_matches('.')
             }
         } else {

@@ -35,7 +35,7 @@ pub(crate) fn to_space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     let space_str = match &space_name {
         Value::String(s, QuoteKind::Quoted) => {
             return Err((
-                format!("$space: Expected {} to be an unquoted string.", s),
+                format!("$space: Expected {s} to be an unquoted string."),
                 span,
             )
                 .into());
@@ -55,7 +55,7 @@ pub(crate) fn to_space(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 
     let target_space = ColorSpace::from_name(&space_str).ok_or_else(|| {
         (
-            format!("$space: Unknown color space \"{}\".", space_str),
+            format!("$space: Unknown color space \"{space_str}\"."),
             span,
         )
     })?;
@@ -87,7 +87,7 @@ pub(crate) fn is_missing(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     let channel_str = match &channel_name {
         Value::String(s, QuoteKind::None) => {
             return Err((
-                format!("$channel: Expected {} to be a quoted string.", s),
+                format!("$channel: Expected {s} to be a quoted string."),
                 span,
             )
                 .into());
@@ -142,7 +142,7 @@ pub(crate) fn channel(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     let channel_str = match &channel_name {
         Value::String(s, QuoteKind::None) => {
             return Err((
-                format!("$channel: Expected {} to be a quoted string.", s),
+                format!("$channel: Expected {s} to be a quoted string."),
                 span,
             )
                 .into());
@@ -255,7 +255,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     let method_str = match &method {
         Value::String(s, QuoteKind::Quoted) => {
             return Err((
-                format!("$method: Expected {} to be an unquoted string.", s),
+                format!("$method: Expected {s} to be an unquoted string."),
                 span,
             )
                 .into());
@@ -288,8 +288,7 @@ pub(crate) fn to_gamut(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         _ => {
             return Err((
                 format!(
-                    "$method: Unknown gamut mapping method \"{}\". Must be \"clip\" or \"local-minde\".",
-                    method_str
+                    "$method: Unknown gamut mapping method \"{method_str}\". Must be \"clip\" or \"local-minde\"."
                 ),
                 span,
             )
@@ -321,7 +320,7 @@ pub(crate) fn is_powerless(mut args: ArgumentResult, visitor: &mut Visitor) -> S
     let channel_str = match &channel_name {
         Value::String(s, QuoteKind::None) => {
             return Err((
-                format!("$channel: Expected {} to be a quoted string.", s),
+                format!("$channel: Expected {s} to be a quoted string."),
                 span,
             )
                 .into());
