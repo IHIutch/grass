@@ -6,7 +6,7 @@ day-to-day workflow for human contributors.
 
 ## Prerequisites
 
-- Rust, MSRV 1.80 (see `rust-version` in `crates/*/Cargo.toml`)
+- Rust, MSRV 1.88 (see `rust-version` in `crates/*/Cargo.toml`)
 - Cargo on `PATH` (if not, use `~/.cargo/bin/cargo` explicitly)
 - Python 3 (for the sass-spec test runner)
 - Node.js + `npx` (only if you need to check expected output against dart-sass)
@@ -137,7 +137,7 @@ this locally unless you're benchmarking a PGO build yourself.
 
 ## Edition / MSRV Policy
 
-All crates are pinned to `edition = "2021"` and `rust-version = "1.80"`.
+All crates are pinned to `edition = "2021"` and `rust-version = "1.88"`.
 This is a deliberate floor, not an oversight — treat any bump to edition
 2024 or a newer MSRV as a decision to make explicitly, not a drive-by
 change.
