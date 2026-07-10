@@ -22,7 +22,7 @@
   ],
   "type": "module",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/browser.mjs && node test/workers.mjs"
+    "test": "node test/smoke.mjs && node test/browser.mjs && node test/workers.mjs && node test/functions.mjs"
   },
   "exports": {
     ".": {

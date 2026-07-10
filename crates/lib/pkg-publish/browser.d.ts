@@ -13,6 +13,11 @@ export interface FsCallbacks {
   canonicalize(path: string): string;
 }
 
+/**
+ * Note: this WASM-only entry point does not support `functions`,
+ * `importers`, `importer`, or `url` — those require the native binding
+ * (see the Node entry point's `Options`/`StringOptions` in `index.d.ts`).
+ */
 export interface Options {
   style?: OutputStyle;
   loadPaths?: string[];

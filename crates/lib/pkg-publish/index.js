@@ -61,6 +61,16 @@ function tryLoadNative() {
 
 nativeBinding = tryLoadNative();
 
+// Value classes for `options.functions`/`options.importers` return values.
+// The native binding validates callback return values by identity against
+// these exact classes (napi's generated `instanceof` check) — constructing
+// a return value requires the class from THIS binding, so it must be
+// re-exported rather than reimplemented. Undefined on the WASM fallback,
+// where `functions`/`importers` are unsupported (see assertWasmSupportsOptions).
+export const SassNumber = nativeBinding ? nativeBinding.SassNumber : undefined;
+export const SassString = nativeBinding ? nativeBinding.SassString : undefined;
+export const SassList = nativeBinding ? nativeBinding.SassList : undefined;
+
 // --- WASM fallback ---
 
 let wasmBinding = null;
@@ -136,7 +146,26 @@ function buildOptions(options) {
     charset: options.charset !== undefined ? options.charset : true,
     sourceMap: options.sourceMap || false,
     sourceMapIncludeSources: options.sourceMapIncludeSources || false,
+    functions: options.functions,
+    importers: options.importers,
   };
+}
+
+// options.functions/importers/importer/url require the native binding —
+// silently dropping them on the WASM fallback would change compile output
+// (a missing custom function/importer is a different Sass program), so we
+// reject instead.
+function assertWasmSupportsOptions(options) {
+  if (options.functions !== undefined || options.importers !== undefined || options.importer !== undefined) {
+    throw new Error(
+      "options.functions and options.importers require the native binding, which is unavailable on this platform (WASM fallback active)"
+    );
+  }
+  if (options.url !== undefined) {
+    throw new Error(
+      "options.url requires the native binding, which is unavailable on this platform (WASM fallback active)"
+    );
+  }
 }
 
 export function compile(path, options = {}) {
@@ -151,6 +180,8 @@ export function compile(path, options = {}) {
         charset: opts.charset,
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
+        functions: opts.functions,
+        importers: opts.importers,
       });
       return makeResult(result.css, path, result.sourceMap);
     } catch (e) {
@@ -158,6 +189,7 @@ export function compile(path, options = {}) {
     }
   }
 
+  assertWasmSupportsOptions(options);
   const wasm = loadWasm();
   try {
     const result = wasm.compile_file(
@@ -187,6 +219,10 @@ export function compileString(source, options = {}) {
         charset: opts.charset,
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
+        functions: opts.functions,
+        importers: opts.importers,
+        url: options.url,
+        importer: options.importer,
       });
       return makeResult(result.css, null, result.sourceMap);
     } catch (e) {
@@ -194,6 +230,7 @@ export function compileString(source, options = {}) {
     }
   }
 
+  assertWasmSupportsOptions(options);
   const wasm = loadWasm();
   try {
     const result = wasm.compile(
@@ -222,6 +259,8 @@ export function compileAsync(path, options = {}) {
         charset: opts.charset,
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
+        functions: opts.functions,
+        importers: opts.importers,
       })
       .then(
         (result) => makeResult(result.css, path, result.sourceMap),
@@ -245,6 +284,10 @@ export function compileStringAsync(source, options = {}) {
         charset: opts.charset,
         sourceMap: opts.sourceMap,
         sourceMapIncludeSources: opts.sourceMapIncludeSources,
+        functions: opts.functions,
+        importers: opts.importers,
+        url: options.url,
+        importer: options.importer,
       })
       .then(
         (result) => makeResult(result.css, null, result.sourceMap),
