@@ -66,6 +66,54 @@ fn nested_output_dir_computes_dot_dot_relative_path() {
     );
 }
 
+// Ground truth: `npx sass@1.97.3 sub/../in.scss sub/../out.css` ->
+// sources: ["in.scss"]. The output directory exists, but the output file
+// does not yet exist when grass constructs the source map.
+#[test]
+fn dotted_output_path_normalizes_before_relative_source_calculation() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+    std::fs::write(tmp.path().join("in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["sub/../in.scss", "sub/../out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
+    assert!(
+        map.contains("\"sources\":[\"in.scss\"]"),
+        "got: {map}"
+    );
+}
+
+// Ground truth: `npx sass@1.97.3 actual/in.scss linked/out.css` where
+// `linked` points to `actual` -> sources: ["../actual/in.scss"]. A missing
+// output file must retain the symlinked directory in the fallback path.
+#[cfg(unix)]
+#[test]
+fn missing_output_in_symlinked_dir_preserves_relative_source_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join("actual")).unwrap();
+    std::os::unix::fs::symlink("actual", tmp.path().join("linked")).unwrap();
+    std::fs::write(tmp.path().join("actual/in.scss"), INPUT).unwrap();
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(["actual/in.scss", "linked/out.css"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let map = std::fs::read_to_string(tmp.path().join("actual/out.css.map")).unwrap();
+    assert!(
+        map.contains("\"sources\":[\"../actual/in.scss\"]"),
+        "got: {map}"
+    );
+}
+
 // Ground truth: `npx sass@1.97.3 --source-map-urls=absolute in.scss out.css`
 // -> sources: ["file:///<absolute path>/in.scss"]
 #[test]

@@ -8,7 +8,7 @@ mod watch;
 use std::{
     fs::OpenOptions,
     io::{stdin, stdout, Read, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use clap::{builder::PossibleValue, parser::ValueSource, value_parser, Arg, ArgAction, Command, ValueEnum};
@@ -344,6 +344,56 @@ fn absolute_source_path(raw: &str, cwd: &Path) -> PathBuf {
     std::fs::canonicalize(&joined).unwrap_or(joined)
 }
 
+/// Lexically removes `.` and `..` components without requiring the final path
+/// to exist. This intentionally does not resolve symlinks by itself: when a
+/// missing output path contains no lexical components to normalize, retaining
+/// the original path preserves the documented never-abort fallback and dart-
+/// sass's source-map behavior for symlinked output directories.
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(normalized.components().next_back(), Some(Component::Normal(_))) {
+                    normalized.pop();
+                } else if !path.is_absolute() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+
+    normalized
+}
+
+/// Resolves an output path for source-map URL construction. Unlike source
+/// paths, the output file is guaranteed not to exist yet when its map is
+/// assembled, so canonicalize the full path first and then normalize its
+/// directory lexically. If normalization changed the path, canonicalize the
+/// now-existing directory to retain symlink resolution where it is
+/// unambiguous; otherwise preserve the original missing-path fallback.
+fn absolute_output_path(raw: &str, cwd: &Path) -> PathBuf {
+    let p = Path::new(raw);
+    let joined = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+
+    let Ok(canonical) = std::fs::canonicalize(&joined) else {
+        let normalized = normalize_path_lexically(&joined);
+        if normalized != joined {
+            if let (Some(file_name), Some(parent)) = (normalized.file_name(), normalized.parent()) {
+                if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
+                    return canonical_parent.join(file_name);
+                }
+            }
+        }
+        return normalized;
+    };
+
+    canonical
+}
+
 /// Computes a `/`-joined relative path from directory `base_dir` to file
 /// `target`, matching dart-sass's `--source-map-urls=relative` (the
 /// default) convention: no leading `./`, `..` segments for each directory
@@ -513,7 +563,7 @@ pub(crate) fn write_compile_result(
             // only allows a stdout target when `--embed-source-map` was passed,
             // and dart-sass omits both `file` and the ability to use relative
             // URLs in that one case (see `validate_source_map_flags`).
-            let output_path = cfg.output_arg.map(|p| absolute_source_path(p, &cwd));
+            let output_path = cfg.output_arg.map(|p| absolute_output_path(p, &cwd));
             let output_dir = output_path.as_deref().and_then(Path::parent);
 
             rewrite_source_map_sources(&mut map, &cfg.source_map_urls, output_dir, &cwd);
