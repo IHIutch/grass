@@ -2403,11 +2403,26 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             parser.parse_argument_invocation(false, false)
                         {
                             Ok(invocation) => {
+                                let space_separated_list = invocation.positional.iter().any(|expr| {
+                                    let mut expr = expr;
+                                    loop {
+                                        match expr {
+                                            AstExpr::List(list) => {
+                                                break list.separator == ListSeparator::Space
+                                                    && list.elems.len() > 1;
+                                            }
+                                            AstExpr::Paren(inner) => expr = inner,
+                                            _ => break false,
+                                        }
+                                    }
+                                });
                                 let calculation_error = if invocation.positional.is_empty()
                                     && invocation.named.is_empty()
                                     && invocation.rest.is_none()
                                     && invocation.keyword_rest.is_none()
                                 {
+                                    None
+                                } else if space_separated_list {
                                     None
                                 } else {
                                     Some(e.raw())
