@@ -186,12 +186,14 @@ impl<'a> CssParser<'a> {
         let modifiers = self.try_import_modifiers()?.map(|m| m.finish(self.arena()));
         self.expect_statement_separator(Some("@import rule"))?;
 
+        let import = AstImport::Plain(AstPlainCssImport {
+            url: InterpolationBuilder::new_with_expr(url).finish(self.arena()),
+            modifiers,
+            span: self.toks.span_from(url_start),
+        });
+
         Ok(AstStmt::ImportRule(AstImportRule {
-            imports: vec![AstImport::Plain(AstPlainCssImport {
-                url: InterpolationBuilder::new_with_expr(url).finish(self.arena()),
-                modifiers,
-                span: self.toks.span_from(url_start),
-            })],
+            imports: self.arena().alloc_slice_fill_iter([import]),
         }))
     }
 

@@ -1329,7 +1329,7 @@ impl<'a> Visitor<'a> {
                 self.add_forward_configuration(Rc::clone(&adjusted_config), &forward_rule)?;
 
             self.load_module(
-                forward_rule.url.as_path(),
+                forward_rule.url,
                 Some(Rc::clone(&new_configuration)),
                 false,
                 forward_rule.span,
@@ -1379,9 +1379,9 @@ impl<'a> Visitor<'a> {
             Self::assert_configuration_is_empty(&new_configuration, false)?;
         } else {
             self.configuration = adjusted_config;
-            let url = forward_rule.url.clone();
+            let url = forward_rule.url;
             self.load_module(
-                url.as_path(),
+                url,
                 None,
                 false,
                 forward_rule.span,
@@ -2266,7 +2266,7 @@ impl<'a> Visitor<'a> {
             .map(|s| Identifier::from(s.trim_start_matches("sass:")));
 
         self.load_module(
-            &use_rule.url,
+            use_rule.url,
             Some(Rc::clone(&configuration)),
             false,
             span,
@@ -2314,9 +2314,11 @@ impl<'a> Visitor<'a> {
         for import in import_rule.imports {
             match import {
                 AstImport::Sass(dynamic_import) => {
-                    self.visit_dynamic_import_rule(&dynamic_import)?;
+                    self.visit_dynamic_import_rule(dynamic_import)?;
                 }
-                AstImport::Plain(static_import) => self.visit_static_import_rule(static_import)?,
+                AstImport::Plain(static_import) => {
+                    self.visit_static_import_rule(static_import.clone())?
+                }
             }
         }
 
@@ -2938,7 +2940,7 @@ impl<'a> Visitor<'a> {
     }
 
     fn visit_dynamic_import_rule(&mut self, dynamic_import: &AstSassImport) -> SassResult<()> {
-        let stylesheet = self.load_style_sheet(&dynamic_import.url, true, dynamic_import.span)?;
+        let stylesheet = self.load_style_sheet(dynamic_import.url, true, dynamic_import.span)?;
 
         let url = stylesheet.url.clone();
 
