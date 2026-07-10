@@ -48,13 +48,14 @@ jobs:
           node-version: 20
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
         with:
+          toolchain: "1.97.0" # pinned stable — bump deliberately
           targets: ${{ matrix.target }}
 
       - name: Install dependencies
         working-directory: crates/napi
-        run: npm install
+        run: npm ci
 
       - name: Install musl-tools
         if: contains(matrix.target, 'musl') && !contains(matrix.target, 'aarch64')
@@ -118,12 +119,20 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install latest npm (trusted publishing requires >= 11.5.1)
-        run: npm install -g npm@latest && npm --version
+      - name: Install npm 11.18.0 (trusted publishing requires >= 11.5.1)
+        run: npm install -g npm@11.18.0 && npm --version
 
       - name: Build WASM
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          version=0.15.0
+          archive="wasm-pack-v${version}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${version}/$archive"
+          # SHA-256 digest from the rustwasm/wasm-pack v0.15.0 GitHub release asset.
+          echo "c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a  $archive" | sha256sum -c -
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.cargo/bin"
+          install -m 0755 "$RUNNER_TEMP/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+          export PATH="$HOME/.cargo/bin:$PATH"
           rustup target add wasm32-unknown-unknown
           cd crates/lib
           wasm-pack build --release --target web --out-name grass --no-default-features --features wasm-exports,random
