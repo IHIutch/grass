@@ -54,22 +54,34 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install dependencies
+        if: ${{ !contains(matrix.target, 'musl') }}
         working-directory: crates/napi
         run: npm ci
 
-      - name: Install musl-tools
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
       - name: Build native module
+        if: ${{ !contains(matrix.target, 'musl') }}
         working-directory: crates/napi
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl-gcc' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-musl' && 'musl-gcc' || '' }}
-          CC_x86_64_unknown_linux_musl: ${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl-gcc' || '' }}
-          CC_aarch64_unknown_linux_musl: ${{ matrix.target == 'aarch64-unknown-linux-musl' && 'musl-gcc' || '' }}
-          RUSTFLAGS: ${{ contains(matrix.target, 'musl') && '-C target-feature=-crt-static' || '' }}
         run: npx napi build --platform --profile release-napi --target ${{ matrix.target }}
+
+      - name: Build native module (musl container)
+        if: contains(matrix.target, 'musl')
+        shell: bash
+        run: |
+          image="grass-rust-musl:${{ matrix.target }}"
+          context="$RUNNER_TEMP/grass-rust-musl-context"
+          mkdir -p "$context"
+          docker build --tag "$image" --file - "$context" <<'DOCKERFILE'
+          FROM rust:1.97-alpine@sha256:ec9c91e77119ce498cd1e87d96d77e0f75b2cee21655a29bc2bf75a51a2b20a4
+          RUN apk add --no-cache nodejs npm build-base
+          DOCKERFILE
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --env npm_config_cache=/tmp/npm-cache \
+            -v "$PWD:/w" \
+            -w /w/crates/napi \
+            "$image" \
+            sh -c "npm ci && npx napi build --platform --profile release-napi --target ${{ matrix.target }}"
 
       - name: Verify musl linkage
         if: contains(matrix.target, 'musl')
