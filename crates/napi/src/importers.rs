@@ -103,13 +103,10 @@ fn build_context(env: Env, from_import: bool, containing_url: Option<&str>) -> R
 
 /// Interprets `findFileUrl`'s return value (shared between the sync and
 /// async calling conventions): `null`/`undefined` decline (`Ok(None)`), a
-/// string is treated as a `file:` URL (`Ok(Some(url))` — the `file://`
-/// scheme prefix is stripped if present, bare unprefixed strings accepted
-/// too as an ergonomic relaxation beyond the real API), a Promise/thenable
-/// hits the documented async limitation, anything else is a clear type
-/// error. No percent-decoding and no Windows drive-letter handling is
-/// performed — a documented gap, not exercised by this project's
-/// macOS/Linux dev and CI targets.
+/// string is treated as a `file:` URL (`Ok(Some(url))`), a Promise/thenable
+/// hits the documented async limitation, and anything else is a clear type
+/// error. The returned URL is parsed and converted to a platform-native path
+/// by `file_url_to_path`.
 fn interpret_find_file_url_return(js_return: JsUnknown) -> std::result::Result<Option<String>, String> {
     let ty = js_return.get_type().map_err(|e| e.reason.clone())?;
     if matches!(ty, ValueType::Null | ValueType::Undefined) {
@@ -212,8 +209,20 @@ fn syntax_from_str(s: &str) -> std::result::Result<InputSyntax, String> {
     }
 }
 
-fn file_url_to_path(url: &str) -> PathBuf {
-    PathBuf::from(url.strip_prefix("file://").unwrap_or(url))
+fn file_url_to_path(file_url: &str) -> std::result::Result<PathBuf, String> {
+    let url = url::Url::parse(file_url)
+        .map_err(|err| format!("invalid file URL {file_url:?}: {err}"))?;
+
+    if url.scheme() != "file" {
+        return Err(format!(
+            "unsupported URL scheme {:?} in FileImporter result {file_url:?}; expected a file: URL",
+            url.scheme()
+        ));
+    }
+
+    url.to_file_path().map_err(|_| {
+        format!("invalid file URL {file_url:?}: cannot convert it to a local path")
+    })
 }
 
 // --- Sync FileImporter (todo #221 slice 4) ---------------------------------
@@ -285,7 +294,9 @@ impl Importer for FileImporterRef {
 
         match func.call(None, &[url_js, ctx]) {
             Ok(js_return) => match interpret_find_file_url_return(js_return) {
-                Ok(Some(s)) => Ok(ImportResolution::DelegateToPath(file_url_to_path(&s))),
+                Ok(Some(s)) => Ok(ImportResolution::DelegateToPath(
+                    file_url_to_path(&s).map_err(|msg| string_err_to_sass(msg, span))?,
+                )),
                 Ok(None) => Ok(ImportResolution::NotFound),
                 Err(msg) => Err(string_err_to_sass(msg, span)),
             },
@@ -521,7 +532,9 @@ impl AsyncFileImporterRef {
         }
 
         match rx.recv() {
-            Ok(Ok(Some(s))) => Ok(ImportResolution::DelegateToPath(file_url_to_path(&s))),
+            Ok(Ok(Some(s))) => Ok(ImportResolution::DelegateToPath(
+                file_url_to_path(&s).map_err(|msg| string_err_to_sass(msg, span))?,
+            )),
             Ok(Ok(None)) => Ok(ImportResolution::NotFound),
             Ok(Err(msg)) => Err(string_err_to_sass(msg, span)),
             Err(_) => Err(string_err_to_sass(
@@ -799,4 +812,54 @@ pub fn register_importers_async(
         options = options.add_importer(Rc::new(importer));
     }
     options
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_url_to_path_handles_absolute_path() {
+        assert_eq!(
+            file_url_to_path("file:///abs/path").unwrap(),
+            PathBuf::from("/abs/path")
+        );
+    }
+
+    #[test]
+    fn file_url_to_path_decodes_percent_encoding() {
+        assert_eq!(
+            file_url_to_path("file:///a%20b").unwrap(),
+            PathBuf::from("/a b")
+        );
+    }
+
+    #[test]
+    fn file_url_to_path_handles_localhost() {
+        assert_eq!(
+            file_url_to_path("file://localhost/x").unwrap(),
+            PathBuf::from("/x")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_url_to_path_handles_windows_drive_letter() {
+        assert_eq!(
+            file_url_to_path("file:///C:/path/to/file.scss").unwrap(),
+            PathBuf::from(r"C:\path\to\file.scss")
+        );
+    }
+
+    #[test]
+    fn file_url_to_path_rejects_non_file_scheme() {
+        let err = file_url_to_path("virtual:thing").unwrap_err();
+        assert!(err.contains("virtual"), "{err}");
+    }
+
+    #[test]
+    fn file_url_to_path_rejects_malformed_url() {
+        let err = file_url_to_path("file://[::1").unwrap_err();
+        assert!(err.contains("file://[::1"), "{err}");
+    }
 }

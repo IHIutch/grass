@@ -492,6 +492,29 @@ await probeConcurrency(16);
   }
 }
 
+// A FileImporter path containing a space is percent-encoded by
+// pathToFileURL and must be decoded by the native importer bridge.
+{
+  const path = join(tmpdir(), `grass-napi-importer-space ${process.pid}.scss`);
+  writeFileSync(path, "$a: purple;");
+  try {
+    const opts = {
+      importers: [
+        {
+          findFileUrl(url) {
+            if (url === "virtual:space") return pathToFileURL(path).href;
+            return null;
+          },
+        },
+      ],
+    };
+    const res = binding.compileString('@import "virtual:space";\na { b: $a; }', opts);
+    assert.equal(res.css, "a {\n  b: purple;\n}\n");
+  } finally {
+    rmSync(path);
+  }
+}
+
 // findFileUrl returning null declines and falls through to the default
 // (loadPaths) resolution underneath it — the importer doesn't break normal
 // resolution just by being registered.
