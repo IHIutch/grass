@@ -2416,13 +2416,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                         }
                                     }
                                 });
-                                let calculation_error = if invocation.positional.is_empty()
-                                    && invocation.named.is_empty()
-                                    && invocation.rest.is_none()
-                                    && invocation.keyword_rest.is_none()
+                                let calculation_error = if space_separated_list
+                                    || (invocation.positional.is_empty()
+                                        && invocation.named.is_empty()
+                                        && invocation.rest.is_none()
+                                        && invocation.keyword_rest.is_none())
                                 {
-                                    None
-                                } else if space_separated_list {
                                     None
                                 } else {
                                     Some(e.raw())
@@ -2502,13 +2501,12 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                         }
                                     }
                                 });
-                                let calculation_error = if invocation.positional.is_empty()
-                                    && invocation.named.is_empty()
-                                    && invocation.rest.is_none()
-                                    && invocation.keyword_rest.is_none()
+                                let calculation_error = if empty_list_argument
+                                    || (invocation.positional.is_empty()
+                                        && invocation.named.is_empty()
+                                        && invocation.rest.is_none()
+                                        && invocation.keyword_rest.is_none())
                                 {
-                                    None
-                                } else if empty_list_argument {
                                     None
                                 } else {
                                     Some(e.raw())
