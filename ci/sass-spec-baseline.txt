@@ -1,0 +1,43 @@
+# sass-spec baseline for dart-sass 1.97.3, the grass release binary, and the
+# pinned sass-spec submodule revision. Keep one stable runner identifier per line.
+# The baseline currently allows 39 failures out of 13,801 tests. Update this
+# file deliberately when the compiler or sass-spec target changes.
+core_functions/color/to_space/hsl/display_p3_linear.hrx::out_of_range/far
+core_functions/color/to_space/hsl/oklab.hrx::out_of_range/far
+core_functions/color/to_space/hsl/oklch.hrx::out_of_range/far
+core_functions/color/to_space/hsl/srgb_linear.hrx::out_of_range/far
+core_functions/color/to_space/hsl/xyz.hrx::out_of_range/far
+core_functions/color/to_space/prophoto_rgb/hwb.hrx::out_of_range/far
+core_functions/color/to_space/prophoto_rgb/xyz.hrx::out_of_range/far
+core_functions/color/to_space/rgb/hwb.hrx::out_of_range/far
+core_functions/meta/load_css/plain_css.hrx::nested/media_query
+core_functions/meta/load_css/plain_css.hrx::plain_css_import
+css/comment.hrx::multiple_stars
+css/media/range/from_interpolation.hrx::root
+css/media/range/static.hrx::root
+css/unknown_directive/name_interpolation.hrx::root
+directives/use/css/order/use_and_import.hrx::use_into_use/import_above_rule
+directives/use/css/order/use_and_import.hrx::use_into_use/import_below_rule
+directives/use/with/distributed_vars.hrx::repeated
+directives/use/with/distributed_vars.hrx::single_use
+libsass-closed-issues/issue_1210/with_without.hrx::root
+libsass-closed-issues/issue_1584.hrx::root
+libsass-closed-issues/issue_185/hoisting.hrx::root
+libsass-closed-issues/issue_185/media_level_4.hrx::root
+libsass-closed-issues/issue_2633.hrx::root
+libsass-todo-issues/issue_2235/not-empty.hrx::root
+libsass/at-root/extend.hrx::root
+libsass/at-root/with_without.hrx::root
+libsass/mixins-and-media-queries.hrx::root
+libsass/selectors/simple.hrx::root
+non_conformant/extend-tests/does_not_move_page_block_in_media.hrx::root
+non_conformant/extend-tests/extend-loop.hrx::root
+non_conformant/parser/operations/binary-and-unary.hrx::root
+non_conformant/sass_4_0/interpolation/after_hyphen.hrx::root
+non_conformant/scope/nested.hrx::root
+non_conformant/scss/media/interpolated.hrx::root
+non_conformant/scss/media/nesting/merged.hrx::root
+non_conformant/scss/media/nesting/merged_and_retained.hrx::root
+non_conformant/scss/media/nesting/removed.hrx::root
+non_conformant/scss/media/nesting/retained.hrx::root
+non_conformant/scss/media/script_features.hrx::root

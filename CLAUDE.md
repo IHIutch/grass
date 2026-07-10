@@ -110,6 +110,7 @@ A todo update is NOT just adding comments. It means the todo's **title, body, an
 - `cargo build --release` - release build
 - `cargo clippy --features=macro -- -D warnings` - lint check
 - `cargo test --features=macro` - run all tests
+- `python3 ci/check-sass-spec.py` - run sass-spec and fail on new regressions
 - Rust MSRV: see rust-version in crates/*/Cargo.toml
 
 ## Testing Strategy
@@ -172,8 +173,9 @@ gh search code "may not contain" --repo sass/dart-sass --limit 10
 # Build release binary for sass-spec testing
 ~/.cargo/bin/cargo build --release
 
-# Test against sass-spec with the binary
+# Test against sass-spec with the binary and the checked-in failure baseline
 echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
+python3 ci/check-sass-spec.py
 
 # Run full test suite (final gate before committing)
 ~/.cargo/bin/cargo test --features=macro
