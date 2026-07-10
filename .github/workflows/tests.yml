@@ -165,6 +165,11 @@ jobs:
           cd crates/lib/pkg-publish
           npm test
 
+      - name: Measure package WASM performance (informational)
+        run: |
+          cd crates/lib/pkg-publish
+          npm run perf
+
   sass-spec:
     runs-on: ubuntu-latest
     steps:

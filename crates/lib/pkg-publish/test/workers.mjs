@@ -4,6 +4,10 @@ import * as workers from "../workers.js";
 
 // Calling before init must throw the descriptive init error.
 assert.throws(() => workers.compileString("a { b: c }"), /WASM not initialized/);
+await assert.rejects(
+  workers.compileStringAsync("a { b: c }"),
+  /WASM not initialized/,
+);
 
 // Workers requires a pre-compiled WebAssembly.Module from a static import;
 // simulate that here by compiling the bytes ourselves.

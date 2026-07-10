@@ -4,6 +4,10 @@ import * as browser from "../browser.js";
 
 // Calling before init must throw the descriptive init error.
 assert.throws(() => browser.compileString("a { b: c }"), /WASM not initialized/);
+await assert.rejects(
+  browser.compileStringAsync("a { b: c }"),
+  /WASM not initialized/,
+);
 
 // Init from raw bytes (the browser/bundler path when no fetch is available).
 const wasmBytes = readFileSync(new URL("../grass_bg.wasm", import.meta.url));
