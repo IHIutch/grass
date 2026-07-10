@@ -129,8 +129,7 @@ test!(
 // silent comment, swallowing the closing paren; this is now a parse error, not a retained comment.
 error!(
     element_retains_silent_comment,
-    "a {\n  color: element(//);\n}\n",
-    "Error: expected \")\"."
+    "a {\n  color: element(//);\n}\n", "Error: expected \")\"."
 );
 test!(
     element_retains_multiline_comment,
@@ -175,8 +174,7 @@ test!(
 // dart-sass 1.97.3 verified: same mechanism as element_retains_silent_comment above — now a parse error.
 error!(
     expression_retains_silent_comment,
-    "a {\n  color: expression(//);\n}\n",
-    "Error: expected \")\"."
+    "a {\n  color: expression(//);\n}\n", "Error: expected \")\"."
 );
 test!(
     expression_retains_multiline_comment,
@@ -221,8 +219,7 @@ test!(
 // dart-sass 1.97.3 verified: same mechanism as element_retains_silent_comment above — now a parse error.
 error!(
     progid_retains_silent_comment,
-    "a {\n  color: progid:(//);\n}\n",
-    "Error: expected \")\"."
+    "a {\n  color: progid:(//);\n}\n", "Error: expected \")\"."
 );
 test!(
     progid_retains_multiline_comment,

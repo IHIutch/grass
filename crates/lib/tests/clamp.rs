@@ -7,8 +7,7 @@ error!(
 );
 error!(
     clamp_parens_in_args,
-    "a {\n  color: clamp((()));\n}\n",
-    "Error: This expression can't be used in a calculation."
+    "a {\n  color: clamp((()));\n}\n", "Error: This expression can't be used in a calculation."
 );
 error!(
     clamp_single_arg,

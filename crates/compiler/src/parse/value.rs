@@ -440,12 +440,24 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     // expression start, indicating it's a binary mod operator.
                     // If not, treat it as a standalone CSS value.
                     let mut n = 1;
-                    while matches!(parser.toks().peek_n(n), Some(Token { kind: ' ' | '\t' | '\n' | '\r', .. })) {
+                    while matches!(
+                        parser.toks().peek_n(n),
+                        Some(Token {
+                            kind: ' ' | '\t' | '\n' | '\r',
+                            ..
+                        })
+                    ) {
                         n += 1;
                     }
                     let is_binary_op = match parser.toks().peek_n(n) {
-                        Some(Token { kind: '0'..='9' | '.' | '(' | '$' | '#' | '"' | '\'' | '-' | '+', .. }) => true,
-                        Some(Token { kind: 'a'..='z' | 'A'..='Z' | '_' | '\\', .. }) => true,
+                        Some(Token {
+                            kind: '0'..='9' | '.' | '(' | '$' | '#' | '"' | '\'' | '-' | '+',
+                            ..
+                        }) => true,
+                        Some(Token {
+                            kind: 'a'..='z' | 'A'..='Z' | '_' | '\\',
+                            ..
+                        }) => true,
                         Some(Token { kind: c, .. }) if c > '\u{7f}' => true,
                         _ => false,
                     };
@@ -465,7 +477,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         parser.toks_mut().next();
                         let span = parser.toks_mut().span_from(expr_start);
                         let expr = AstExpr::String(
-                            StringExpr(InterpolationBuilder::new_plain("%".to_owned()).finish(parser.arena()), QuoteKind::None),
+                            StringExpr(
+                                InterpolationBuilder::new_plain("%".to_owned())
+                                    .finish(parser.arena()),
+                                QuoteKind::None,
+                            ),
                             span,
                         )
                         .span(span);
@@ -685,7 +701,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 parser.toks_mut().next();
                 let span = parser.toks_mut().span_from(start);
                 Ok(AstExpr::String(
-                    StringExpr(InterpolationBuilder::new_plain("%".to_owned()).finish(parser.arena()), QuoteKind::None),
+                    StringExpr(
+                        InterpolationBuilder::new_plain("%".to_owned()).finish(parser.arena()),
+                        QuoteKind::None,
+                    ),
                     span,
                 )
                 .span(span))
@@ -744,7 +763,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             && left.node.is_slash_operand()
             && right.node.is_slash_operand()
         {
-            self.single_expression = Some(AstExpr::slash(left.node, right.node, span, parser.arena()).span(span));
+            self.single_expression =
+                Some(AstExpr::slash(left.node, right.node, span, parser.arena()).span(span));
         } else {
             self.single_expression = Some(
                 AstExpr::BinaryOp(parser.arena().alloc(BinaryOpExpr {
@@ -1112,9 +1132,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         if is_hex_color(&ident) {
             parser.toks_mut().set_cursor(after_hash);
             let color = self.parse_hex_color_contents(parser)?;
-            return Ok(
-                AstExpr::Color(Rc::new(color)).span(parser.toks_mut().span_from(after_hash))
-            );
+            return Ok(AstExpr::Color(Rc::new(color)).span(parser.toks_mut().span_from(after_hash)));
         }
 
         let mut buffer = InterpolationBuilder::new();
@@ -1124,10 +1142,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         let span = parser.toks_mut().span_from(start);
 
-        Ok(
-            AstExpr::String(StringExpr(buffer.finish(parser.arena()), QuoteKind::None), span)
-                .span(span),
+        Ok(AstExpr::String(
+            StringExpr(buffer.finish(parser.arena()), QuoteKind::None),
+            span,
         )
+        .span(span))
     }
 
     fn parse_hex_digit(&mut self, parser: &mut P) -> SassResult<u32> {
@@ -1286,7 +1305,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         let number: f64 = if overflowed {
             parser.toks_mut().raw_text(start).parse().unwrap()
         } else {
-            std::str::from_utf8(&stack_buf[..len]).unwrap().parse().unwrap()
+            std::str::from_utf8(&stack_buf[..len])
+                .unwrap()
+                .parse()
+                .unwrap()
         };
 
         let unit = if parser.scan_char('%') {
@@ -1449,9 +1471,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         if let Some(plain) = plain {
             if plain == "if" && parser.toks().next_char_is('(') {
                 // Try CSS-native if() syntax first
-                if let Some(css_if) =
-                    super::css_if::try_parse_css_if(parser, start)?
-                {
+                if let Some(css_if) = super::css_if::try_parse_css_if(parser, start)? {
                     return Ok(css_if);
                 }
                 // Fall back to legacy if($condition, $if-true, $if-false)
@@ -1460,9 +1480,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 let args_end = parser.toks().cursor();
                 let span = call_args.span;
 
-                let message = Self::legacy_if_deprecation_message(
-                    parser, &call_args, args_start, args_end,
-                );
+                let message =
+                    Self::legacy_if_deprecation_message(parser, &call_args, args_start, args_end);
                 parser
                     .parse_time_warnings_mut()
                     .push((Deprecation::IfFunction, span, message));
@@ -1495,7 +1514,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
                 let span = parser.toks_mut().span_from(start);
 
-                return Ok(AstExpr::UnaryOp(UnaryOp::Not, parser.arena().alloc(value.node), span).span(span));
+                return Ok(
+                    AstExpr::UnaryOp(UnaryOp::Not, parser.arena().alloc(value.node), span)
+                        .span(span),
+                );
             }
 
             let lower_ref: &str = lower_owned.as_deref().unwrap_or(plain);
@@ -1552,10 +1574,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             }
             Some(Token { kind: '(', .. }) => {
                 if let Some(plain) = plain {
-                    let arguments = parser.parse_argument_invocation(
-                        false,
-                        plain.eq_ignore_ascii_case("var"),
-                    )?;
+                    let arguments = parser
+                        .parse_argument_invocation(false, plain.eq_ignore_ascii_case("var"))?;
 
                     let is_css_custom = plain.starts_with("--");
                     let original_name = if plain.eq_ignore_ascii_case("url") {
@@ -1563,15 +1583,17 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     } else {
                         plain
                     };
-                    Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
-                        namespace: None,
-                        name: Identifier::from(plain),
-                        original_name: CompactString::from(original_name),
-                        arguments: parser.arena().alloc(arguments),
-                        span: parser.toks_mut().span_from(start),
-                        is_css_custom_function: is_css_custom,
-                    }))
-                    .span(parser.toks_mut().span_from(start)))
+                    Ok(
+                        AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
+                            namespace: None,
+                            name: Identifier::from(plain),
+                            original_name: CompactString::from(original_name),
+                            arguments: parser.arena().alloc(arguments),
+                            span: parser.toks_mut().span_from(start),
+                            is_css_custom_function: is_css_custom,
+                        }))
+                        .span(parser.toks_mut().span_from(start)),
+                    )
                 } else {
                     let arguments = parser.parse_argument_invocation(false, false)?;
                     Ok(
@@ -1677,15 +1699,17 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             return Err(("Module namespaces aren't allowed in plain CSS.", span).into());
         }
 
-        Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
-            namespace: Some(namespace),
-            name: Identifier::from(&name),
-            original_name: CompactString::from(name),
-            arguments: parser.arena().alloc(args),
-            span,
-            is_css_custom_function: false,
-        }))
-        .span(span))
+        Ok(
+            AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
+                namespace: Some(namespace),
+                name: Identifier::from(&name),
+                original_name: CompactString::from(name),
+                arguments: parser.arena().alloc(args),
+                span,
+                is_css_custom_function: false,
+            }))
+            .span(span),
+        )
     }
 
     fn parse_unicode_range(parser: &mut P) -> SassResult<Spanned<AstExpr<'a>>> {
@@ -1719,7 +1743,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         } else if has_question_mark {
             return Ok(AstExpr::String(
                 StringExpr(
-                    InterpolationBuilder::new_plain(parser.toks_mut().raw_text(start)).finish(parser.arena()),
+                    InterpolationBuilder::new_plain(parser.toks_mut().raw_text(start))
+                        .finish(parser.arena()),
                     QuoteKind::None,
                 ),
                 span,
@@ -1759,7 +1784,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         Ok(AstExpr::String(
             StringExpr(
-                InterpolationBuilder::new_plain(parser.toks_mut().raw_text(start)).finish(parser.arena()),
+                InterpolationBuilder::new_plain(parser.toks_mut().raw_text(start))
+                    .finish(parser.arena()),
                 QuoteKind::None,
             ),
             span,
@@ -1810,7 +1836,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             buffer = InterpolationBuilder::new_plain(name.to_owned());
             buffer.add_char('(');
 
-            buffer.add_interpolation(parser.parse_interpolated_declaration_value(false, true, true)?);
+            buffer
+                .add_interpolation(parser.parse_interpolated_declaration_value(false, true, true)?);
             parser.expect_char(')')?;
             buffer.add_char(')');
 
@@ -1866,7 +1893,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         parser.toks_mut().span_from(start),
                     )
                     .span(parser.toks_mut().span_from(start))
-                }))
+                }));
             }
             _ => return Ok(None),
         }
@@ -1913,9 +1940,11 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                         break;
                     }
                 }
-                '$' if parser.toks().peek().is_some_and(|t| {
-                    t.kind.is_ascii_alphabetic() || t.kind == '_'
-                }) => {
+                '$' if parser
+                    .toks()
+                    .peek()
+                    .is_some_and(|t| t.kind.is_ascii_alphabetic() || t.kind == '_') =>
+                {
                     parser.toks_mut().set_cursor(start);
                     return true;
                 }
@@ -1964,9 +1993,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         // value, don't use the greedy interpolation path — let the normal
         // parser run so it produces the proper error message.
         if let Some(first) = parser.toks().peek() {
-            if !matches!(first.kind,
-                '+' | '-' | '.' | '0'..='9' | '$' | '(' | '#' | '\'' | '"'
-                | ' ' | '\t' | '\n' | '\r'
+            if !matches!(
+                first.kind,
+                '+' | '-' | '.' | '0'
+                    ..='9' | '$' | '(' | '#' | '\'' | '"' | ' ' | '\t' | '\n' | '\r'
             ) && !first.kind.is_ascii_alphabetic()
                 && first.kind != '_'
             {
@@ -2065,16 +2095,20 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     kind: '.' | '0'..='9',
                     ..
                 })
-            ) && parser.toks().peek_n(1).is_some_and(|t| {
-                t.kind.is_ascii_alphabetic() || t.kind == '_'
-            }) => {
+            ) && parser
+                .toks()
+                .peek_n(1)
+                .is_some_and(|t| t.kind.is_ascii_alphabetic() || t.kind == '_') =>
+            {
                 let start = parser.toks().cursor();
                 parser.toks_mut().next();
                 let value = ValueParser::parse_calculation_value(parser)?;
                 if sign == '-' {
                     let span = parser.toks_mut().span_from(start);
-                    Ok(AstExpr::UnaryOp(UnaryOp::Neg, parser.arena().alloc(value.node), span)
-                        .span(span))
+                    Ok(
+                        AstExpr::UnaryOp(UnaryOp::Neg, parser.arena().alloc(value.node), span)
+                            .span(span),
+                    )
                 } else {
                     Ok(value)
                 }
@@ -2099,7 +2133,8 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 parser.whitespace()?;
                 parser.expect_char(')')?;
 
-                Ok(AstExpr::Paren(parser.arena().alloc(value)).span(parser.toks_mut().span_from(start)))
+                Ok(AstExpr::Paren(parser.arena().alloc(value))
+                    .span(parser.toks_mut().span_from(start)))
             }
             Some(Token { kind: '#', .. })
                 if matches!(parser.toks().peek_n(1), Some(Token { kind: '{', .. })) =>
@@ -2185,20 +2220,26 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 if let Some(calc) = calculation {
                     Ok(calc)
                 } else if lowercase == "if" {
-                    Ok(AstExpr::If(parser.arena().alloc(Ternary(
-                        parser.parse_argument_invocation(false, false)?,
-                    )))
+                    Ok(AstExpr::If(
+                        parser
+                            .arena()
+                            .alloc(Ternary(parser.parse_argument_invocation(false, false)?)),
+                    )
                     .span(parser.toks_mut().span_from(start)))
                 } else {
                     let is_css_custom = ident.starts_with("--");
-                    Ok(AstExpr::FunctionCall(parser.arena().alloc(FunctionCallExpr {
-                        namespace: None,
-                        name: Identifier::from(&ident),
-                        original_name: CompactString::from(ident),
-                        arguments: parser.arena().alloc(parser.parse_argument_invocation(false, false)?),
-                        span: parser.toks_mut().span_from(start),
-                        is_css_custom_function: is_css_custom,
-                    }))
+                    Ok(AstExpr::FunctionCall(
+                        parser.arena().alloc(FunctionCallExpr {
+                            namespace: None,
+                            name: Identifier::from(&ident),
+                            original_name: CompactString::from(ident),
+                            arguments: parser
+                                .arena()
+                                .alloc(parser.parse_argument_invocation(false, false)?),
+                            span: parser.toks_mut().span_from(start),
+                            is_css_custom_function: is_css_custom,
+                        }),
+                    )
                     .span(parser.toks_mut().span_from(start)))
                 }
             }
@@ -2399,23 +2440,24 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             return Ok(None);
                         }
                         parser.toks_mut().set_cursor(before_args);
-                        let (invocation, calculation_error) = match
-                            parser.parse_argument_invocation(false, false)
+                        let (invocation, calculation_error) = match parser
+                            .parse_argument_invocation(false, false)
                         {
                             Ok(invocation) => {
-                                let space_separated_list = invocation.positional.iter().any(|expr| {
-                                    let mut expr = expr;
-                                    loop {
-                                        match expr {
-                                            AstExpr::List(list) => {
-                                                break list.separator == ListSeparator::Space
-                                                    && list.elems.len() > 1;
+                                let space_separated_list =
+                                    invocation.positional.iter().any(|expr| {
+                                        let mut expr = expr;
+                                        loop {
+                                            match expr {
+                                                AstExpr::List(list) => {
+                                                    break list.separator == ListSeparator::Space
+                                                        && list.elems.len() > 1;
+                                                }
+                                                AstExpr::Paren(inner) => expr = inner,
+                                                _ => break false,
                                             }
-                                            AstExpr::Paren(inner) => expr = inner,
-                                            _ => break false,
                                         }
-                                    }
-                                });
+                                    });
                                 let calculation_error = if space_separated_list
                                     || (invocation.positional.is_empty()
                                         && invocation.named.is_empty()
@@ -2462,13 +2504,15 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                 // are parsed as normal Sass functions.
                 let before_args = parser.toks().cursor();
 
-                let args = match ValueParser::parse_calculation_arguments_inner(parser, None, start, true) {
-                    Ok(args) => args,
-                    Err(..) => {
-                        parser.toks_mut().set_cursor(before_args);
-                        return Ok(None);
-                    }
-                };
+                let args =
+                    match ValueParser::parse_calculation_arguments_inner(parser, None, start, true)
+                    {
+                        Ok(args) => args,
+                        Err(..) => {
+                            parser.toks_mut().set_cursor(before_args);
+                            return Ok(None);
+                        }
+                    };
 
                 Self::make_calculation(
                     parser,
@@ -2487,20 +2531,21 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     Ok(args) => Self::make_calculation(parser, CalculationName::Clamp, args, start),
                     Err(e) => {
                         parser.toks_mut().set_cursor(before_args);
-                        let (invocation, calculation_error) = match
-                            parser.parse_argument_invocation(false, false)
+                        let (invocation, calculation_error) = match parser
+                            .parse_argument_invocation(false, false)
                         {
                             Ok(invocation) => {
-                                let empty_list_argument = invocation.positional.iter().any(|expr| {
-                                    let mut expr = expr;
-                                    loop {
-                                        match expr {
-                                            AstExpr::List(list) => break list.elems.is_empty(),
-                                            AstExpr::Paren(inner) => expr = inner,
-                                            _ => break false,
+                                let empty_list_argument =
+                                    invocation.positional.iter().any(|expr| {
+                                        let mut expr = expr;
+                                        loop {
+                                            match expr {
+                                                AstExpr::List(list) => break list.elems.is_empty(),
+                                                AstExpr::Paren(inner) => expr = inner,
+                                                _ => break false,
+                                            }
                                         }
-                                    }
-                                });
+                                    });
                                 let calculation_error = if empty_list_argument
                                     || (invocation.positional.is_empty()
                                         && invocation.named.is_empty()

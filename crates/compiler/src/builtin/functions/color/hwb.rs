@@ -113,11 +113,20 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
             ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel is `none` or a special function — if so, use modern Color 4 path
-                let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                let has_none = list
+                    .iter()
+                    .any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 let has_special = list.iter().any(|v| v.is_special_function());
                 if has_none || has_special {
                     let has_alpha = list.len() > 3;
-                    return super::css_color4::construct_color("hwb", ColorSpace::Hwb, &list, has_alpha, span, visitor);
+                    return super::css_color4::construct_color(
+                        "hwb",
+                        ColorSpace::Hwb,
+                        &list,
+                        has_alpha,
+                        span,
+                        visitor,
+                    );
                 }
                 let args = ArgumentResult {
                     positional: list,

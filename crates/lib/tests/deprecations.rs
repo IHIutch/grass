@@ -137,7 +137,11 @@ fn assert_global_builtin_warning(input: &str, expected_module_dot_name: &str) {
     // mismatch on a later argument) can still be used to test the warning.
     let _ = grass::from_string(input.to_string(), &options);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 1, "expected exactly one warning for {input}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected exactly one warning for {input}"
+    );
     assert!(
         warnings[0].starts_with(
             "DEPRECATION WARNING [global-builtin]: Global built-in functions are deprecated and \
@@ -163,7 +167,10 @@ fn assert_first_warning_is_global_builtin(input: &str, expected_module_dot_name:
     let options = grass::Options::default().logger(&logger);
     let _ = grass::from_string(input.to_string(), &options);
     let warnings = logger.warning_messages();
-    assert!(!warnings.is_empty(), "expected at least one warning for {input}");
+    assert!(
+        !warnings.is_empty(),
+        "expected at least one warning for {input}"
+    );
     assert!(
         warnings[0].starts_with(
             "DEPRECATION WARNING [global-builtin]: Global built-in functions are deprecated and \
@@ -194,10 +201,7 @@ fn assert_no_global_builtin_warning(input: &str) {
 fn global_builtin_warns_for_list_map_selector_string_math_functions() {
     assert_global_builtin_warning("a { b: nth(1px 2px, 1); }", "list.nth");
     assert_global_builtin_warning("a { b: list-separator(1px 2px); }", "list.separator");
-    assert_global_builtin_warning(
-        "$m: (a: 1);\na { b: map-get($m, a); }",
-        "map.get",
-    );
+    assert_global_builtin_warning("$m: (a: 1);\na { b: map-get($m, a); }", "map.get");
     assert_global_builtin_warning("a { b: selector-parse(\".a .b\"); }", "selector.parse");
     assert_global_builtin_warning("a { b: str-slice(\"hello\", 1, 2); }", "string.slice");
     assert_global_builtin_warning("a { b: comparable(1px, 2px); }", "math.compatible");
@@ -401,7 +405,11 @@ fn slash_div_recommendation_nested_division_in_parens() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {warnings:?}");
+    assert_eq!(
+        warnings.len(),
+        2,
+        "expected 2 distinct warnings, got {warnings:?}"
+    );
     assert!(warnings[0].contains("Recommendation: math.div(12, $n)"));
     assert!(warnings[1].contains("Recommendation: math.div(12 / $n, 2)"));
 }
@@ -436,7 +444,11 @@ fn slash_div_warns_per_distinct_variable_decl() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {warnings:?}");
+    assert_eq!(
+        warnings.len(),
+        2,
+        "expected 2 distinct warnings, got {warnings:?}"
+    );
     assert!(warnings[0].contains("math.div(16, 12)"));
     assert!(warnings[1].contains("math.div(18, 14)"));
 }
@@ -643,8 +655,7 @@ fn if_function_warns_even_when_call_is_unreached() {
 
 #[test]
 fn if_function_dedupes_repeated_call_site() {
-    let input =
-        "@each $n in 1, 2, 3 {\n  .c-#{$n} {\n    d: if(true, 1, 2);\n  }\n}\n";
+    let input = "@each $n in 1, 2, 3 {\n  .c-#{$n} {\n    d: if(true, 1, 2);\n  }\n}\n";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
@@ -716,8 +727,9 @@ fn bogus_combinators_warns_for_doubled_combinator_and_omits_rule() {
     assert_eq!(&output, "");
     let warnings = logger.warning_messages();
     assert_eq!(warnings.len(), 1);
-    assert!(warnings[0]
-        .contains("The selector \".a + + .b\" is invalid CSS. It will be omitted from the generated CSS."));
+    assert!(warnings[0].contains(
+        "The selector \".a + + .b\" is invalid CSS. It will be omitted from the generated CSS."
+    ));
 }
 
 #[test]
@@ -743,9 +755,9 @@ fn bogus_combinators_warns_for_bogus_extender() {
     assert!(warnings
         .iter()
         .any(|w| w.contains("is invalid CSS and shouldn't be an extender")));
-    assert!(warnings
-        .iter()
-        .any(|w| w.starts_with("DEPRECATION WARNING [bogus-combinators]: The selector \"+ .a\" is invalid CSS.\n")));
+    assert!(warnings.iter().any(|w| w.starts_with(
+        "DEPRECATION WARNING [bogus-combinators]: The selector \"+ .a\" is invalid CSS.\n"
+    )));
 }
 
 #[test]
@@ -819,9 +831,15 @@ fn color_functions_warns_for_all_six_channel_getters() {
         let options = grass::Options::default().logger(&logger);
         grass::from_string(input.clone(), &options).expect(&input);
         let warnings = logger.warning_messages();
-        assert_eq!(warnings.len(), 1, "unexpected warnings for {name}: {warnings:?}");
+        assert_eq!(
+            warnings.len(),
+            1,
+            "unexpected warnings for {name}: {warnings:?}"
+        );
         assert!(
-            warnings[0].contains(&format!("color.channel($color, \"{name}\", $space: {space})")),
+            warnings[0].contains(&format!(
+                "color.channel($color, \"{name}\", $space: {space})"
+            )),
             "unexpected warning for {name}: {}",
             warnings[0]
         );
@@ -1028,12 +1046,16 @@ fn call_string_reconstruction_preserves_unquoted_string() {
 
 #[test]
 fn call_string_does_not_warn_for_function_reference() {
-    let input = "@use \"sass:meta\";\na {\n  b: meta.call(meta.get-function(\"if\"), true, 1, 2);\n}\n";
+    let input =
+        "@use \"sass:meta\";\na {\n  b: meta.call(meta.get-function(\"if\"), true, 1, 2);\n}\n";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     assert!(
-        !logger.warning_messages().iter().any(|w| w.contains("[call-string]")),
+        !logger
+            .warning_messages()
+            .iter()
+            .any(|w| w.contains("[call-string]")),
         "unexpected call-string warning: {:?}",
         logger.warning_messages()
     );
@@ -1046,7 +1068,13 @@ fn call_string_dedupes_repeated_call_site() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.iter().filter(|w| w.contains("[call-string]")).count(), 1);
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.contains("[call-string]"))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -1058,7 +1086,10 @@ fn call_string_silenced() {
         .silence_deprecation(Deprecation::CallString);
     grass::from_string(input.to_string(), &options).expect(input);
     assert!(
-        !logger.warning_messages().iter().any(|w| w.contains("[call-string]")),
+        !logger
+            .warning_messages()
+            .iter()
+            .any(|w| w.contains("[call-string]")),
         "unexpected call-string warning: {:?}",
         logger.warning_messages()
     );
@@ -1078,8 +1109,7 @@ fn feature_exists_warns_for_global_and_module_forms() {
          More info: https://sass-lang.com/d/feature-exists"
     ));
 
-    let input_module =
-        "@use \"sass:meta\";\na {\n  b: meta.feature-exists(\"at-error\");\n}\n";
+    let input_module = "@use \"sass:meta\";\na {\n  b: meta.feature-exists(\"at-error\");\n}\n";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input_module.to_string(), &options).expect(input_module);
@@ -1146,7 +1176,10 @@ fn abs_does_not_warn_for_non_percent_units() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     assert!(
-        !logger.warning_messages().iter().any(|w| w.contains("[abs-percent]")),
+        !logger
+            .warning_messages()
+            .iter()
+            .any(|w| w.contains("[abs-percent]")),
         "unexpected abs-percent warning: {:?}",
         logger.warning_messages()
     );
@@ -1171,7 +1204,11 @@ fn abs_percent_warns_once_per_distinct_call_site() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 2, "expected 2 distinct warnings, got {warnings:?}");
+    assert_eq!(
+        warnings.len(),
+        2,
+        "expected 2 distinct warnings, got {warnings:?}"
+    );
     assert!(warnings[0].contains("math.abs(-50%)"));
     assert!(warnings[1].contains("math.abs(-25%)"));
 }
@@ -1336,7 +1373,8 @@ fn with_private_warns_for_load_css() {
     let mut fs = TestFs::new();
     fs.add_file("_mod.scss", "$-private: red !default;\na { b: $-private; }");
 
-    let input = "@use \"sass:meta\";\n@include meta.load-css(\"mod\", $with: (\"-private\": green));";
+    let input =
+        "@use \"sass:meta\";\n@include meta.load-css(\"mod\", $with: (\"-private\": green));";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger).fs(&fs);
     let output = grass::from_string(input.to_string(), &options).expect(input);
@@ -1381,7 +1419,11 @@ fn assert_color_module_compat_warning(input: &str, expected_prefix: &str) {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.len(), 1, "expected exactly one warning for {input}: {warnings:?}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected exactly one warning for {input}: {warnings:?}"
+    );
     assert!(
         warnings[0].starts_with(expected_prefix),
         "unexpected warning for {input}: {}",
@@ -1462,7 +1504,10 @@ fn color_module_compat_does_not_warn_for_global_forms() {
         let options = grass::Options::default().logger(&logger);
         grass::from_string(input.to_string(), &options).expect(input);
         assert!(
-            !logger.warning_messages().iter().any(|w| w.contains("[color-module-compat]")),
+            !logger
+                .warning_messages()
+                .iter()
+                .any(|w| w.contains("[color-module-compat]")),
             "unexpected color-module-compat warning for {input}: {:?}",
             logger.warning_messages()
         );
@@ -1504,7 +1549,10 @@ fn duplicate_var_flags_warns_for_repeated_global() {
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
     assert_eq!(
-        warnings.iter().filter(|w| w.contains("[duplicate-var-flags]")).count(),
+        warnings
+            .iter()
+            .filter(|w| w.contains("[duplicate-var-flags]"))
+            .count(),
         1
     );
     assert!(warnings.iter().any(|w| w.starts_with(
@@ -1519,7 +1567,10 @@ fn duplicate_var_flags_does_not_warn_for_single_flag() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[duplicate-var-flags]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[duplicate-var-flags]")));
 }
 
 #[test]
@@ -1530,7 +1581,10 @@ fn duplicate_var_flags_silenced() {
         .logger(&logger)
         .silence_deprecation(Deprecation::DuplicateVarFlags);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[duplicate-var-flags]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[duplicate-var-flags]")));
 }
 
 #[test]
@@ -1566,7 +1620,10 @@ fn function_units_does_not_warn_for_unitless_index() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1591,7 +1648,10 @@ fn function_units_does_not_warn_for_unitless_random_limit() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1602,7 +1662,10 @@ fn function_units_silenced() {
         .logger(&logger)
         .silence_deprecation(Deprecation::FunctionUnits);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1614,7 +1677,13 @@ fn function_units_warns_for_mix_legacy_weight_without_percent() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.iter().filter(|w| w.contains("[function-units]")).count(), 1);
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.contains("[function-units]"))
+            .count(),
+        1
+    );
     assert!(warnings.iter().any(|w| w.starts_with(
         "DEPRECATION WARNING [function-units]: $weight: Passing a number without unit % \
          (40) is deprecated.\n\nTo preserve current behavior: $weight * 1%"
@@ -1628,7 +1697,10 @@ fn function_units_does_not_warn_for_mix_default_weight() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1637,7 +1709,10 @@ fn function_units_does_not_warn_for_mix_percent_weight() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1658,13 +1733,15 @@ fn function_units_warns_for_invert_legacy_weight_without_percent() {
 fn function_units_does_not_warn_for_invert_with_space() {
     // dart-sass's `_checkPercent` for invert's $weight only applies to the
     // legacy (no $space) path.
-    let input =
-        "@use \"sass:color\";\na {\n  b: inspect(color.invert($color: red, $weight: 40, \
+    let input = "@use \"sass:color\";\na {\n  b: inspect(color.invert($color: red, $weight: 40, \
          $space: hsl));\n}\n";
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1675,7 +1752,13 @@ fn function_units_warns_for_hsl_saturation_and_lightness_without_percent() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.iter().filter(|w| w.contains("[function-units]")).count(), 2);
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.contains("[function-units]"))
+            .count(),
+        2
+    );
     assert!(warnings.iter().any(|w| w.starts_with(
         "DEPRECATION WARNING [function-units]: $saturation: Passing a number without unit % \
          (50) is deprecated."
@@ -1692,7 +1775,10 @@ fn function_units_does_not_warn_for_hsl_with_percent() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 // todo #198: `check_change_alpha` bounds-checked BEFORE emitting the
@@ -1788,7 +1874,10 @@ fn function_units_does_not_warn_for_unitless_hue() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1813,7 +1902,10 @@ fn function_units_does_not_warn_for_color_change_alpha_percent_or_unitless() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1838,7 +1930,10 @@ fn function_units_does_not_warn_for_color_adjust_unitless_alpha() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1853,7 +1948,13 @@ fn function_units_warns_for_color_adjust_alpha_with_any_unit_modern_space() {
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
     let warnings = logger.warning_messages();
-    assert_eq!(warnings.iter().filter(|w| w.contains("[function-units]")).count(), 2);
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.contains("[function-units]"))
+            .count(),
+        2
+    );
     assert!(warnings.iter().any(|w| w.starts_with(
         "DEPRECATION WARNING [function-units]: $alpha: Passing a number with unit % is \
          deprecated.\n\nTo preserve current behavior: calc($alpha / 1%)"
@@ -1871,7 +1972,10 @@ fn function_units_does_not_warn_for_color_adjust_unitless_alpha_modern_space() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }
 
 #[test]
@@ -1900,5 +2004,8 @@ fn color_change_alpha_percent_scales_for_modern_space() {
     let logger = TestLogger::default();
     let options = grass::Options::default().logger(&logger);
     grass::from_string(input.to_string(), &options).expect(input);
-    assert!(!logger.warning_messages().iter().any(|w| w.contains("[function-units]")));
+    assert!(!logger
+        .warning_messages()
+        .iter()
+        .any(|w| w.contains("[function-units]")));
 }

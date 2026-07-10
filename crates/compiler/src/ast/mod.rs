@@ -33,9 +33,7 @@ mod unknown;
 /// INVARIANT: the returned `'static`-erased value must not outlive the
 /// arena backing the compilation that produced it (see call sites in
 /// `lib.rs` and `evaluate/visitor.rs`).
-pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(
-    sheet: StyleSheet<'a>,
-) -> StyleSheet<'static> {
+pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(sheet: StyleSheet<'a>) -> StyleSheet<'static> {
     std::mem::transmute(sheet)
 }
 

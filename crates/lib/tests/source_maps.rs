@@ -8,14 +8,15 @@ fn option_off_is_byte_identical_to_from_string() {
     let plain = grass::from_string(INPUT.to_string(), &grass::Options::default())
         .expect("from_string should succeed");
 
-    let (with_map_api, map) = grass::from_string_with_source_map(
-        INPUT.to_string(),
-        &grass::Options::default(),
-    )
-    .expect("from_string_with_source_map should succeed");
+    let (with_map_api, map) =
+        grass::from_string_with_source_map(INPUT.to_string(), &grass::Options::default())
+            .expect("from_string_with_source_map should succeed");
 
     assert_eq!(plain, with_map_api);
-    assert!(map.is_none(), "map must be None when source_map option is off");
+    assert!(
+        map.is_none(),
+        "map must be None when source_map option is off"
+    );
 }
 
 #[test]
@@ -39,8 +40,14 @@ fn option_on_emits_valid_v3_json() {
         "got: {map}"
     );
     assert!(map.contains("\"names\":[]"));
-    assert!(!map.contains("\"mappings\":\"\""), "mappings must be non-empty");
-    assert!(!map.contains("\"file\""), "file key must be omitted, got: {map}");
+    assert!(
+        !map.contains("\"mappings\":\"\""),
+        "mappings must be non-empty"
+    );
+    assert!(
+        !map.contains("\"file\""),
+        "file key must be omitted, got: {map}"
+    );
 }
 
 #[test]
@@ -91,5 +98,8 @@ fn dependency_tracking_collects_variable_only_imports_without_mappings() {
 
     let (_, map) = grass::from_path_with_source_map(&entry, &options)
         .expect("source-map wrapper should still compile");
-    assert!(map.is_none(), "dependency tracking must not enable mappings");
+    assert!(
+        map.is_none(),
+        "dependency tracking must not enable mappings"
+    );
 }

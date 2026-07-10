@@ -65,7 +65,9 @@ use napi::bindgen_prelude::FromNapiValue;
 use napi::threadsafe_function::{
     ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
-use napi::{sys, Env, Error, JsFunction, JsObject, JsUnknown, NapiValue, Ref, Result, Status, ValueType};
+use napi::{
+    sys, Env, Error, JsFunction, JsObject, JsUnknown, NapiValue, Ref, Result, Status, ValueType,
+};
 
 use grass_compiler::codemap::Span;
 use grass_compiler::{ImportResolution, Importer, InputSyntax, Options, Result as SassResult};
@@ -107,7 +109,9 @@ fn build_context(env: Env, from_import: bool, containing_url: Option<&str>) -> R
 /// hits the documented async limitation, and anything else is a clear type
 /// error. The returned URL is parsed and converted to a platform-native path
 /// by `file_url_to_path`.
-fn interpret_find_file_url_return(js_return: JsUnknown) -> std::result::Result<Option<String>, String> {
+fn interpret_find_file_url_return(
+    js_return: JsUnknown,
+) -> std::result::Result<Option<String>, String> {
     let ty = js_return.get_type().map_err(|e| e.reason.clone())?;
     if matches!(ty, ValueType::Null | ValueType::Undefined) {
         return Ok(None);
@@ -132,7 +136,9 @@ fn interpret_find_file_url_return(js_return: JsUnknown) -> std::result::Result<O
 /// async calling conventions): `null`/`undefined` decline (`Ok(None)`), a
 /// string is the canonical URL (`Ok(Some(url))`), a Promise/thenable hits
 /// the documented async limitation, anything else is a clear type error.
-fn interpret_canonicalize_return(js_return: JsUnknown) -> std::result::Result<Option<String>, String> {
+fn interpret_canonicalize_return(
+    js_return: JsUnknown,
+) -> std::result::Result<Option<String>, String> {
     let ty = js_return.get_type().map_err(|e| e.reason.clone())?;
     if matches!(ty, ValueType::Null | ValueType::Undefined) {
         return Ok(None);
@@ -210,8 +216,8 @@ fn syntax_from_str(s: &str) -> std::result::Result<InputSyntax, String> {
 }
 
 fn file_url_to_path(file_url: &str) -> std::result::Result<PathBuf, String> {
-    let url = url::Url::parse(file_url)
-        .map_err(|err| format!("invalid file URL {file_url:?}: {err}"))?;
+    let url =
+        url::Url::parse(file_url).map_err(|err| format!("invalid file URL {file_url:?}: {err}"))?;
 
     if url.scheme() != "file" {
         return Err(format!(
@@ -220,9 +226,8 @@ fn file_url_to_path(file_url: &str) -> std::result::Result<PathBuf, String> {
         ));
     }
 
-    url.to_file_path().map_err(|_| {
-        format!("invalid file URL {file_url:?}: cannot convert it to a local path")
-    })
+    url.to_file_path()
+        .map_err(|_| format!("invalid file URL {file_url:?}: cannot convert it to a local path"))
 }
 
 // --- Sync FileImporter (todo #221 slice 4) ---------------------------------
@@ -290,7 +295,8 @@ impl Importer for FileImporterRef {
             .create_string(url)
             .map_err(|e| napi_err_to_sass(&e, span))?
             .into_unknown();
-        let ctx = build_context(env, from_import, containing_url).map_err(|e| napi_err_to_sass(&e, span))?;
+        let ctx = build_context(env, from_import, containing_url)
+            .map_err(|e| napi_err_to_sass(&e, span))?;
 
         match func.call(None, &[url_js, ctx]) {
             Ok(js_return) => match interpret_find_file_url_return(js_return) {
@@ -367,7 +373,8 @@ impl Importer for FullImporterRef {
             .create_string(url)
             .map_err(|e| napi_err_to_sass(&e, span))?
             .into_unknown();
-        let ctx = build_context(env, from_import, containing_url).map_err(|e| napi_err_to_sass(&e, span))?;
+        let ctx = build_context(env, from_import, containing_url)
+            .map_err(|e| napi_err_to_sass(&e, span))?;
 
         let canonical_url = match canonicalize_fn.call(None, &[url_js, ctx]) {
             Ok(js_return) => match interpret_canonicalize_return(js_return) {
@@ -389,7 +396,8 @@ impl Importer for FullImporterRef {
         match load_fn.call(None, &[url_arg]) {
             Ok(js_return) => match interpret_load_return(js_return) {
                 Ok(Some((contents, syntax_str))) => {
-                    let syntax = syntax_from_str(&syntax_str).map_err(|msg| string_err_to_sass(msg, span))?;
+                    let syntax = syntax_from_str(&syntax_str)
+                        .map_err(|msg| string_err_to_sass(msg, span))?;
                     Ok(ImportResolution::Resolved {
                         canonical_url,
                         contents,
@@ -450,9 +458,15 @@ impl FromNapiValue for ImporterRef {
         let has_load = obj.has_named_property("load").unwrap_or(false);
 
         if has_find_file_url && !has_canonicalize && !has_load {
-            Ok(ImporterRef::File(FileImporterRef::from_object(env_wrapped, &obj)?))
+            Ok(ImporterRef::File(FileImporterRef::from_object(
+                env_wrapped,
+                &obj,
+            )?))
         } else if !has_find_file_url && has_canonicalize && has_load {
-            Ok(ImporterRef::Full(FullImporterRef::from_object(env_wrapped, &obj)?))
+            Ok(ImporterRef::Full(FullImporterRef::from_object(
+                env_wrapped,
+                &obj,
+            )?))
         } else if !has_find_file_url && !has_canonicalize && !has_load {
             Err(Error::from_reason(
                 "each `importers` entry must be an object with either a `findFileUrl(url, \
@@ -476,7 +490,10 @@ impl FromNapiValue for ImporterRef {
 /// resolution — see `Options::add_importer`) onto `options`. Only safe to
 /// call for the SYNCHRONOUS entry points (`compile`/`compileString`) — see
 /// this module's doc comment.
-pub fn register_importers(mut options: Options<'static>, importers: Vec<ImporterRef>) -> Options<'static> {
+pub fn register_importers(
+    mut options: Options<'static>,
+    importers: Vec<ImporterRef>,
+) -> Options<'static> {
     for importer in importers {
         options = options.add_importer(Rc::new(importer));
     }
@@ -507,7 +524,8 @@ pub struct AsyncFileImporterRef {
 
 impl std::fmt::Debug for AsyncFileImporterRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AsyncFileImporterRef").finish_non_exhaustive()
+        f.debug_struct("AsyncFileImporterRef")
+            .finish_non_exhaustive()
     }
 }
 
@@ -521,7 +539,12 @@ impl AsyncFileImporterRef {
     ) -> SassResult<ImportResolution> {
         let (tx, rx) = mpsc::channel();
         let status = self.tsfn.call(
-            (url.to_owned(), from_import, containing_url.map(str::to_owned), tx),
+            (
+                url.to_owned(),
+                from_import,
+                containing_url.map(str::to_owned),
+                tx,
+            ),
             ThreadsafeFunctionCallMode::Blocking,
         );
         if status != Status::Ok {
@@ -554,35 +577,43 @@ impl FileImporterRef {
     /// `lib.rs`'s `take_async_importers`).
     pub(crate) fn into_threadsafe(self) -> Result<AsyncFileImporterRef> {
         let outer_env = self.env;
-        let noop = outer_env.create_function("grass_async_importer_find_file_url_target", noop_callback)?;
+        let noop = outer_env
+            .create_function("grass_async_importer_find_file_url_target", noop_callback)?;
 
-        let tsfn = noop.create_threadsafe_function::<FileImporterCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
-            0,
-            move |ctx: ThreadSafeCallContext<FileImporterCallArgs>| -> Result<Vec<JsUnknown>> {
-                let (url, from_import, containing_url, tx) = ctx.value;
-                let env = ctx.env;
+        let tsfn = noop
+            .create_threadsafe_function::<FileImporterCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
+                0,
+                move |ctx: ThreadSafeCallContext<FileImporterCallArgs>| -> Result<Vec<JsUnknown>> {
+                    let (url, from_import, containing_url, tx) = ctx.value;
+                    let env = ctx.env;
 
-                let outcome: std::result::Result<Option<String>, String> = (|| {
-                    let func = env
-                        .get_reference_value::<JsFunction>(&self.find_file_url_ref)
-                        .map_err(|e| e.reason.clone())?;
-                    let url_js = env.create_string(&url).map_err(|e| e.reason.clone())?.into_unknown();
-                    let ctx_obj = build_context(env, from_import, containing_url.as_deref())
-                        .map_err(|e| e.reason.clone())?;
+                    let outcome: std::result::Result<Option<String>, String> = (|| {
+                        let func = env
+                            .get_reference_value::<JsFunction>(&self.find_file_url_ref)
+                            .map_err(|e| e.reason.clone())?;
+                        let url_js = env
+                            .create_string(&url)
+                            .map_err(|e| e.reason.clone())?
+                            .into_unknown();
+                        let ctx_obj = build_context(env, from_import, containing_url.as_deref())
+                            .map_err(|e| e.reason.clone())?;
 
-                    let js_return = func.call(None, &[url_js, ctx_obj]).map_err(|e| e.reason.clone())?;
-                    interpret_find_file_url_return(js_return)
-                })();
+                        let js_return = func
+                            .call(None, &[url_js, ctx_obj])
+                            .map_err(|e| e.reason.clone())?;
+                        interpret_find_file_url_return(js_return)
+                    })(
+                    );
 
-                // Always send SOMETHING and always return Ok(..) — the
-                // worker thread's `rx.recv()` must never be left hanging,
-                // and letting this closure return Err would route through
-                // napi's fatal-error/process-abort path (see
-                // `functions.rs`'s module doc comment).
-                let _ = tx.send(outcome);
-                Ok(Vec::new())
-            },
-        )?;
+                    // Always send SOMETHING and always return Ok(..) — the
+                    // worker thread's `rx.recv()` must never be left hanging,
+                    // and letting this closure return Err would route through
+                    // napi's fatal-error/process-abort path (see
+                    // `functions.rs`'s module doc comment).
+                    let _ = tx.send(outcome);
+                    Ok(Vec::new())
+                },
+            )?;
 
         Ok(AsyncFileImporterRef { tsfn })
     }
@@ -594,7 +625,10 @@ type CanonicalizeCallArgs = (
     Option<String>,
     mpsc::Sender<std::result::Result<Option<String>, String>>,
 );
-type LoadCallArgs = (String, mpsc::Sender<std::result::Result<Option<(String, String)>, String>>);
+type LoadCallArgs = (
+    String,
+    mpsc::Sender<std::result::Result<Option<(String, String)>, String>>,
+);
 
 /// A JS full `Importer`'s `canonicalize`+`load` pair usable from
 /// `Task::compute()` — the async counterpart to [`FullImporterRef`]. Two
@@ -608,7 +642,8 @@ pub struct AsyncFullImporterRef {
 
 impl std::fmt::Debug for AsyncFullImporterRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AsyncFullImporterRef").finish_non_exhaustive()
+        f.debug_struct("AsyncFullImporterRef")
+            .finish_non_exhaustive()
     }
 }
 
@@ -622,7 +657,12 @@ impl AsyncFullImporterRef {
     ) -> SassResult<ImportResolution> {
         let (tx, rx) = mpsc::channel();
         let status = self.canonicalize_tsfn.call(
-            (url.to_owned(), from_import, containing_url.map(str::to_owned), tx),
+            (
+                url.to_owned(),
+                from_import,
+                containing_url.map(str::to_owned),
+                tx,
+            ),
             ThreadsafeFunctionCallMode::Blocking,
         );
         if status != Status::Ok {
@@ -645,9 +685,10 @@ impl AsyncFullImporterRef {
         };
 
         let (tx2, rx2) = mpsc::channel();
-        let status2 = self
-            .load_tsfn
-            .call((canonical_url.clone(), tx2), ThreadsafeFunctionCallMode::Blocking);
+        let status2 = self.load_tsfn.call(
+            (canonical_url.clone(), tx2),
+            ThreadsafeFunctionCallMode::Blocking,
+        );
         if status2 != Status::Ok {
             return Err(string_err_to_sass(
                 format!("failed to schedule JS importer callback: {status2:?}"),
@@ -657,7 +698,8 @@ impl AsyncFullImporterRef {
 
         match rx2.recv() {
             Ok(Ok(Some((contents, syntax_str)))) => {
-                let syntax = syntax_from_str(&syntax_str).map_err(|msg| string_err_to_sass(msg, span))?;
+                let syntax =
+                    syntax_from_str(&syntax_str).map_err(|msg| string_err_to_sass(msg, span))?;
                 Ok(ImportResolution::Resolved {
                     canonical_url,
                     contents,
@@ -702,15 +744,23 @@ impl FullImporterRef {
 
                     let outcome: std::result::Result<Option<String>, String> = (|| {
                         let func = env
-                            .get_reference_value::<JsFunction>(&shared_for_canonicalize.canonicalize_ref)
+                            .get_reference_value::<JsFunction>(
+                                &shared_for_canonicalize.canonicalize_ref,
+                            )
                             .map_err(|e| e.reason.clone())?;
-                        let url_js = env.create_string(&url).map_err(|e| e.reason.clone())?.into_unknown();
+                        let url_js = env
+                            .create_string(&url)
+                            .map_err(|e| e.reason.clone())?
+                            .into_unknown();
                         let ctx_obj = build_context(env, from_import, containing_url.as_deref())
                             .map_err(|e| e.reason.clone())?;
 
-                        let js_return = func.call(None, &[url_js, ctx_obj]).map_err(|e| e.reason.clone())?;
+                        let js_return = func
+                            .call(None, &[url_js, ctx_obj])
+                            .map_err(|e| e.reason.clone())?;
                         interpret_canonicalize_return(js_return)
-                    })();
+                    })(
+                    );
 
                     let _ = tx.send(outcome);
                     Ok(Vec::new())
@@ -719,29 +769,31 @@ impl FullImporterRef {
 
         let load_noop = env.create_function("grass_async_importer_load_target", noop_callback)?;
         let shared_for_load = shared.clone();
-        let load_tsfn = load_noop.create_threadsafe_function::<LoadCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
-            0,
-            move |ctx: ThreadSafeCallContext<LoadCallArgs>| -> Result<Vec<JsUnknown>> {
-                let (canonical_url, tx) = ctx.value;
-                let env = ctx.env;
+        let load_tsfn = load_noop
+            .create_threadsafe_function::<LoadCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
+                0,
+                move |ctx: ThreadSafeCallContext<LoadCallArgs>| -> Result<Vec<JsUnknown>> {
+                    let (canonical_url, tx) = ctx.value;
+                    let env = ctx.env;
 
-                let outcome: std::result::Result<Option<(String, String)>, String> = (|| {
-                    let func = env
-                        .get_reference_value::<JsFunction>(&shared_for_load.load_ref)
-                        .map_err(|e| e.reason.clone())?;
-                    let url_js = env
-                        .create_string(&canonical_url)
-                        .map_err(|e| e.reason.clone())?
-                        .into_unknown();
+                    let outcome: std::result::Result<Option<(String, String)>, String> = (|| {
+                        let func = env
+                            .get_reference_value::<JsFunction>(&shared_for_load.load_ref)
+                            .map_err(|e| e.reason.clone())?;
+                        let url_js = env
+                            .create_string(&canonical_url)
+                            .map_err(|e| e.reason.clone())?
+                            .into_unknown();
 
-                    let js_return = func.call(None, &[url_js]).map_err(|e| e.reason.clone())?;
-                    interpret_load_return(js_return)
-                })();
+                        let js_return = func.call(None, &[url_js]).map_err(|e| e.reason.clone())?;
+                        interpret_load_return(js_return)
+                    })(
+                    );
 
-                let _ = tx.send(outcome);
-                Ok(Vec::new())
-            },
-        )?;
+                    let _ = tx.send(outcome);
+                    Ok(Vec::new())
+                },
+            )?;
 
         Ok(AsyncFullImporterRef {
             canonicalize_tsfn,
@@ -777,7 +829,9 @@ impl Importer for AsyncImporterRef {
     ) -> SassResult<ImportResolution> {
         match self {
             AsyncImporterRef::File(f) => f.canonicalize(url, from_import, containing_url, span),
-            AsyncImporterRef::Full(full) => full.canonicalize(url, from_import, containing_url, span),
+            AsyncImporterRef::Full(full) => {
+                full.canonicalize(url, from_import, containing_url, span)
+            }
         }
     }
 }

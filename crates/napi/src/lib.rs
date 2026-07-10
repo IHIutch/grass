@@ -179,7 +179,10 @@ pub struct CompileResult {
 /// Builds the JS-API-shaped `sourceMap` result value: `None` when maps
 /// weren't requested at all, `Some` otherwise (never a `file` key, per the
 /// JS API contract — see `CompileResult::source_map`'s doc comment).
-fn source_map_result(map: Option<SourceMapData>, include_sources: bool) -> Option<serde_json::Value> {
+fn source_map_result(
+    map: Option<SourceMapData>,
+    include_sources: bool,
+) -> Option<serde_json::Value> {
     map.map(|m| {
         serde_json::from_str(&m.to_json(None, include_sources))
             .expect("grass-generated source map JSON must always be valid")
@@ -198,7 +201,9 @@ fn catch<T>(f: impl FnOnce() -> napi::Result<T> + std::panic::UnwindSafe) -> nap
                 .map(|s| (*s).to_string())
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "internal compiler panic".to_string());
-            Err(napi::Error::from_reason(format!("grass internal error: {msg}")))
+            Err(napi::Error::from_reason(format!(
+                "grass internal error: {msg}"
+            )))
         }
     }
 }
@@ -242,7 +247,11 @@ fn resolve_fatal_deprecations(entries: &[Either<String, DeprecationVersion>]) ->
                 }
             }
             Either::B(version) => {
-                resolved.extend(Deprecation::for_version((version.major, version.minor, version.patch)));
+                resolved.extend(Deprecation::for_version((
+                    version.major,
+                    version.minor,
+                    version.patch,
+                )));
             }
         }
     }
@@ -470,7 +479,8 @@ impl Task for CompileTask {
             _ => opts,
         };
         catch(std::panic::AssertUnwindSafe(|| {
-            from_path_with_source_map(path, &opts).map_err(|e| napi::Error::from_reason(e.to_string()))
+            from_path_with_source_map(path, &opts)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
         }))
     }
 
@@ -649,13 +659,21 @@ mod tests {
         let source = "a { b: if(true, 1, 2) }".to_owned();
 
         let below = CompileOptions {
-            fatal_deprecations: Some(vec![Either::B(DeprecationVersion { major: 1, minor: 94, patch: 9 })]),
+            fatal_deprecations: Some(vec![Either::B(DeprecationVersion {
+                major: 1,
+                minor: 94,
+                patch: 9,
+            })]),
             ..base_opts()
         };
         assert!(compile_string(source.clone(), Some(below)).is_ok());
 
         let at_boundary = CompileOptions {
-            fatal_deprecations: Some(vec![Either::B(DeprecationVersion { major: 1, minor: 95, patch: 0 })]),
+            fatal_deprecations: Some(vec![Either::B(DeprecationVersion {
+                major: 1,
+                minor: 95,
+                patch: 0,
+            })]),
             ..base_opts()
         };
         assert!(compile_string(source, Some(at_boundary)).is_err());
@@ -670,7 +688,11 @@ mod tests {
         let opts = CompileOptions {
             fatal_deprecations: Some(vec![
                 Either::A("bogus-id".to_owned()),
-                Either::B(DeprecationVersion { major: 1, minor: 95, patch: 0 }),
+                Either::B(DeprecationVersion {
+                    major: 1,
+                    minor: 95,
+                    patch: 0,
+                }),
             ]),
             ..base_opts()
         };
@@ -685,7 +707,11 @@ mod tests {
         // hard error, it's ignored with a `WARNING: Invalid deprecation "…".`
         // printed to stderr (not observable from a Rust unit test, but the
         // compile itself must still succeed).
-        for field in ["silence_deprecations", "fatal_deprecations", "future_deprecations"] {
+        for field in [
+            "silence_deprecations",
+            "fatal_deprecations",
+            "future_deprecations",
+        ] {
             let opts = match field {
                 "silence_deprecations" => CompileOptions {
                     silence_deprecations: Some(vec!["bogus-id".to_owned()]),
@@ -712,7 +738,10 @@ mod tests {
         // (verified against dart-sass: `fatalDeprecations: ["slash-div",
         // "bogus-id"]` both warns AND fatalizes on `slash-div`).
         let opts = CompileOptions {
-            fatal_deprecations: Some(vec![Either::A("slash-div".to_owned()), Either::A("bogus-id".to_owned())]),
+            fatal_deprecations: Some(vec![
+                Either::A("slash-div".to_owned()),
+                Either::A("bogus-id".to_owned()),
+            ]),
             ..base_opts()
         };
         let res = compile_string("$a: 1;\nb { c: $a/2; }".to_owned(), Some(opts));
@@ -766,17 +795,25 @@ mod tests {
             ..base_opts()
         };
         let res = compile_string("a {\n  b: c;\n}\n".to_owned(), Some(opts)).unwrap();
-        let map = res.source_map.expect("source_map must be Some when requested");
+        let map = res
+            .source_map
+            .expect("source_map must be Some when requested");
 
         assert_eq!(map["version"], 3);
         assert_eq!(map["sourceRoot"], "");
         assert_eq!(map["names"], serde_json::json!([]));
         assert_eq!(map["mappings"], "AAAA;EACE");
-        assert!(map.get("file").is_none(), "JS API shape must omit file, got: {map}");
+        assert!(
+            map.get("file").is_none(),
+            "JS API shape must omit file, got: {map}"
+        );
         let sources = map["sources"].as_array().unwrap();
         assert_eq!(sources.len(), 1);
         assert!(
-            sources[0].as_str().unwrap().starts_with("data:;charset=utf-8,"),
+            sources[0]
+                .as_str()
+                .unwrap()
+                .starts_with("data:;charset=utf-8,"),
             "got: {map}"
         );
         assert!(map.get("sourcesContent").is_none());
@@ -791,7 +828,10 @@ mod tests {
         };
         let res = compile_string("a {\n  b: c;\n}\n".to_owned(), Some(opts)).unwrap();
         let map = res.source_map.unwrap();
-        assert_eq!(map["sourcesContent"], serde_json::json!(["a {\n  b: c;\n}\n"]));
+        assert_eq!(
+            map["sourcesContent"],
+            serde_json::json!(["a {\n  b: c;\n}\n"])
+        );
     }
 
     #[test]

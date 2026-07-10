@@ -217,10 +217,9 @@ fn canonical_multiplier(unit: &Unit) -> f64 {
         UnitKind::Time => &Unit::S,
         UnitKind::Frequency => &Unit::Hz,
         UnitKind::Resolution => &Unit::Dpi,
-        UnitKind::FontRelative
-        | UnitKind::ViewportRelative
-        | UnitKind::Other
-        | UnitKind::None => return 1.0,
+        UnitKind::FontRelative | UnitKind::ViewportRelative | UnitKind::Other | UnitKind::None => {
+            return 1.0
+        }
     };
 
     conversion_factor(unit, canonical).unwrap_or(1.0)
@@ -239,10 +238,7 @@ fn hash_unit_shape(unit: &Unit, hasher: &mut FxHasher) {
         UnitKind::Time => 2,
         UnitKind::Frequency => 3,
         UnitKind::Resolution => 4,
-        UnitKind::FontRelative
-        | UnitKind::ViewportRelative
-        | UnitKind::Other
-        | UnitKind::None => {
+        UnitKind::FontRelative | UnitKind::ViewportRelative | UnitKind::Other | UnitKind::None => {
             // Not one of the convertible kinds: hash the exact unit so e.g.
             // Em vs Rem, or Unknown("foo") vs Unknown("bar"), never collide
             // into a shape that implies comparability.
@@ -258,7 +254,7 @@ fn hash_unit_shape(unit: &Unit, hasher: &mut FxHasher) {
 mod tests {
     use super::*;
     use crate::{
-        common::{Brackets, SmallOrderedMap, ListSeparator, QuoteKind},
+        common::{Brackets, ListSeparator, QuoteKind, SmallOrderedMap},
         value::{ArgList, Number, SassMap},
     };
     use codemap::{CodeMap, Spanned};
@@ -272,7 +268,10 @@ mod tests {
     }
 
     fn spanned(v: Value) -> Spanned<Value> {
-        Spanned { node: v, span: span() }
+        Spanned {
+            node: v,
+            span: span(),
+        }
     }
 
     fn dim<N: Into<Number>>(n: N, unit: Unit) -> Value {

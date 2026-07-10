@@ -224,10 +224,7 @@ error!(
     nothing_after_i_after_else,
     "@if true {} @else i", "Error: expected \"{\"."
 );
-test!(
-    invalid_toplevel_selector,
-    "@if true { & { } }", ""
-);
+test!(invalid_toplevel_selector, "@if true { & { } }", "");
 test!(
     treats_interpolated_if_as_unknown_at_rule,
     "@#{if} true { a {   color: red; } }",

@@ -187,11 +187,7 @@ fn update_modern(
         if let Some(v) = args.get(usize::MAX, channel_defs[i].name) {
             // Scale doesn't work on hue channels
             if update == UpdateComponents::Scale && channel_defs[i].is_polar {
-                return Err((
-                    "$hue: Cannot scale a polar channel (hue).".to_owned(),
-                    span,
-                )
-                    .into());
+                return Err(("$hue: Cannot scale a polar channel (hue).".to_owned(), span).into());
             }
 
             let result = parse_modern_channel(
@@ -244,11 +240,7 @@ fn update_modern(
 
     // Check for unknown named arguments
     if !args.named.is_empty() {
-        let argument_names: Vec<String> = args
-            .named
-            .keys()
-            .map(|key| format!("${key}"))
-            .collect();
+        let argument_names: Vec<String> = args.named.keys().map(|key| format!("${key}")).collect();
 
         let first_name = &argument_names[0];
         return Err((
@@ -321,9 +313,7 @@ fn update_modern(
                         UpdateComponents::Adjust => {
                             let val = current + adj_val;
                             // dart-sass clamps lightness in perceptual spaces for adjust()
-                            if working_space.is_perceptual()
-                                && !channel_defs[i].is_polar
-                                && i == 0
+                            if working_space.is_perceptual() && !channel_defs[i].is_polar && i == 0
                             {
                                 val.clamp(channel_defs[i].min, channel_defs[i].max)
                             } else {
@@ -461,10 +451,7 @@ fn update_components(
             // functions use and where explicit null IS equivalent to omitted.
             v => {
                 return Err((
-                    format!(
-                        "$space: {} is not a string.",
-                        v.inspect(span)?
-                    ),
+                    format!("$space: {} is not a string.", v.inspect(span)?),
                     span,
                 )
                     .into())
@@ -478,7 +465,15 @@ fn update_components(
             )
         })?;
 
-        return update_modern(&color, &mut args, working_space, true, update, span, visitor);
+        return update_modern(
+            &color,
+            &mut args,
+            working_space,
+            true,
+            update,
+            span,
+            visitor,
+        );
     }
 
     // No $space parameter - check if color is in a modern space
@@ -552,7 +547,13 @@ fn update_components(
                         }
                     }
                 }
-                Some(Some(check_num(v, name, assert_percent, check_percent, visitor)?))
+                Some(Some(check_num(
+                    v,
+                    name,
+                    assert_percent,
+                    check_percent,
+                    visitor,
+                )?))
             }
             None => None,
         })
@@ -627,20 +628,11 @@ fn update_components(
         };
 
         let argument_names = to_sentence(
-            args.named
-                .keys()
-                .map(|key| format!("${key}"))
-                .collect(),
+            args.named.keys().map(|key| format!("${key}")).collect(),
             "or",
         );
 
-        return Err((
-            format!(
-                "No {argument_word} named {argument_names}."
-            ),
-            span,
-        )
-            .into());
+        return Err((format!("No {argument_word} named {argument_names}."), span).into());
     }
 
     let has_rgb = red.is_some() || green.is_some() || blue.is_some();
@@ -650,9 +642,7 @@ fn update_components(
     if has_rgb && (has_sl || has_wb || hue.is_some()) {
         let param_type = if has_wb { "HWB" } else { "HSL" };
         return Err((
-            format!(
-                "RGB parameters may not be passed along with {param_type} parameters."
-            ),
+            format!("RGB parameters may not be passed along with {param_type} parameters."),
             span,
         )
             .into());
@@ -676,8 +666,8 @@ fn update_components(
         update: UpdateComponents,
     ) -> Option<f64> {
         match param {
-            None => current,                // Not provided, preserve current (including None/missing)
-            Some(None) => None,             // `none` keyword, set to missing
+            None => current,    // Not provided, preserve current (including None/missing)
+            Some(None) => None, // `none` keyword, set to missing
             Some(Some(p)) => {
                 let cur = current.unwrap_or(0.0);
                 let val = match update {
@@ -685,10 +675,10 @@ fn update_components(
                     UpdateComponents::Adjust => p.0 + cur,
                     UpdateComponents::Scale => {
                         cur + if p.0 > 0.0 {
-                                (max - cur) * p.0
-                            } else {
-                                cur * p.0
-                            }
+                            (max - cur) * p.0
+                        } else {
+                            cur * p.0
+                        }
                     }
                 };
                 Some(val)
@@ -702,7 +692,11 @@ fn update_components(
     // `_missingChannelError` guard. Only `adjust()`/`scale()` guard on a missing
     // channel (via `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
     if update != UpdateComponents::Change {
-        let check_missing_channel = |color_in_space: &Color, channel_idx: usize, channel_name: &str, span: Span| -> SassResult<()> {
+        let check_missing_channel = |color_in_space: &Color,
+                                     channel_idx: usize,
+                                     channel_name: &str,
+                                     span: Span|
+         -> SassResult<()> {
             if color_in_space.has_missing_channel(channel_idx) {
                 return Err((
                     format!(
@@ -780,14 +774,28 @@ fn update_components(
         let clamp_rgb = update == UpdateComponents::Adjust;
         let in_rgb = color.to_space(ColorSpace::Rgb);
         let rgb_ch = in_rgb.raw_channels();
-        let new_r = apply_update(rgb_ch[0], &red, 255.0, update)
-            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_g = apply_update(rgb_ch[1], &green, 255.0, update)
-            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_b = apply_update(rgb_ch[2], &blue, 255.0, update)
-            .map(|v| if clamp_rgb { v.clamp(0.0, 255.0) } else { v });
-        let new_a = apply_update(alpha_current, &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_r = apply_update(rgb_ch[0], &red, 255.0, update).map(|v| {
+            if clamp_rgb {
+                v.clamp(0.0, 255.0)
+            } else {
+                v
+            }
+        });
+        let new_g = apply_update(rgb_ch[1], &green, 255.0, update).map(|v| {
+            if clamp_rgb {
+                v.clamp(0.0, 255.0)
+            } else {
+                v
+            }
+        });
+        let new_b = apply_update(rgb_ch[2], &blue, 255.0, update).map(|v| {
+            if clamp_rgb {
+                v.clamp(0.0, 255.0)
+            } else {
+                v
+            }
+        });
+        let new_a = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         Rc::new(Color::for_space(
             ColorSpace::Rgb,
             [new_r, new_g, new_b],
@@ -801,7 +809,11 @@ fn update_components(
             let ch = color.raw_channels();
             (ch[0], ch[1], ch[2])
         } else {
-            (Some(color.hue().0), Some(color.whiteness().0), Some(color.blackness().0))
+            (
+                Some(color.hue().0),
+                Some(color.whiteness().0),
+                Some(color.blackness().0),
+            )
         };
         let new_hue = match &hue {
             None => raw_hue,
@@ -816,8 +828,7 @@ fn update_components(
         };
         let new_w = apply_update(raw_w, &whiteness, 100.0, update);
         let new_b = apply_update(raw_b, &blackness, 100.0, update);
-        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
         let mut result = Color::for_space(
             ColorSpace::Hwb,
@@ -860,8 +871,7 @@ fn update_components(
             }
         }
         let new_light = apply_update(hsl_ch[2], &lightness, 100.0, update);
-        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hsla's clamping of out-of-range values
         let mut result = Color::for_space(
             ColorSpace::Hsl,
@@ -884,8 +894,7 @@ fn update_components(
         }
         Rc::new(result)
     } else if alpha.is_some() {
-        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update)
-            .map(|v| v.clamp(0.0, 1.0));
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Unlike `Color::with_alpha` (used by legacy global functions, which
         // always operate in RGB space), changing alpha through
         // `color.change`/`color.adjust`/`color.scale` must preserve the
@@ -940,7 +949,10 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
         "adjust-color",
         Builtin::new(adjust_color).with_deprecated_global("color", "adjust"),
     );
-    f.insert("scale-color", Builtin::new(scale_color).with_deprecated_global("color", "scale"));
+    f.insert(
+        "scale-color",
+        Builtin::new(scale_color).with_deprecated_global("color", "scale"),
+    );
     // Permanently global-only in dart-sass; never warns.
     f.insert("ie-hex-str", Builtin::new(ie_hex_str));
 }

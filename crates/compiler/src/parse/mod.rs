@@ -28,14 +28,8 @@ pub(crate) enum DeclarationOrBuffer<'a> {
 }
 
 /// Names that functions are not allowed to have
-pub(super) const RESERVED_IDENTIFIERS: [&str; 6] = [
-    "element",
-    "expression",
-    "url",
-    "and",
-    "or",
-    "not",
-];
+pub(super) const RESERVED_IDENTIFIERS: [&str; 6] =
+    ["element", "expression", "url", "and", "or", "not"];
 
 #[derive(Debug, Clone)]
 pub(crate) enum VariableDeclOrInterpolation<'a> {

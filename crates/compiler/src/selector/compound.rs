@@ -68,7 +68,13 @@ impl CompoundSelector {
     /// Returns the index and reference of the first pseudo-element in this compound.
     fn find_pseudo_element_indexed(&self) -> Option<(usize, &SimpleSelector)> {
         self.components.iter().enumerate().find(|(_, s)| {
-            matches!(s, SimpleSelector::Pseudo(Pseudo { is_class: false, .. }))
+            matches!(
+                s,
+                SimpleSelector::Pseudo(Pseudo {
+                    is_class: false,
+                    ..
+                })
+            )
         })
     }
 
@@ -219,9 +225,11 @@ impl CompoundSelector {
             }
         } else {
             return Ok(Some(vec![ComplexSelector::new(
-                vec![ComplexSelectorComponent::Compound(Rc::new(CompoundSelector {
-                    components: resolved_members,
-                }))],
+                vec![ComplexSelectorComponent::Compound(Rc::new(
+                    CompoundSelector {
+                        components: resolved_members,
+                    },
+                ))],
                 false,
             )]));
         }
@@ -297,9 +305,7 @@ impl CompoundSelector {
         }
 
         result.extend(pseudo_result);
-        Some(Self {
-            components: result,
-        })
+        Some(Self { components: result })
     }
 
     /// Adds a `SimpleSelector::Parent` to the beginning of `compound`, or returns `None` if

@@ -83,10 +83,7 @@ fn dotted_output_path_normalizes_before_relative_source_calculation() {
     assert!(output.status.success(), "{output:?}");
 
     let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
-    assert!(
-        map.contains("\"sources\":[\"in.scss\"]"),
-        "got: {map}"
-    );
+    assert!(map.contains("\"sources\":[\"in.scss\"]"), "got: {map}");
 }
 
 // Ground truth: `npx sass@1.97.3 actual/in.scss linked/out.css` where
@@ -131,7 +128,10 @@ fn absolute_urls_produce_file_url() {
     let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
     let canonical = std::fs::canonicalize(tmp.path().join("in.scss")).unwrap();
     let expected_source = format!("\"sources\":[\"file://{}\"]", canonical.to_string_lossy());
-    assert!(map.contains(&expected_source), "got: {map}\nwant substring: {expected_source}");
+    assert!(
+        map.contains(&expected_source),
+        "got: {map}\nwant substring: {expected_source}"
+    );
 }
 
 // Ground truth: `npx sass@1.97.3 --embed-source-map in.scss out.css` -> no
@@ -229,7 +229,12 @@ fn no_source_map_conflicts_with_embed_source_map() {
 
     let output = grass_cmd()
         .current_dir(tmp.path())
-        .args(["--no-source-map", "--embed-source-map", "in.scss", "out.css"])
+        .args([
+            "--no-source-map",
+            "--embed-source-map",
+            "in.scss",
+            "out.css",
+        ])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -351,8 +356,14 @@ fn embed_source_map_alone_works_on_stdout_with_absolute_fallback() {
         stdout.contains("sourceMappingURL=data:application/json;charset=utf-8,"),
         "got: {stdout}"
     );
-    assert!(stdout.contains("file:"), "expected an absolute file: URL, got: {stdout}");
-    assert!(!stdout.contains("%22file%22"), "file key must be omitted, got: {stdout}");
+    assert!(
+        stdout.contains("file:"),
+        "expected an absolute file: URL, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("%22file%22"),
+        "file key must be omitted, got: {stdout}"
+    );
 }
 
 // `--stdin` with no OUTPUT arg (stdout) must remain byte-identical to plain
@@ -469,10 +480,7 @@ fn comment_trailing_declaration_is_not_mapped() {
     let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
     // Only 2 segments total: the selector and the declaration -- the
     // trailing comment contributes no third segment.
-    assert!(
-        map.contains("\"mappings\":\"AAAA;EACE\""),
-        "got: {map}"
-    );
+    assert!(map.contains("\"mappings\":\"AAAA;EACE\""), "got: {map}");
 }
 
 // Ground truth: a comment trailing a `}` on the same source line (dart-sass
@@ -500,7 +508,6 @@ fn comment_trailing_closing_brace_is_mapped() {
         "got: {map}"
     );
 }
-
 
 // ---- Slice 6 (todo #203): UTF-16 column semantics ----
 
@@ -565,7 +572,10 @@ fn charset_prepend_shifts_all_mapping_lines() {
     // First mapping group is now empty (dst line 0 = the @charset line,
     // unmapped); the selector (line 1), comment (line 2), and declaration
     // (line 3) mappings follow with an extra +1 line shift baked in.
-    assert!(map.contains("\"mappings\":\";AAAA;AACE;EACA\""), "got: {map}");
+    assert!(
+        map.contains("\"mappings\":\";AAAA;AACE;EACA\""),
+        "got: {map}"
+    );
 }
 
 // `@supports` at-rule mapping (todo #269, follow-up to #225 part 1).
@@ -590,7 +600,10 @@ fn supports_at_rule_maps_to_keyword_not_body() {
     assert!(output.status.success(), "{output:?}");
 
     let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
-    assert!(map.contains("\"mappings\":\"AAAA;EACE;IAAI\""), "got: {map}");
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE;IAAI\""),
+        "got: {map}"
+    );
 }
 
 // Nested `@supports` -- ground truth: `npx sass@1.97.3` on
@@ -663,7 +676,10 @@ fn media_at_rule_maps_to_keyword() {
     assert!(output.status.success(), "{output:?}");
 
     let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
-    assert!(map.contains("\"mappings\":\"AAAA;EACE;IAAI\""), "got: {map}");
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE;IAAI\""),
+        "got: {map}"
+    );
 }
 
 // `@font-face` at-rule mapping -- unlike `@media`/`@supports`, `@font-face`

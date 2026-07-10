@@ -267,6 +267,5 @@ error!(
 );
 error!(
     min_calc_parens_no_args,
-    "a {\n  color: min(calc());\n}\n",
-    "Error: Missing argument."
+    "a {\n  color: min(calc());\n}\n", "Error: Missing argument."
 );

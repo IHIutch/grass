@@ -1,10 +1,6 @@
 use codemap::Spanned;
 
-use crate::{
-    ast::*,
-    error::SassResult,
-    Token,
-};
+use crate::{ast::*, error::SassResult, Token};
 
 use super::StylesheetParser;
 
@@ -189,9 +185,7 @@ fn detect_css_if_syntax<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResul
 }
 
 /// Parse a top-level if() condition (with and/or combinators).
-fn parse_if_condition<'a>(
-    parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<IfCondition<'a>> {
+fn parse_if_condition<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResult<IfCondition<'a>> {
     // Check for `else` keyword
     let start = parser.toks().cursor();
     if parser.scan_identifier("else", false)? && !parser.looking_at_identifier_body() {
@@ -317,9 +311,7 @@ fn check_sass_before_raw<'a>(
     Ok(())
 }
 
-fn check_not_followed_by_combinator<'a>(
-    parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<()> {
+fn check_not_followed_by_combinator<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResult<()> {
     let pos = parser.toks().cursor();
     if parser.scan_identifier("and", false)? && !parser.looking_at_identifier_body() {
         parser.toks_mut().set_cursor(pos);
@@ -335,9 +327,7 @@ fn check_not_followed_by_combinator<'a>(
 }
 
 /// After `not`, check that no raw items follow (var, identifier+paren, etc.)
-fn check_not_followed_by_raw<'a>(
-    parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<()> {
+fn check_not_followed_by_raw<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResult<()> {
     let pos = parser.toks().cursor();
 
     // Check for identifier followed by `(`
@@ -463,9 +453,7 @@ fn parse_condition_operand<'a>(
     match &primary {
         IfCondition::Atom(IfConditionAtom::Css(_, _))
         | IfCondition::Atom(IfConditionAtom::CssRaw(_, _))
-        | IfCondition::Atom(IfConditionAtom::Interp(_, _)) => {
-            try_extend_with_raw(parser, primary)
-        }
+        | IfCondition::Atom(IfConditionAtom::Interp(_, _)) => try_extend_with_raw(parser, primary),
         _ => Ok(primary),
     }
 }
@@ -508,7 +496,10 @@ fn try_extend_with_raw<'a>(
         // End of condition markers
         if matches!(
             parser.toks().peek(),
-            Some(Token { kind: ':' | ';' | ')', .. }) | None
+            Some(Token {
+                kind: ':' | ';' | ')',
+                ..
+            }) | None
         ) {
             parser.toks_mut().set_cursor(pos);
             break;
@@ -558,7 +549,10 @@ fn try_extend_with_raw<'a>(
             if had_whitespace {
                 buffer.add_char(' ');
             }
-            buffer.add_expr(Spanned { node: expr.node, span });
+            buffer.add_expr(Spanned {
+                node: expr.node,
+                span,
+            });
             has_extra = true;
             continue;
         }
@@ -581,11 +575,7 @@ fn try_extend_with_raw<'a>(
                 "not" => {
                     if !parser.looking_at_identifier_body() {
                         if has_extra {
-                            return Err((
-                                "expected \"(\".",
-                                parser.toks().current_span(),
-                            )
-                                .into());
+                            return Err(("expected \"(\".", parser.toks().current_span()).into());
                         }
                         parser.toks_mut().set_cursor(pos);
                         break;
@@ -594,11 +584,7 @@ fn try_extend_with_raw<'a>(
                 "else" => {
                     if !parser.looking_at_identifier_body() {
                         // `else` after a raw condition — always error
-                        return Err((
-                            "expected \"(\".",
-                            parser.toks().current_span(),
-                        )
-                            .into());
+                        return Err(("expected \"(\".", parser.toks().current_span()).into());
                     }
                 }
                 _ => {}
@@ -617,9 +603,7 @@ fn try_extend_with_raw<'a>(
                 // `and(`/`or(` without space → error
                 if matches!(lower.as_str(), "and" | "or") && !parser.looking_at_identifier_body() {
                     return Err((
-                        format!(
-                            "Whitespace is required between \"{name}\" and \"(\""
-                        ),
+                        format!("Whitespace is required between \"{name}\" and \"(\""),
                         parser.toks().current_span(),
                     )
                         .into());
@@ -713,7 +697,10 @@ fn parse_condition_primary<'a>(
 
             let mut interp = InterpolationBuilder::new();
             let expr_span = parser.toks_mut().span_from(start);
-            interp.add_expr(Spanned { node: expr.node, span: expr_span });
+            interp.add_expr(Spanned {
+                node: expr.node,
+                span: expr_span,
+            });
             interp.add_char('(');
             interp.add_interpolation(content);
             interp.add_char(')');
@@ -725,9 +712,7 @@ fn parse_condition_primary<'a>(
         }
 
         let span = parser.toks_mut().span_from(start);
-        return Ok(IfCondition::Atom(IfConditionAtom::Interp(
-            expr.node, span,
-        )));
+        return Ok(IfCondition::Atom(IfConditionAtom::Interp(expr.node, span)));
     }
 
     // Must be an identifier
@@ -744,9 +729,7 @@ fn parse_condition_primary<'a>(
         "not" | "and" | "or" => {
             if parser.toks().next_char_is('(') {
                 return Err((
-                    format!(
-                        "Whitespace is required between \"{name}\" and \"(\""
-                    ),
+                    format!("Whitespace is required between \"{name}\" and \"(\""),
                     parser.toks().current_span(),
                 )
                     .into());
@@ -868,7 +851,13 @@ fn parse_css_function_args<'a>(
             ' ' | '\t' | '\n' | '\r' if parser.is_consuming_newlines() => {
                 // In indented syntax with consume_newlines, collapse whitespace
                 parser.toks_mut().next();
-                while matches!(parser.toks().peek(), Some(Token { kind: ' ' | '\t' | '\n' | '\r', .. })) {
+                while matches!(
+                    parser.toks().peek(),
+                    Some(Token {
+                        kind: ' ' | '\t' | '\n' | '\r',
+                        ..
+                    })
+                ) {
                     parser.toks_mut().next();
                 }
                 // Only add space if not at start or end of args
@@ -889,14 +878,15 @@ fn parse_css_function_args<'a>(
 }
 
 /// Parse the value portion of a clause (after `:`).
-fn parse_clause_value<'a>(
-    parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<AstExpr<'a>> {
+fn parse_clause_value<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResult<AstExpr<'a>> {
     let expr = parser.parse_expression(
         Some(&|p| {
             Ok(matches!(
                 p.toks().peek(),
-                Some(Token { kind: ';' | ')', .. })
+                Some(Token {
+                    kind: ';' | ')',
+                    ..
+                })
             ))
         }),
         None,

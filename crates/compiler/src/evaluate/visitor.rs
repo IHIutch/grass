@@ -624,12 +624,10 @@ impl<'a> Visitor<'a> {
                         for value in map.borrow_mut().values_mut() {
                             if let Mixin::UserDefined(_, closure_env, _) = value {
                                 stack.append(&mut closure_env.global_modules);
-                                stack.extend(
-                                    closure_env.forwarded_modules.borrow().iter().cloned(),
-                                );
-                                stack.extend(closure_env.modules.borrow().0.values().cloned());
                                 stack
-                                    .extend(closure_env.imported_modules.borrow().iter().cloned());
+                                    .extend(closure_env.forwarded_modules.borrow().iter().cloned());
+                                stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                stack.extend(closure_env.imported_modules.borrow().iter().cloned());
                                 if let Some(nested) = &closure_env.nested_forwarded_modules {
                                     for inner in nested.borrow().iter() {
                                         stack.extend(inner.borrow().iter().cloned());
@@ -823,7 +821,10 @@ impl<'a> Visitor<'a> {
 
         // Re-borrow to clone extension store and scope
         let m = module.borrow();
-        let cloned = if let Module::Environment { extension_store, .. } = &*m {
+        let cloned = if let Module::Environment {
+            extension_store, ..
+        } = &*m
+        {
             let cloned_store = extension_store.clone_for_import(&self.import_selector_map);
             Rc::new(RefCell::new(Module::Environment {
                 scope: m.scope().clone(),
@@ -1090,8 +1091,7 @@ impl<'a> Visitor<'a> {
                 Ok(None)
             }
             AstStmt::ErrorRule(err) => {
-                let value = self.visit_expr_ref(&err.value)?
-                    .inspect(err.span)?;
+                let value = self.visit_expr_ref(&err.value)?.inspect(err.span)?;
                 Err((value, err.span).into())
             }
             // Each/Media/Include/ContentRule delegate to `_ref`/borrowing visitors
@@ -1117,7 +1117,9 @@ impl<'a> Visitor<'a> {
                 Ok(None)
             }
             AstStmt::ContentRule(content_rule) => self.visit_content_rule(content_rule),
-            AstStmt::UnknownAtRule(unknown_at_rule) => self.visit_unknown_at_rule((*unknown_at_rule).clone()),
+            AstStmt::UnknownAtRule(unknown_at_rule) => {
+                self.visit_unknown_at_rule((*unknown_at_rule).clone())
+            }
             AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule.clone()),
             AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule.clone()),
             AstStmt::ImportRule(import_rule) => self.visit_import_rule(import_rule.clone()),
@@ -1137,7 +1139,10 @@ impl<'a> Visitor<'a> {
     }
 
     /// Reference-based variable declaration visitor.
-    fn visit_variable_decl_ref(&mut self, decl: &AstVariableDecl<'static>) -> SassResult<Option<Value>> {
+    fn visit_variable_decl_ref(
+        &mut self,
+        decl: &AstVariableDecl<'static>,
+    ) -> SassResult<Option<Value>> {
         let name = Spanned {
             node: decl.name,
             span: decl.span,
@@ -1188,7 +1193,10 @@ impl<'a> Visitor<'a> {
     }
 
     /// Reference-based loud comment visitor.
-    fn visit_loud_comment_ref(&mut self, comment: &AstLoudComment<'static>) -> SassResult<Option<Value>> {
+    fn visit_loud_comment_ref(
+        &mut self,
+        comment: &AstLoudComment<'static>,
+    ) -> SassResult<Option<Value>> {
         if self.flags.in_function() {
             return Ok(None);
         }
@@ -1282,14 +1290,12 @@ impl<'a> Visitor<'a> {
             .transpose()?
         {
             if !value.is_blank() || value.is_empty_list() || is_custom_property {
-                self.add_child_to_current_parent(
-                    CssStmt::Style(Style {
-                        property: InternedString::get_or_intern(&name),
-                        value: Box::new(value),
-                        declared_as_custom_property: is_custom_property,
-                        property_span: style.span,
-                    }),
-                );
+                self.add_child_to_current_parent(CssStmt::Style(Style {
+                    property: InternedString::get_or_intern(&name),
+                    value: Box::new(value),
+                    declared_as_custom_property: is_custom_property,
+                    property_span: style.span,
+                }));
             }
         }
 
@@ -1328,7 +1334,9 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 |visitor, module, _| {
-                    visitor.env.forward_module(Rc::clone(&module), forward_rule.clone())?;
+                    visitor
+                        .env
+                        .forward_module(Rc::clone(&module), forward_rule.clone())?;
                     visitor.upstream_modules.push(module);
 
                     Ok(())
@@ -1378,7 +1386,9 @@ impl<'a> Visitor<'a> {
                 false,
                 forward_rule.span,
                 move |visitor, module, _| {
-                    visitor.env.forward_module(Rc::clone(&module), forward_rule.clone())?;
+                    visitor
+                        .env
+                        .forward_module(Rc::clone(&module), forward_rule.clone())?;
                     visitor.upstream_modules.push(module);
 
                     Ok(())
@@ -1477,11 +1487,17 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_supports_condition(&mut self, condition: AstSupportsCondition<'static>) -> SassResult<String> {
+    fn visit_supports_condition(
+        &mut self,
+        condition: AstSupportsCondition<'static>,
+    ) -> SassResult<String> {
         self.visit_supports_condition_ref(&condition)
     }
 
-    fn visit_supports_condition_ref(&mut self, condition: &AstSupportsCondition<'static>) -> SassResult<String> {
+    fn visit_supports_condition_ref(
+        &mut self,
+        condition: &AstSupportsCondition<'static>,
+    ) -> SassResult<String> {
         match condition {
             AstSupportsCondition::Operation {
                 left,
@@ -1637,8 +1653,12 @@ impl<'a> Visitor<'a> {
 
                 if !same_original {
                     // Check if module has !default vars matching the config keys
-                    let config_keys: FxHashSet<Identifier> =
-                        current_configuration.borrow().values.keys().into_iter().collect();
+                    let config_keys: FxHashSet<Identifier> = current_configuration
+                        .borrow()
+                        .values
+                        .keys()
+                        .into_iter()
+                        .collect();
                     let could_be_configured = stylesheet
                         .configurable_variables
                         .iter()
@@ -1657,7 +1677,10 @@ impl<'a> Visitor<'a> {
 
                         return Err((
                             msg,
-                            current_configuration.borrow().span.unwrap_or(self.empty_span),
+                            current_configuration
+                                .borrow()
+                                .span
+                                .unwrap_or(self.empty_span),
                         )
                             .into());
                     }
@@ -1669,7 +1692,8 @@ impl<'a> Visitor<'a> {
             // 2. We're in a @use context but the module was first loaded
             //    inside an @import (so the original CSS belongs to the @import)
             if self.in_import_context || self.modules_loaded_in_import.contains(&url) {
-                let (cloned_module, has_clones) = self.clone_module_for_import(&url, &already_loaded);
+                let (cloned_module, has_clones) =
+                    self.clone_module_for_import(&url, &already_loaded);
                 if has_clones {
                     return Ok(cloned_module);
                 }
@@ -1741,7 +1765,9 @@ impl<'a> Visitor<'a> {
                 .into_iter()
                 .filter(|idx| !visitor.css_tree.is_hidden(*idx))
                 .collect();
-            visitor.module_css_indices.insert(url.clone(), new_css_indices.clone());
+            visitor
+                .module_css_indices
+                .insert(url.clone(), new_css_indices.clone());
 
             // When this module is being evaluated inside a nested @import
             // (i.e., `a { @import "file-that-uses-modules" }`), the module's
@@ -1765,10 +1791,8 @@ impl<'a> Visitor<'a> {
                             }) = &mut *stmt
                             {
                                 let old_list = selector.as_selector_list().clone();
-                                let resolved = old_list.resolve_parent_selectors(
-                                    Some(parent_list.clone()),
-                                    true,
-                                )?;
+                                let resolved = old_list
+                                    .resolve_parent_selectors(Some(parent_list.clone()), true)?;
                                 selector.set_inner(resolved);
                                 // Clear group_end since these are conceptually
                                 // children of the enclosing style rule, flattened
@@ -1816,7 +1840,8 @@ impl<'a> Visitor<'a> {
         // Build module with its own extension store and upstream deps.
         let module = env.to_module_with_upstream(module_extension_store, module_upstream);
 
-        self.module_ptr_to_url.insert(Rc::as_ptr(&module) as usize, url.clone());
+        self.module_ptr_to_url
+            .insert(Rc::as_ptr(&module) as usize, url.clone());
         self.modules.insert(url.clone(), Rc::clone(&module));
         self.module_configurations
             .insert(url.clone(), config_for_tracking);
@@ -1897,8 +1922,7 @@ impl<'a> Visitor<'a> {
             };
 
             if needs_wrapper {
-                let parent_list =
-                    old_style_rule.as_ref().unwrap().as_selector_list().clone();
+                let parent_list = old_style_rule.as_ref().unwrap().as_selector_list().clone();
                 let wrapper_selector = ExtendedSelector::new(parent_list);
                 let wrapper = CssStmt::RuleSet {
                     selector: wrapper_selector,
@@ -1944,8 +1968,8 @@ impl<'a> Visitor<'a> {
                     }) = &mut *stmt
                     {
                         let old_list = selector.as_selector_list().clone();
-                        let resolved = old_list
-                            .resolve_parent_selectors(Some(parent_list.clone()), true)?;
+                        let resolved =
+                            old_list.resolve_parent_selectors(Some(parent_list.clone()), true)?;
                         selector.set_inner(resolved);
                         *is_group_end = false;
                     }
@@ -1974,10 +1998,7 @@ impl<'a> Visitor<'a> {
 
     /// Collect deduplicated CSS tree indices from the full transitive dependency
     /// tree of a module, in upstream-first topological order.
-    fn collect_transitive_css_indices(
-        &self,
-        module: &Rc<RefCell<Module>>,
-    ) -> Vec<CssTreeIdx> {
+    fn collect_transitive_css_indices(&self, module: &Rc<RefCell<Module>>) -> Vec<CssTreeIdx> {
         // Build reverse mapping: module pointer → URL for looking up CSS indices.
         let ptr_to_url: FxHashMap<*const RefCell<Module>, PathBuf> = self
             .modules
@@ -2082,9 +2103,7 @@ impl<'a> Visitor<'a> {
             if let Some(url) = ptr_to_url.get(&ptr) {
                 if let Some(indices) = self.module_css_indices.get(url) {
                     for &idx in indices {
-                        if !self.css_tree.is_hidden(idx)
-                            && !original_to_hidden.contains_key(&idx)
-                        {
+                        if !self.css_tree.is_hidden(idx) && !original_to_hidden.contains_key(&idx) {
                             let hidden_idx =
                                 self.css_tree.clone_subtree_hidden(idx, &mut selector_map);
                             original_to_hidden.insert(idx, hidden_idx);
@@ -2126,7 +2145,9 @@ impl<'a> Visitor<'a> {
         let extensions = {
             let m = module.borrow();
             match &*m {
-                Module::Environment { extension_store, .. } => {
+                Module::Environment {
+                    extension_store, ..
+                } => {
                     if extension_store.is_empty() {
                         return Ok(());
                     }
@@ -2181,11 +2202,7 @@ impl<'a> Visitor<'a> {
                         "Built-in modules can't be configured.".to_owned()
                     };
 
-                    return Err((
-                        msg,
-                        (**configuration).borrow().span.unwrap(),
-                    )
-                        .into());
+                    return Err((msg, (**configuration).borrow().span.unwrap()).into());
                 }
             }
 
@@ -2254,7 +2271,9 @@ impl<'a> Visitor<'a> {
             false,
             span,
             |visitor, module, _| {
-                visitor.env.add_module(namespace, Rc::clone(&module), span)?;
+                visitor
+                    .env
+                    .add_module(namespace, Rc::clone(&module), span)?;
                 visitor.upstream_modules.push(module);
 
                 Ok(())
@@ -2280,9 +2299,7 @@ impl<'a> Visitor<'a> {
         let Spanned { node: name, span } = config.first().unwrap();
 
         let msg = if name_in_error {
-            format!(
-                "${name} was not declared with !default in the @used module."
-            )
+            format!("${name} was not declared with !default in the @used module.")
         } else {
             "This variable was not declared with !default in the @used module.".to_owned()
         };
@@ -2290,7 +2307,10 @@ impl<'a> Visitor<'a> {
         Err((msg, span).into())
     }
 
-    fn visit_import_rule(&mut self, import_rule: AstImportRule<'static>) -> SassResult<Option<Value>> {
+    fn visit_import_rule(
+        &mut self,
+        import_rule: AstImportRule<'static>,
+    ) -> SassResult<Option<Value>> {
         for import in import_rule.imports {
             match import {
                 AstImport::Sass(dynamic_import) => {
@@ -2339,7 +2359,11 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Option<ImportSource>> {
         // Cache key must include the full containing URL because a custom importer can resolve
         // the same requested path differently from two files in the same directory.
-        let cache_key = (self.current_import_path.clone(), path.to_path_buf(), for_import);
+        let cache_key = (
+            self.current_import_path.clone(),
+            path.to_path_buf(),
+            for_import,
+        );
         if let Some(result) = self.import_path_cache.get(&cache_key) {
             return result.clone();
         }
@@ -2435,19 +2459,13 @@ impl<'a> Visitor<'a> {
                     .parent()
                     .unwrap_or_else(|| Path::new(""))
                     .to_path_buf();
-                let sass_basename =
-                    sass_import.file_name().unwrap_or_else(|| OsStr::new(".."));
-                let scss_basename =
-                    scss_import.file_name().unwrap_or_else(|| OsStr::new(".."));
-                import_candidates.push(dirname.join(format!(
-                    "_{}",
-                    sass_basename.to_str().unwrap()
-                )));
+                let sass_basename = sass_import.file_name().unwrap_or_else(|| OsStr::new(".."));
+                let scss_basename = scss_import.file_name().unwrap_or_else(|| OsStr::new(".."));
+                import_candidates
+                    .push(dirname.join(format!("_{}", sass_basename.to_str().unwrap())));
                 import_candidates.push(sass_import);
-                import_candidates.push(dirname.join(format!(
-                    "_{}",
-                    scss_basename.to_str().unwrap()
-                )));
+                import_candidates
+                    .push(dirname.join(format!("_{}", scss_basename.to_str().unwrap())));
                 import_candidates.push(scss_import);
             }
 
@@ -2461,11 +2479,9 @@ impl<'a> Visitor<'a> {
             let scss_basename = scss_path.file_name().unwrap_or_else(|| OsStr::new(".."));
             let mut regular_candidates = Vec::with_capacity(4);
             // Order: _other.sass, other.sass, _other.scss, other.scss
-            regular_candidates
-                .push(dirname.join(format!("_{}", sass_basename.to_str().unwrap())));
+            regular_candidates.push(dirname.join(format!("_{}", sass_basename.to_str().unwrap())));
             regular_candidates.push(sass_path);
-            regular_candidates
-                .push(dirname.join(format!("_{}", scss_basename.to_str().unwrap())));
+            regular_candidates.push(dirname.join(format!("_{}", scss_basename.to_str().unwrap())));
             regular_candidates.push(scss_path);
 
             (import_candidates, regular_candidates)
@@ -2474,36 +2490,34 @@ impl<'a> Visitor<'a> {
         // Check for load conflicts among candidates in a directory.
         // Returns an error if multiple files match, otherwise returns
         // the first match (or None).
-        let check_conflicts =
-            |candidates: &[PathBuf], context_dir: &Path, span: Span| -> SassResult<Option<PathBuf>> {
-                let existing: Vec<&PathBuf> = candidates
-                    .iter()
-                    .filter(|p| self.is_file_fast(p))
-                    .collect();
+        let check_conflicts = |candidates: &[PathBuf],
+                               context_dir: &Path,
+                               span: Span|
+         -> SassResult<Option<PathBuf>> {
+            let existing: Vec<&PathBuf> =
+                candidates.iter().filter(|p| self.is_file_fast(p)).collect();
 
-                if existing.len() > 1 {
-                    let mut msg = "It's not clear which file to import. Found:\n".to_string();
-                    for p in &existing {
-                        let rel = p
-                            .strip_prefix(context_dir)
-                            .unwrap_or(p);
-                        msg.push_str(&format!("  {}\n", rel.display()));
-                    }
-                    // Remove trailing newline
-                    msg.pop();
-                    return Err((msg, span).into());
+            if existing.len() > 1 {
+                let mut msg = "It's not clear which file to import. Found:\n".to_string();
+                for p in &existing {
+                    let rel = p.strip_prefix(context_dir).unwrap_or(p);
+                    msg.push_str(&format!("  {}\n", rel.display()));
                 }
+                // Remove trailing newline
+                msg.pop();
+                return Err((msg, span).into());
+            }
 
-                Ok(existing.into_iter().next().cloned())
-            };
+            Ok(existing.into_iter().next().cloned())
+        };
 
         // Resolve candidates with conflict detection: check import candidates first
         // (if for_import), then regular candidates. Import candidates take priority
         // and never conflict with regular candidates.
         let resolve_with_conflicts = |base_path: &Path,
-                                       for_import: bool,
-                                       context_dir: &Path,
-                                       span: Span|
+                                      for_import: bool,
+                                      context_dir: &Path,
+                                      span: Span|
          -> SassResult<Option<PathBuf>> {
             let (import_candidates, regular_candidates) =
                 non_css_candidates_for_conflict(base_path, for_import);
@@ -2646,19 +2660,14 @@ impl<'a> Visitor<'a> {
         for load_path in &self.options.load_paths {
             let lp_buf = Self::normalize_path(&load_path.join(path));
 
-            if let Some(found) =
-                resolve_with_conflicts(&lp_buf, for_import, context_dir, span)?
-            {
+            if let Some(found) = resolve_with_conflicts(&lp_buf, for_import, context_dir, span)? {
                 return Ok(Some(ImportSource::Path(found)));
             }
 
             if self.is_dir_fast(&lp_buf) {
-                if let Some(found) = resolve_with_conflicts(
-                    &lp_buf.join("index"),
-                    for_import,
-                    context_dir,
-                    span,
-                )? {
+                if let Some(found) =
+                    resolve_with_conflicts(&lp_buf.join("index"), for_import, context_dir, span)?
+                {
                     return Ok(Some(ImportSource::Path(found)));
                 }
             }
@@ -2688,9 +2697,15 @@ impl<'a> Visitor<'a> {
         syntax: InputSyntax,
     ) -> SassResult<StyleSheet<'static>> {
         let result = match syntax {
-            InputSyntax::Scss => ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
-            InputSyntax::Sass => SassParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
-            InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse(),
+            InputSyntax::Scss => {
+                ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
+            }
+            InputSyntax::Sass => {
+                SassParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
+            }
+            InputSyntax::Css => {
+                CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
+            }
         }?;
         // Safety: the arena lives for the entire compilation (stored in Visitor).
         // INVARIANT: the erased-'static StyleSheet must not outlive the Visitor's arena.
@@ -2850,11 +2865,8 @@ impl<'a> Visitor<'a> {
                 let old_is_use_allowed = self.flags.is_use_allowed();
                 self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-                let style_sheet = self.parse_file(
-                    Lexer::new_from_file(&file),
-                    &name,
-                    file.span.subspan(0, 0),
-                )?;
+                let style_sheet =
+                    self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
 
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
@@ -2998,7 +3010,10 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_static_import_rule(&mut self, static_import: AstPlainCssImport<'static>) -> SassResult<()> {
+    fn visit_static_import_rule(
+        &mut self,
+        static_import: AstPlainCssImport<'static>,
+    ) -> SassResult<()> {
         let import = self.interpolation_to_value(static_import.url, false, false)?;
 
         let modifiers = static_import
@@ -3021,7 +3036,10 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_content_rule(&mut self, content_rule: &AstContentRule<'static>) -> SassResult<Option<Value>> {
+    fn visit_content_rule(
+        &mut self,
+        content_rule: &AstContentRule<'static>,
+    ) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
             #[allow(mutable_borrow_reservation_conflict)]
@@ -3088,7 +3106,10 @@ impl<'a> Visitor<'a> {
         nodes[innermost_contiguous.unwrap()]
     }
 
-    fn visit_at_root_rule(&mut self, mut at_root_rule: AstAtRootRule<'static>) -> SassResult<Option<Value>> {
+    fn visit_at_root_rule(
+        &mut self,
+        mut at_root_rule: AstAtRootRule<'static>,
+    ) -> SassResult<Option<Value>> {
         let query = match at_root_rule.query {
             Some(query) => {
                 let resolved = self.perform_interpolation_ref(&query.node, true)?;
@@ -3300,7 +3321,10 @@ impl<'a> Visitor<'a> {
         parser.parse()
     }
 
-    fn visit_extend_rule(&mut self, extend_rule: AstExtendRule<'static>) -> SassResult<Option<Value>> {
+    fn visit_extend_rule(
+        &mut self,
+        extend_rule: AstExtendRule<'static>,
+    ) -> SassResult<Option<Value>> {
         if !self.style_rule_exists() || self.declaration_name.is_some() {
             return Err((
                 "@extend may only be used within style rules.",
@@ -3319,7 +3343,11 @@ impl<'a> Visitor<'a> {
 
                 let text = complex.to_string();
                 let trimmed = text.trim();
-                let cant_or_shouldnt = if complex.is_useless() { "can't" } else { "shouldn't" };
+                let cant_or_shouldnt = if complex.is_useless() {
+                    "can't"
+                } else {
+                    "shouldn't"
+                };
 
                 self.emit_deprecation(Deprecation::BogusCombinators, extend_rule.span, || {
                     Ok(format!(
@@ -3688,13 +3716,19 @@ impl<'a> Visitor<'a> {
         let mut message = Some(message);
         let mut prebuilt_message = None;
 
-        if !self.deprecation_warnings_emitted.insert((deprecation, span)) {
+        if !self
+            .deprecation_warnings_emitted
+            .insert((deprecation, span))
+        {
             if !deprecation.message_may_vary_per_visit() {
                 return Ok(());
             }
 
             let msg = (message.take().unwrap())()?;
-            if !self.deprecation_messages_emitted.insert((span, msg.clone())) {
+            if !self
+                .deprecation_messages_emitted
+                .insert((span, msg.clone()))
+            {
                 return Ok(());
             }
             prebuilt_message = Some(msg);
@@ -3939,8 +3973,9 @@ impl<'a> Visitor<'a> {
                 // media queries — if so, reuse it instead of creating a new copy.
                 // This merges siblings like `h` and `k` into the same `@media`
                 // block after bubbling (dart-sass#777).
-                if let Some(existing) =
-                    self.css_tree.last_matching_media_sibling(parent, grandparent)
+                if let Some(existing) = self
+                    .css_tree
+                    .last_matching_media_sibling(parent, grandparent)
                 {
                     parent = existing;
                 } else {
@@ -4054,7 +4089,10 @@ impl<'a> Visitor<'a> {
         v
     }
 
-    fn visit_include_stmt(&mut self, include_stmt: &AstInclude<'static>) -> SassResult<Option<Value>> {
+    fn visit_include_stmt(
+        &mut self,
+        include_stmt: &AstInclude<'static>,
+    ) -> SassResult<Option<Value>> {
         let mixin = self
             .env
             .get_mixin(include_stmt.name, include_stmt.namespace)?;
@@ -4062,11 +4100,7 @@ impl<'a> Visitor<'a> {
         match mixin {
             Mixin::Builtin(mixin) => {
                 if include_stmt.content.is_some() {
-                    return Err((
-                        "Mixin doesn't accept a content block.",
-                        include_stmt.span,
-                    )
-                        .into());
+                    return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
 
                 let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
@@ -4082,9 +4116,7 @@ impl<'a> Visitor<'a> {
                         content,
                         env: self.env.new_closure(),
                     });
-                    self.with_content(Some(callable_content), |visitor| {
-                        mixin(args, visitor)
-                    })?;
+                    self.with_content(Some(callable_content), |visitor| mixin(args, visitor))?;
                 } else {
                     mixin(args, self)?;
                 }
@@ -4260,10 +4292,7 @@ impl<'a> Visitor<'a> {
         self.with_scope(true, true, |visitor| {
             let mut result = None;
 
-            'outer: while visitor
-                .visit_expr_ref(&while_stmt.condition)?
-                .is_truthy()
-            {
+            'outer: while visitor.visit_expr_ref(&while_stmt.condition)?.is_truthy() {
                 for stmt in while_stmt.body.iter() {
                     let val = visitor.visit_stmt_ref(stmt)?;
                     if val.is_some() {
@@ -4437,8 +4466,7 @@ impl<'a> Visitor<'a> {
     fn expr_span(expr: &AstExpr<'static>, fallback: Span) -> Span {
         match expr {
             AstExpr::BinaryOp(binop) => binop.span,
-            AstExpr::String(_, span)
-            | AstExpr::UnaryOp(.., span) => *span,
+            AstExpr::String(_, span) | AstExpr::UnaryOp(.., span) => *span,
             AstExpr::FunctionCall(func) => func.span,
             AstExpr::InterpolatedFunction(func) => func.span,
             AstExpr::CalculationWithFallback(calc) => calc.span,
@@ -4476,7 +4504,10 @@ impl<'a> Visitor<'a> {
 
         for (key, expr) in arguments.named {
             let val = self.visit_expr_ref(expr)?;
-            named.insert(*key, self.without_slash(val, || Self::expr_span(expr, span))?);
+            named.insert(
+                *key,
+                self.without_slash(val, || Self::expr_span(expr, span))?,
+            );
         }
 
         if arguments.rest.is_none() {
@@ -4638,10 +4669,10 @@ impl<'a> Visitor<'a> {
 
                 // Drain positional args in forward order (O(n) total vs O(n²) from remove())
                 for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
-                    visitor.env.scopes_mut().insert_var_last(
-                        declared_arguments[i].name,
-                        val,
-                    );
+                    visitor
+                        .env
+                        .scopes_mut()
+                        .insert_var_last(declared_arguments[i].name, val);
                 }
 
                 // todo: better name for var
@@ -4723,13 +4754,7 @@ impl<'a> Visitor<'a> {
                     "or",
                 );
 
-                Err((
-                    format!(
-                        "No {argument_word} named {argument_names}."
-                    ),
-                    span,
-                )
-                    .into())
+                Err((format!("No {argument_word} named {argument_names}."), span).into())
             })
         })
     }
@@ -4889,7 +4914,10 @@ impl<'a> Visitor<'a> {
         Ok(Value::List(Rc::new(elems), list.separator, list.brackets))
     }
 
-    fn visit_function_call_expr(&mut self, func_call: &FunctionCallExpr<'static>) -> SassResult<Value> {
+    fn visit_function_call_expr(
+        &mut self,
+        func_call: &FunctionCallExpr<'static>,
+    ) -> SassResult<Value> {
         let name = func_call.name;
 
         // If the function name starts with -- AND was written with hyphens in source
@@ -4934,8 +4962,7 @@ impl<'a> Visitor<'a> {
 
         let old_in_function = self.flags.in_function();
         self.flags.set(ContextFlags::IN_FUNCTION, true);
-        let value =
-            self.run_function_callable(func, func_call.arguments, func_call.span)?;
+        let value = self.run_function_callable(func, func_call.arguments, func_call.span)?;
         self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
 
         Ok(value)
@@ -4965,7 +4992,10 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_interpolated_func_expr(&mut self, func: &InterpolatedFunction<'static>) -> SassResult<Value> {
+    fn visit_interpolated_func_expr(
+        &mut self,
+        func: &InterpolatedFunction<'static>,
+    ) -> SassResult<Value> {
         let InterpolatedFunction {
             name,
             arguments: args,
@@ -5030,9 +5060,13 @@ impl<'a> Visitor<'a> {
             }),
             AstExpr::Variable { name, namespace } => self.env.get_var(*name, *namespace)?,
             AstExpr::ParentSelector => self.visit_parent_selector(),
-            AstExpr::BinaryOp(binop) => {
-                self.visit_bin_op(&binop.lhs, binop.op, &binop.rhs, binop.allows_slash, binop.span)?
-            }
+            AstExpr::BinaryOp(binop) => self.visit_bin_op(
+                &binop.lhs,
+                binop.op,
+                &binop.rhs,
+                binop.allows_slash,
+                binop.span,
+            )?,
             AstExpr::Paren(inner) => self.visit_expr_ref(inner)?,
             AstExpr::UnaryOp(op, inner, span) => self.visit_unary_op(*op, inner, *span)?,
             AstExpr::List(list) => self.visit_list_expr(list)?,
@@ -5087,13 +5121,10 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<CalculationArg> {
         Ok(match expr {
             AstExpr::Paren(inner) => {
-                let result =
-                    self.visit_calculation_value(inner, in_min_or_max, span)?;
+                let result = self.visit_calculation_value(inner, in_min_or_max, span)?;
 
                 match result {
-                    CalculationArg::String(text) => {
-                        CalculationArg::String(format!("({text})"))
-                    }
+                    CalculationArg::String(text) => CalculationArg::String(format!("({text})")),
                     CalculationArg::Interpolation(text) => {
                         CalculationArg::String(format!("({text})"))
                     }
@@ -5114,17 +5145,15 @@ impl<'a> Visitor<'a> {
                     CalculationArg::Interpolation(text)
                 }
             }
-            AstExpr::BinaryOp(binop) => {
-                SassCalculation::operate_internal(
-                    binop.op,
-                    self.visit_calculation_value(&binop.lhs, in_min_or_max, span)?,
-                    self.visit_calculation_value(&binop.rhs, in_min_or_max, span)?,
-                    in_min_or_max,
-                    !self.flags.in_supports_declaration(),
-                    self.options,
-                    span,
-                )?
-            }
+            AstExpr::BinaryOp(binop) => SassCalculation::operate_internal(
+                binop.op,
+                self.visit_calculation_value(&binop.lhs, in_min_or_max, span)?,
+                self.visit_calculation_value(&binop.rhs, in_min_or_max, span)?,
+                in_min_or_max,
+                !self.flags.in_supports_declaration(),
+                self.options,
+                span,
+            )?,
             AstExpr::Number { .. }
             | AstExpr::Calculation(..)
             | AstExpr::CalculationWithFallback(..)
@@ -5164,7 +5193,7 @@ impl<'a> Visitor<'a> {
                 } else {
                     "Missing math operator."
                 };
-                return Err((message, span).into())
+                return Err((message, span).into());
             }
             v => unreachable!("{:?}", v),
         })
@@ -5180,10 +5209,8 @@ impl<'a> Visitor<'a> {
         // resolution fails due to incompatible units (e.g. abs(1 + 1px)),
         // fall back to evaluating as the Sass math function where unitless
         // values freely combine with units.
-        let single_arg_fallback = matches!(
-            name,
-            CalculationName::Abs | CalculationName::Round
-        ) && ast_args.len() == 1;
+        let single_arg_fallback =
+            matches!(name, CalculationName::Abs | CalculationName::Round) && ast_args.len() == 1;
 
         let resolved = ast_args
             .iter()
@@ -5312,21 +5339,13 @@ impl<'a> Visitor<'a> {
             }
             CalculationName::Log => {
                 if args.is_empty() {
-                    return Err((
-                        "1 argument required, but only 0 were passed.",
-                        span,
-                    )
-                        .into());
+                    return Err(("1 argument required, but only 0 were passed.", span).into());
                 }
                 SassCalculation::log(args, self.options, span)
             }
             CalculationName::Hypot => {
                 if args.is_empty() {
-                    return Err((
-                        "hypot() must have at least one argument.",
-                        span,
-                    )
-                        .into());
+                    return Err(("hypot() must have at least one argument.", span).into());
                 }
                 SassCalculation::hypot(args, self.options, span)
             }
@@ -5346,8 +5365,7 @@ impl<'a> Visitor<'a> {
                 // round() can have 1-3 args. With 2-3 args, first might be a strategy keyword.
                 let strategy = if args.len() >= 2 {
                     let s = match &args[0] {
-                        CalculationArg::String(s)
-                        | CalculationArg::Interpolation(s) => {
+                        CalculationArg::String(s) | CalculationArg::Interpolation(s) => {
                             let lower = s.to_ascii_lowercase();
                             if matches!(lower.as_str(), "nearest" | "up" | "down" | "to-zero") {
                                 Some(lower)
@@ -5369,7 +5387,12 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_unary_op(&mut self, op: UnaryOp, expr: &AstExpr<'static>, span: Span) -> SassResult<Value> {
+    fn visit_unary_op(
+        &mut self,
+        op: UnaryOp,
+        expr: &AstExpr<'static>,
+        span: Span,
+    ) -> SassResult<Value> {
         let operand = self.visit_expr_ref(expr)?;
 
         match op {
@@ -5395,7 +5418,11 @@ impl<'a> Visitor<'a> {
             return self.without_slash(value, || span);
         }
 
-        if_arguments(self.arena).verify(if_expr.0.positional.len(), if_expr.0.named, if_expr.0.span)?;
+        if_arguments(self.arena).verify(
+            if_expr.0.positional.len(),
+            if_expr.0.named,
+            if_expr.0.span,
+        )?;
 
         let positional = if_expr.0.positional;
         let named = if_expr.0.named;
@@ -5487,22 +5514,16 @@ impl<'a> Visitor<'a> {
         for clause in &css_if.clauses[first_idx + 1..] {
             match &clause.condition {
                 IfCondition::Else => {
-                    let val_str = self.evaluate_to_css(
-                        &clause.value,
-                        QuoteKind::None,
-                        css_if.span,
-                    )?;
+                    let val_str =
+                        self.evaluate_to_css(&clause.value, QuoteKind::None, css_if.span)?;
                     parts.push(format!("else: {val_str}"));
                 }
                 other => {
                     match self.eval_if_condition(other)? {
                         ConditionResult::True => {
                             // Sass condition that's true — this becomes the value
-                            let val_str = self.evaluate_to_css(
-                                &clause.value,
-                                QuoteKind::None,
-                                css_if.span,
-                            )?;
+                            let val_str =
+                                self.evaluate_to_css(&clause.value, QuoteKind::None, css_if.span)?;
                             // Replace all remaining with just this value
                             parts.push(format!("else: {val_str}"));
                             break;
@@ -5513,11 +5534,8 @@ impl<'a> Visitor<'a> {
                         }
                         ConditionResult::Css(remaining) => {
                             let cond_str = self.serialize_if_condition(&remaining)?;
-                            let val_str = self.evaluate_to_css(
-                                &clause.value,
-                                QuoteKind::None,
-                                css_if.span,
-                            )?;
+                            let val_str =
+                                self.evaluate_to_css(&clause.value, QuoteKind::None, css_if.span)?;
                             parts.push(format!("{cond_str}: {val_str}"));
                         }
                     }
@@ -5529,7 +5547,10 @@ impl<'a> Visitor<'a> {
         Ok(Value::String(output.into(), QuoteKind::None))
     }
 
-    fn eval_if_condition(&mut self, condition: &IfCondition<'static>) -> SassResult<ConditionResult> {
+    fn eval_if_condition(
+        &mut self,
+        condition: &IfCondition<'static>,
+    ) -> SassResult<ConditionResult> {
         match condition {
             IfCondition::Else => Ok(ConditionResult::True),
             IfCondition::Atom(atom) => self.eval_if_atom(atom),
@@ -5541,25 +5562,21 @@ impl<'a> Visitor<'a> {
                         // Safety: see `erase_ref_lifetime` — `self.arena` lives for
                         // the whole compilation, so this reference is valid for
                         // as long as any other 'static-erased AST reference.
-                        let inner_cond = unsafe {
-                            crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond))
-                        };
+                        let inner_cond =
+                            unsafe { crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond)) };
                         Ok(ConditionResult::Css(IfCondition::Not(inner_cond, *_span)))
                     }
                 }
             }
-            IfCondition::Paren(inner) => {
-                match self.eval_if_condition(inner)? {
-                    ConditionResult::True => Ok(ConditionResult::True),
-                    ConditionResult::False => Ok(ConditionResult::False),
-                    ConditionResult::Css(inner_cond) => {
-                        let inner_cond = unsafe {
-                            crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond))
-                        };
-                        Ok(ConditionResult::Css(IfCondition::Paren(inner_cond)))
-                    }
+            IfCondition::Paren(inner) => match self.eval_if_condition(inner)? {
+                ConditionResult::True => Ok(ConditionResult::True),
+                ConditionResult::False => Ok(ConditionResult::False),
+                ConditionResult::Css(inner_cond) => {
+                    let inner_cond =
+                        unsafe { crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond)) };
+                    Ok(ConditionResult::Css(IfCondition::Paren(inner_cond)))
                 }
-            }
+            },
             IfCondition::And(operands) => {
                 let mut remaining_css = Vec::new();
                 for op in operands {
@@ -5580,7 +5597,9 @@ impl<'a> Visitor<'a> {
                     Ok(ConditionResult::True)
                 } else if remaining_css.len() == 1 {
                     // Unwrap Paren if the sole remaining was in a group
-                    Ok(ConditionResult::Css(unwrap_paren(remaining_css.pop().unwrap())))
+                    Ok(ConditionResult::Css(unwrap_paren(
+                        remaining_css.pop().unwrap(),
+                    )))
                 } else {
                     Ok(ConditionResult::Css(IfCondition::And(remaining_css)))
                 }
@@ -5604,7 +5623,9 @@ impl<'a> Visitor<'a> {
                 if remaining_css.is_empty() {
                     Ok(ConditionResult::False)
                 } else if remaining_css.len() == 1 {
-                    Ok(ConditionResult::Css(unwrap_paren(remaining_css.pop().unwrap())))
+                    Ok(ConditionResult::Css(unwrap_paren(
+                        remaining_css.pop().unwrap(),
+                    )))
                 } else {
                     Ok(ConditionResult::Css(IfCondition::Or(remaining_css)))
                 }
@@ -5670,13 +5691,16 @@ impl<'a> Visitor<'a> {
                     Ok(ConditionResult::False)
                 }
             }
-            IfConditionAtom::Css(interp, span)
-            | IfConditionAtom::CssRaw(interp, span) => {
+            IfConditionAtom::Css(interp, span) | IfConditionAtom::CssRaw(interp, span) => {
                 // Evaluate any interpolations within the CSS text
                 let text = self.perform_interpolation_ref(interp, false)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
                     IfConditionAtom::Css(
-                        unsafe { crate::ast::erase_interpolation_lifetime(InterpolationBuilder::new_plain(text).finish(self.arena)) },
+                        unsafe {
+                            crate::ast::erase_interpolation_lifetime(
+                                InterpolationBuilder::new_plain(text).finish(self.arena),
+                            )
+                        },
                         *span,
                     ),
                 )))
@@ -5686,7 +5710,11 @@ impl<'a> Visitor<'a> {
                 let text = self.serialize(value, QuoteKind::None, *span)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
                     IfConditionAtom::Css(
-                        unsafe { crate::ast::erase_interpolation_lifetime(InterpolationBuilder::new_plain(text).finish(self.arena)) },
+                        unsafe {
+                            crate::ast::erase_interpolation_lifetime(
+                                InterpolationBuilder::new_plain(text).finish(self.arena),
+                            )
+                        },
                         *span,
                     ),
                 )))
@@ -5700,8 +5728,7 @@ impl<'a> Visitor<'a> {
         match condition {
             IfCondition::Else => Ok("else".to_string()),
             IfCondition::Atom(atom) => match atom {
-                IfConditionAtom::Css(interp, _)
-                | IfConditionAtom::CssRaw(interp, _) => {
+                IfConditionAtom::Css(interp, _) | IfConditionAtom::CssRaw(interp, _) => {
                     Ok(interp.as_plain().unwrap_or("").to_string())
                 }
                 IfConditionAtom::Sass(_, _) => {
@@ -5736,7 +5763,11 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_string(&mut self, text: &Interpolation<'static>, quote: QuoteKind) -> SassResult<Value> {
+    fn visit_string(
+        &mut self,
+        text: &Interpolation<'static>,
+        quote: QuoteKind,
+    ) -> SassResult<Value> {
         // Don't use [performInterpolation] here because we need to get the raw text
         // from strings, rather than the semantic value.
         let old_in_supports_declaration = self.flags.in_supports_declaration();
@@ -5916,7 +5947,10 @@ impl<'a> Visitor<'a> {
         expr.to_css_string(span, self.options.is_compressed())
     }
 
-    pub(crate) fn visit_ruleset(&mut self, ruleset: AstRuleSet<'static>) -> SassResult<Option<Value>> {
+    pub(crate) fn visit_ruleset(
+        &mut self,
+        ruleset: AstRuleSet<'static>,
+    ) -> SassResult<Option<Value>> {
         if self.style_rule_recursion_depth >= MAX_STYLE_RULE_RECURSION_DEPTH {
             return Err(("Too much nesting.", ruleset.span).into());
         }
@@ -5968,8 +6002,7 @@ impl<'a> Visitor<'a> {
             });
 
             let was_in_keyframes_rule = self.flags.in_keyframes_rule();
-            self.flags
-                .set(ContextFlags::IN_KEYFRAMES_RULE, true);
+            self.flags.set(ContextFlags::IN_KEYFRAMES_RULE, true);
 
             self.with_parent(
                 keyframes_ruleset,
@@ -6029,14 +6062,8 @@ impl<'a> Visitor<'a> {
                 }
 
                 // Reject trailing combinators in plain CSS
-                if let Some(ComplexSelectorComponent::Combinator(..)) =
-                    complex.components.last()
-                {
-                    return Err((
-                        "expected selector.",
-                        ruleset.selector_span,
-                    )
-                        .into());
+                if let Some(ComplexSelectorComponent::Combinator(..)) = complex.components.last() {
+                    return Err(("expected selector.", ruleset.selector_span).into());
                 }
             }
         }
@@ -6045,8 +6072,7 @@ impl<'a> Visitor<'a> {
         // and for selectors containing & at any depth. At depth 0 without &,
         // still resolve to handle @import context (e.g., a {@import "plain.css"}).
         let skip_resolution = self.is_plain_css
-            && (self.plain_css_style_rule_depth > 0
-                || parsed_selector.contains_parent_selector());
+            && (self.plain_css_style_rule_depth > 0 || parsed_selector.contains_parent_selector());
 
         if !skip_resolution {
             parsed_selector = parsed_selector.resolve_parent_selectors(
@@ -6156,7 +6182,6 @@ impl<'a> Visitor<'a> {
     fn style_rule_exists(&self) -> bool {
         !self.flags.at_root_excluding_style_rule() && self.style_rule_ignoring_at_root.is_some()
     }
-
 }
 
 #[cfg(test)]

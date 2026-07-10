@@ -24,8 +24,14 @@ use std::path::Path;
 //   literal that previously failed to resolve, proving the fix end-to-end.
 #[test]
 fn trybuild() {
-    let multi_main = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/trybuild/multi/main.scss");
-    let generated_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/trybuild/multi_file_generated.rs");
+    let multi_main = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/trybuild/multi/main.scss"
+    );
+    let generated_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/trybuild/multi_file_generated.rs"
+    );
     std::fs::write(
         generated_path,
         format!(

@@ -199,14 +199,14 @@ impl<'a> InterpolationBuilder<'a> {
     /// draining it. Nothing leaks into the arena's never-dropped storage.
     pub fn finish(self, arena: &'a Bump) -> Interpolation<'a> {
         Interpolation {
-            contents: arena.alloc_slice_fill_iter(self.contents.into_iter().map(|part| {
-                match part {
+            contents: arena.alloc_slice_fill_iter(self.contents.into_iter().map(
+                |part| match part {
                     InterpolationPartBuilder::String(s) => {
                         InterpolationPart::String(arena.alloc_str(&s))
                     }
                     InterpolationPartBuilder::Expr(e) => InterpolationPart::Expr(e),
-                }
-            })),
+                },
+            )),
         }
     }
 }

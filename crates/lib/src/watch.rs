@@ -62,7 +62,10 @@ use std::{
     time::Duration,
 };
 
-use notify::{Config as NotifyConfig, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode,
+    Watcher,
+};
 
 use grass::{from_path_with_loaded_files, from_path_with_source_map, Options, SourceMapData};
 
@@ -77,7 +80,10 @@ pub(crate) struct WatchArgs<'a> {
     pub(crate) poll: bool,
 }
 
-type WatchCompileResult = (grass::Result<(String, Option<SourceMapData>)>, Option<Vec<PathBuf>>);
+type WatchCompileResult = (
+    grass::Result<(String, Option<SourceMapData>)>,
+    Option<Vec<PathBuf>>,
+);
 
 /// Tracks the directories currently watched for a single `--watch` session
 /// and rebuilds that set after every compile from the compile's
@@ -100,7 +106,12 @@ struct DepWatcher {
 }
 
 impl DepWatcher {
-    fn new(watcher: Box<dyn Watcher>, entry_dir: Option<PathBuf>, load_paths: &[&Path], cwd: &Path) -> io::Result<Self> {
+    fn new(
+        watcher: Box<dyn Watcher>,
+        entry_dir: Option<PathBuf>,
+        load_paths: &[&Path],
+        cwd: &Path,
+    ) -> io::Result<Self> {
         let mut this = Self {
             watcher,
             entry_dir,
@@ -110,18 +121,24 @@ impl DepWatcher {
         };
 
         for load_path in load_paths {
-            this.load_path_roots
-                .insert(crate::absolute_source_path(&load_path.to_string_lossy(), cwd));
+            this.load_path_roots.insert(crate::absolute_source_path(
+                &load_path.to_string_lossy(),
+                cwd,
+            ));
         }
         for root in &this.load_path_roots {
-            this.watcher.watch(root, RecursiveMode::Recursive).map_err(notify_to_io_err)?;
+            this.watcher
+                .watch(root, RecursiveMode::Recursive)
+                .map_err(notify_to_io_err)?;
         }
 
         // No compile has run yet, so there's no `loaded_files` to be
         // precise about -- start in fallback mode, matching the pre-#274
         // behavior for the very first compile.
         if let Some(dir) = &this.entry_dir {
-            this.watcher.watch(dir, RecursiveMode::Recursive).map_err(notify_to_io_err)?;
+            this.watcher
+                .watch(dir, RecursiveMode::Recursive)
+                .map_err(notify_to_io_err)?;
             this.fallback_active = true;
         }
 
@@ -137,7 +154,9 @@ impl DepWatcher {
             // all -- neither should leave us with less coverage than we
             // already had, so keep whatever was watched before.
             if let Some(dir) = self.entry_dir.clone() {
-                if !self.fallback_active && self.watcher.watch(&dir, RecursiveMode::Recursive).is_ok() {
+                if !self.fallback_active
+                    && self.watcher.watch(&dir, RecursiveMode::Recursive).is_ok()
+                {
                     self.fallback_active = true;
                 }
             }
@@ -259,20 +278,24 @@ fn event_is_relevant(evt: &notify::Result<Event>) -> bool {
     let Ok(evt) = evt else {
         return false;
     };
-    if !matches!(evt.kind, EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)) {
+    if !matches!(
+        evt.kind,
+        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+    ) {
         return false;
     }
-    evt.paths
-        .iter()
-        .any(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("scss") | Some("sass")))
+    evt.paths.iter().any(|p| {
+        matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("scss") | Some("sass")
+        )
+    })
 }
 
 /// Compile once for watch mode. Explicit source-map requests retain the
 /// source-map result used by `write_compile_result`; ordinary watch compiles
 /// use the dependency-only path so serializer mapping state stays disabled.
-fn compile_for_watch(
-    args: &WatchArgs,
-) -> WatchCompileResult {
+fn compile_for_watch(args: &WatchArgs) -> WatchCompileResult {
     if args.write_config.generate_source_map {
         let compile_result = from_path_with_source_map(args.input, args.options);
         let loaded_files = match &compile_result {
@@ -297,7 +320,12 @@ fn compile_and_announce(args: &WatchArgs) -> io::Result<Option<Vec<PathBuf>>> {
     let (compile_result, loaded_files) = compile_for_watch(args);
 
     if write_compile_result(compile_result, &args.write_config)? {
-        println!("{} Compiled {} to {}.", timestamp::now_utc_minute(), args.input, args.output);
+        println!(
+            "{} Compiled {} to {}.",
+            timestamp::now_utc_minute(),
+            args.input,
+            args.output
+        );
     }
     // On failure, the error was already printed to stderr by
     // `write_compile_result`; watch mode just keeps going.

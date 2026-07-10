@@ -168,7 +168,10 @@ pub(crate) fn unit_to_js_units(unit: &sass::Unit) -> (Vec<String>, Vec<String>) 
 /// The inverse of [`unit_to_js_units`], built the same way: `Unit::from`
 /// (public) parses each unit string, `Unit::Complex`/`ComplexUnit` (public
 /// variant/fields) assembles compound units.
-pub(crate) fn js_units_to_unit(numerator_units: Vec<String>, denominator_units: Vec<String>) -> sass::Unit {
+pub(crate) fn js_units_to_unit(
+    numerator_units: Vec<String>,
+    denominator_units: Vec<String>,
+) -> sass::Unit {
     let numer: Vec<sass::Unit> = numerator_units.into_iter().map(sass::Unit::from).collect();
     let denom: Vec<sass::Unit> = denominator_units
         .into_iter()
@@ -247,15 +250,18 @@ pub fn js_value_to_sass(env: Env, value: JsUnknown) -> Result<sass::Value> {
     match value.get_type()? {
         ValueType::Boolean => {
             let b = value.coerce_to_bool()?.get_value()?;
-            Ok(if b { sass::Value::True } else { sass::Value::False })
+            Ok(if b {
+                sass::Value::True
+            } else {
+                sass::Value::False
+            })
         }
         ValueType::Null | ValueType::Undefined => Ok(sass::Value::Null),
         ValueType::Object => {
             let raw = unsafe { <JsUnknown as napi::NapiRaw>::raw(&value) };
 
             if unsafe { <&SassNumber as ValidateNapiValue>::validate(env.raw(), raw) }.is_ok() {
-                let n: &SassNumber =
-                    unsafe { FromNapiValue::from_napi_value(env.raw(), raw)? };
+                let n: &SassNumber = unsafe { FromNapiValue::from_napi_value(env.raw(), raw)? };
                 return Ok(sass::Value::Dimension(sass::SassNumber {
                     num: sass::Number(n.value),
                     unit: js_units_to_unit(n.numerator_units.clone(), n.denominator_units.clone()),
@@ -264,8 +270,7 @@ pub fn js_value_to_sass(env: Env, value: JsUnknown) -> Result<sass::Value> {
             }
 
             if unsafe { <&SassString as ValidateNapiValue>::validate(env.raw(), raw) }.is_ok() {
-                let s: &SassString =
-                    unsafe { FromNapiValue::from_napi_value(env.raw(), raw)? };
+                let s: &SassString = unsafe { FromNapiValue::from_napi_value(env.raw(), raw)? };
                 return Ok(sass::Value::String(
                     s.text.clone().into(),
                     if s.has_quotes {

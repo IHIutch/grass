@@ -244,9 +244,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
-                '$' => children.push(AstStmt::VariableDecl(self.arena().alloc(
-                    self.parse_variable_declaration_without_namespace(None, None)?,
-                ))),
+                '$' => children
+                    .push(AstStmt::VariableDecl(self.arena().alloc(
+                        self.parse_variable_declaration_without_namespace(None, None)?,
+                    ))),
                 '/' => match self.toks().peek_n(1) {
                     Some(Token { kind: '/', .. }) => {
                         children.push(self.parse_silent_comment()?);
@@ -286,9 +287,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace_without_comments();
         while let Some(tok) = self.toks().peek() {
             match tok.kind {
-                '$' => stmts.push(AstStmt::VariableDecl(self.arena().alloc(
-                    self.parse_variable_declaration_without_namespace(None, None)?,
-                ))),
+                '$' => stmts
+                    .push(AstStmt::VariableDecl(self.arena().alloc(
+                        self.parse_variable_declaration_without_namespace(None, None)?,
+                    ))),
                 '/' => match self.toks().peek_n(1) {
                     Some(Token { kind: '/', .. }) => {
                         stmts.push(self.parse_silent_comment()?);
@@ -551,7 +553,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.flags_mut().set(ContextFlags::FOUND_CONTENT_RULE, true);
 
-        Ok(AstStmt::ContentRule(self.arena().alloc(AstContentRule { args })))
+        Ok(AstStmt::ContentRule(
+            self.arena().alloc(AstContentRule { args }),
+        ))
     }
 
     fn parse_debug_rule(&mut self) -> SassResult<AstStmt<'a>> {
@@ -883,7 +887,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let body = self.parse_children(child)?;
         self.whitespace_without_comments();
 
-        let mut clauses = vec![AstIfClause { condition, body: self.alloc_stmts(body) }];
+        let mut clauses = vec![AstIfClause {
+            condition,
+            body: self.alloc_stmts(body),
+        }];
 
         let mut last_clause: Option<&'a [AstStmt<'a>]> = None;
 
@@ -896,7 +903,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 self.set_consume_newlines(was_consuming_newlines);
                 let condition = self.parse_expression(None, None, None)?.node;
                 let body = self.parse_children(child)?;
-                clauses.push(AstIfClause { condition, body: self.alloc_stmts(body) });
+                clauses.push(AstIfClause {
+                    condition,
+                    body: self.alloc_stmts(body),
+                });
             } else {
                 let else_body = self.parse_children(child)?;
                 last_clause = Some(self.alloc_stmts(else_body));
@@ -914,7 +924,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }))
     }
 
-    fn try_parse_import_supports_function(&mut self) -> SassResult<Option<AstSupportsCondition<'a>>> {
+    fn try_parse_import_supports_function(
+        &mut self,
+    ) -> SassResult<Option<AstSupportsCondition<'a>>> {
         if !self.looking_at_interpolated_identifier() {
             return Ok(None);
         }
@@ -989,7 +1001,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                             buffer.add_char('(');
                         }
 
-                        buffer.add_expr(AstExpr::Supports(self.arena().alloc(query)).span(self.empty_span()));
+                        buffer.add_expr(
+                            AstExpr::Supports(self.arena().alloc(query)).span(self.empty_span()),
+                        );
 
                         if !is_declaration {
                             buffer.add_char(')');
@@ -1027,7 +1041,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn try_url_contents(&mut self, name: Option<&str>) -> SassResult<Option<InterpolationBuilder<'a>>> {
+    fn try_url_contents(
+        &mut self,
+        name: Option<&str>,
+    ) -> SassResult<Option<InterpolationBuilder<'a>>> {
         let start = self.toks().cursor();
         if !self.scan_char('(') {
             return Ok(None);
@@ -1110,9 +1127,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             if try_url {
                 let url = self.parse_dynamic_url()?;
                 self.whitespace()?;
-                let modifiers = self
-                    .try_import_modifiers()?
-                    .map(|m| m.finish(self.arena()));
+                let modifiers = self.try_import_modifiers()?.map(|m| m.finish(self.arena()));
                 return Ok(AstImport::Plain(AstPlainCssImport {
                     url: InterpolationBuilder::new_with_expr(
                         url.span(self.toks_mut().span_from(start)),
@@ -1133,19 +1148,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let start = self.toks().cursor();
             let mut url = String::new();
             while let Some(tok) = self.toks().peek() {
-                if matches!(
-                    tok.kind,
-                    ' ' | '\t' | '\n' | '\r' | ',' | ';'
-                ) || tok.kind == ')' {
+                if matches!(tok.kind, ' ' | '\t' | '\n' | '\r' | ',' | ';') || tok.kind == ')' {
                     break;
                 }
                 url.push(tok.kind);
                 self.toks_mut().next();
             }
             self.whitespace()?;
-            let modifiers = self
-                .try_import_modifiers()?
-                .map(|m| m.finish(self.arena()));
+            let modifiers = self.try_import_modifiers()?.map(|m| m.finish(self.arena()));
             let span = self.toks_mut().span_from(start);
 
             // Wrap the unquoted URL in double quotes, matching dart-sass behavior
@@ -1166,9 +1176,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let url = self.parse_string()?;
         let raw_url = self.toks().raw_text(start);
         self.whitespace()?;
-        let modifiers = self
-            .try_import_modifiers()?
-            .map(|m| m.finish(self.arena()));
+        let modifiers = self.try_import_modifiers()?.map(|m| m.finish(self.arena()));
 
         let span = self.toks_mut().span_from(start);
 
@@ -1376,11 +1384,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         if !found_match {
-            return Err((
-                format!("Expected {quote}."),
-                self.toks().current_span(),
-            )
-                .into());
+            return Err((format!("Expected {quote}."), self.toks().current_span()).into());
         }
 
         Ok(Spanned {
@@ -1464,12 +1468,17 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }))
     }
 
-    fn unknown_at_rule(&mut self, name: InterpolationBuilder<'a>, start: usize) -> SassResult<AstStmt<'a>> {
+    fn unknown_at_rule(
+        &mut self,
+        name: InterpolationBuilder<'a>,
+        start: usize,
+    ) -> SassResult<AstStmt<'a>> {
         let was_in_unknown_at_rule = self.flags().in_unknown_at_rule();
         self.flags_mut().set(ContextFlags::IN_UNKNOWN_AT_RULE, true);
 
         // Strip comments from @-moz-document values (dart-sass compatibility)
-        let omit_comments = name.as_plain()
+        let omit_comments = name
+            .as_plain()
             .is_some_and(|n| n.eq_ignore_ascii_case("-moz-document"));
 
         let value: Option<Interpolation<'a>> =
@@ -1480,12 +1489,16 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             };
 
         // CSS custom function: @function --name() or @FUNCTION --name()
-        let is_css_function = name.as_plain()
+        let is_css_function = name
+            .as_plain()
             .is_some_and(|n| n.eq_ignore_ascii_case("function"))
-            && value.as_ref().is_some_and(|v| v.initial_plain().starts_with("--"));
+            && value
+                .as_ref()
+                .is_some_and(|v| v.initial_plain().starts_with("--"));
         let was_in_css_function = self.flags().in_css_function_body();
         if is_css_function {
-            self.flags_mut().set(ContextFlags::IN_CSS_FUNCTION_BODY, true);
+            self.flags_mut()
+                .set(ContextFlags::IN_CSS_FUNCTION_BODY, true);
         }
 
         let children = if self.looking_at_children()? {
@@ -1518,12 +1531,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             ));
         }
 
-        Ok(AstStmt::UnknownAtRule(self.arena().alloc(AstUnknownAtRule {
-            name: name.finish(self.arena()),
-            value,
-            body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c)),
-            span,
-        })))
+        Ok(AstStmt::UnknownAtRule(self.arena().alloc(
+            AstUnknownAtRule {
+                name: name.finish(self.arena()),
+                value,
+                body: children.map(|c| &*self.arena().alloc_slice_fill_iter(c)),
+                span,
+            },
+        )))
     }
 
     fn try_supports_operation(
@@ -1606,7 +1621,11 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let identifier = self.parse_interpolated_identifier()?;
             let ident_span = self.toks_mut().span_from(start);
 
-            if identifier.as_plain().unwrap_or("").eq_ignore_ascii_case("not") {
+            if identifier
+                .as_plain()
+                .unwrap_or("")
+                .eq_ignore_ascii_case("not")
+            {
                 return Err((r#""not" is not a valid identifier here."#, ident_span).into());
             }
 
@@ -1647,7 +1666,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             let condition = self.supports_condition_in_parens()?;
             self.expect_char(')')?;
             self.set_consume_newlines(was_consuming_newlines);
-            return Ok(AstSupportsCondition::Negation(self.arena().alloc(condition)));
+            return Ok(AstSupportsCondition::Negation(
+                self.arena().alloc(condition),
+            ));
         } else if self.toks_mut().next_char_is('(') {
             let condition = self.parse_supports_condition()?;
             self.expect_char(')')?;
@@ -1676,9 +1697,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let expr = self.parse_expression(None, None, None);
         let found_colon = self.expect_char(':');
         let name: AstExpr<'a> = match (expr, found_colon) {
-            (Ok(val), Ok(..)) => {
-                val.node
-            }
+            (Ok(val), Ok(..)) => val.node,
             (Ok(..), Err(e)) | (Err(e), Ok(..)) | (Err(e), Err(..)) => {
                 self.toks_mut().set_cursor(name_start);
                 self.flags_mut().set(ContextFlags::IN_PARENS, was_in_parens);
@@ -1725,9 +1744,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn parse_supports_condition(&mut self) -> SassResult<AstSupportsCondition<'a>> {
         if self.scan_identifier("not", false)? {
             self.whitespace()?;
-            return Ok(AstSupportsCondition::Negation(self.arena().alloc(
-                self.supports_condition_in_parens()?,
-            )));
+            return Ok(AstSupportsCondition::Negation(
+                self.arena().alloc(self.supports_condition_in_parens()?),
+            ));
         }
 
         let mut condition = self.supports_condition_in_parens()?;
@@ -1805,7 +1824,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.flags_mut()
             .set(ContextFlags::IN_CONTROL_FLOW, was_in_control_directive);
 
-        Ok(AstStmt::While(self.arena().alloc(AstWhile { condition, body: self.alloc_stmts(body) })))
+        Ok(AstStmt::While(self.arena().alloc(AstWhile {
+            condition,
+            body: self.alloc_stmts(body),
+        })))
     }
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         self.set_consume_newlines(true);
@@ -1846,8 +1868,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         let config = self.parse_configuration(true)?;
-        let config: &'a [ConfiguredVariable<'a>] =
-            self.arena().alloc_slice_fill_iter(config.unwrap_or_default());
+        let config: &'a [ConfiguredVariable<'a>] = self
+            .arena()
+            .alloc_slice_fill_iter(config.unwrap_or_default());
 
         self.expect_statement_separator(Some("@forward rule"))?;
         let span = self.toks_mut().span_from(start);
@@ -1884,7 +1907,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     span,
                 ))
             } else {
-                self.arena().alloc(AstForwardRule::new(url, prefix, config, span))
+                self.arena()
+                    .alloc(AstForwardRule::new(url, prefix, config, span))
             },
         ))
     }
@@ -2307,7 +2331,6 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: None,
                 body: self.alloc_stmts(children),
                 span: self.toks_mut().span_from(start),
-
             })));
         }
 
@@ -2337,7 +2360,6 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: Some(value),
                 body: self.alloc_stmts(children),
                 span: self.toks_mut().span_from(start),
-
             })))
         } else {
             self.expect_statement_separator(None)?;
@@ -2346,7 +2368,6 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 value: Some(value),
                 body: &[],
                 span: self.toks_mut().span_from(start),
-
             })))
         }
     }
@@ -2373,7 +2394,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(interpolation)
     }
 
-    fn parse_interpolated_identifier_body(&mut self, buffer: &mut InterpolationBuilder<'a>) -> SassResult<()> {
+    fn parse_interpolated_identifier_body(
+        &mut self,
+        buffer: &mut InterpolationBuilder<'a>,
+    ) -> SassResult<()> {
         while let Some(next) = self.toks().peek() {
             match next.kind {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '\u{80}'..=std::char::MAX => {
@@ -2512,7 +2536,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         // default=true
         allow_colon: bool,
     ) -> SassResult<InterpolationBuilder<'a>> {
-        self.parse_interpolated_declaration_value_inner(allow_semicolon, allow_empty, allow_colon, true)
+        self.parse_interpolated_declaration_value_inner(
+            allow_semicolon,
+            allow_empty,
+            allow_colon,
+            true,
+        )
     }
 
     /// Like `parse_interpolated_declaration_value` but with `silent_comments=false`,
@@ -2523,7 +2552,12 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         allow_empty: bool,
         allow_colon: bool,
     ) -> SassResult<InterpolationBuilder<'a>> {
-        self.parse_interpolated_declaration_value_inner(allow_semicolon, allow_empty, allow_colon, false)
+        self.parse_interpolated_declaration_value_inner(
+            allow_semicolon,
+            allow_empty,
+            allow_colon,
+            false,
+        )
     }
 
     fn parse_interpolated_declaration_value_inner(
@@ -2604,10 +2638,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '\n' | '\r' => {
-                    if self.is_indented()
-                        && brackets.is_empty()
-                        && !self.is_consuming_newlines()
-                    {
+                    if self.is_indented() && brackets.is_empty() && !self.is_consuming_newlines() {
                         break;
                     }
                     buffer.add_char('\n');
@@ -2805,7 +2836,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 && matches!(self.toks().peek(), Some(Token { kind: ')', .. }))
             {
                 positional.push(AstExpr::String(
-                    StringExpr(InterpolationBuilder::new().finish(self.arena()), QuoteKind::None),
+                    StringExpr(
+                        InterpolationBuilder::new().finish(self.arena()),
+                        QuoteKind::None,
+                    ),
                     self.toks().current_span(),
                 ));
                 break;
@@ -2874,14 +2908,19 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         match variable_or_interpolation {
             VariableDeclOrInterpolation::Interpolation(int) => name_buffer.add_interpolation(int),
             VariableDeclOrInterpolation::VariableDecl(v) => {
-                return Ok(DeclarationOrBuffer::Stmt(AstStmt::VariableDecl(self.arena().alloc(v))))
+                return Ok(DeclarationOrBuffer::Stmt(AstStmt::VariableDecl(
+                    self.arena().alloc(v),
+                )))
             }
         }
 
         self.flags_mut().set(ContextFlags::IS_USE_ALLOWED, false);
 
         if self.next_matches("/*") {
-            self.fallible_append_raw_text(name_buffer.trailing_string_mut(), Self::skip_loud_comment)?;
+            self.fallible_append_raw_text(
+                name_buffer.trailing_string_mut(),
+                Self::skip_loud_comment,
+            )?;
         }
 
         let mut mid_buffer = String::new();
@@ -2897,7 +2936,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         // Parse custom properties and CSS function body declarations as raw CSS.
         let is_custom_property = name_buffer.initial_plain().starts_with("--");
-        let is_css_fn_decl = self.flags().in_css_function_body() && name_buffer.as_plain().is_some();
+        let is_css_fn_decl =
+            self.flags().in_css_function_body() && name_buffer.as_plain().is_some();
         if is_custom_property || is_css_fn_decl {
             // For CSS function body declarations, consume whitespace so the
             // serializer's ": " doesn't create a double space.
@@ -2905,7 +2945,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 self.whitespace()?;
             }
             let value_start = self.toks().cursor();
-            let value = self.parse_interpolated_declaration_value_no_strip_comments(false, true, true)?;
+            let value =
+                self.parse_interpolated_declaration_value_no_strip_comments(false, true, true)?;
             let value_span = self.toks_mut().span_from(value_start);
             let separator_name = if is_css_fn_decl && !is_custom_property {
                 Some("@function result")
@@ -2913,18 +2954,20 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 Some("custom property")
             };
             self.expect_statement_separator(separator_name)?;
-            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
-                name: name_buffer.finish(self.arena()),
-                value: Some(
-                    AstExpr::String(
-                        StringExpr(value.finish(self.arena()), QuoteKind::None),
-                        value_span,
-                    )
-                    .span(value_span),
-                ),
-                span: self.toks_mut().span_from(start),
-                body: &[],
-            }))));
+            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(
+                self.arena().alloc(AstStyle {
+                    name: name_buffer.finish(self.arena()),
+                    value: Some(
+                        AstExpr::String(
+                            StringExpr(value.finish(self.arena()), QuoteKind::None),
+                            value_span,
+                        )
+                        .span(value_span),
+                    ),
+                    span: self.toks_mut().span_from(start),
+                    body: &[],
+                }),
+            )));
         }
 
         if self.scan_char(':') {
@@ -2954,13 +2997,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     .into());
             }
             let body = self.with_children(Self::parse_declaration_child)?.node;
-            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
-                name: name_buffer.finish(self.arena()),
-                value: None,
-                span: self.toks_mut().span_from(start),
-                body: self.alloc_stmts(body),
-
-            }))));
+            return Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(
+                self.arena().alloc(AstStyle {
+                    name: name_buffer.finish(self.arena()),
+                    value: None,
+                    span: self.toks_mut().span_from(start),
+                    body: self.alloc_stmts(body),
+                }),
+            )));
         }
 
         let could_be_selector = self.toks().cursor() == post_colon_whitespace_start
@@ -3011,22 +3055,24 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     .into());
             }
             let body = self.with_children(Self::parse_declaration_child)?.node;
-            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
-                name: name_buffer.finish(self.arena()),
-                value: Some(value),
-                span: self.toks_mut().span_from(start),
-                body: self.alloc_stmts(body),
-
-            }))))
+            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(
+                self.arena().alloc(AstStyle {
+                    name: name_buffer.finish(self.arena()),
+                    value: Some(value),
+                    span: self.toks_mut().span_from(start),
+                    body: self.alloc_stmts(body),
+                }),
+            )))
         } else {
             self.expect_statement_separator(None)?;
-            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(self.arena().alloc(AstStyle {
-                name: name_buffer.finish(self.arena()),
-                value: Some(value),
-                span: self.toks_mut().span_from(start),
-                body: &[],
-
-            }))))
+            Ok(DeclarationOrBuffer::Stmt(AstStmt::Style(
+                self.arena().alloc(AstStyle {
+                    name: name_buffer.finish(self.arena()),
+                    value: Some(value),
+                    span: self.toks_mut().span_from(start),
+                    body: &[],
+                }),
+            )))
         }
     }
 
@@ -3084,7 +3130,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
 
         match self.parse_variable_declaration_or_interpolation()? {
-            VariableDeclOrInterpolation::VariableDecl(var) => Ok(AstStmt::VariableDecl(self.arena().alloc(var))),
+            VariableDeclOrInterpolation::VariableDecl(var) => {
+                Ok(AstStmt::VariableDecl(self.arena().alloc(var)))
+            }
             VariableDeclOrInterpolation::Interpolation(int) => {
                 self.parse_style_rule(Some(int), Some(start))
             }
@@ -3361,10 +3409,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     }
                 }
                 '\r' | '\n' => {
-                    if self.is_indented()
-                        && brackets.is_empty()
-                        && !self.is_consuming_newlines()
-                    {
+                    if self.is_indented() && brackets.is_empty() && !self.is_consuming_newlines() {
                         break;
                     }
                     buffer.add_char(self.toks_mut().next().unwrap().kind);
@@ -3597,7 +3642,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         }
     }
 
-    fn parse_media_or_interpolation(&mut self, buf: &mut InterpolationBuilder<'a>) -> SassResult<()> {
+    fn parse_media_or_interpolation(
+        &mut self,
+        buf: &mut InterpolationBuilder<'a>,
+    ) -> SassResult<()> {
         if self.toks_mut().next_char_is('#') {
             buf.add_interpolation(self.parse_single_interpolation()?);
         } else {
@@ -3714,7 +3762,10 @@ fn moz_document_prelude_needs_deprecation_warning(value: &Interpolation) -> bool
     }
 
     !split_top_level_commas(trimmed).iter().all(|term| {
-        matches!(term.trim(), "url-prefix()" | "url-prefix(\"\")" | "url-prefix('')")
+        matches!(
+            term.trim(),
+            "url-prefix()" | "url-prefix(\"\")" | "url-prefix('')"
+        )
     })
 }
 

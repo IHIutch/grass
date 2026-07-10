@@ -1,5 +1,5 @@
-use crate::{builtin::builtin_imports::*, serializer::inspect_number};
 use crate::color::space::ColorSpace;
+use crate::{builtin::builtin_imports::*, serializer::inspect_number};
 
 use super::ParsedChannels;
 
@@ -14,20 +14,21 @@ pub(crate) fn parse_slash_part(s: &str) -> Option<Value> {
     } else if crate::utils::is_special_function(s) {
         Some(Value::String(s.to_owned().into(), QuoteKind::None))
     } else if let Some(num_str) = s.strip_suffix('%') {
-        num_str
-            .parse::<f64>()
-            .ok()
-            .map(|n| Value::Dimension(SassNumber {
+        num_str.parse::<f64>().ok().map(|n| {
+            Value::Dimension(SassNumber {
                 num: Number(n),
                 unit: Unit::Percent,
                 as_slash: None,
-            }))
+            })
+        })
     } else if let Some((num_str, unit)) = parse_number_with_unit(s) {
-        num_str.parse::<f64>().ok().map(|n| Value::Dimension(SassNumber {
-            num: Number(n),
-            unit,
-            as_slash: None,
-        }))
+        num_str.parse::<f64>().ok().map(|n| {
+            Value::Dimension(SassNumber {
+                num: Number(n),
+                unit,
+                as_slash: None,
+            })
+        })
     } else {
         s.parse::<f64>()
             .ok()
@@ -45,7 +46,12 @@ fn parse_number_with_unit(s: &str) -> Option<(&str, Unit)> {
     ];
     for (suffix, unit) in &units {
         if let Some(num_str) = s.strip_suffix(suffix) {
-            if !num_str.is_empty() && num_str.bytes().last().is_some_and(|b| b.is_ascii_digit() || b == b'.') {
+            if !num_str.is_empty()
+                && num_str
+                    .bytes()
+                    .last()
+                    .is_some_and(|b| b.is_ascii_digit() || b == b'.')
+            {
                 return Some((num_str, unit.clone()));
             }
         }
@@ -82,7 +88,8 @@ fn inner_rgb_2_arg(
                         Number(rgb[1]).to_string(is_compressed),
                         Number(rgb[2]).to_string(is_compressed),
                         alpha.to_css_string(args.span(), is_compressed)?
-                    ).into(),
+                    )
+                    .into(),
                     QuoteKind::None,
                 ));
             }
@@ -105,7 +112,8 @@ fn inner_rgb_2_arg(
                 Number(rgb[1]).to_string(is_compressed),
                 Number(rgb[2]).to_string(is_compressed),
                 alpha.to_css_string(args.span(), is_compressed)?
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ));
     }
@@ -141,12 +149,7 @@ fn inner_rgb_3_arg(
             .unwrap_or(false)
     {
         let fn_string = if let Some(alpha) = alpha {
-            function_string(
-                name,
-                &[red, green, blue, alpha.node],
-                visitor,
-                args.span(),
-            )?
+            function_string(name, &[red, green, blue, alpha.node], visitor, args.span())?
         } else {
             function_string(name, &[red, green, blue], visitor, args.span())?
         };
@@ -161,15 +164,11 @@ fn inner_rgb_3_arg(
     let blue = blue.assert_number_with_name("blue", span)?;
 
     Ok(Value::Color(Rc::new(Color::from_rgba_fn(
-        Number(percentage_or_unitless(
-            &red, 255.0, "red", span, visitor,
-        )?),
+        Number(percentage_or_unitless(&red, 255.0, "red", span, visitor)?),
         Number(percentage_or_unitless(
             &green, 255.0, "green", span, visitor,
         )?),
-        Number(percentage_or_unitless(
-            &blue, 255.0, "blue", span, visitor,
-        )?),
+        Number(percentage_or_unitless(&blue, 255.0, "blue", span, visitor)?),
         Number(
             alpha
                 .map(|alpha| {
@@ -253,8 +252,7 @@ pub(crate) fn parse_channels(
 
         if let Some(Value::String(s, QuoteKind::None)) = check_list.first() {
             if s.eq_ignore_ascii_case("from") {
-                let fn_string =
-                    function_string(name, &[original_channels], visitor, span)?;
+                let fn_string = function_string(name, &[original_channels], visitor, span)?;
                 return Ok(ParsedChannels::String(fn_string));
             }
         }
@@ -335,11 +333,7 @@ pub(crate) fn parse_channels(
             return Ok(ParsedChannels::String(fn_string));
         } else {
             let argument = arg_names[list.len()];
-            return Err((
-                format!("Missing element ${argument}."),
-                span,
-            )
-                .into());
+            return Err((format!("Missing element ${argument}."), span).into());
         }
     }
 
@@ -378,7 +372,9 @@ pub(crate) fn parse_channels(
             }
 
             // Only pass through as CSS string if it contains a special function
-            if crate::utils::is_special_function(text) || list.iter().any(|v| v.is_special_function()) {
+            if crate::utils::is_special_function(text)
+                || list.iter().any(|v| v.is_special_function())
+            {
                 let fn_string = function_string(name, &[channels], visitor, span)?;
                 Ok(ParsedChannels::String(fn_string))
             } else {
@@ -410,10 +406,19 @@ fn inner_rgb(
                 ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
                 ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                     // Check if any channel is `none` — if so, use modern Color 4 path
-                    let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                    let has_none = list
+                        .iter()
+                        .any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                     if has_none {
                         let has_alpha = list.len() > 3;
-                        return super::css_color4::construct_color(name, ColorSpace::Rgb, &list, has_alpha, span, visitor);
+                        return super::css_color4::construct_color(
+                            name,
+                            ColorSpace::Rgb,
+                            &list,
+                            has_alpha,
+                            span,
+                            visitor,
+                        );
                     }
                     let args = ArgumentResult {
                         positional: list,
@@ -450,7 +455,8 @@ pub(crate) fn red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         return Err((
             "color.red() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
@@ -472,7 +478,8 @@ fn global_red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
         return Err((
             "color.red() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
@@ -532,7 +539,8 @@ pub(crate) fn blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
         return Err((
             "color.blue() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
@@ -552,7 +560,8 @@ fn global_blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Va
         return Err((
             "color.blue() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
@@ -672,7 +681,8 @@ fn parse_interpolation_method(
                     value.inspect(span)?
                 ),
                 span,
-            ).into());
+            )
+                .into());
         }
         Value::List(items, ListSeparator::Space, _) => {
             let mut parts = Vec::new();
@@ -686,7 +696,8 @@ fn parse_interpolation_method(
                                 value.inspect(span)?
                             ),
                             span,
-                        ).into());
+                        )
+                            .into());
                     }
                 }
             }
@@ -694,12 +705,10 @@ fn parse_interpolation_method(
         }
         _ => {
             return Err((
-                format!(
-                    "$method: {} is not a string.",
-                    value.inspect(span)?
-                ),
+                format!("$method: {} is not a string.", value.inspect(span)?),
                 span,
-            ).into());
+            )
+                .into());
         }
     };
 
@@ -713,7 +722,8 @@ fn parse_interpolation_method(
             return Err((
                 format!("$method: Unknown color space \"{}\".", parts[0]),
                 span,
-            ).into());
+            )
+                .into());
         }
     };
 
@@ -732,12 +742,16 @@ fn parse_interpolation_method(
                         parts[1]
                     ),
                     span,
-                ).into());
+                )
+                    .into());
             }
         };
 
         if !space.is_polar() {
-            let method_name = format!("HueInterpolationMethod.{} hue", parts[1].to_ascii_lowercase());
+            let method_name = format!(
+                "HueInterpolationMethod.{} hue",
+                parts[1].to_ascii_lowercase()
+            );
             return Err((
                 format!(
                     "$method: Hue interpolation method \"{}\" may not be set for rectangular color space {}.",
@@ -757,7 +771,8 @@ fn parse_interpolation_method(
                 parts.join(" ")
             ),
             span,
-        ).into());
+        )
+            .into());
     } else {
         return Err((
             format!(
@@ -765,7 +780,8 @@ fn parse_interpolation_method(
                 parts.join(" ")
             ),
             span,
-        ).into());
+        )
+            .into());
     };
 
     Ok((space, hue_method))
@@ -775,8 +791,20 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     // rgb/rgba are plain-CSS-compatible constructors; never warn.
     f.insert("rgb", Builtin::new(rgb));
     f.insert("rgba", Builtin::new(rgba));
-    f.insert("red", Builtin::new(global_red).with_deprecated_global("color", "red"));
-    f.insert("green", Builtin::new(global_green).with_deprecated_global("color", "green"));
-    f.insert("blue", Builtin::new(global_blue).with_deprecated_global("color", "blue"));
-    f.insert("mix", Builtin::new(mix).with_deprecated_global("color", "mix"));
+    f.insert(
+        "red",
+        Builtin::new(global_red).with_deprecated_global("color", "red"),
+    );
+    f.insert(
+        "green",
+        Builtin::new(global_green).with_deprecated_global("color", "green"),
+    );
+    f.insert(
+        "blue",
+        Builtin::new(global_blue).with_deprecated_global("color", "blue"),
+    );
+    f.insert(
+        "mix",
+        Builtin::new(mix).with_deprecated_global("color", "mix"),
+    );
 }

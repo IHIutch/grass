@@ -442,7 +442,8 @@ impl ComplexSelector {
                 compound.components.iter().any(|simple| match simple {
                     SimpleSelector::Parent(Some(_)) => true,
                     SimpleSelector::Pseudo(Pseudo {
-                        selector: Some(sel), ..
+                        selector: Some(sel),
+                        ..
                     }) => sel.contains_parent_selector_with_suffix(),
                     _ => false,
                 })
@@ -566,12 +567,8 @@ mod tests {
         // components.len()), the inner-scan case (n == after_super_selector), and
         // the first-loop-iteration edge case where m + 1 > n - 1 (empty range).
         for &(n, m) in &[(8usize, 0usize), (6, 2), (5, 1), (4, 3)] {
-            let via_take_skip: Vec<ComplexSelectorComponent> = components
-                .iter()
-                .take(n - 1)
-                .skip(m + 1)
-                .cloned()
-                .collect();
+            let via_take_skip: Vec<ComplexSelectorComponent> =
+                components.iter().take(n - 1).skip(m + 1).cloned().collect();
             // Mirrors the real call site's `.get(range).unwrap_or(&[])` guard,
             // since a plain slice index panics when m + 1 > n - 1.
             let via_slice: &[ComplexSelectorComponent] =

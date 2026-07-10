@@ -172,7 +172,11 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
             .map(|s| Value::String(s.to_string().into(), quote))
             .collect()
     };
-    Ok(Value::List(Rc::new(vec), ListSeparator::Comma, Brackets::Bracketed))
+    Ok(Value::List(
+        Rc::new(vec),
+        ListSeparator::Comma,
+        Brackets::Bracketed,
+    ))
 }
 
 pub(crate) fn str_index(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -260,7 +264,10 @@ pub(crate) fn unique_id(args: ArgumentResult, _: &mut Visitor) -> SassResult<Val
         .map(char::from)
         .take(12)
         .collect();
-    Ok(Value::String(format!("id-{string}").into(), QuoteKind::None))
+    Ok(Value::String(
+        format!("id-{string}").into(),
+        QuoteKind::None,
+    ))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
@@ -272,12 +279,33 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
         "to-lower-case",
         Builtin::new(to_lower_case).with_deprecated_global("string", "to-lower-case"),
     );
-    f.insert("str-length", Builtin::new(str_length).with_deprecated_global("string", "length"));
-    f.insert("quote", Builtin::new(quote).with_deprecated_global("string", "quote"));
-    f.insert("unquote", Builtin::new(unquote).with_deprecated_global("string", "unquote"));
-    f.insert("str-slice", Builtin::new(str_slice).with_deprecated_global("string", "slice"));
-    f.insert("str-index", Builtin::new(str_index).with_deprecated_global("string", "index"));
-    f.insert("str-insert", Builtin::new(str_insert).with_deprecated_global("string", "insert"));
+    f.insert(
+        "str-length",
+        Builtin::new(str_length).with_deprecated_global("string", "length"),
+    );
+    f.insert(
+        "quote",
+        Builtin::new(quote).with_deprecated_global("string", "quote"),
+    );
+    f.insert(
+        "unquote",
+        Builtin::new(unquote).with_deprecated_global("string", "unquote"),
+    );
+    f.insert(
+        "str-slice",
+        Builtin::new(str_slice).with_deprecated_global("string", "slice"),
+    );
+    f.insert(
+        "str-index",
+        Builtin::new(str_index).with_deprecated_global("string", "index"),
+    );
+    f.insert(
+        "str-insert",
+        Builtin::new(str_insert).with_deprecated_global("string", "insert"),
+    );
     #[cfg(feature = "random")]
-    f.insert("unique-id", Builtin::new(unique_id).with_deprecated_global("string", "unique-id"));
+    f.insert(
+        "unique-id",
+        Builtin::new(unique_id).with_deprecated_global("string", "unique-id"),
+    );
 }

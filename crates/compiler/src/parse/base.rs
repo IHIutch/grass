@@ -342,11 +342,7 @@ pub(crate) trait BaseParser {
         }
 
         if !found_matching_quote {
-            return Err((
-                format!("Expected {quote}."),
-                self.toks().current_span(),
-            )
-                .into());
+            return Err((format!("Expected {quote}."), self.toks().current_span()).into());
         }
 
         Ok(buffer)

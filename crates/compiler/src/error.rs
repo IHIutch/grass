@@ -2,8 +2,8 @@ use std::{
     error::Error,
     fmt::{self, Display},
     io,
-    string::FromUtf8Error,
     rc::Rc,
+    string::FromUtf8Error,
 };
 
 use codemap::{Span, SpanLoc};

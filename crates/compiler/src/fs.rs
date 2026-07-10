@@ -67,7 +67,10 @@ impl DirListing {
         if self.plain_files.contains(name) {
             return Some(true);
         }
-        if !self.all_names_lower.contains(&name.to_string_lossy().to_lowercase()) {
+        if !self
+            .all_names_lower
+            .contains(&name.to_string_lossy().to_lowercase())
+        {
             return Some(false);
         }
         None
@@ -79,7 +82,10 @@ impl DirListing {
         if self.plain_dirs.contains(name) {
             return Some(true);
         }
-        if !self.all_names_lower.contains(&name.to_string_lossy().to_lowercase()) {
+        if !self
+            .all_names_lower
+            .contains(&name.to_string_lossy().to_lowercase())
+        {
             return Some(false);
         }
         None

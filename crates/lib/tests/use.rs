@@ -345,8 +345,7 @@ fn use_whitespace_and_comments() {
 // converted this to a success test, consistent with the sibling use_whitespace_and_comments test.
 #[test]
 fn use_loud_comment_after_close_paren_with() {
-    let input =
-        r#"@use "use_loud_comment_after_close_paren_with" as foo with ($a : red)  /**/  ;"#;
+    let input = r#"@use "use_loud_comment_after_close_paren_with" as foo with ($a : red)  /**/  ;"#;
     tempfile!(
         "use_loud_comment_after_close_paren_with.scss",
         "$a: green !default; a { color: $a }"
@@ -928,8 +927,7 @@ fn use_path_with_dotdot_normalization() {
 
     assert_eq!(
         "a {\n  b: value;\n}\n",
-        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs))
-            .expect(input)
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
     );
 }
 

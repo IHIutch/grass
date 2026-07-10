@@ -4,7 +4,7 @@ use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
 
 use crate::{
-    common::{NamedArgsView, SmallOrderedMap, Identifier, ListSeparator},
+    common::{Identifier, ListSeparator, NamedArgsView, SmallOrderedMap},
     error::SassResult,
     utils::to_sentence,
     value::Value,
@@ -94,11 +94,7 @@ impl<'a> ArgumentDeclaration<'a> {
             unknown_names.retain(|name| !self.args.iter().any(|arg| &arg.name == name));
 
             if unknown_names.len() == 1 {
-                return Err((
-                    format!("No argument named ${}.", unknown_names[0]),
-                    span,
-                )
-                    .into());
+                return Err((format!("No argument named ${}.", unknown_names[0]), span).into());
             }
 
             if unknown_names.len() > 1 {

@@ -94,7 +94,14 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             .collect::<SassResult<Vec<_>>>()?;
 
         Ok(Value::String(
-            format!("alpha({})", args.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")).into(),
+            format!(
+                "alpha({})",
+                args.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into(),
             QuoteKind::None,
         ))
     }
@@ -138,7 +145,11 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
             QuoteKind::None,
         )),
         v if v.is_special_function() => Ok(Value::String(
-            format!("opacity({})", v.to_css_string(span, visitor.options.is_compressed())?).into(),
+            format!(
+                "opacity({})",
+                v.to_css_string(span, visitor.options.is_compressed())?
+            )
+            .into(),
             QuoteKind::None,
         )),
         v => Err((
@@ -152,7 +163,11 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
 /// Shared implementation of `opacify()`/`fade-in()` — `name` is the name the
 /// call was made through, since dart-sass's `_opacify` uses it verbatim in
 /// the deprecation message.
-fn opacify(name: &'static str, mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+fn opacify(
+    name: &'static str,
+    mut args: ArgumentResult,
+    visitor: &mut Visitor,
+) -> SassResult<Value> {
     args.max_args(2)?;
     let span = args.span();
     let color = args

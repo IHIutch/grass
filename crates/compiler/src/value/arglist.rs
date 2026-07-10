@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 
-use crate::common::{SmallOrderedMap, Identifier, ListSeparator};
+use crate::common::{Identifier, ListSeparator, SmallOrderedMap};
 
 use super::Value;
 

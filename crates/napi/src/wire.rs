@@ -22,7 +22,9 @@
 
 use grass_compiler::sass_value as sass;
 
-use crate::values::{js_units_to_unit, list_separator_from_str, list_separator_to_str, unit_to_js_units};
+use crate::values::{
+    js_units_to_unit, list_separator_from_str, list_separator_to_str, unit_to_js_units,
+};
 
 #[derive(Debug, Clone)]
 pub enum WireValue {

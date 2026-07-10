@@ -22,7 +22,9 @@ pub struct SmallOrderedMap<K, V> {
 
 impl<K, V> Default for SmallOrderedMap<K, V> {
     fn default() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 }
 

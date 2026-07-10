@@ -7,7 +7,6 @@ use crate::ast::{Configuration, ConfiguredValue};
 use crate::builtin::builtin_imports::*;
 
 use crate::ast::Mixin;
-use crate::ContextFlags;
 use crate::builtin::{
     meta::{
         accepts_content, call, content_exists, feature_exists, function_exists, get_function,
@@ -17,6 +16,7 @@ use crate::builtin::{
     modules::Module,
 };
 use crate::serializer::serialize_calculation_arg;
+use crate::ContextFlags;
 
 fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
     args.max_args(2)?;
@@ -40,8 +40,12 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
         let mut values = FxHashMap::default();
         let mut emitted_private_deprecation = false;
         for (key, value) in with {
-            let name =
-                Identifier::from(key.node.assert_string_with_name("with key", args.span())?.0.as_str());
+            let name = Identifier::from(
+                key.node
+                    .assert_string_with_name("with key", args.span())?
+                    .0
+                    .as_str(),
+            );
 
             if values.contains_key(&name) {
                 return Err((
@@ -64,7 +68,10 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
             values.insert(name, ConfiguredValue::explicit(value, args.span()));
         }
 
-        Some(Rc::new(RefCell::new(Configuration::explicit(values, args.span()))))
+        Some(Rc::new(RefCell::new(Configuration::explicit(
+            values,
+            args.span(),
+        ))))
     } else {
         None
     };
@@ -107,7 +114,8 @@ fn module_functions(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     args.max_args(1)?;
 
     let module = Identifier::verbatim(
-        &args.get_err(0, "module")?
+        &args
+            .get_err(0, "module")?
             .assert_string_with_name("module", args.span())?
             .0,
     );
@@ -123,7 +131,8 @@ fn module_variables(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     args.max_args(1)?;
 
     let module = Identifier::verbatim(
-        &args.get_err(0, "module")?
+        &args
+            .get_err(0, "module")?
             .assert_string_with_name("module", args.span())?
             .0,
     );
@@ -167,7 +176,11 @@ fn calc_args(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
         })
         .collect::<SassResult<Vec<_>>>()?;
 
-    Ok(Value::List(Rc::new(args), ListSeparator::Comma, Brackets::None))
+    Ok(Value::List(
+        Rc::new(args),
+        ListSeparator::Comma,
+        Brackets::None,
+    ))
 }
 
 fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
@@ -184,14 +197,18 @@ fn calc_name(mut args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Val
         }
     };
 
-    Ok(Value::String(calc.name.to_string().into(), QuoteKind::Quoted))
+    Ok(Value::String(
+        calc.name.to_string().into(),
+        QuoteKind::Quoted,
+    ))
 }
 
 fn module_mixins(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
 
     let module = Identifier::verbatim(
-        &args.get_err(0, "module")?
+        &args
+            .get_err(0, "module")?
             .assert_string_with_name("module", args.span())?
             .0,
     );
@@ -209,10 +226,7 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
         Value::MixinRef(m) => *m,
         v => {
             return Err((
-                format!(
-                    "$mixin: {} is not a mixin reference.",
-                    v.inspect(span)?
-                ),
+                format!("$mixin: {} is not a mixin reference.", v.inspect(span)?),
                 span,
             )
                 .into())

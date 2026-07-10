@@ -188,11 +188,13 @@ fn cmp_dimension(
         return Err((format!("Incompatible units {unit2} and {unit}."), span).into());
     }
 
-    Ok(if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {
-        num.partial_cmp(num2)
-    } else {
-        num.partial_cmp(&num2.convert(unit2, unit))
-    })
+    Ok(
+        if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {
+            num.partial_cmp(num2)
+        } else {
+            num.partial_cmp(&num2.convert(unit2, unit))
+        },
+    )
 }
 
 pub(crate) fn min(args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
@@ -279,19 +281,40 @@ pub(crate) fn divide(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("percentage", Builtin::new(percentage).with_deprecated_global("math", "percentage"));
-    f.insert("round", Builtin::new(round).with_deprecated_global("math", "round"));
-    f.insert("ceil", Builtin::new(ceil).with_deprecated_global("math", "ceil"));
-    f.insert("floor", Builtin::new(floor).with_deprecated_global("math", "floor"));
+    f.insert(
+        "percentage",
+        Builtin::new(percentage).with_deprecated_global("math", "percentage"),
+    );
+    f.insert(
+        "round",
+        Builtin::new(round).with_deprecated_global("math", "round"),
+    );
+    f.insert(
+        "ceil",
+        Builtin::new(ceil).with_deprecated_global("math", "ceil"),
+    );
+    f.insert(
+        "floor",
+        Builtin::new(floor).with_deprecated_global("math", "floor"),
+    );
     // abs warns conditionally (abs-percent vs global-builtin), emitted
     // inline in global_abs above, not generically here.
     f.insert("abs", Builtin::new(global_abs));
-    f.insert("min", Builtin::new(min).with_deprecated_global("math", "min"));
-    f.insert("max", Builtin::new(max).with_deprecated_global("math", "max"));
+    f.insert(
+        "min",
+        Builtin::new(min).with_deprecated_global("math", "min"),
+    );
+    f.insert(
+        "max",
+        Builtin::new(max).with_deprecated_global("math", "max"),
+    );
     f.insert(
         "comparable",
         Builtin::new(comparable).with_deprecated_global("math", "compatible"),
     );
     #[cfg(feature = "random")]
-    f.insert("random", Builtin::new(random).with_deprecated_global("math", "random"));
+    f.insert(
+        "random",
+        Builtin::new(random).with_deprecated_global("math", "random"),
+    );
 }

@@ -261,9 +261,16 @@ impl Value {
     pub fn unquote(self) -> Self {
         match self {
             Value::String(s1, _) => Value::String(s1, QuoteKind::None),
-            Value::List(v, sep, bracket) => {
-                Value::List(Rc::new(Rc::unwrap_or_clone(v).into_iter().map(Value::unquote).collect()), sep, bracket)
-            }
+            Value::List(v, sep, bracket) => Value::List(
+                Rc::new(
+                    Rc::unwrap_or_clone(v)
+                        .into_iter()
+                        .map(Value::unquote)
+                        .collect(),
+                ),
+                sep,
+                bracket,
+            ),
             v => v,
         }
     }
@@ -298,7 +305,9 @@ impl Value {
     pub fn without_slash(self) -> Self {
         match self {
             Value::Dimension(SassNumber {
-                as_slash: Some(_), num, unit,
+                as_slash: Some(_),
+                num,
+                unit,
             }) => Value::Dimension(SassNumber {
                 num,
                 unit,
@@ -357,7 +366,7 @@ impl Value {
                 }) => {
                     if !unit.comparable(unit2) {
                         return Err(
-                            (format!("Incompatible units {unit2} and {unit}."), span).into(),
+                            (format!("Incompatible units {unit2} and {unit}."), span).into()
                         );
                     }
                     if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {
@@ -495,15 +504,14 @@ impl Value {
             Some(v) => v,
             None => return Err((format!("${}: {} is not a valid selector: it must be a string,\n a list of strings, or a list of lists of strings.", name, self.inspect(span)?), span).into()),
         };
-        Ok(Selector(visitor.parse_selector_from_string(
-            &string,
-            allows_parent,
-            true,
-            span,
-        ).map_err(|e| {
-            let (msg, span) = (*e).raw();
-            (format!("${name}: {msg}"), span)
-        })?))
+        Ok(Selector(
+            visitor
+                .parse_selector_from_string(&string, allows_parent, true, span)
+                .map_err(|e| {
+                    let (msg, span) = (*e).raw();
+                    (format!("${name}: {msg}"), span)
+                })?,
+        ))
     }
 
     pub fn to_selector_unnamed(

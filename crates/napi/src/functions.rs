@@ -225,18 +225,21 @@ pub fn register_functions(
         let handle = Arc::new(func_ref);
 
         options = options
-            .add_custom_fn_with_signature(signature, move |mut args: ArgumentResult, _: &mut Visitor| {
-                let span = args.span();
+            .add_custom_fn_with_signature(
+                signature,
+                move |mut args: ArgumentResult, _: &mut Visitor| {
+                    let span = args.span();
 
-                let mut sass_args = Vec::new();
-                let mut i = 0;
-                while let Some(spanned) = args.get_positional(i) {
-                    sass_args.push(spanned.node);
-                    i += 1;
-                }
+                    let mut sass_args = Vec::new();
+                    let mut i = 0;
+                    while let Some(spanned) = args.get_positional(i) {
+                        sass_args.push(spanned.node);
+                        i += 1;
+                    }
 
-                handle.call(&sass_args, span)
-            })
+                    handle.call(&sass_args, span)
+                },
+            )
             .map_err(|e| Error::from_reason(e.to_string()))?;
     }
 
@@ -256,7 +259,10 @@ pub fn register_functions(
 const PROMISE_RETURN_ERR: &str = "async custom functions returning a Promise are not yet \
      supported in compileAsync; use a synchronous function";
 
-type ThreadsafeCallArgs = (Vec<WireValue>, mpsc::Sender<std::result::Result<WireValue, String>>);
+type ThreadsafeCallArgs = (
+    Vec<WireValue>,
+    mpsc::Sender<std::result::Result<WireValue, String>>,
+);
 
 /// A JS `functions` callback usable from `Task::compute()` (i.e. off the JS
 /// thread) — todo #221 slice 3's async calling convention. Built via
@@ -319,52 +325,54 @@ impl JsFunctionRef {
         let outer_env = self.env.0;
         let noop = outer_env.create_function("grass_async_fn_target", noop_callback)?;
 
-        let tsfn = noop.create_threadsafe_function::<ThreadsafeCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
-            0,
-            move |ctx: ThreadSafeCallContext<ThreadsafeCallArgs>| -> Result<Vec<JsUnknown>> {
-                let (wire_args, tx) = ctx.value;
-                let env = ctx.env;
+        let tsfn = noop
+            .create_threadsafe_function::<ThreadsafeCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
+                0,
+                move |ctx: ThreadSafeCallContext<ThreadsafeCallArgs>| -> Result<Vec<JsUnknown>> {
+                    let (wire_args, tx) = ctx.value;
+                    let env = ctx.env;
 
-                let outcome: std::result::Result<WireValue, String> = (|| {
-                    let func = env
-                        .get_reference_value::<JsFunction>(&self.func_ref)
-                        .map_err(|e| e.reason.clone())?;
+                    let outcome: std::result::Result<WireValue, String> = (|| {
+                        let func = env
+                            .get_reference_value::<JsFunction>(&self.func_ref)
+                            .map_err(|e| e.reason.clone())?;
 
-                    let mut js_args = Vec::with_capacity(wire_args.len());
-                    for w in wire_args {
-                        let v = wire_to_sass(w);
-                        js_args.push(sass_value_to_js(env, &v).map_err(|e| e.reason.clone())?);
-                    }
-                    // Same single-array-argument convention as the sync path
-                    // — see `JsFunctionRef::call`'s comment.
-                    let args_array =
-                        crate::values::to_unknown(env, js_args).map_err(|e| e.reason.clone())?;
-
-                    match func.call(None, &[args_array]) {
-                        Ok(js_return) => {
-                            // Must be checked BEFORE js_value_to_sass, which
-                            // would otherwise reject a Promise with a generic
-                            // "unsupported shape" error instead of this
-                            // specific, documented one.
-                            if js_return.is_promise().unwrap_or(false) {
-                                return Err(PROMISE_RETURN_ERR.to_owned());
-                            }
-
-                            let v = js_value_to_sass(env, js_return).map_err(|e| e.reason.clone())?;
-                            value_to_wire(&v).map_err(unsupported_wire_value_message)
+                        let mut js_args = Vec::with_capacity(wire_args.len());
+                        for w in wire_args {
+                            let v = wire_to_sass(w);
+                            js_args.push(sass_value_to_js(env, &v).map_err(|e| e.reason.clone())?);
                         }
-                        Err(e) => Err(e.reason.clone()),
-                    }
-                })();
+                        // Same single-array-argument convention as the sync path
+                        // — see `JsFunctionRef::call`'s comment.
+                        let args_array = crate::values::to_unknown(env, js_args)
+                            .map_err(|e| e.reason.clone())?;
 
-                // Always send SOMETHING and always return Ok(..) — the
-                // worker thread's `rx.recv()` must never be left hanging,
-                // and letting this closure return Err would route through
-                // napi's fatal-error/process-abort path (see module doc).
-                let _ = tx.send(outcome);
-                Ok(Vec::new())
-            },
-        )?;
+                        match func.call(None, &[args_array]) {
+                            Ok(js_return) => {
+                                // Must be checked BEFORE js_value_to_sass, which
+                                // would otherwise reject a Promise with a generic
+                                // "unsupported shape" error instead of this
+                                // specific, documented one.
+                                if js_return.is_promise().unwrap_or(false) {
+                                    return Err(PROMISE_RETURN_ERR.to_owned());
+                                }
+
+                                let v = js_value_to_sass(env, js_return)
+                                    .map_err(|e| e.reason.clone())?;
+                                value_to_wire(&v).map_err(unsupported_wire_value_message)
+                            }
+                            Err(e) => Err(e.reason.clone()),
+                        }
+                    })();
+
+                    // Always send SOMETHING and always return Ok(..) — the
+                    // worker thread's `rx.recv()` must never be left hanging,
+                    // and letting this closure return Err would route through
+                    // napi's fatal-error/process-abort path (see module doc).
+                    let _ = tx.send(outcome);
+                    Ok(Vec::new())
+                },
+            )?;
 
         Ok(AsyncJsFunctionRef { tsfn })
     }
@@ -421,18 +429,21 @@ pub fn register_functions_async(
         let handle = Arc::new(func_ref);
 
         options = options
-            .add_custom_fn_with_signature(signature, move |mut args: ArgumentResult, _: &mut Visitor| {
-                let span = args.span();
+            .add_custom_fn_with_signature(
+                signature,
+                move |mut args: ArgumentResult, _: &mut Visitor| {
+                    let span = args.span();
 
-                let mut sass_args = Vec::new();
-                let mut i = 0;
-                while let Some(spanned) = args.get_positional(i) {
-                    sass_args.push(spanned.node);
-                    i += 1;
-                }
+                    let mut sass_args = Vec::new();
+                    let mut i = 0;
+                    while let Some(spanned) = args.get_positional(i) {
+                        sass_args.push(spanned.node);
+                        i += 1;
+                    }
 
-                handle.call(&sass_args, span)
-            })
+                    handle.call(&sass_args, span)
+                },
+            )
             .map_err(|e| Error::from_reason(e.to_string()))?;
     }
 

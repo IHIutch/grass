@@ -165,7 +165,8 @@ impl SourceMapData {
 /// everything else (including space, `{`, `}`, and all non-ASCII bytes) is
 /// percent-encoded.
 pub fn encode_uri(input: &str) -> String {
-    const UNESCAPED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'();,/?:@&=+$#";
+    const UNESCAPED: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'();,/?:@&=+$#";
 
     const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 

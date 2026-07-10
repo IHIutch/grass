@@ -78,9 +78,9 @@ pub use crate::importer::{ImportResolution, ImportSource, Importer};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
 pub use crate::source_map::{encode_uri, SourceMapData};
+use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
 pub use crate::{builtin::Builtin, evaluate::Visitor};
 pub(crate) use crate::{context_flags::ContextFlags, lexer::Token};
-use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
 
 pub mod sass_value {
     pub use crate::{
@@ -158,9 +158,7 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
         InputSyntax::Sass => {
             SassParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
         }
-        InputSyntax::Css => {
-            CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
-        }
+        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse(),
     };
 
     // Safety: We leak the arena so that the returned StyleSheet's references remain valid.
@@ -224,7 +222,12 @@ pub fn from_string_with_source_map<S: Into<String>>(
                 input_for_data_url.as_deref().unwrap_or_default(),
             );
         }
-        Some(SourceMapData::new(&mappings, sources, sources_content, loaded_files))
+        Some(SourceMapData::new(
+            &mappings,
+            sources,
+            sources_content,
+            loaded_files,
+        ))
     } else {
         None
     };
@@ -249,7 +252,12 @@ pub fn from_string_with_url_and_source_map<S: Into<String>>(
         compile_impl(input.into(), url, options)?;
 
     let map = if options.source_map {
-        Some(SourceMapData::new(&mappings, sources, sources_content, loaded_files))
+        Some(SourceMapData::new(
+            &mappings,
+            sources,
+            sources_content,
+            loaded_files,
+        ))
     } else {
         None
     };
@@ -271,7 +279,12 @@ pub fn from_path_with_source_map<P: AsRef<Path>>(
     let (css, mappings, sources, sources_content, loaded_files) = compile_impl(input, p, options)?;
 
     let map = if options.source_map {
-        Some(SourceMapData::new(&mappings, sources, sources_content, loaded_files))
+        Some(SourceMapData::new(
+            &mappings,
+            sources,
+            sources_content,
+            loaded_files,
+        ))
     } else {
         None
     };
@@ -293,7 +306,8 @@ pub fn from_path_with_loaded_files<P: AsRef<Path>>(
     options: &Options,
 ) -> Result<(String, Vec<std::path::PathBuf>)> {
     let input = String::from_utf8(options.fs.read(p.as_ref())?)?;
-    let (css, _mappings, _sources, _sources_content, loaded_files) = compile_impl(input, p, options)?;
+    let (css, _mappings, _sources, _sources_content, loaded_files) =
+        compile_impl(input, p, options)?;
     Ok((css, loaded_files))
 }
 
@@ -321,15 +335,9 @@ fn compile_impl<P: AsRef<Path>>(
         .unwrap_or_else(|| InputSyntax::for_path(path));
 
     let stylesheet = match input_syntax {
-        InputSyntax::Scss => {
-            ScssParser::new(lexer, options, empty_span, path, &arena).__parse()
-        }
-        InputSyntax::Sass => {
-            SassParser::new(lexer, options, empty_span, path, &arena).__parse()
-        }
-        InputSyntax::Css => {
-            CssParser::new(lexer, options, empty_span, path, &arena).__parse()
-        }
+        InputSyntax::Scss => ScssParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Sass => SassParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(),
     };
 
     // Safety: the arena lives on the stack for the entire compilation.
@@ -390,7 +398,12 @@ fn compile_impl<P: AsRef<Path>>(
         let buf_len_before = serializer.buffer_len();
 
         serializer
-            .visit_group(stmt, prev_was_group_end, prev_requires_semicolon, had_previous_visible)
+            .visit_group(
+                stmt,
+                prev_was_group_end,
+                prev_requires_semicolon,
+                had_previous_visible,
+            )
             .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
 
         // Track whether any visible statement has been processed,
@@ -530,7 +543,10 @@ mod wasm_fs {
         fn canonicalize(this: &JsFsCallbacks, path: &str) -> Result<String, JsValue>;
 
         #[wasm_bindgen(method, catch)]
-        fn resolve_first_existing(this: &JsFsCallbacks, candidates: Vec<String>) -> Result<JsValue, JsValue>;
+        fn resolve_first_existing(
+            this: &JsFsCallbacks,
+            candidates: Vec<String>,
+        ) -> Result<JsValue, JsValue>;
 
         /// Batches many per-candidate `is_file`/`is_dir` boundary crossings
         /// into a single directory read. Each returned entry is a string
@@ -573,14 +589,12 @@ mod wasm_fs {
         }
 
         fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-            self.callbacks
-                .read(&path.to_string_lossy())
-                .map_err(|e| {
-                    Error::new(
-                        ErrorKind::NotFound,
-                        e.as_string().unwrap_or_else(|| "read error".to_string()),
-                    )
-                })
+            self.callbacks.read(&path.to_string_lossy()).map_err(|e| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    e.as_string().unwrap_or_else(|| "read error".to_string()),
+                )
+            })
         }
 
         fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
@@ -644,8 +658,9 @@ fn wasm_compile_result(css: String, map: Option<SourceMapData>, include_sources:
     js_sys::Reflect::set(&obj, &JsValue::from_str("css"), &JsValue::from_str(&css)).unwrap();
 
     let source_map = match map {
-        Some(map) => js_sys::JSON::parse(&map.to_json(None, include_sources))
-            .unwrap_or(JsValue::UNDEFINED),
+        Some(map) => {
+            js_sys::JSON::parse(&map.to_json(None, include_sources)).unwrap_or(JsValue::UNDEFINED)
+        }
         None => JsValue::UNDEFINED,
     };
     js_sys::Reflect::set(&obj, &JsValue::from_str("sourceMap"), &source_map).unwrap();
@@ -667,7 +682,10 @@ pub fn compile_js(
 ) -> std::result::Result<JsValue, String> {
     let js_fs = wasm_fs::JsFs::new(fs_callbacks);
 
-    let mut options = Options::default().fs(&js_fs).quiet(quiet).source_map(source_map);
+    let mut options = Options::default()
+        .fs(&js_fs)
+        .quiet(quiet)
+        .source_map(source_map);
 
     if style == "compressed" {
         options = options.style(OutputStyle::Compressed);
@@ -695,7 +713,10 @@ pub fn compile_file_js(
 ) -> std::result::Result<JsValue, String> {
     let js_fs = wasm_fs::JsFs::new(fs_callbacks);
 
-    let mut options = Options::default().fs(&js_fs).quiet(quiet).source_map(source_map);
+    let mut options = Options::default()
+        .fs(&js_fs)
+        .quiet(quiet)
+        .source_map(source_map);
 
     if style == "compressed" {
         options = options.style(OutputStyle::Compressed);

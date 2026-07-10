@@ -36,7 +36,9 @@ pub fn synthesize(display_text: &str, unicode: bool) -> String {
     // Prevent the error text from prematurely closing the `/* ... */`
     // comment, and normalize CRLF to LF (dart-sass does both; see
     // `toCssString`).
-    comment_message = comment_message.replace("*/", "*\u{2215}").replace("\r\n", "\n");
+    comment_message = comment_message
+        .replace("*/", "*\u{2215}")
+        .replace("\r\n", "\n");
 
     let comment = format!("/* {} */", comment_message.replace('\n', "\n * "));
     let content = css_string_literal(base);
@@ -44,7 +46,9 @@ pub fn synthesize(display_text: &str, unicode: bool) -> String {
     let mut out = String::new();
     out.push_str(&comment);
     out.push_str("\n\nbody::before {\n");
-    out.push_str("  font-family: \"Source Code Pro\", \"SF Mono\", Monaco, Inconsolata, \"Fira Mono\",\n");
+    out.push_str(
+        "  font-family: \"Source Code Pro\", \"SF Mono\", Monaco, Inconsolata, \"Fira Mono\",\n",
+    );
     out.push_str("      \"Droid Sans Mono\", monospace, monospace;\n");
     out.push_str("  white-space: pre;\n");
     out.push_str("  display: block;\n");

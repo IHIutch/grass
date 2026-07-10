@@ -244,7 +244,8 @@ static FUNCTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// NOT require the closure to touch `Visitor`/`Value` (both `Rc`-heavy,
 /// `!Send`) across threads — only whatever state the closure *captures*
 /// must be thread-safe.
-pub(crate) type DynamicBuiltinFn = dyn Fn(ArgumentResult, &mut Visitor) -> SassResult<Value> + Send + Sync;
+pub(crate) type DynamicBuiltinFn =
+    dyn Fn(ArgumentResult, &mut Visitor) -> SassResult<Value> + Send + Sync;
 
 /// The callable body of a [`Builtin`].
 pub(crate) enum BuiltinFn {
@@ -365,7 +366,11 @@ impl Builtin {
     /// - `if`: no module equivalent in dart-sass.
     /// - `clamp`, `hypot`: pure CSS calculation syntax in dart-sass, never
     ///   registered as global Sass functions.
-    pub(crate) fn with_deprecated_global(mut self, module: &'static str, name: &'static str) -> Self {
+    pub(crate) fn with_deprecated_global(
+        mut self,
+        module: &'static str,
+        name: &'static str,
+    ) -> Self {
         self.2 = Some((module, name));
         self
     }
@@ -431,28 +436,29 @@ pub(crate) static GLOBAL_FUNCTIONS: LazyLock<GlobalFunctionMap> = LazyLock::new(
     m
 });
 
-pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
-    GLOBAL_FUNCTIONS
-        .keys()
-        .copied()
-        .filter(|&name| {
-            !matches!(
-                name,
-                "rgb"
-                    | "rgba"
-                    | "hsl"
-                    | "hsla"
-                    | "grayscale"
-                    | "invert"
-                    | "alpha"
-                    | "opacity"
-                    | "saturate"
-                    | "lab"
-                    | "lch"
-                    | "oklab"
-                    | "oklch"
-                    | "color"
-            )
-        })
-        .collect()
-});
+pub(crate) static DISALLOWED_PLAIN_CSS_FUNCTION_NAMES: LazyLock<FxHashSet<&str>> =
+    LazyLock::new(|| {
+        GLOBAL_FUNCTIONS
+            .keys()
+            .copied()
+            .filter(|&name| {
+                !matches!(
+                    name,
+                    "rgb"
+                        | "rgba"
+                        | "hsl"
+                        | "hsla"
+                        | "grayscale"
+                        | "invert"
+                        | "alpha"
+                        | "opacity"
+                        | "saturate"
+                        | "lab"
+                        | "lch"
+                        | "oklab"
+                        | "oklch"
+                        | "color"
+                )
+            })
+            .collect()
+    });

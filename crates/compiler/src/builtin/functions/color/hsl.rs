@@ -1,9 +1,9 @@
+use crate::color::space::ColorSpace;
 use crate::{
     builtin::builtin_imports::*,
     serializer::{inspect_number, serialize_number},
     value::SassNumber,
 };
-use crate::color::space::ColorSpace;
 
 use super::{
     angle_value,
@@ -44,7 +44,8 @@ fn hsl_3_args(
                     Brackets::None
                 )
                 .to_css_string(args.span(), false)?
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ));
     }
@@ -57,7 +58,11 @@ fn hsl_3_args(
         let value_display = inspect_number(&saturation, visitor.options, span)?;
         let unit = saturation.unit.clone();
         visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
-            Ok(function_percent_message("saturation", &value_display, &unit))
+            Ok(function_percent_message(
+                "saturation",
+                &value_display,
+                &unit,
+            ))
         })?;
     }
 
@@ -108,7 +113,9 @@ fn inner_hsl(
             ParsedChannels::String(s) => Ok(Value::String(s.into(), QuoteKind::None)),
             ParsedChannels::List(list) | ParsedChannels::SlashList(list) => {
                 // Check if any channel or alpha is `none` — if so, use modern Color 4 path
-                let has_none = list.iter().any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
+                let has_none = list
+                    .iter()
+                    .any(|v| matches!(v, Value::String(s, QuoteKind::None) if s == "none"));
                 if has_none {
                     let has_alpha = list.len() > 3;
                     return construct_color(name, ColorSpace::Hsl, &list, has_alpha, span, visitor);
@@ -159,7 +166,8 @@ pub(crate) fn hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         return Err((
             "color.hue() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
@@ -183,7 +191,8 @@ fn global_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
         return Err((
             "color.hue() is only supported for legacy colors. Please use color.channel() instead.",
             args.span(),
-        ).into());
+        )
+            .into());
     }
 
     visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
@@ -416,7 +425,8 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
             format!(
                 "saturate({})",
                 serialize_number(&amount, &Options::default(), args.span())?,
-            ).into(),
+            )
+            .into(),
             QuoteKind::None,
         ));
     }
@@ -432,7 +442,9 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
 
     amount.assert_bounds("amount", 0.0, 100.0, span)?;
 
-    let color = args.get_err(0, "color")?.assert_color_with_name("color", span)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
@@ -556,7 +568,9 @@ pub(crate) fn module_grayscale(args: ArgumentResult, visitor: &mut Visitor) -> S
         .get(&Identifier::from("color"))
         .or_else(|| args.positional.first());
     let arg0_text = match peek {
-        Some(Value::Dimension(SassNumber { num, unit, .. })) => Some(format!("{}{}", num.inspect(), unit)),
+        Some(Value::Dimension(SassNumber { num, unit, .. })) => {
+            Some(format!("{}{}", num.inspect(), unit))
+        }
         _ => None,
     };
 
@@ -670,7 +684,9 @@ pub(crate) fn module_invert(args: ArgumentResult, visitor: &mut Visitor) -> Sass
         .or_else(|| args.positional.first());
 
     let arg0_text = match peek {
-        Some(Value::Dimension(SassNumber { num, unit, .. })) => Some(format!("{}{}", num.inspect(), unit)),
+        Some(Value::Dimension(SassNumber { num, unit, .. })) => {
+            Some(format!("{}{}", num.inspect(), unit))
+        }
         _ => None,
     };
 
@@ -746,9 +762,10 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
                             .into());
                     }
                 }
-                Ok(Value::Color(Rc::new(
-                    c.invert_in_space(space, weight.unwrap_or_else(Number::one)),
-                )))
+                Ok(Value::Color(Rc::new(c.invert_in_space(
+                    space,
+                    weight.unwrap_or_else(Number::one),
+                ))))
             } else if !c.color_space().is_legacy() {
                 // Modern colors require $space
                 Err((
@@ -823,24 +840,42 @@ pub(crate) fn declare(f: &mut GlobalFunctionMap) {
     // hsl/hsla are plain-CSS-compatible constructors; never warn.
     f.insert("hsl", Builtin::new(hsl));
     f.insert("hsla", Builtin::new(hsla));
-    f.insert("hue", Builtin::new(global_hue).with_deprecated_global("color", "hue"));
+    f.insert(
+        "hue",
+        Builtin::new(global_hue).with_deprecated_global("color", "hue"),
+    );
     f.insert(
         "saturation",
         Builtin::new(global_saturation).with_deprecated_global("color", "saturation"),
     );
-    f.insert("adjust-hue", Builtin::new(adjust_hue).with_deprecated_global("color", "adjust"));
+    f.insert(
+        "adjust-hue",
+        Builtin::new(adjust_hue).with_deprecated_global("color", "adjust"),
+    );
     f.insert(
         "lightness",
         Builtin::new(global_lightness).with_deprecated_global("color", "lightness"),
     );
-    f.insert("lighten", Builtin::new(lighten).with_deprecated_global("color", "adjust"));
-    f.insert("darken", Builtin::new(darken).with_deprecated_global("color", "adjust"));
+    f.insert(
+        "lighten",
+        Builtin::new(lighten).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "darken",
+        Builtin::new(darken).with_deprecated_global("color", "adjust"),
+    );
     // saturate/grayscale/invert warn conditionally on argument shape; the
     // warning is emitted inline in their own function bodies above, not
     // generically here (avoids a double warning).
     f.insert("saturate", Builtin::new(saturate));
-    f.insert("desaturate", Builtin::new(desaturate).with_deprecated_global("color", "adjust"));
+    f.insert(
+        "desaturate",
+        Builtin::new(desaturate).with_deprecated_global("color", "adjust"),
+    );
     f.insert("grayscale", Builtin::new(global_grayscale));
-    f.insert("complement", Builtin::new(complement).with_deprecated_global("color", "complement"));
+    f.insert(
+        "complement",
+        Builtin::new(complement).with_deprecated_global("color", "complement"),
+    );
     f.insert("invert", Builtin::new(global_invert));
 }

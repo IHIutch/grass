@@ -43,11 +43,8 @@ fn dynamic_fn_binds_named_args_to_declared_position() {
         .add_custom_fn_with_signature("subtract($a, $b)", subtract)
         .unwrap();
 
-    let css = grass::from_string(
-        "a { width: subtract($b: 3, $a: 10); }".to_owned(),
-        &options,
-    )
-    .unwrap();
+    let css =
+        grass::from_string("a { width: subtract($b: 3, $a: 10); }".to_owned(), &options).unwrap();
 
     assert_eq!(css, "a {\n  width: 7;\n}\n");
 }
@@ -131,10 +128,7 @@ fn dynamic_fn_captures_environment_state() {
     )
     .unwrap();
 
-    assert_eq!(
-        css,
-        "a {\n  one: 10;\n  two: 11;\n  three: 12;\n}\n"
-    );
+    assert_eq!(css, "a {\n  one: 10;\n  two: 11;\n  three: 12;\n}\n");
     assert_eq!(calls.load(Ordering::SeqCst), 3);
 }
 
@@ -158,7 +152,9 @@ fn dynamic_fn_arity_error_matches_user_defined_function_message() {
     .unwrap_err();
 
     assert!(dynamic_err.to_string().contains("Missing argument $b."));
-    assert!(user_defined_err.to_string().contains("Missing argument $b."));
+    assert!(user_defined_err
+        .to_string()
+        .contains("Missing argument $b."));
 }
 
 #[test]

@@ -2,7 +2,9 @@ use std::{cell::Cell, path::Path};
 
 use codemap::Span;
 
-use crate::{ast::*, deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token};
+use crate::{
+    ast::*, deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token,
+};
 
 use super::{BaseParser, StylesheetParser};
 
@@ -237,11 +239,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
             let indentation = self.read_indentation()?;
             if indentation != 0 {
-                return Err((
-                    "Nothing may be indented here.",
-                    self.toks.current_span(),
-                )
-                    .into());
+                return Err(("Nothing may be indented here.", self.toks.current_span()).into());
             }
         }
 
@@ -481,7 +479,9 @@ impl<'a> SassParser<'a> {
             // Skip trailing whitespace and comments after semicolons
             loop {
                 match self.toks.peek() {
-                    Some(Token { kind: ' ' | '\t', .. }) => {
+                    Some(Token {
+                        kind: ' ' | '\t', ..
+                    }) => {
                         self.toks.next();
                     }
                     Some(Token { kind: '/', .. })
@@ -650,9 +650,7 @@ impl<'a> SassParser<'a> {
 
             if child_indent != indentation {
                 return Err((
-                    format!(
-                        "Inconsistent indentation, expected {child_indent} spaces."
-                    ),
+                    format!("Inconsistent indentation, expected {child_indent} spaces."),
                     self.toks.current_span(),
                 )
                     .into());
@@ -672,9 +670,10 @@ impl<'a> SassParser<'a> {
             Some(Token {
                 kind: '\n' | '\r', ..
             }) => return Ok(None),
-            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(self.arena().alloc(
-                self.parse_variable_declaration_without_namespace(None, None)?,
-            )),
+            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(
+                self.arena()
+                    .alloc(self.parse_variable_declaration_without_namespace(None, None)?),
+            ),
             Some(Token { kind: '/', .. }) => match self.toks.peek_n(1) {
                 Some(Token { kind: '/', .. }) => self.parse_silent_comment()?,
                 Some(Token { kind: '*', .. }) => AstStmt::LoudComment(self.parse_loud_comment()?),
