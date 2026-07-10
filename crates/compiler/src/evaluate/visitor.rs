@@ -4962,7 +4962,10 @@ impl<'a> Visitor<'a> {
                 self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
                 value
             }
-            None => self.visit_expr_ref(&node.calculation),
+            None => match &node.calculation_error {
+                Some((message, span)) => Err((message.clone(), *span).into()),
+                None => self.visit_expr_ref(&node.calculation),
+            },
         }
     }
 

@@ -1,6 +1,6 @@
 use std::{iter::Iterator, marker::PhantomData, rc::Rc};
 
-use codemap::Spanned;
+use codemap::{Span, Spanned};
 use compact_str::CompactString;
 
 use crate::{
@@ -2399,8 +2399,21 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             return Ok(None);
                         }
                         parser.toks_mut().set_cursor(before_args);
-                        let invocation = match parser.parse_argument_invocation(false, false) {
-                            Ok(invocation) => invocation,
+                        let (invocation, calculation_error) = match
+                            parser.parse_argument_invocation(false, false)
+                        {
+                            Ok(invocation) => {
+                                let calculation_error = if invocation.positional.is_empty()
+                                    && invocation.named.is_empty()
+                                    && invocation.rest.is_none()
+                                    && invocation.keyword_rest.is_none()
+                                {
+                                    None
+                                } else {
+                                    Some(e.raw())
+                                };
+                                (invocation, calculation_error)
+                            }
                             Err(_) => {
                                 parser.toks_mut().set_cursor(before_args);
                                 parser.expect_char('(')?;
@@ -2408,7 +2421,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 if !parser.scan_char(')') {
                                     return Err(e);
                                 }
-                                ArgumentInvocation::empty(parser.toks_mut().span_from(start))
+                                (
+                                    ArgumentInvocation::empty(parser.toks_mut().span_from(start)),
+                                    None,
+                                )
                             }
                         };
                         let calculation = Self::make_calculation(
@@ -2422,6 +2438,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             name,
                             calculation,
                             invocation,
+                            calculation_error,
                         )));
                     }
                 }
@@ -2456,8 +2473,21 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     Ok(args) => Self::make_calculation(parser, CalculationName::Clamp, args, start),
                     Err(e) => {
                         parser.toks_mut().set_cursor(before_args);
-                        let invocation = match parser.parse_argument_invocation(false, false) {
-                            Ok(invocation) => invocation,
+                        let (invocation, calculation_error) = match
+                            parser.parse_argument_invocation(false, false)
+                        {
+                            Ok(invocation) => {
+                                let calculation_error = if invocation.positional.is_empty()
+                                    && invocation.named.is_empty()
+                                    && invocation.rest.is_none()
+                                    && invocation.keyword_rest.is_none()
+                                {
+                                    None
+                                } else {
+                                    Some(e.raw())
+                                };
+                                (invocation, calculation_error)
+                            }
                             Err(_) => {
                                 parser.toks_mut().set_cursor(before_args);
                                 parser.expect_char('(')?;
@@ -2465,7 +2495,10 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                                 if !parser.scan_char(')') {
                                     return Err(e);
                                 }
-                                ArgumentInvocation::empty(parser.toks_mut().span_from(start))
+                                (
+                                    ArgumentInvocation::empty(parser.toks_mut().span_from(start)),
+                                    None,
+                                )
                             }
                         };
                         let calculation = Self::make_calculation(
@@ -2479,6 +2512,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             name,
                             calculation,
                             invocation,
+                            calculation_error,
                         )));
                     }
                 }
@@ -2556,11 +2590,13 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         name: &str,
         calculation: Spanned<AstExpr<'a>>,
         invocation: ArgumentInvocation<'a>,
+        calculation_error: Option<(String, Span)>,
     ) -> Spanned<AstExpr<'a>> {
         let span = calculation.span;
         AstExpr::CalculationWithFallback(parser.arena().alloc(CalculationWithFallbackExpr {
             name: Identifier::from(name),
             calculation: calculation.node,
+            calculation_error,
             invocation: parser.arena().alloc(invocation),
             span,
         }))
@@ -2597,6 +2633,7 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
             name,
             calculation,
             invocation,
+            None,
         ))
     }
 

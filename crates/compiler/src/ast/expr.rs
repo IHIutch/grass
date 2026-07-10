@@ -101,6 +101,9 @@ pub struct CalculationWithFallbackExpr<'a> {
     pub name: Identifier,
     /// The calculation node, evaluated when no override is found.
     pub calculation: AstExpr<'a>,
+    /// The original calculation parse error, if the calculation syntax was
+    /// invalid. A user-defined function still shadows this error.
+    pub calculation_error: Option<(String, Span)>,
     /// The same call parsed as an ordinary function invocation, used when an
     /// override is found.
     pub invocation: &'a ArgumentInvocation<'a>,
