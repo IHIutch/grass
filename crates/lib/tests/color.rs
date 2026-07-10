@@ -270,6 +270,30 @@ test!(
     "a {\n  color: opacify(rgba(0, 0, 17, 0.8), 0.2);\n}\n",
     "a {\n  color: #000011;\n}\n"
 );
+// Plan 027 / Solo scratchpad #76: with_alpha/fade_in/fade_out previously
+// rounded fractional channels via from_rgba()'s fuzzy_round. Expectations
+// verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    with_alpha_fractional_rgb_channels,
+    "a {\n  color: rgba(rgb(206.6, 226, 254.6), 0.5);\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, 0.5);\n}\n"
+);
+test!(
+    fade_in_fractional_rgb_channels,
+    "a {\n  color: fade-in(rgba(206.6, 226, 254.6, 0.5), 0.1);\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, 0.6);\n}\n"
+);
+test!(
+    fade_out_fractional_rgb_channels,
+    "a {\n  color: fade-out(rgba(206.6, 226, 254.6, 0.5), 0.1);\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, 0.4);\n}\n"
+);
+test!(
+    rgba_mix_fractional_channels_bootstrap_shaped,
+    "a {\n  color: rgba(mix(#0d6efd, #ced4da, 15%), .5);\n}\n",
+    "a {\n  color: rgba(177.05, 196.7, 223.25, 0.5);\n}\n"
+);
 test!(
     grayscale_1,
     "a {\n  color: grayscale(plum);\n}\n",
@@ -314,6 +338,30 @@ test!(
     mix_sanity_check,
     "a {\n  color: mix(black, white);\n}\n",
     "a {\n  color: rgb(127.5, 127.5, 127.5);\n}\n"
+);
+// Plan 027 / Solo scratchpad #76: mix() previously blended fractional input
+// channels through the rounding red()/green()/blue() getters instead of raw
+// channels. Expectations verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    mix_fractional_rgb_channels,
+    "a {\n  color: mix(#000, rgb(206.6, 226, 254.6), 5%);\n}\n",
+    "a {\n  color: rgb(196.27, 214.7, 241.87);\n}\n"
+);
+test!(
+    mix_fractional_hsl_input,
+    "a {\n  color: mix(hsl(210.5, 60.3%, 50.2%), #123456, 33.3%);\n}\n",
+    "a {\n  color: rgb(29.13386499, 76.8863389165, 125.48879501);\n}\n"
+);
+test!(
+    mix_fractional_alpha_weight,
+    "a {\n  color: mix(rgba(100.4, 50, 50, 0.4), rgba(20, 200.7, 30, 0.9), 25%);\n}\n",
+    "a {\n  color: rgba(28.04, 185.63, 32, 0.775);\n}\n"
+);
+test!(
+    mix_fractional_nested_bootstrap_shaped,
+    "a {\n  color: mix(#000, mix(white, #0d6efd, 80%), 5%);\n}\n",
+    "a {\n  color: rgb(196.27, 214.7, 241.87);\n}\n"
 );
 test!(
     change_color_blue,
@@ -571,9 +619,24 @@ test!(
     "a {\n  color: rgb(1, var(--foo));\n}\n"
 );
 test!(
+    // Expectation updated for Plan 027 / Solo scratchpad #76: rgb(1%, 1, 1)'s
+    // red channel is fractional (2.55), and the var()-alpha fallback path
+    // must preserve raw channels rather than rounding through red()/green()/
+    // blue(). Verified against dart-sass 1.97.3:
+    // printf '%s' 'a { color: rgb(rgb(1%, 1, 1), var(--foo)); }' | npx sass@1.97.3 --stdin --style=expanded
+    // -> rgb(2.55, 1, 1, var(--foo))
     rgb_special_fn_2_arg_first_is_color,
     "a {\n  color: rgb(rgb(1%, 1, 1), var(--foo));;\n}\n",
-    "a {\n  color: rgb(3, 1, 1, var(--foo));\n}\n"
+    "a {\n  color: rgb(2.55, 1, 1, var(--foo));\n}\n"
+);
+// Plan 027 / Solo scratchpad #76: the calc()-alpha fallback path (same
+// code as the var()-alpha path above) also preserves raw channels.
+// Verified against dart-sass 1.97.3 via:
+// printf '%s' '<input>' | npx sass@1.97.3 --stdin --style=expanded
+test!(
+    rgba_special_fn_alpha_fractional_rgb_channels,
+    "a {\n  color: rgba(rgb(206.6, 226, 254.6), calc(1 - var(--x)));\n}\n",
+    "a {\n  color: rgba(206.6, 226, 254.6, calc(1 - var(--x)));\n}\n"
 );
 test!(
     interpolated_named_color_is_not_color,
@@ -910,6 +973,162 @@ test!(
     "@use \"sass:color\";\na {\n  b: color.adjust(oklch(90% 0.2 30), $lightness: 20%);\n}\n",
     "a {\n  b: oklch(100% 0.2 30deg);\n}\n"
 );
+// todo #194 item 2: `update_modern` previously used the raw numeric value for
+// `$alpha` regardless of unit, so `$alpha: 50%` set alpha to 50 (clamped to 1)
+// instead of scaling to 0.5, unlike dart-sass's `_changeColor`. Verified
+// byte-identical against npx sass@1.97.3.
+test!(
+    change_modern_space_alpha_percent,
+    "@use \"sass:color\";\na {\n  b: color.change(oklch(50% 0.1 200), $alpha: 50%);\n}\n",
+    "a {\n  b: oklch(50% 0.1 200deg / 0.5);\n}\n"
+);
+test!(
+    change_lab_alpha_percent,
+    "@use \"sass:color\";\na {\n  b: color.change(lab(50% 20 20), $alpha: 25%);\n}\n",
+    "a {\n  b: lab(50% 20 20 / 0.25);\n}\n"
+);
+// todo #199: `update_modern` never checked for the `none` keyword on `$alpha`,
+// unlike the legacy path (`update_components`'s non-modern branch), so this
+// errored with "$alpha: none is not a number." instead of setting alpha to
+// missing. Verified byte-identical against npx sass@1.97.3.
+test!(
+    change_modern_space_alpha_none,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(50% 0.1 200), $alpha: none));\n}\n",
+    "a {\n  b: oklch(50% 0.1 200deg / none);\n}\n"
+);
+test!(
+    change_lab_alpha_none,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(lab(50% 20 30), $alpha: none));\n}\n",
+    "a {\n  b: lab(50% 20 30 / none);\n}\n"
+);
+test!(
+    change_legacy_rgb_alpha_none,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(10 20 30), $alpha: none));\n}\n",
+    "a {\n  b: rgb(10 20 30 / none);\n}\n"
+);
+// dart-sass's `_changeColor` never guards on a missing alpha being modified —
+// only `adjust()`/`scale()` do (via `_adjustChannel`/`_scaleChannel`). Verified
+// against npx sass@1.97.3: neither `$alpha: none` nor a numeric `$alpha` on an
+// already-missing-alpha color errors for `change()`.
+test!(
+    change_modern_space_alpha_none_on_already_missing_alpha,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200 / none), $alpha: none));\n}\n",
+    "a {\n  b: oklch(none 0.1 200deg / none);\n}\n"
+);
+test!(
+    change_modern_space_alpha_numeric_on_already_missing_alpha,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200 / none), $alpha: 0.5));\n}\n",
+    "a {\n  b: oklch(none 0.1 200deg / 0.5);\n}\n"
+);
+// Confirms adjust()'s missing-alpha guard is unaffected by the change() fix above.
+error!(
+    adjust_modern_space_alpha_on_already_missing_alpha_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.adjust(oklch(none 0.1 200 / none), $alpha: 0.1);\n}\n",
+    "Error: $alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: oklch(none 0.1 200deg / none))."
+);
+
+// todo #223: dart-sass's unified `_changeColor` (used for both legacy and
+// modern color spaces) never guards missing/powerless CHANNELS either — only
+// `_adjustChannel`/`_scaleChannel` (adjust()/scale()) do. grass's
+// check_missing_channel (legacy) and update_modern's channel loop
+// unconditionally errored on every update kind, including Change. All values
+// below verified byte-identical against npx sass@1.97.3.
+test!(
+    change_legacy_rgb_missing_red_channel,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(none 20 30), $red: 100));\n}\n",
+    "a {\n  b: #64141e;\n}\n"
+);
+test!(
+    change_legacy_hsl_missing_hue_channel,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(none 50% 50%), $hue: 100));\n}\n",
+    "a {\n  b: hsl(100, 50%, 50%);\n}\n"
+);
+test!(
+    change_modern_oklch_missing_lightness_channel,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200), $lightness: 60%));\n}\n",
+    "a {\n  b: oklch(60% 0.1 200deg);\n}\n"
+);
+// Changing a DIFFERENT channel than the missing one: the missing channel
+// survives into the output as `none`, matching dart exactly.
+test!(
+    change_legacy_rgb_missing_channel_survives_when_other_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(none 20 30), $green: 100));\n}\n",
+    "a {\n  b: rgb(none 100 30);\n}\n"
+);
+test!(
+    change_legacy_hsl_missing_hue_survives_when_lightness_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(none 50% 50%), $lightness: 80%));\n}\n",
+    "a {\n  b: hsl(none 50% 80%);\n}\n"
+);
+test!(
+    change_modern_oklch_missing_chroma_survives_when_lightness_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(0.5 none 200), $lightness: 60%));\n}\n",
+    "a {\n  b: oklch(60% none 200deg);\n}\n"
+);
+test!(
+    change_legacy_hwb_missing_hue_survives_when_blackness_changed,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(none 10% 10%), $blackness: 50%));\n}\n",
+    "a {\n  b: hwb(none 10% 50%);\n}\n"
+);
+// Legacy alpha: `check_missing_channel`'s alpha branch also unconditionally
+// errored for Change; now scoped to Adjust/Scale like the modern path (#199).
+test!(
+    change_legacy_rgb_missing_alpha_numeric,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(255 0 0 / none), $alpha: 0.5));\n}\n",
+    "a {\n  b: rgba(255, 0, 0, 0.5);\n}\n"
+);
+// dart-sass's `_changeColor` reads an untouched, non-`$alpha`-provided alpha
+// via `color.alpha`, which is `alphaOrNull ?? 0` — unlike
+// `_adjustChannel`/`_scaleChannel`, which read `color.alphaOrNull` and so
+// preserve a missing alpha. So `change()` on a color with a missing alpha,
+// where `$alpha` itself is not passed, coerces the untouched alpha to 0
+// rather than leaving it `none`. This is a dart-sass quirk, not a grass
+// choice — verified against npx sass@1.97.3.
+test!(
+    change_legacy_rgb_untouched_missing_alpha_defaults_to_zero,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(0 0 0 / none), $red: 10));\n}\n",
+    "a {\n  b: rgba(10, 0, 0, 0);\n}\n"
+);
+test!(
+    change_legacy_hsl_untouched_missing_alpha_defaults_to_zero,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(0 0% 0% / none), $hue: 10));\n}\n",
+    "a {\n  b: hsla(10, 0%, 0%, 0);\n}\n"
+);
+test!(
+    change_modern_oklch_untouched_missing_alpha_defaults_to_zero,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(oklch(none 0.1 200 / none), $lightness: 60%));\n}\n",
+    "a {\n  b: oklch(60% 0.1 200deg / 0);\n}\n"
+);
+// A previously-missing HSL literal (constructed via the CSS Color 4 path
+// because it contains `none`) must still serialize as hsl() — not rgb() with
+// fractional values — once change() fills in the missing channel. Regression
+// test for a format-tag bug this fix unmasked: `hsl(none 50% 50%)` never got
+// tagged `ColorFormat::Hsl` (only literal hsl()/hsla() without `none` does,
+// via `from_hsla_fn`), so once the missing-channel guard above stopped
+// blocking this call, the result fell through to rgb() fractional output.
+test!(
+    change_legacy_hsl_missing_hue_channel_keeps_hsl_format,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(0 0% 0% / none), $hue: 10));\n}\n",
+    "a {\n  b: hsla(10, 0%, 0%, 0);\n}\n"
+);
+// Controls: adjust()/scale() must still error on a missing channel — only
+// change() gets the exemption.
+error!(
+    adjust_legacy_rgb_missing_red_channel_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.adjust(rgb(none 20 30), $red: 10);\n}\n",
+    "Error: $red: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: rgb(none 20 30))."
+);
+error!(
+    adjust_legacy_hsl_missing_hue_channel_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.adjust(hsl(none 50% 50%), $hue: 10);\n}\n",
+    "Error: $hue: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: hsl(none 50% 50%))."
+);
+error!(
+    scale_modern_oklch_missing_lightness_channel_still_errors,
+    "@use \"sass:color\";\na {\n  b: color.scale(oklch(none 0.1 200), $lightness: 10%);\n}\n",
+    "Error: $lightness: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: oklch(none 0.1 200deg))."
+);
+
 // Note: dart-sass outputs oklch(50% 0.8 30deg) directly, but grass uses
 // color-mix() serialization for out-of-range perceptual values (separate issue)
 test!(
@@ -927,4 +1146,165 @@ test!(
     invert_hsl_preserves_format,
     "@use \"sass:color\";\na {\n  b: color.invert(hsl(200, 100%, 50%));\n}\n",
     "a {\n  b: hsl(20, 100%, 50%);\n}\n"
+);
+// dart-sass 1.97.3 verdict: explicit `$space: null` is NOT treated as omitted
+// for color.change/adjust/scale — it errors, same as any other non-string value.
+error!(
+    change_explicit_null_space_errors,
+    "@use \"sass:color\";\na {b: color.change(red, $lightness: 50%, $space: null)}",
+    "Error: $space: null is not a string."
+);
+error!(
+    adjust_explicit_null_space_errors,
+    "@use \"sass:color\";\na {b: color.adjust(red, $lightness: 5%, $space: null)}",
+    "Error: $space: null is not a string."
+);
+error!(
+    scale_explicit_null_space_errors,
+    "@use \"sass:color\";\na {b: color.scale(red, $lightness: 5%, $space: null)}",
+    "Error: $space: null is not a string."
+);
+// xyz-d50 <-> lab/lch must convert directly (both are already in the D50 white
+// point) rather than round-tripping through XYZ-D65. At extreme magnitudes that
+// detour introduces enough FP noise to push a boundary-exact L of 0 negative,
+// wrongly triggering the out-of-gamut color-mix() serialization fallback.
+// Expected values verified against npx sass@1.97.3.
+test!(
+    to_space_xyz_d50_to_lab_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), lab)}",
+    "a {\n  b: lab(0% -4037677156.674863 0);\n}\n"
+);
+test!(
+    to_space_xyz_d50_to_lch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), lch)}",
+    "a {\n  b: lch(0% 4037677156.674863 180deg);\n}\n"
+);
+test!(
+    to_space_lch_to_xyz_d50_round_trip,
+    "@use \"sass:color\";\na {b: color.to-space(lch(69.4695307685% 4338.814723033 181.6020122751deg), xyz-d50)}",
+    "a {\n  b: color(xyz-d50 -1 0.4 2);\n}\n"
+);
+// dart-sass's `SassColor._normalizeHue` renormalizes an Lch/OKLch hue with
+// `(hue % 360 + 360) % 360`, not a plain `if h < 0 { h += 360 }`. The extra
+// modulo shifts the last bit at extreme magnitudes, which both changes far
+// out-of-gamut to-space() results and (as a side effect) makes a $space: lab
+// round-trip of an OKLch color with hue 0deg bit-exact instead of drifting to
+// 360deg. Expected values verified against npx sass@1.97.3 / sass-spec.
+test!(
+    to_space_hsl_to_lch_extreme_saturation,
+    "@use \"sass:color\";\na {b: color.to-space(hsl(20deg 999999% 50%), lch)}",
+    "a {\n  b: color-mix(in lch, color(xyz 136956388.67576775 59264689.51984791 -623200798.6134329) 100%, black);\n}\n"
+);
+test!(
+    to_space_xyz_to_oklch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz -999999 0 0), oklch)}",
+    "a {\n  b: color-mix(in oklch, color(xyz -999998.9999999988 0 -0.0000000009) 100%, black);\n}\n"
+);
+test!(
+    adjust_oklch_lab_space_noop_is_bit_exact,
+    "@use \"sass:color\";\na {b: color.adjust(oklch(50% 0.2 0deg), $space: lab)}",
+    "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
+);
+test!(
+    change_oklch_lab_space_noop_is_bit_exact,
+    "@use \"sass:color\";\na {b: color.change(oklch(50% 0.2 0deg), $space: lab)}",
+    "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
+);
+test!(
+    scale_oklch_lab_space_no_channels_is_bit_exact,
+    "@use \"sass:color\";\na {b: color.scale(oklch(50% 0.2 0deg), $space: lab)}",
+    "a {\n  b: oklch(50% 0.2 0deg);\n}\n"
+);
+// dart-sass computes an out-of-gamut Lch/OKLch hue in TWO separate stages that
+// are not equivalent in IEEE double arithmetic: labToLch's own conditional
+// `hue + 360` for a negative angle, then an independent second renormalization
+// `(hue % 360 + 360) % 360` when the color is actually constructed. Collapsing
+// these into a single normalization (as an earlier version of this fix did)
+// still lands 1 ULP off from dart-sass at extreme magnitudes. Expected values
+// verified against sass-spec / npx sass@1.97.3.
+test!(
+    to_space_rgb_to_lch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color.change(black, $red: -999999), lch)}",
+    "a {\n  b: color-mix(in lch, color(xyz -152693379.43919504 -78732523.77333494 -7157502.161212466) 100%, black);\n}\n"
+);
+test!(
+    to_space_a98_rgb_to_lch_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(a98-rgb -999999 0 0), lch)}",
+    "a {\n  b: color-mix(in lch, color(xyz -9041452038524.758 -4661998707364.329 -423818064305.86096) 100%, black);\n}\n"
+);
+// OKLab/OKLCH <-> Lab/LCH/XYZ-D50 must convert directly via the LMS<->XYZ-D50
+// matrices (dart-sass's LmsColorSpace/XyzD50ColorSpace special-case this),
+// not via an XYZ-D65 round trip. Expected values verified against sass-spec.
+test!(
+    to_space_oklab_to_lab_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(oklab(50% -999999 0), lab)}",
+    "a {\n  b: color-mix(in lab, color(xyz -76837317949857280 3783158056963294.5 5396109066377520) 100%, black);\n}\n"
+);
+test!(
+    to_space_xyz_d50_to_oklab_extreme_magnitude,
+    "@use \"sass:color\";\na {b: color.to-space(color(xyz-d50 -999999 0 0), oklab)}",
+    "a {\n  b: color-mix(in oklab, color(xyz -955472.4660146532 28369.6809641542 -12314.0025504671) 100%, black);\n}\n"
+);
+// HWB-space colors with fractional RGB used to unconditionally serialize as
+// hsl() (todo #271). dart-sass's `_writeHwb` is reached whenever a
+// no-missing-channel HWB color is inspected, regardless of gamut/fractional
+// status — so inspect output must always preserve `hwb()`. Verified against
+// dart-sass 1.97.3.
+test!(
+    hwb_change_whiteness_serializes_as_hwb_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(50 10% 10%), $whiteness: 5%));\n}\n",
+    "a {\n  b: hwb(50 5% 10%);\n}\n"
+);
+test!(
+    hwb_change_blackness_serializes_as_hwb_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(50 10% 10%), $blackness: 30%));\n}\n",
+    "a {\n  b: hwb(50 10% 30%);\n}\n"
+);
+test!(
+    hwb_adjust_whiteness_serializes_as_hwb_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.adjust(hwb(50 10% 10%), $whiteness: 5%));\n}\n",
+    "a {\n  b: hwb(50 15% 10%);\n}\n"
+);
+test!(
+    hwb_literal_fractional_channels_via_inspect,
+    "@use \"sass:meta\";\na {\n  b: meta.inspect(hwb(50 10.5% 10.25%));\n}\n",
+    "a {\n  b: hwb(50 10.5% 10.25%);\n}\n"
+);
+test!(
+    hwb_literal_with_alpha_via_inspect,
+    "@use \"sass:meta\";\na {\n  b: meta.inspect(hwb(50 10% 10% / 0.5));\n}\n",
+    "a {\n  b: hwb(50 10% 10% / 0.5);\n}\n"
+);
+// `color.change`'s alpha-only branch used to route through `Color::with_alpha`,
+// which unconditionally converts to RGB space (correct for legacy global
+// functions, wrong for `color.change`, which must preserve the color's own
+// space per dart-sass's `SassColor.changeAlpha`).
+test!(
+    hwb_change_alpha_preserves_hwb_format,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hwb(50 10% 10%), $alpha: 0.3));\n}\n",
+    "a {\n  b: hwb(50 10% 10% / 0.3);\n}\n"
+);
+// Controls: non-HWB legacy spaces are unaffected by the inspect-mode HWB rule.
+test!(
+    hsl_change_saturation_still_serializes_as_hsl_via_inspect,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(hsl(50 10% 10%), $saturation: 5%));\n}\n",
+    "a {\n  b: hsl(50, 5%, 10%);\n}\n"
+);
+test!(
+    rgb_change_red_still_serializes_as_hex,
+    "@use \"sass:color\";\n@use \"sass:meta\";\na {\n  b: meta.inspect(color.change(rgb(10, 20, 30), $red: 50));\n}\n",
+    "a {\n  b: #32141e;\n}\n"
+);
+// A literal (hex/named) color's alpha-only change must drop the stale literal
+// text, since alpha isn't part of it (was broken by an earlier attempt at
+// this fix — regression-tested here).
+test!(
+    literal_named_color_change_alpha_drops_stale_literal,
+    "@use \"sass:color\";\na {\n  b: color.change(sienna, $alpha: 0.3);\n}\n",
+    "a {\n  b: rgba(160, 82, 45, 0.3);\n}\n"
+);
+test!(
+    literal_hex_color_change_alpha_drops_stale_literal,
+    "@use \"sass:color\";\na {\n  b: color.change(#102030, $alpha: 0.325);\n}\n",
+    "a {\n  b: rgba(16, 32, 48, 0.325);\n}\n"
 );

@@ -1,6 +1,7 @@
 use crate::{
     builtin::{builtin_imports::*, color::angle_value},
     color::{space::ColorSpace, ColorFormat},
+    serializer::inspect_number,
     utils::to_sentence,
 };
 
@@ -107,6 +108,52 @@ fn parse_modern_channel(
     }
 }
 
+/// Extracts and validates the `$alpha` argument for `color.change()`.
+/// Transcribes dart-sass's unified `_changeColor` alpha handling (the same
+/// code path is used for both legacy and modern color spaces): unitless and
+/// `%` are both accepted without warning (`%` is scaled to 0-1, bounds
+/// 0-100); any other unit is deprecated (`function-units`, via
+/// `function_unit_other_than_message`) but the raw numeric value is still
+/// used (bounds 0-1), matching dart's `alphaArg.valueInRange(0, 1, "alpha")`.
+fn check_change_alpha(value: Value, span: Span, visitor: &mut Visitor) -> SassResult<Number> {
+    let num = value.assert_number_with_name("alpha", span)?;
+    if num.unit == Unit::Percent {
+        num.assert_bounds("alpha", 0.0, 100.0, span)?;
+        Ok(num.num / Number(100.0))
+    } else {
+        if num.unit != Unit::None {
+            let value_display = inspect_number(&num, visitor.options, span)?;
+            let unit = num.unit.clone();
+            visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                Ok(function_unit_other_than_message(
+                    "alpha",
+                    "%",
+                    &value_display,
+                    &unit,
+                ))
+            })?;
+        }
+        num.assert_bounds_with_unit("alpha", 0.0, 1.0, &num.unit, span)?;
+        Ok(num.num)
+    }
+}
+
+/// Emits the `function-units` deprecation for `color.adjust()`'s `$alpha`
+/// argument when it carries ANY unit (including `%`, unlike `change()`'s
+/// `$alpha`). Transcribes dart-sass's `_adjustChannel` alpha-unit check,
+/// which applies uniformly to legacy and modern color spaces — the raw
+/// numeric value is used either way (never scaled), matching
+/// `adjustmentArg = SassNumber(adjustmentArg.value)`.
+fn check_adjust_alpha(num: &SassNumber, span: Span, visitor: &mut Visitor) -> SassResult<()> {
+    if num.unit != Unit::None {
+        let unit = num.unit.clone();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_units_message("alpha", &unit))
+        })?;
+    }
+    Ok(())
+}
+
 /// Handle adjust/scale/change for a modern (non-legacy) working space.
 fn update_modern(
     color: &Rc<Color>,
@@ -115,6 +162,7 @@ fn update_modern(
     convert_back: bool,
     update: UpdateComponents,
     span: Span,
+    visitor: &mut Visitor,
 ) -> SassResult<Value> {
     let channel_defs = working_space.channels();
 
@@ -158,15 +206,33 @@ fn update_modern(
         }
     }
 
-    // Extract alpha
-    let alpha_adjustment = if let Some(v) = args.get(usize::MAX, "alpha") {
-        let num = v.node.assert_number_with_name("alpha", span)?;
-        if update == UpdateComponents::Scale {
-            num.assert_unit(&Unit::Percent, "alpha", span)?;
-            num.assert_bounds("alpha", -100.0, 100.0, span)?;
-            Some(num.num.0 / 100.0)
-        } else {
-            Some(num.num.0)
+    // Extract alpha.
+    // None = not provided, Some(None) = `none` keyword (only valid for Change,
+    // mirroring channel_adjustments' convention above), Some(Some(val)) = numeric.
+    let alpha_adjustment: Option<Option<f64>> = if let Some(v) = args.get(usize::MAX, "alpha") {
+        match update {
+            UpdateComponents::Scale => {
+                let num = v.node.assert_number_with_name("alpha", span)?;
+                num.assert_unit(&Unit::Percent, "alpha", span)?;
+                num.assert_bounds("alpha", -100.0, 100.0, span)?;
+                Some(Some(num.num.0 / 100.0))
+            }
+            UpdateComponents::Change => {
+                if let Value::String(s, QuoteKind::None) = &v.node {
+                    if s == "none" {
+                        Some(None)
+                    } else {
+                        Some(Some(check_change_alpha(v.node, span, visitor)?.0))
+                    }
+                } else {
+                    Some(Some(check_change_alpha(v.node, span, visitor)?.0))
+                }
+            }
+            UpdateComponents::Adjust => {
+                let num = v.node.assert_number_with_name("alpha", span)?;
+                check_adjust_alpha(&num, span, visitor)?;
+                Some(Some(num.num.0))
+            }
         }
     } else {
         None
@@ -188,26 +254,38 @@ fn update_modern(
             .into());
     }
 
-    // Check for missing/powerless channels being modified
+    // Check for missing/powerless channels being modified.
+    // dart-sass's `_changeColor` never raises this for any channel — it replaces
+    // the value directly via `_channelForChange` with no `_missingChannelError`
+    // guard. Only `adjust()`/`scale()` guard on a missing channel (via
+    // `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
     let display_color = color_in_space.with_powerless_as_missing();
     for i in 0..3 {
-        if let Some(Some(_)) = channel_adjustments[i] {
-            if color_in_space.has_missing_channel(i) || color_in_space.is_channel_powerless(i) {
-                return Err((
-                    format!(
-                        "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
-                        channel_defs[i].name,
-                        Value::Color(Rc::new(display_color)).inspect(span)?
-                    ),
-                    span,
-                )
-                    .into());
-            }
+        if update != UpdateComponents::Change
+            && matches!(channel_adjustments[i], Some(Some(_)))
+            && (color_in_space.has_missing_channel(i) || color_in_space.is_channel_powerless(i))
+        {
+            return Err((
+                format!(
+                    "${}: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
+                    channel_defs[i].name,
+                    Value::Color(Rc::new(display_color)).inspect(span)?
+                ),
+                span,
+            )
+                .into());
         }
     }
 
-    // Check for missing alpha being modified
-    if alpha_adjustment.is_some() && color_in_space.has_missing_alpha() {
+    // Check for missing alpha being modified.
+    // dart-sass's `_changeColor` never raises this for alpha — it replaces the
+    // value directly via `_isNone`/`valueInRange` with no `_missingChannelError`
+    // guard. Only `adjust()`/`scale()` guard on a missing alpha (via
+    // `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
+    if update != UpdateComponents::Change
+        && alpha_adjustment.is_some()
+        && color_in_space.has_missing_alpha()
+    {
         return Err((
             format!(
                 "$alpha: Because the CSS working group is still deciding on the best behavior, Sass doesn't currently support modifying missing channels (color: {}).",
@@ -289,23 +367,36 @@ fn update_modern(
     }
 
     // Apply alpha modification
-    let new_alpha = if let Some(adj) = alpha_adjustment {
-        let current = color_in_space.alpha().0;
-        Some(match update {
-            UpdateComponents::Change => adj.clamp(0.0, 1.0),
-            UpdateComponents::Adjust => (current + adj).clamp(0.0, 1.0),
-            UpdateComponents::Scale => {
-                let val = current
-                    + if adj > 0.0 {
-                        (1.0 - current) * adj
-                    } else {
-                        current * adj
-                    };
-                val.clamp(0.0, 1.0)
+    let new_alpha = match alpha_adjustment {
+        Some(None) => None, // `none` keyword - set alpha to missing
+        Some(Some(adj)) => {
+            let current = color_in_space.alpha().0;
+            Some(match update {
+                UpdateComponents::Change => adj.clamp(0.0, 1.0),
+                UpdateComponents::Adjust => (current + adj).clamp(0.0, 1.0),
+                UpdateComponents::Scale => {
+                    let val = current
+                        + if adj > 0.0 {
+                            (1.0 - current) * adj
+                        } else {
+                            current * adj
+                        };
+                    val.clamp(0.0, 1.0)
+                }
+            })
+        }
+        // dart-sass's `_changeColor` reads the untouched alpha via `color.alpha`,
+        // which defaults a missing alpha to 0 (`alphaOrNull ?? 0`) — unlike
+        // `_adjustChannel`/`_scaleChannel`, which read `color.alphaOrNull` and so
+        // preserve a missing alpha. Replicate that asymmetry: only Change
+        // coerces an untouched-but-missing alpha to 0.
+        None => {
+            if update == UpdateComponents::Change {
+                color_in_space.raw_alpha().or(Some(0.0))
+            } else {
+                color_in_space.raw_alpha()
             }
-        })
-    } else {
-        color_in_space.raw_alpha()
+        }
     };
 
     let result = Color::for_space(working_space, new_channels, new_alpha, ColorFormat::Infer);
@@ -348,12 +439,16 @@ fn update_components(
         let space_str = match &space_val.node {
             Value::String(s, QuoteKind::Quoted) => {
                 return Err((
-                    format!("$space: Expected {} to be an unquoted string.", s),
+                    format!("$space: Expected {s} to be an unquoted string."),
                     span,
                 )
                     .into());
             }
             Value::String(s, QuoteKind::None) => s.clone(),
+            // Explicit `$space: null` is intentionally NOT treated as omitted here:
+            // dart-sass 1.97.3 also errors on it (verified against `npx sass@1.97.3`),
+            // unlike `parse_space_arg` in `color::mod`, which some other color
+            // functions use and where explicit null IS equivalent to omitted.
             v => {
                 return Err((
                     format!("$space: {} is not a string.", v.inspect(span)?),
@@ -365,17 +460,33 @@ fn update_components(
 
         let working_space = ColorSpace::from_name(&space_str).ok_or_else(|| {
             (
-                format!("$space: Unknown color space \"{}\".", space_str),
+                format!("$space: Unknown color space \"{space_str}\"."),
                 span,
             )
         })?;
 
-        return update_modern(&color, &mut args, working_space, true, update, span);
+        return update_modern(
+            &color,
+            &mut args,
+            working_space,
+            true,
+            update,
+            span,
+            visitor,
+        );
     }
 
     // No $space parameter - check if color is in a modern space
     if !color.color_space().is_legacy() {
-        return update_modern(&color, &mut args, color.color_space(), false, update, span);
+        return update_modern(
+            &color,
+            &mut args,
+            color.color_space(),
+            false,
+            update,
+            span,
+            visitor,
+        );
     }
 
     // Legacy path: existing behavior for RGB/HSL/HWB colors
@@ -386,37 +497,45 @@ fn update_components(
 
     let check_num = |num: Spanned<Value>,
                      name: &str,
-                     mut max: f64,
                      assert_percent: bool,
-                     _check_percent: bool|
+                     check_percent: bool,
+                     visitor: &mut Visitor|
      -> SassResult<Number> {
         let span = num.span;
         let mut num = num.node.assert_number_with_name(name, span)?;
 
         if update == UpdateComponents::Scale {
-            max = 100.0;
             // Scale always requires percentage and bounds checking
             num.assert_unit(&Unit::Percent, name, span)?;
-            num.assert_bounds(name, -max, max, span)?;
+            num.assert_bounds(name, -100.0, 100.0, span)?;
+            // Scale's formula needs a pure fraction of the remaining range,
+            // regardless of the channel's native storage scale.
+            num.num /= Number(100.0);
         } else if assert_percent {
             // HWB whiteness/blackness require % unit
             num.assert_unit(&Unit::Percent, name, span)?;
+        } else if check_percent && num.unit != Unit::Percent {
+            // dart-sass's `_checkPercent`: HSL saturation/lightness for change()/
+            // adjust() warn (rather than error) on a non-% unit, matching the
+            // legacy behavior where these channels are stored unitless 0-100.
+            let value_display = inspect_number(&num, visitor.options, span)?;
+            let unit = num.unit.clone();
+            visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                Ok(function_percent_message(name, &value_display, &unit))
+            })?;
         }
-        // For Change and Adjust, no bounds checking — out-of-range values are allowed
-
-        // todo: hack to check if rgb channel
-        if max == 100.0 {
-            num.num /= Number(100.0);
-        }
+        // For Change and Adjust, no bounds checking — out-of-range values are allowed.
+        // Saturation/lightness/whiteness/blackness are stored 0-100 (like dart-sass),
+        // so no rescaling is needed here.
 
         Ok(num.num)
     };
 
     let get_arg = |args: &mut ArgumentResult,
                    name: &str,
-                   max: f64,
                    assert_percent: bool,
-                   check_percent: bool|
+                   check_percent: bool,
+                   visitor: &mut Visitor|
      -> SassResult<ChannelArg> {
         Ok(match args.get(usize::MAX, name) {
             Some(v) => {
@@ -431,18 +550,18 @@ fn update_components(
                 Some(Some(check_num(
                     v,
                     name,
-                    max,
                     assert_percent,
                     check_percent,
+                    visitor,
                 )?))
             }
             None => None,
         })
     };
 
-    let red = get_arg(&mut args, "red", 255.0, false, false)?;
-    let green = get_arg(&mut args, "green", 255.0, false, false)?;
-    let blue = get_arg(&mut args, "blue", 255.0, false, false)?;
+    let red = get_arg(&mut args, "red", false, false, visitor)?;
+    let green = get_arg(&mut args, "green", false, false, visitor)?;
+    let blue = get_arg(&mut args, "blue", false, false, visitor)?;
 
     // Alpha has bounds checking even for change/adjust (unlike channels)
     // Also supports `none` for Change
@@ -453,26 +572,10 @@ fn update_components(
                 if s == "none" {
                     Some(None)
                 } else {
-                    let num = v.node.assert_number_with_name("alpha", span)?;
-                    let min = 0.0;
-                    if num.unit == Unit::Percent {
-                        num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
-                        Some(Some(num.num / Number(100.0)))
-                    } else {
-                        num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
-                        Some(Some(num.num))
-                    }
+                    Some(Some(check_change_alpha(v.node, span, visitor)?))
                 }
             } else {
-                let num = v.node.assert_number_with_name("alpha", span)?;
-                let min = 0.0;
-                if num.unit == Unit::Percent {
-                    num.assert_bounds("alpha", min * 100.0, 100.0, span)?;
-                    Some(Some(num.num / Number(100.0)))
-                } else {
-                    num.assert_bounds_with_unit("alpha", min, 1.0, &Unit::None, span)?;
-                    Some(Some(num.num))
-                }
+                Some(Some(check_change_alpha(v.node, span, visitor)?))
             }
         } else {
             let num = v.node.assert_number_with_name("alpha", span)?;
@@ -481,8 +584,9 @@ fn update_components(
                 num.assert_bounds("alpha", -100.0, 100.0, span)?;
                 Some(Some(num.num / Number(100.0)))
             } else {
-                // Adjust: no bounds check on the argument itself; the result is clamped.
-                // Percent unit is stripped (deprecated but accepted).
+                // Adjust: no bounds check on the argument itself; the result is
+                // clamped.
+                check_adjust_alpha(&num, span, visitor)?;
                 Some(Some(num.num))
             }
         }
@@ -499,22 +603,22 @@ fn update_components(
                 if s == "none" {
                     Some(None)
                 } else {
-                    Some(Some(angle_value(v.node, "hue", v.span)?))
+                    Some(Some(angle_value(v.node, "hue", v.span, visitor)?))
                 }
             } else {
-                Some(Some(angle_value(v.node, "hue", v.span)?))
+                Some(Some(angle_value(v.node, "hue", v.span, visitor)?))
             }
         } else {
-            Some(Some(angle_value(v.node, "hue", v.span)?))
+            Some(Some(angle_value(v.node, "hue", v.span, visitor)?))
         }
     } else {
         None
     };
 
-    let saturation = get_arg(&mut args, "saturation", 100.0, false, true)?;
-    let lightness = get_arg(&mut args, "lightness", 100.0, false, true)?;
-    let whiteness = get_arg(&mut args, "whiteness", 100.0, true, true)?;
-    let blackness = get_arg(&mut args, "blackness", 100.0, true, true)?;
+    let saturation = get_arg(&mut args, "saturation", false, true, visitor)?;
+    let lightness = get_arg(&mut args, "lightness", false, true, visitor)?;
+    let whiteness = get_arg(&mut args, "whiteness", true, true, visitor)?;
+    let blackness = get_arg(&mut args, "blackness", true, true, visitor)?;
 
     if !args.named.is_empty() {
         let argument_word = if args.named.len() == 1 {
@@ -524,22 +628,11 @@ fn update_components(
         };
 
         let argument_names = to_sentence(
-            args.named
-                .keys()
-                .map(|key| format!("${key}", key = key))
-                .collect(),
+            args.named.keys().map(|key| format!("${key}")).collect(),
             "or",
         );
 
-        return Err((
-            format!(
-                "No {argument_word} named {argument_names}.",
-                argument_word = argument_word,
-                argument_names = argument_names
-            ),
-            span,
-        )
-            .into());
+        return Err((format!("No {argument_word} named {argument_names}."), span).into());
     }
 
     let has_rgb = red.is_some() || green.is_some() || blue.is_some();
@@ -549,10 +642,7 @@ fn update_components(
     if has_rgb && (has_sl || has_wb || hue.is_some()) {
         let param_type = if has_wb { "HWB" } else { "HSL" };
         return Err((
-            format!(
-                "RGB parameters may not be passed along with {} parameters.",
-                param_type
-            ),
+            format!("RGB parameters may not be passed along with {param_type} parameters."),
             span,
         )
             .into());
@@ -596,8 +686,12 @@ fn update_components(
         }
     }
 
-    // Check for explicitly missing channels in legacy paths (powerless check only in $space/modern path)
-    {
+    // Check for explicitly missing channels in legacy paths (powerless check only in $space/modern path).
+    // dart-sass's `_changeColor` never raises this for any channel or alpha — it
+    // replaces the value directly via `_channelForChange`/`_isNone` with no
+    // `_missingChannelError` guard. Only `adjust()`/`scale()` guard on a missing
+    // channel (via `_adjustChannel`/`_scaleChannel`), so Change is exempted here.
+    if update != UpdateComponents::Change {
         let check_missing_channel = |color_in_space: &Color,
                                      channel_idx: usize,
                                      channel_name: &str,
@@ -666,7 +760,16 @@ fn update_components(
     }
 
     let original_space = color.color_space();
-    let original_format = color.format.clone();
+    // dart-sass's `_changeColor` reads the untouched alpha via `color.alpha`,
+    // which defaults a missing alpha to 0 (`alphaOrNull ?? 0`) — unlike
+    // `_adjustChannel`/`_scaleChannel`, which read `color.alphaOrNull` and so
+    // preserve a missing alpha. Replicate that asymmetry: only Change coerces
+    // an untouched-but-missing alpha to 0.
+    let alpha_current = if update == UpdateComponents::Change {
+        color.raw_alpha().or(Some(0.0))
+    } else {
+        color.raw_alpha()
+    };
     let color = if has_rgb {
         let clamp_rgb = update == UpdateComponents::Adjust;
         let in_rgb = color.to_space(ColorSpace::Rgb);
@@ -692,7 +795,7 @@ fn update_components(
                 v
             }
         });
-        let new_a = apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
+        let new_a = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         Rc::new(Color::for_space(
             ColorSpace::Rgb,
             [new_r, new_g, new_b],
@@ -723,10 +826,9 @@ fn update_components(
                 }
             }
         };
-        let new_w = apply_update(raw_w, &whiteness, 1.0, update);
-        let new_b = apply_update(raw_b, &blackness, 1.0, update);
-        let new_alpha =
-            apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
+        let new_w = apply_update(raw_w, &whiteness, 100.0, update);
+        let new_b = apply_update(raw_b, &blackness, 100.0, update);
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hwb's normalization of out-of-range values
         let mut result = Color::for_space(
             ColorSpace::Hwb,
@@ -753,7 +855,7 @@ fn update_components(
                 }
             }
         };
-        let mut new_sat = apply_update(hsl_ch[1], &saturation, 1.0, update);
+        let mut new_sat = apply_update(hsl_ch[1], &saturation, 100.0, update);
         let mut new_hue = new_hue;
         // For Adjust, clamp saturation to ≥0. For Change, reflect (negate + rotate hue 180°).
         if let Some(s) = new_sat {
@@ -768,9 +870,8 @@ fn update_components(
                 }
             }
         }
-        let new_light = apply_update(hsl_ch[2], &lightness, 1.0, update);
-        let new_alpha =
-            apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
+        let new_light = apply_update(hsl_ch[2], &lightness, 100.0, update);
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
         // Use Color::for_space to avoid from_hsla's clamping of out-of-range values
         let mut result = Color::for_space(
             ColorSpace::Hsl,
@@ -781,24 +882,37 @@ fn update_components(
         if original_space != ColorSpace::Hsl {
             result = result.to_space(original_space);
         } else {
-            result.format = original_format.clone();
+            // `original_format` can be `Infer` here when the input literal had a
+            // missing channel (e.g. `hsl(none 50% 50%)` goes through the CSS
+            // Color 4 constructor, not `from_hsla_fn`, so it never gets tagged
+            // `ColorFormat::Hsl`). Now that Change no longer errors on a missing
+            // channel, that Infer tag would fall through to
+            // `write_rgb_fractional` once the channel is filled in. Match
+            // `Color::to_space`'s own rule instead: any legacy-Hsl-space result
+            // always serializes as `hsl()`.
+            result.format = ColorFormat::Hsl;
         }
         Rc::new(result)
     } else if alpha.is_some() {
-        let new_alpha =
-            apply_update(color.raw_alpha(), &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
-        match new_alpha {
-            Some(a) => Rc::new(color.with_alpha(Number(a))),
-            None => {
-                // Alpha set to `none` (missing) — use for_space to create color with None alpha
-                Rc::new(Color::for_space(
-                    color.color_space(),
-                    color.raw_channels(),
-                    None,
-                    color.format.clone(),
-                ))
-            }
-        }
+        let new_alpha = apply_update(alpha_current, &alpha, 1.0, update).map(|v| v.clamp(0.0, 1.0));
+        // Unlike `Color::with_alpha` (used by legacy global functions, which
+        // always operate in RGB space), changing alpha through
+        // `color.change`/`color.adjust`/`color.scale` must preserve the
+        // color's own space (dart-sass's `SassColor.changeAlpha`, which
+        // always drops the format entirely). A stale `Literal` format (the
+        // original hex/named source text) can't represent the new alpha
+        // value, so it must be re-inferred; other format tags (Rgb/Hsl/Infer)
+        // don't depend on alpha and can stay as-is.
+        let format = match &color.format {
+            ColorFormat::Literal(_) => ColorFormat::Infer,
+            other => other.clone(),
+        };
+        Rc::new(Color::for_space(
+            color.color_space(),
+            color.raw_channels(),
+            new_alpha,
+            format,
+        ))
     } else {
         color
     };
@@ -827,8 +941,18 @@ pub(crate) fn ie_hex_str(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("change-color", Builtin::new(change_color));
-    f.insert("adjust-color", Builtin::new(adjust_color));
-    f.insert("scale-color", Builtin::new(scale_color));
+    f.insert(
+        "change-color",
+        Builtin::new(change_color).with_deprecated_global("color", "change"),
+    );
+    f.insert(
+        "adjust-color",
+        Builtin::new(adjust_color).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "scale-color",
+        Builtin::new(scale_color).with_deprecated_global("color", "scale"),
+    );
+    // Permanently global-only in dart-sass; never warns.
     f.insert("ie-hex-str", Builtin::new(ie_hex_str));
 }

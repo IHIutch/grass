@@ -448,7 +448,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 
     let space = match ColorSpace::from_name(&space_name) {
         Some(s) => s,
-        None => return Err((format!("Unknown color space \"{}\".", space_name), span).into()),
+        None => return Err((format!("Unknown color space \"{space_name}\"."), span).into()),
     };
 
     // Remaining items are channels
@@ -492,7 +492,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
             .any(|v| v.is_special_function() || v.is_var())
         {
             let is_compressed = visitor.options.is_compressed();
-            let mut result = format!("color({}", space_name);
+            let mut result = format!("color({space_name}");
             for ch in &channel_items {
                 result.push(' ');
                 result.push_str(&ch.to_css_string(span, is_compressed)?);
@@ -508,7 +508,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
         let missing = channel_defs
             .get(channel_items.len())
             .map_or("channel", |c| c.name);
-        return Err((format!("Missing element ${}.", missing), span).into());
+        return Err((format!("Missing element ${missing}."), span).into());
     }
     if channel_items.len() > 3 {
         return Err((
@@ -525,7 +525,7 @@ pub(crate) fn color_fn(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
     let alpha_is_special = alpha_val.as_ref().is_some_and(|a| a.is_special_function());
     if channel_items.iter().any(|v| v.is_special_function()) || alpha_is_special {
         let is_compressed = visitor.options.is_compressed();
-        let mut result = format!("color({}", space_name);
+        let mut result = format!("color({space_name}");
         for ch in &channel_items {
             result.push(' ');
             result.push_str(&ch.to_css_string(span, is_compressed)?);

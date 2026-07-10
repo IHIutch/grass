@@ -196,16 +196,20 @@ test!(
     "a {\n  color: ((1in*1in) / 1cm);\n}\n",
     "a {\n  color: 2.54in;\n}\n"
 );
+// npx-verified against dart-sass 1.97.3: complex-unit numbers render wrapped
+// in calc(...) under inspect(), same as normal CSS serialization (todo #193).
 test!(
     add_complex_div_units,
     "a {\n  color: inspect((1em / 1em) + (1px / 1em));\n}\n",
-    "a {\n  color: 2px/em;\n}\n"
+    "a {\n  color: calc(2px / 1em);\n}\n"
 );
 test!(
     complex_units_with_same_denom_and_comparable_numer_are_comparable,
     "a {\n  color: comparable((23in/2fu), (23cm/2fu));\n}\n",
     "a {\n  color: true;\n}\n"
 );
+// dart-sass 1.97.3 verified: multiple denominator units are parenthesized in unit()'s string
+// output ("rem/(px*vh)"), not flattened bare ("rem/px*vh") — grass already matches.
 test!(
     complex_unit_many_denom_one_numer,
     "a {\n  color: unit((1rem/1px) / 1vh);\n}\n",
@@ -409,3 +413,47 @@ test_unit_addition!(dpcm, dppx, "38.7952755906");
 test_unit_addition!(dppx, dpi, "1.0104166667");
 test_unit_addition!(dppx, dpcm, "1.0264583333");
 test_unit_addition!(dppx, dppx, "2");
+
+// Compound-unit comparability must be order-independent (dart-sass verified,
+// todo #176): `1px*em` and `1em*px` are the same compound unit regardless of
+// which order the numerator units were multiplied in.
+test!(
+    compound_unit_equal_reordered_numerator,
+    "a {\n  color: (1px * 1em) == (1em * 1px);\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_add_reordered_numerator,
+    "a {\n  color: (2px * 1em) + (1em * 1px);\n}\n",
+    "a {\n  color: calc(3px * 1em);\n}\n"
+);
+test!(
+    compound_unit_greater_than_reordered_numerator,
+    "a {\n  color: (2px * 1em) > (1em * 1px);\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_equal_reordered_three_way_numerator,
+    "a {\n  color: (1px * 1em * 1deg) == (1deg * 1em * 1px);\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_equal_reordered_denominator,
+    "a {\n  color: (1 / (1px * 1em * 1deg)) == (1 / (1deg * 1px * 1em));\n}\n",
+    "a {\n  color: true;\n}\n"
+);
+test!(
+    compound_unit_reordered_numerator_with_conversion,
+    "a {\n  color: (2in * 1deg) / 1s + (1deg * 2cm) / 1s;\n}\n",
+    "a {\n  color: calc(2.7874015748in * 1deg / 1s);\n}\n"
+);
+test!(
+    compound_unit_font_relative_units_still_not_comparable_when_reordered,
+    "a {\n  color: comparable((1px * 1em), (1px * 1rem));\n}\n",
+    "a {\n  color: false;\n}\n"
+);
+test!(
+    compound_unit_mismatched_length_still_not_comparable,
+    "a {\n  color: comparable((1px * 1em), (1px * 1em * 1deg));\n}\n",
+    "a {\n  color: false;\n}\n"
+);

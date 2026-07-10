@@ -21,8 +21,8 @@ pub(crate) enum CssStmt {
     KeyframesRuleSet(KeyframesRuleSet),
     /// A plain import such as `@import "foo.css";` or
     /// `@import url(https://fonts.google.com/foo?bar);`
-    // todo: named fields, 0: url, 1: modifiers
-    Import(String, Option<String>),
+    // todo: named fields, 0: url, 1: modifiers, 2: span of the url token (source-map mapping)
+    Import(String, Option<String>, Option<Span>),
 }
 
 impl CssStmt {
@@ -39,7 +39,7 @@ impl CssStmt {
             CssStmt::Style(_)
             | CssStmt::Comment(_, _)
             | CssStmt::KeyframesRuleSet(_)
-            | CssStmt::Import(_, _) => {}
+            | CssStmt::Import(_, _, _) => {}
         }
     }
 
@@ -95,6 +95,7 @@ impl CssStmt {
                     query: media.query.clone(),
                     body: Vec::new(),
                     query_span: media.query_span,
+                    at_rule_span: media.at_rule_span,
                 },
                 *is_group_end,
             ),
@@ -104,6 +105,7 @@ impl CssStmt {
                     params: at_rule.params.clone(),
                     body: Vec::new(),
                     has_body: at_rule.has_body,
+                    at_rule_span: at_rule.at_rule_span,
                 },
                 *is_group_end,
             ),
@@ -111,12 +113,14 @@ impl CssStmt {
                 SupportsRule {
                     params: supports.params.clone(),
                     body: Vec::new(),
+                    at_rule_span: supports.at_rule_span,
                 },
                 *is_group_end,
             ),
             CssStmt::KeyframesRuleSet(keyframes) => CssStmt::KeyframesRuleSet(KeyframesRuleSet {
                 selector: keyframes.selector.clone(),
                 body: Vec::new(),
+                selector_span: keyframes.selector_span,
             }),
         }
     }
@@ -126,6 +130,8 @@ impl CssStmt {
 pub(crate) struct KeyframesRuleSet {
     pub selector: Vec<KeyframesSelector>,
     pub body: Vec<CssStmt>,
+    /// Span of the keyframes selector (e.g. `from`, `to`, `50%`), used for source-map mappings
+    pub selector_span: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,4 +145,6 @@ pub(crate) enum KeyframesSelector {
 pub(crate) struct SupportsRule {
     pub params: String,
     pub body: Vec<CssStmt>,
+    /// Span of the `@supports` keyword itself, used for source-map mappings
+    pub at_rule_span: Option<Span>,
 }

@@ -19,7 +19,7 @@ impl fmt::Display for Namespace {
         match self {
             Self::Empty => write!(f, "|"),
             Self::Asterisk => write!(f, "*|"),
-            Self::Other(namespace) => write!(f, "{}|", namespace),
+            Self::Other(namespace) => write!(f, "{namespace}|"),
             Self::None => Ok(()),
         }
     }
@@ -38,6 +38,7 @@ impl fmt::Display for QualifiedName {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Specificity {
     pub min: i32,
     pub max: i32,

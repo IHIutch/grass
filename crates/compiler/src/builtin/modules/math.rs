@@ -87,38 +87,32 @@ fn clamp(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
     if min_unit == &Unit::None && number_unit != &Unit::None {
         return Err((
             format!(
-                "$min is unitless but $number has unit {}. Arguments must all have units or all be unitless.",
-                number_unit
+                "$min is unitless but $number has unit {number_unit}. Arguments must all have units or all be unitless."
             ), span).into());
     } else if min_unit != &Unit::None && number_unit == &Unit::None {
         return Err((
                 format!(
-                    "$min has unit {} but $number is unitless. Arguments must all have units or all be unitless.",
-                    min_unit
+                    "$min has unit {min_unit} but $number is unitless. Arguments must all have units or all be unitless."
                 ), span).into());
     } else if min_unit != &Unit::None && max_unit == &Unit::None {
         return Err((
             format!(
-                "$min has unit {} but $max is unitless. Arguments must all have units or all be unitless.",
-                min_unit
+                "$min has unit {min_unit} but $max is unitless. Arguments must all have units or all be unitless."
             ), span).into());
     } else if min_unit == &Unit::None && max_unit != &Unit::None {
         return Err((
             format!(
-                "$min is unitless but $max has unit {}. Arguments must all have units or all be unitless.",
-                max_unit
+                "$min is unitless but $max has unit {max_unit}. Arguments must all have units or all be unitless."
             ), span).into());
     } else if number_unit == &Unit::None && max_unit != &Unit::None {
         return Err((
             format!(
-                "$number is unitless but $max has unit {}. Arguments must all have units or all be unitless.",
-                max_unit
+                "$number is unitless but $max has unit {max_unit}. Arguments must all have units or all be unitless."
             ), span).into());
     } else if number_unit != &Unit::None && max_unit == &Unit::None {
         return Err((
             format!(
-                "$number has unit {} but $max is unitless. Arguments must all have units or all be unitless.",
-                number_unit
+                "$number has unit {number_unit} but $max is unitless. Arguments must all have units or all be unitless."
             ), span).into());
     }
 
@@ -420,9 +414,8 @@ fn atan2(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
     } else if y_unit == Unit::None {
         return Err((
             format!(
-                "$y is unitless but $x has unit {}. \
-            Arguments must all have units or all be unitless.",
-                x_unit
+                "$y is unitless but $x has unit {x_unit}. \
+            Arguments must all have units or all be unitless."
             ),
             args.span(),
         )
@@ -430,9 +423,8 @@ fn atan2(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
     } else if x_unit == Unit::None {
         return Err((
             format!(
-                "$y has unit {} but $x is unitless. \
-                Arguments must all have units or all be unitless.",
-                y_unit
+                "$y has unit {y_unit} but $x is unitless. \
+                Arguments must all have units or all be unitless."
             ),
             args.span(),
         )
@@ -441,7 +433,7 @@ fn atan2(mut args: ArgumentResult, _: &mut Visitor) -> SassResult<Value> {
         (x_num, y_num.convert(&y_unit, &x_unit))
     } else {
         return Err((
-            format!("Incompatible units {} and {}.", y_unit, x_unit),
+            format!("Incompatible units {y_unit} and {x_unit}."),
             args.span(),
         )
             .into());

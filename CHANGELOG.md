@@ -1,11 +1,69 @@
-<!-- UPCOMING:
-
-- error when `@extend` is used across `@media` boundaries
-- more robust support for NaN in builtin functions
-
-- support unquoted imports in the indented/SASS syntax
-
+<!--
+Versioning note: `grass` (crates.io), the native Node.js binding (`ihiutch-grass-napi` on npm), and
+the WASM/native npm package (`ihiutch-grass` on npm) version independently of one another. This
+file tracks user-visible changes to the `grass` crate and CLI; napi/npm-specific additions are
+called out explicitly where relevant.
 -->
+
+# Unreleased
+
+## Source maps
+
+- implement Source Map v3 generation end-to-end: CLI (`--no-source-map`, `--source-map-urls`,
+  `--embed-sources`, `--embed-source-map`), library (`from_string_with_source_map`,
+  `from_path_with_source_map`, `Options::source_map`, `SourceMapData`), the napi binding
+  (`CompileOptions.sourceMap`/`sourceMapIncludeSources`, `CompileResult.sourceMap`), and the
+  WASM/npm package (same options plumbed through `pkg-publish`)
+- map standalone and trailing (`after-}`) comments, in addition to declarations and selectors
+- emit UTF-16 code-unit columns in mappings, matching dart-sass/JS source map conventions
+- map `@media`, `@font-face`, `@keyframes`, and `@import` at-rules, in addition to declarations,
+  selectors, and comments
+
+## Deprecation warnings
+
+- implement dart-sass's full deprecation system (18 tracked IDs, e.g. `slash-div`, `import`,
+  `global-builtin`, `color-functions`, `if-function`, `function-units`)
+- add CLI flags `--silence-deprecation`, `--fatal-deprecation`, and `--future-deprecation`
+  (repeatable and/or comma-separated); `--fatal-deprecation` additionally accepts a dart-sass
+  version to fatalize every deprecation introduced at or before it
+- add matching napi `CompileOptions` fields (`silenceDeprecations`, `fatalDeprecations`,
+  `futureDeprecations`); `fatalDeprecations` also accepts `{major, minor, patch}` version objects
+- unknown deprecation IDs passed to the napi binding now warn and continue, matching the real Sass
+  JS API, instead of hard-erroring
+
+## CLI
+
+- implement `-w`/`--watch`: recompile a single `INPUT`/`OUTPUT` pair whenever the entry file's
+  directory or a `-I`/`--load-path` directory changes, printing dart-sass-style
+  `Compiled ... to ....` status lines (previously accepted but inert flags)
+- add `--poll`, a polling backend for `--watch` on filesystems where native file-change events
+  don't fire
+- implement `--error-css`/`--no-error-css`, matching dart-sass: on a failed compile to an output
+  file, a synthesized error stylesheet is written to that file by default (`--no-error-css` deletes
+  the file instead); this supersedes the interim "preserve the previous output file on failure"
+  behavior, which was never released
+
+## Fixes
+
+- fix keyword-argument ordering to match dart-sass's insertion order (was previously unordered in
+  some cases)
+- fix compound-unit comparability (e.g. `1px*em` and `1em*px` were incorrectly treated as
+  incompatible) to match dart-sass's order-independent unit matching
+- fix `meta.inspect()` to wrap compound-unit numbers in `calc()`, matching dart-sass
+- fix modern-color-space (`oklch`, `oklab`, `lab`, etc.) `$alpha` handling in
+  `color.change`/`color.adjust`: percentage scaling, `$alpha: none`, and warning ordering now
+  match dart-sass
+- fix `color.change()` to no longer require every channel/`$alpha` to be non-missing, matching
+  dart-sass (the missing-channel guard was only ever meant for `color.adjust`/`color.scale`)
+
+## Other
+
+- expose custom builtin Sass functions from the `grass` crate itself: `Options::add_custom_fn` and
+  `Builtin`/`Visitor`/`sass_value` are now re-exported behind the default-enabled
+  `custom-builtin-fns` feature, rather than requiring a direct dependency on `grass_compiler`
+- raise the maximum style-rule nesting depth from 128 to 1024, matching dart-sass more closely
+- improve compile performance: the release CLI's USWDS benchmark has dropped from ~271ms to
+  ~205ms since the `0.13.4` release
 
 # 0.13.4
 

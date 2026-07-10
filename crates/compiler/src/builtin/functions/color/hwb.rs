@@ -22,7 +22,7 @@ pub(crate) fn blackness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     }
 
     Ok(Value::Dimension(SassNumber {
-        num: color.blackness() * 100,
+        num: color.blackness(),
         unit: Unit::Percent,
         as_slash: None,
     }))
@@ -43,7 +43,7 @@ pub(crate) fn whiteness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
     }
 
     Ok(Value::Dimension(SassNumber {
-        num: color.whiteness() * 100,
+        num: color.whiteness(),
         unit: Unit::Percent,
         as_slash: None,
     }))
@@ -79,7 +79,7 @@ fn hwb_inner(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Valu
         return Ok(Value::String(result.into(), QuoteKind::None));
     }
 
-    let hue = angle_value(hue_val, "hue", span)?;
+    let hue = angle_value(hue_val, "hue", span, visitor)?;
 
     let whiteness = whiteness_val.assert_number_with_name("whiteness", span)?;
     whiteness.assert_unit(&Unit::Percent, "whiteness", span)?;
@@ -130,10 +130,10 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                 }
                 let args = ArgumentResult {
                     positional: list,
-                    named: BTreeMap::new(),
+                    named: SmallOrderedMap::default(),
                     separator: ListSeparator::Comma,
                     span,
-                    touched: BTreeSet::new(),
+                    touched: FxHashSet::default(),
                 };
 
                 hwb_inner(args, visitor)

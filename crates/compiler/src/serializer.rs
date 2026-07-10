@@ -1,13 +1,12 @@
-use std::io::Write;
+use std::{io::Write, sync::Arc};
 
-use codemap::{CodeMap, Span};
+use codemap::{CodeMap, File, Span};
 
 use crate::{
     ast::{CssStmt, MediaQuery, SassMixin, Style, SupportsRule},
     color::{Color, ColorFormat, ColorSpace, NAMED_COLORS},
     common::{BinaryOp, Brackets, ListSeparator, QuoteKind},
     error::SassResult,
-    evaluate::css_tree::{CssTree, CssTreeIdx},
     selector::{
         Combinator, ComplexSelector, ComplexSelectorComponent, CompoundSelector, Namespace, Pseudo,
         SelectorList, SimpleSelector,
@@ -137,11 +136,102 @@ pub(crate) struct Serializer<'a> {
     _span: Span,
     in_calculation: bool,
     in_custom_property: bool,
-    // Tree-walking state (used by serialize_tree)
-    prev_was_group_end_tree: bool,
-    prev_requires_semicolon_tree: bool,
-    had_previous_visible_tree: bool,
-    tree_skip_indices: Vec<CssTreeIdx>,
+    /// Plan 013 design-spike prototype: gathers (generated position -> source
+    /// position) mappings for style declarations and selectors when
+    /// `options.source_map` is set. `None` whenever the option is off, and
+    /// ALWAYS `None` for expression serializers (`new_expr` — there is no
+    /// `CodeMap` and expression serialization never maps). A single
+    /// `Option<Box<_>>` keeps the off-path (and the very-high-frequency
+    /// `new_expr` path, once per `#{...}` interpolation) down to one
+    /// pointer-sized field instead of five always-initialized fields
+    /// (round-1 review finding: the five-field version cost 2-4.5% even
+    /// with the option off, from extra struct-init/move cost in `new_expr`).
+    mapping_state: Option<Box<MappingState>>,
+}
+
+/// Plan 013 design-spike prototype: see `Serializer::mapping_state`.
+#[derive(Default)]
+struct MappingState {
+    mappings: Vec<crate::source_map::RawMapping>,
+    /// Deduplicated, first-appearance-ordered source file names; indexed by
+    /// `RawMapping::src_file_idx`.
+    sources: Vec<String>,
+    /// Source file handle for each entry in `sources`, same indexing. Kept
+    /// as a cheap `Arc` clone (not `loc.file.source().to_owned()`) so a
+    /// maps-on-but-not-embedded compile — the common case — never deep-
+    /// copies file text; `SourceMapData::to_json`'s `embed_sources` flag
+    /// materializes the text lazily, only when it's actually emitted.
+    sources_content: Vec<Arc<File>>,
+    /// Byte offset into `buffer` already scanned for generated line/column
+    /// tracking; `record_mapping` only rescans `buffer[scan_pos..]`.
+    scan_pos: usize,
+    dst_line: usize,
+    dst_col: usize,
+}
+
+/// Transcription of dart-sass's `_writeRounded` (`lib/src/visitor/serialize.dart:1237-1314`).
+///
+/// `short` is ryu's shortest-round-trip decimal string for a non-negative
+/// number, with `dot_pos` its decimal point index and more than 10 digits
+/// after it. Rather than rounding the double's exact binary expansion (as
+/// `format!("{:.10}", num)` does), dart rounds half-up on the *string's*
+/// 11th fractional digit, with carry propagation that can ripple all the
+/// way into the integer part (dart's own example: "9.99999999995" -> "10").
+/// These two approaches diverge whenever the shortest-round-trip string's
+/// 11th digit disagrees with the true value's 11th digit — an inherent
+/// property of "shortest disambiguating decimal" vs. "true expansion", not
+/// a bug in either rounding algorithm.
+fn round_shortest_string_to_precision(short: &str, dot_pos: usize) -> String {
+    let int_part = &short[..dot_pos];
+    let frac_part = &short.as_bytes()[dot_pos + 1..];
+
+    // digits[0] is a dedicated extra slot to absorb a carry that ripples
+    // all the way through the integer part (e.g. "9.99..." -> "10...").
+    let mut digits = Vec::with_capacity(1 + int_part.len() + 10);
+    digits.push(0u8);
+    digits.extend(int_part.bytes().map(|b| b - b'0'));
+    let first_fractional_digit = digits.len();
+    digits.extend(frac_part[..10].iter().map(|b| b - b'0'));
+
+    let mut digits_index = digits.len();
+    if frac_part[10] >= b'5' {
+        loop {
+            digits[digits_index - 1] += 1;
+            if digits[digits_index - 1] != 10 {
+                break;
+            }
+            // `digits[0]` starts at 0, so incrementing it can never
+            // overflow to 10 — this loop always terminates with
+            // `digits_index >= 1`.
+            digits_index -= 1;
+        }
+    }
+
+    // Positions the carry rippled past hold a stale, invalid "10" — they
+    // fall before `digits_index` and are skipped below, except any that
+    // lie before the decimal point, which must be zeroed so they print
+    // correctly (e.g. the "0" in "10").
+    while digits_index < first_fractional_digit {
+        digits[digits_index] = 0;
+        digits_index += 1;
+    }
+    // Trim trailing zero fractional digits produced by rounding.
+    while digits_index > first_fractional_digit && digits[digits_index - 1] == 0 {
+        digits_index -= 1;
+    }
+
+    let start_index = usize::from(digits[0] == 0);
+    let mut out = String::with_capacity(digits.len());
+    for &d in &digits[start_index..first_fractional_digit] {
+        out.push((b'0' + d) as char);
+    }
+    if digits_index > first_fractional_digit {
+        out.push('.');
+        for &d in &digits[first_fractional_digit..digits_index] {
+            out.push((b'0' + d) as char);
+        }
+    }
+    out
 }
 
 impl<'a> Serializer<'a> {
@@ -157,10 +247,11 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
-            prev_was_group_end_tree: false,
-            prev_requires_semicolon_tree: false,
-            had_previous_visible_tree: false,
-            tree_skip_indices: Vec::new(),
+            mapping_state: if options.source_map {
+                Some(Box::new(MappingState::default()))
+            } else {
+                None
+            },
         }
     }
 
@@ -178,10 +269,9 @@ impl<'a> Serializer<'a> {
             _span: span,
             in_calculation: false,
             in_custom_property: false,
-            prev_was_group_end_tree: false,
-            prev_requires_semicolon_tree: false,
-            had_previous_visible_tree: false,
-            tree_skip_indices: Vec::new(),
+            // Always None: expression serialization has no CodeMap and never
+            // produces mappings, regardless of `options.source_map`.
+            mapping_state: None,
         }
     }
 
@@ -272,7 +362,7 @@ impl<'a> Serializer<'a> {
                 self.write_namespace(&name.namespace);
                 self.buffer.extend_from_slice(name.ident.as_bytes());
             }
-            SimpleSelector::Attribute(attr) => write!(&mut self.buffer, "{}", attr).unwrap(),
+            SimpleSelector::Attribute(attr) => write!(&mut self.buffer, "{attr}").unwrap(),
             SimpleSelector::Parent(suffix) => {
                 self.buffer.push(b'&');
                 if let Some(s) = suffix {
@@ -341,15 +431,13 @@ impl<'a> Serializer<'a> {
     }
 
     fn write_selector_list_filtered(&mut self, list: &SelectorList, filter_bogus: bool) {
-        let complexes: Vec<_> = list
+        let mut first = true;
+
+        for complex in list
             .components
             .iter()
             .filter(|c| !c.is_invisible() && (!filter_bogus || !c.is_bogus(false)))
-            .collect();
-
-        let mut first = true;
-
-        for complex in complexes {
+        {
             if first {
                 first = false;
             } else {
@@ -509,9 +597,9 @@ impl<'a> Serializer<'a> {
         } else if val.is_infinite() {
             let sign = if val.is_sign_negative() { "-" } else { "" };
             if has_percent {
-                write!(&mut self.buffer, "calc({}infinity * 1%)", sign).unwrap();
+                write!(&mut self.buffer, "calc({sign}infinity * 1%)").unwrap();
             } else {
-                write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
+                write!(&mut self.buffer, "calc({sign}infinity)").unwrap();
             }
         } else {
             self.write_float(val);
@@ -586,8 +674,8 @@ impl<'a> Serializer<'a> {
             let raw = color.raw_channels();
             (
                 raw[0].unwrap_or(0.0),
-                raw[1].unwrap_or(0.0) * 100.0,
-                raw[2].unwrap_or(0.0) * 100.0,
+                raw[1].unwrap_or(0.0),
+                raw[2].unwrap_or(0.0),
             )
         } else if color.color_space() == ColorSpace::Hwb {
             let raw = color.raw_channels();
@@ -597,7 +685,7 @@ impl<'a> Serializer<'a> {
                 raw[2].unwrap_or(0.0),
             );
             let hsl = crate::color::conversion::srgb_to_hsl(srgb[0], srgb[1], srgb[2]);
-            (hsl[0], hsl[1] * 100.0, hsl[2] * 100.0)
+            (hsl[0], hsl[1], hsl[2])
         } else {
             (color.hue().0, color.saturation().0, color.lightness().0)
         };
@@ -613,6 +701,29 @@ impl<'a> Serializer<'a> {
             let alpha = color.alpha().0;
             // NaN alpha clamps to 0 in legacy colors
             self.write_float(if alpha.is_nan() { 0.0 } else { alpha });
+        }
+
+        self.buffer.push(b')');
+    }
+
+    /// Writes an HWB color using the modern `hwb()` function. Only used in
+    /// inspect mode, matching dart-sass's `_writeHwb`.
+    fn write_hwb(&mut self, color: &Color) {
+        let is_opaque = fuzzy_equals(color.alpha().0, 1.0);
+        self.buffer.extend_from_slice(b"hwb(");
+
+        let raw = color.raw_channels();
+        self.write_float(raw[0].unwrap_or(0.0));
+        self.buffer.push(b' ');
+        self.write_float(raw[1].unwrap_or(0.0));
+        self.buffer.push(b'%');
+        self.buffer.push(b' ');
+        self.write_float(raw[2].unwrap_or(0.0));
+        self.buffer.push(b'%');
+
+        if !is_opaque {
+            self.buffer.extend_from_slice(b" / ");
+            self.write_float(color.alpha().0);
         }
 
         self.buffer.push(b')');
@@ -648,8 +759,8 @@ impl<'a> Serializer<'a> {
                             self.write_float(val);
                             self.buffer.extend_from_slice(b"deg");
                         } else {
-                            // saturation, lightness (stored as [0,1], display as %)
-                            self.write_float(val * 100.0);
+                            // saturation, lightness (stored as [0,100], matching display)
+                            self.write_float(val);
                             self.buffer.push(b'%');
                         }
                     }
@@ -659,8 +770,8 @@ impl<'a> Serializer<'a> {
                             self.write_float(val);
                             self.buffer.extend_from_slice(b"deg");
                         } else {
-                            // whiteness, blackness (stored as [0,1], display as %)
-                            self.write_float(val * 100.0);
+                            // whiteness, blackness (stored as [0,100], matching display)
+                            self.write_float(val);
                             self.buffer.push(b'%');
                         }
                     }
@@ -715,6 +826,14 @@ impl<'a> Serializer<'a> {
             || color.has_missing_alpha();
         if has_missing {
             self.write_legacy_with_none(color);
+            return;
+        }
+
+        // In inspect mode, HWB-space colors always serialize via the modern
+        // `hwb()` function regardless of gamut or fractional-channel status
+        // (dart-sass's `_writeHwb`, reached only when inspecting).
+        if self.inspect && color.color_space() == ColorSpace::Hwb {
+            self.write_hwb(color);
             return;
         }
 
@@ -956,11 +1075,11 @@ impl<'a> Serializer<'a> {
             if val.is_infinite() {
                 let sign = if val.is_sign_negative() { "-" } else { "" };
                 if channel_defs[index].is_polar {
-                    write!(&mut self.buffer, "calc({}infinity * 1deg)", sign).unwrap();
+                    write!(&mut self.buffer, "calc({sign}infinity * 1deg)").unwrap();
                 } else if channel_defs[index].name == "lightness" {
-                    write!(&mut self.buffer, "calc({}infinity * 1%)", sign).unwrap();
+                    write!(&mut self.buffer, "calc({sign}infinity * 1%)").unwrap();
                 } else {
-                    write!(&mut self.buffer, "calc({}infinity)", sign).unwrap();
+                    write!(&mut self.buffer, "calc({sign}infinity)").unwrap();
                 }
                 return;
             }
@@ -1016,10 +1135,10 @@ impl<'a> Serializer<'a> {
     ///   ` * 1a * 1b / 1c / 1d`
     fn write_complex_unit_suffix(&mut self, numer: &[Unit], denom: &[Unit]) {
         for unit in numer {
-            let _ = write!(&mut self.buffer, " * 1{}", unit);
+            let _ = write!(&mut self.buffer, " * 1{unit}");
         }
         for unit in denom {
-            let _ = write!(&mut self.buffer, " / 1{}", unit);
+            let _ = write!(&mut self.buffer, " / 1{unit}");
         }
     }
 
@@ -1051,10 +1170,10 @@ impl<'a> Serializer<'a> {
                 let sign = if f.is_sign_negative() { "-" } else { "" };
                 let (numer, denom) = number.unit.clone().numer_and_denom();
                 if self.in_calculation {
-                    write!(&mut self.buffer, "{}infinity", sign)?;
+                    write!(&mut self.buffer, "{sign}infinity")?;
                     self.write_complex_unit_suffix(&numer, &denom);
                 } else {
-                    write!(&mut self.buffer, "calc({}infinity", sign)?;
+                    write!(&mut self.buffer, "calc({sign}infinity")?;
                     self.write_complex_unit_suffix(&numer, &denom);
                     self.buffer.push(b')');
                 }
@@ -1062,31 +1181,36 @@ impl<'a> Serializer<'a> {
             }
         }
 
-        if !self.inspect && is_complex {
-            // Wrap finite complex-unit numbers in calc()
+        if is_complex {
+            // Wrap finite complex-unit numbers in calc() — dart-sass's
+            // `visitNumber` does this unconditionally, in both inspect
+            // (`@debug`/`meta.inspect`) and normal CSS-value serialization;
+            // it does not special-case `_inspect` for this branch (verified
+            // against dart-sass 1.97.3 via npx: `@debug 1px * 1em` and
+            // `meta.inspect(1px * 1em)` both print `calc(1px * 1em)`).
             let (numer, denom) = number.unit.clone().numer_and_denom();
             if self.in_calculation {
                 self.write_float(number.num.0);
                 if let Some(first) = numer.first() {
-                    write!(&mut self.buffer, "{}", first)?;
+                    write!(&mut self.buffer, "{first}")?;
                 }
                 for unit in numer.iter().skip(1) {
-                    write!(&mut self.buffer, " * 1{}", unit)?;
+                    write!(&mut self.buffer, " * 1{unit}")?;
                 }
                 for unit in &denom {
-                    write!(&mut self.buffer, " / 1{}", unit)?;
+                    write!(&mut self.buffer, " / 1{unit}")?;
                 }
             } else {
                 self.buffer.extend_from_slice(b"calc(");
                 self.write_float(number.num.0);
                 if let Some(first) = numer.first() {
-                    write!(&mut self.buffer, "{}", first)?;
+                    write!(&mut self.buffer, "{first}")?;
                 }
                 for unit in numer.iter().skip(1) {
-                    write!(&mut self.buffer, " * 1{}", unit)?;
+                    write!(&mut self.buffer, " * 1{unit}")?;
                 }
                 for unit in &denom {
-                    write!(&mut self.buffer, " / 1{}", unit)?;
+                    write!(&mut self.buffer, " / 1{unit}")?;
                 }
                 self.buffer.push(b')');
             }
@@ -1116,14 +1240,34 @@ impl<'a> Serializer<'a> {
 
         let num = float.abs();
 
-        // For very large numbers that exceed f64's integer precision,
-        // format via scientific notation to avoid precision artifacts.
-        // f64 has ~15-17 significant decimal digits; beyond that, the
-        // decimal representation includes spurious non-zero digits.
-        // This matches dart-sass behavior where 1e100 outputs as 1 followed
-        // by 100 zeros.
-        if num >= 1e15 && num.fract() == 0.0 {
-            let s = format!("{:e}", num);
+        // dart-sass's `_writeNumber` (lib/src/visitor/serialize.dart) takes
+        // `fuzzyAsInt(number)`, which rounds via Dart's native `int` — a
+        // 64-bit twos-complement type. Below 2^63 that round-trips exactly
+        // (the double is already integer-valued, so rounding is a no-op),
+        // and dart prints that EXACT decimal integer. At/above 2^63,
+        // `int.round()` *saturates* to i64::MAX/MIN instead of the true
+        // value, `fuzzyEquals` then rejects the saturated result, and dart
+        // falls back to printing its own shortest-round-trip `toString()`
+        // with the exponent expanded via zero-padding — the same strategy
+        // this file used before this fix. So the two regimes need two
+        // different algorithms; verified against the real dart-sass
+        // library (`dart run`) at both the 2^53 (int-exactness) and 2^63
+        // (int64-saturation) boundaries, and against sass-spec's
+        // `values/numbers/{bounds,very_large}` and
+        // `core_functions/color/*/out_of_range` tests.
+        const I64_SATURATION_BOUNDARY: f64 = 9_223_372_036_854_775_808.0; // 2^63
+
+        if num >= 1e15 && num.fract() == 0.0 && num < I64_SATURATION_BOUNDARY {
+            // Rust's `{:.0}` uses an exact (not shortest-round-trip) decimal
+            // algorithm, so for an already-integer-valued f64 within this
+            // range it reproduces dart's exact string — unlike
+            // reconstructing from the shortest-round-trip `{:e}` mantissa,
+            // which may omit true non-zero low digits and get zero-padded
+            // incorrectly above 2^53.
+            let formatted = format!("{num:.0}");
+            self.buffer.extend_from_slice(formatted.as_bytes());
+        } else if num >= I64_SATURATION_BOUNDARY && num.fract() == 0.0 {
+            let s = format!("{num:e}");
             if let Some(e_pos) = s.find('e') {
                 let mantissa = &s[..e_pos];
                 let exp: usize = s[e_pos + 1..].parse().unwrap_or(0);
@@ -1138,7 +1282,7 @@ impl<'a> Serializer<'a> {
                     self.buffer.extend_from_slice(&digits.as_bytes()[..exp + 1]);
                 }
             } else {
-                let formatted = format!("{:.10}", num);
+                let formatted = format!("{num:.10}");
                 let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
                 self.buffer.extend_from_slice(trimmed.as_bytes());
             }
@@ -1152,15 +1296,15 @@ impl<'a> Serializer<'a> {
             let fixed;
             let trimmed = if short.contains('e') || short.contains('E') {
                 // ryu used scientific notation — CSS needs decimal form
-                fixed = format!("{:.10}", num);
+                fixed = format!("{num:.10}");
                 fixed.trim_end_matches('0').trim_end_matches('.')
             } else if let Some(dot_pos) = short.find('.') {
                 let short_decimals = short.len() - dot_pos - 1;
                 if short_decimals <= 10 {
                     short.trim_end_matches('0').trim_end_matches('.')
                 } else {
-                    fixed = format!("{:.10}", num);
-                    fixed.trim_end_matches('0').trim_end_matches('.')
+                    fixed = round_shortest_string_to_precision(short, dot_pos);
+                    fixed.as_str()
                 }
             } else {
                 // No decimal point — integer
@@ -1182,7 +1326,6 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn visit_group(
         &mut self,
         stmt: CssStmt,
@@ -1207,13 +1350,16 @@ impl<'a> Serializer<'a> {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
     }
 
     fn finish_for_expr(self) -> String {
-        // SAFETY: todo
+        // SAFETY: `buffer` only ever receives complete UTF-8 sequences: ASCII
+        // byte literals (`push(b'...')`) and whole `&str::as_bytes()` slices
+        // (`extend_from_slice`). No code path writes a partial multi-byte
+        // sequence, so the buffer is always valid UTF-8.
+        debug_assert!(std::str::from_utf8(&self.buffer).is_ok());
         unsafe { String::from_utf8_unchecked(self.buffer) }
     }
 
@@ -1228,7 +1374,11 @@ impl<'a> Serializer<'a> {
             self.write_optional_newline();
         }
 
-        // SAFETY: todo
+        // SAFETY: `buffer` only ever receives complete UTF-8 sequences: ASCII
+        // byte literals (`push(b'...')`) and whole `&str::as_bytes()` slices
+        // (`extend_from_slice`). No code path writes a partial multi-byte
+        // sequence, so the buffer is always valid UTF-8.
+        debug_assert!(std::str::from_utf8(&self.buffer).is_ok());
         let mut as_string = unsafe { String::from_utf8_unchecked(self.buffer) };
 
         if is_not_ascii && self.options.is_compressed() && self.options.allows_charset {
@@ -1594,6 +1744,8 @@ impl<'a> Serializer<'a> {
             self.write_indentation();
         }
 
+        self.record_mapping(style.property_span.low());
+
         self.buffer
             .extend_from_slice(style.property.resolve_ref().as_bytes());
         self.buffer.push(b':');
@@ -1722,10 +1874,18 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn write_import(&mut self, import: &str, modifiers: Option<String>) -> SassResult<()> {
+    fn write_import(
+        &mut self,
+        import: &str,
+        modifiers: Option<String>,
+        span: Option<Span>,
+    ) -> SassResult<()> {
         self.write_indentation();
+        if let Some(span) = span {
+            self.record_mapping(span.low());
+        }
         self.buffer.extend_from_slice(b"@import ");
-        write!(&mut self.buffer, "{}", import)?;
+        write!(&mut self.buffer, "{import}")?;
 
         if let Some(modifiers) = modifiers {
             self.buffer.push(b' ');
@@ -1744,6 +1904,19 @@ impl<'a> Serializer<'a> {
         let trimmed = comment.trim_start_matches("/*").trim_start();
         if trimmed.starts_with("# sourceMappingURL=") || trimmed.starts_with("# sourceURL=") {
             return Ok(());
+        }
+
+        // dart-sass maps a standalone comment to column 0 of its generated
+        // line — i.e. *before* indentation is written, unlike declarations/
+        // selectors which map after (verified via npx: a nested comment's
+        // mapping targets dst col0, not the indented comment-text column).
+        // A comment squeezed inline onto an already-started line (e.g.
+        // issue_894's "comment-only body renders on one line") gets no
+        // mapping at all, matching `write_inline_comment`'s existing
+        // no-mapping convention — so only record when the buffer is
+        // genuinely at the start of a fresh output line.
+        if self.buffer.last().is_none_or(|&b| b == b'\n') {
+            self.record_mapping(span.low());
         }
 
         self.write_indentation();
@@ -1788,7 +1961,7 @@ impl<'a> Serializer<'a> {
 
     pub fn requires_semicolon(stmt: &CssStmt) -> bool {
         match stmt {
-            CssStmt::Style(_) | CssStmt::Import(_, _) => true,
+            CssStmt::Style(_) | CssStmt::Import(_, _, _) => true,
             CssStmt::UnknownAtRule(rule, _) => !rule.has_body,
             _ => false,
         }
@@ -1799,8 +1972,112 @@ impl<'a> Serializer<'a> {
         self.map.map_or(0, |m| m.look_up_pos(pos).position.line)
     }
 
-    /// Write a comment inline (after a semicolon or opening brace) without indentation
-    pub(crate) fn write_inline_comment(&mut self, comment: &str, span: Span) -> SassResult<()> {
+    /// Plan 013 design-spike prototype: record a mapping from the current
+    /// generated (buffer) position to `src_pos`, if source-map collection is
+    /// enabled. No-op when `mapping_state` is `None` — the option is off, or
+    /// this is an expression serializer (`new_expr` always leaves it `None`).
+    ///
+    /// Generated line/column are tracked by scanning only the unscanned tail
+    /// of `buffer` (`buffer[scan_pos..]`) rather than instrumenting every
+    /// low-level `buffer.push`/`extend_from_slice` call site — the serializer
+    /// has dozens of those, and touching them all would be a much larger and
+    /// riskier change for a design spike. This scan is amortized O(total
+    /// output size) across the whole serialization, since each byte is
+    /// scanned at most once.
+    fn record_mapping(&mut self, src_pos: codemap::Pos) {
+        let Some(state) = &mut self.mapping_state else {
+            return;
+        };
+
+        // `mapping_state` is only ever `Some` via `new`, which always pairs
+        // it with `map: Some(map)` (gated on the same `options.source_map`
+        // check) — `new_expr` leaves both `None`. So this is infallible in
+        // practice, but stays a graceful no-op rather than an unwrap.
+        let Some(map) = self.map else { return };
+
+        debug_assert!(
+            state.scan_pos <= self.buffer.len(),
+            "mapping scan_pos must never point past the current buffer end"
+        );
+
+        for &byte in &self.buffer[state.scan_pos..] {
+            if byte == b'\n' {
+                state.dst_line += 1;
+                state.dst_col = 0;
+            } else if byte & 0b1100_0000 != 0b1000_0000 {
+                // Source Map v3 columns are UTF-16 code units (verified
+                // against dart-sass: a non-BMP char like an emoji preceding a
+                // mapped token on the same line shifts dart's column by 2,
+                // not 1). A 4-byte UTF-8 lead byte is always a supplementary-
+                // plane codepoint (U+10000..U+10FFFF), which UTF-16 encodes
+                // as a surrogate pair — 2 code units. Every other lead byte
+                // (1-3 byte UTF-8 sequences) encodes a BMP codepoint — 1 code
+                // unit. This mirrors `char::len_utf16()` without decoding the
+                // full codepoint.
+                state.dst_col += if byte & 0b1111_1000 == 0b1111_0000 {
+                    2
+                } else {
+                    1
+                };
+            }
+        }
+        state.scan_pos = self.buffer.len();
+
+        let loc = map.look_up_pos(src_pos);
+        let src_file_idx = match state
+            .sources
+            .iter()
+            .position(|name| name == loc.file.name())
+        {
+            Some(idx) => idx,
+            None => {
+                state.sources.push(loc.file.name().to_owned());
+                state.sources_content.push(Arc::clone(&loc.file));
+                state.sources.len() - 1
+            }
+        };
+
+        state.mappings.push(crate::source_map::RawMapping {
+            dst_line: state.dst_line,
+            dst_col: state.dst_col,
+            src_file_idx,
+            src_line: loc.position.line,
+            src_col: crate::source_map::utf16_column(&loc.file, loc.position.line, src_pos),
+        });
+    }
+
+    /// Take the mappings, source names, and source contents collected via
+    /// `record_mapping`. All empty when `mapping_state` was `None` (option
+    /// off).
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn take_mappings(
+        &mut self,
+    ) -> (
+        Vec<crate::source_map::RawMapping>,
+        Vec<String>,
+        Vec<Arc<File>>,
+    ) {
+        match self.mapping_state.take() {
+            Some(state) => (state.mappings, state.sources, state.sources_content),
+            None => (Vec::new(), Vec::new(), Vec::new()),
+        }
+    }
+
+    /// Write a comment inline (after a semicolon or opening brace) without indentation.
+    ///
+    /// `after_closing_brace` distinguishes dart-sass's three "squeeze onto one
+    /// line" cases (verified via npx): a comment trailing a `}` (e.g. `} /*
+    /// c */`) DOES get its own mapping (at the column right after `} `), but
+    /// a comment trailing a declaration (`color: red; /* c */`) or one on the
+    /// same line as an opening `{` (`.x { /* c */`) does NOT — dart emits no
+    /// second segment for those. Callers pass `true` only for the
+    /// after-`}` case.
+    pub(crate) fn write_inline_comment(
+        &mut self,
+        comment: &str,
+        span: Span,
+        after_closing_brace: bool,
+    ) -> SassResult<()> {
         if self.options.is_compressed() && !comment.starts_with("/*!") {
             return Ok(());
         }
@@ -1812,6 +2089,9 @@ impl<'a> Serializer<'a> {
         }
 
         self.buffer.push(b' ');
+        if after_closing_brace {
+            self.record_mapping(span.low());
+        }
         // For inline comments, write on the same line without indentation
         let col = self
             .map
@@ -1906,7 +2186,7 @@ impl<'a> Serializer<'a> {
                         if comment_line == brace_line {
                             if let CssStmt::Comment(ref comment, span) = children[idx] {
                                 let comment = comment.clone();
-                                self.write_inline_comment(&comment, span)?;
+                                self.write_inline_comment(&comment, span, false)?;
                                 children.remove(idx);
                             }
                         }
@@ -1949,7 +2229,7 @@ impl<'a> Serializer<'a> {
                                 if comment_line == style_end_line {
                                     if let CssStmt::Comment(ref comment, span) = children[idx] {
                                         let comment = comment.clone();
-                                        self.write_inline_comment(&comment, span)?;
+                                        self.write_inline_comment(&comment, span, false)?;
                                         children.remove(idx);
                                     }
                                 }
@@ -1967,7 +2247,7 @@ impl<'a> Serializer<'a> {
                             if comment_line == brace_line {
                                 if let CssStmt::Comment(ref comment, span) = children[idx] {
                                     let comment = comment.clone();
-                                    self.write_inline_comment(&comment, span)?;
+                                    self.write_inline_comment(&comment, span, true)?;
                                     children.remove(idx);
                                 }
                             }
@@ -2012,6 +2292,9 @@ impl<'a> Serializer<'a> {
 
     fn write_supports_rule(&mut self, supports_rule: SupportsRule) -> SassResult<()> {
         self.write_indentation();
+        if let Some(span) = supports_rule.at_rule_span {
+            self.record_mapping(span.low());
+        }
         self.buffer.extend_from_slice(b"@supports");
 
         if !supports_rule.params.is_empty() {
@@ -2036,6 +2319,7 @@ impl<'a> Serializer<'a> {
                 self.write_indentation();
                 let sel_list = selector.as_selector_list();
                 let brace_line = Some(self.source_line(sel_list.span.high()));
+                self.record_mapping(sel_list.span.low());
                 self.write_top_level_selector_list(&sel_list);
 
                 // Comment-only body on same line as `{`: render single-line (issue_894)
@@ -2061,6 +2345,9 @@ impl<'a> Serializer<'a> {
             }
             CssStmt::Media(media_rule, ..) => {
                 self.write_indentation();
+                if let Some(span) = media_rule.at_rule_span {
+                    self.record_mapping(span.low());
+                }
                 self.buffer.extend_from_slice(b"@media ");
 
                 if let Some((last, rest)) = media_rule.query.split_last() {
@@ -2082,6 +2369,9 @@ impl<'a> Serializer<'a> {
             }
             CssStmt::UnknownAtRule(unknown_at_rule, ..) => {
                 self.write_indentation();
+                if let Some(span) = unknown_at_rule.at_rule_span {
+                    self.record_mapping(span.low());
+                }
                 self.buffer.push(b'@');
                 self.buffer
                     .extend_from_slice(unknown_at_rule.name.as_bytes());
@@ -2125,6 +2415,9 @@ impl<'a> Serializer<'a> {
             CssStmt::Comment(comment, span) => self.write_comment(&comment, span)?,
             CssStmt::KeyframesRuleSet(keyframes_rule_set) => {
                 self.write_indentation();
+                if let Some(span) = keyframes_rule_set.selector_span {
+                    self.record_mapping(span.low());
+                }
                 // todo: i bet we can do something like write_with_separator to avoid extra allocation
                 let selector = keyframes_rule_set
                     .selector
@@ -2137,584 +2430,13 @@ impl<'a> Serializer<'a> {
 
                 self.write_children(keyframes_rule_set.body, None)?;
             }
-            CssStmt::Import(import, modifier) => self.write_import(&import, modifier)?,
+            CssStmt::Import(import, modifier, span) => {
+                self.write_import(&import, modifier, span)?
+            }
             CssStmt::Supports(supports_rule, _) => self.write_supports_rule(supports_rule)?,
         }
 
         Ok(true)
-    }
-
-    // ── Tree-walking serialization ──────────────────────────────────────
-
-    /// Serialize directly from a CssTree without materializing Vec<CssStmt> bodies.
-    /// Returns `prev_requires_semicolon` for the caller to pass to `finish()`.
-    pub fn serialize_tree(
-        &mut self,
-        tree: &CssTree,
-        combined_imports: &[CssStmt],
-        import_tree_count: usize,
-        has_out_of_order_imports: bool,
-    ) -> SassResult<bool> {
-        let root_children = tree.children(CssTree::ROOT);
-
-        // Determine iteration order based on import section reordering
-        // (mirrors logic from visitor.finish() lines 330-349 and lib.rs lines 222-270)
-        if has_out_of_order_imports
-            && import_tree_count > 0
-            && import_tree_count <= root_children.len()
-        {
-            // First: import-section tree items (comments before out-of-order imports)
-            self.serialize_tree_children(tree, &root_children[..import_tree_count])?;
-            // Then: combined imports (standalone CssStmts)
-            self.serialize_combined_imports(combined_imports)?;
-            // Then: remaining tree items
-            self.serialize_tree_children(tree, &root_children[import_tree_count..])?;
-        } else if !combined_imports.is_empty() {
-            // Combined imports first, then all tree items
-            self.serialize_combined_imports(combined_imports)?;
-            self.serialize_tree_children(tree, root_children)?;
-        } else {
-            // No import reordering needed
-            self.serialize_tree_children(tree, root_children)?;
-        }
-
-        Ok(self.prev_requires_semicolon_tree)
-    }
-
-    /// Serialize a sequence of combined import CssStmts (standalone, not in tree).
-    fn serialize_combined_imports(&mut self, imports: &[CssStmt]) -> SassResult<()> {
-        for stmt in imports {
-            if stmt.is_invisible() {
-                continue;
-            }
-
-            let is_group_end = stmt.is_group_end();
-            let requires_semicolon = Self::requires_semicolon(stmt);
-
-            if self.prev_requires_semicolon_tree {
-                self.buffer.push(b';');
-            }
-
-            if !self.buffer.is_empty() || self.had_previous_visible_tree {
-                self.write_optional_newline();
-            }
-
-            if self.prev_was_group_end_tree && !self.buffer.is_empty() {
-                self.write_optional_newline();
-            }
-
-            let buf_len_before = self.buffer.len();
-            self.visit_stmt(stmt.clone())?;
-
-            self.had_previous_visible_tree = true;
-
-            if self.buffer.len() == buf_len_before {
-                continue;
-            }
-
-            self.prev_was_group_end_tree = is_group_end;
-            self.prev_requires_semicolon_tree = requires_semicolon;
-        }
-        Ok(())
-    }
-
-    /// Serialize a slice of tree children indices as top-level statements.
-    fn serialize_tree_children(
-        &mut self,
-        tree: &CssTree,
-        children: &[CssTreeIdx],
-    ) -> SassResult<()> {
-        let mut i = 0;
-        while i < children.len() {
-            let idx = children[i];
-
-            if tree.is_invisible_in_tree(idx) {
-                i += 1;
-                continue;
-            }
-
-            let is_group_end = {
-                let stmt = tree.get(idx);
-                match &*stmt {
-                    Some(s) => s.is_group_end(),
-                    None => {
-                        i += 1;
-                        continue;
-                    }
-                }
-            };
-            let requires_semicolon = {
-                let stmt = tree.get(idx);
-                Self::requires_semicolon(stmt.as_ref().unwrap())
-            };
-            let closing_brace_line = {
-                let stmt = tree.get(idx);
-                self.stmt_closing_brace_line(stmt.as_ref().unwrap())
-            };
-
-            if self.prev_requires_semicolon_tree {
-                self.buffer.push(b';');
-            }
-
-            if !self.buffer.is_empty() || self.had_previous_visible_tree {
-                self.write_optional_newline();
-            }
-
-            if self.prev_was_group_end_tree && !self.buffer.is_empty() {
-                self.write_optional_newline();
-            }
-
-            let buf_len_before = self.buffer.len();
-            self.visit_stmt_from_tree(tree, idx)?;
-
-            self.had_previous_visible_tree = true;
-
-            if self.buffer.len() == buf_len_before {
-                i += 1;
-                continue;
-            }
-
-            // Sub-problem C at top level: comment after closing `}` on same source line
-            if let Some(brace_line) = closing_brace_line {
-                if let Some(next_idx) = self.next_visible_sibling(tree, children, i) {
-                    let next_child = children[next_idx];
-                    let inline_comment = {
-                        let stmt = tree.get(next_child);
-                        match &*stmt {
-                            Some(CssStmt::Comment(comment, span)) => {
-                                if self.comment_start_line(stmt.as_ref().unwrap())
-                                    == Some(brace_line)
-                                {
-                                    Some((comment.clone(), *span))
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        }
-                    };
-                    if let Some((comment, span)) = inline_comment {
-                        self.write_inline_comment(&comment, span)?;
-                        self.tree_skip_indices.push(next_child);
-                    }
-                }
-            }
-
-            self.prev_was_group_end_tree = is_group_end;
-            self.prev_requires_semicolon_tree = requires_semicolon;
-
-            i += 1;
-        }
-        Ok(())
-    }
-
-    /// Find the next visible sibling index in a children slice, starting after `current_pos`.
-    /// Skips over invisible nodes and nodes in the skip list.
-    fn next_visible_sibling(
-        &self,
-        tree: &CssTree,
-        children: &[CssTreeIdx],
-        current_pos: usize,
-    ) -> Option<usize> {
-        children
-            .iter()
-            .enumerate()
-            .skip(current_pos + 1)
-            .find(|(_, &child_idx)| {
-                !self.tree_skip_indices.contains(&child_idx)
-                    && !tree.is_invisible_in_tree(child_idx)
-            })
-            .map(|(j, _)| j)
-    }
-
-    /// Visit a single statement from the tree, dispatching by variant.
-    fn visit_stmt_from_tree(&mut self, tree: &CssTree, idx: CssTreeIdx) -> SassResult<bool> {
-        if self.tree_skip_indices.contains(&idx) {
-            return Ok(false);
-        }
-
-        // Borrow the cell, determine the variant, extract what we need, drop the borrow.
-        let stmt_ref = tree.get(idx);
-        let stmt = match &*stmt_ref {
-            None => return Ok(false),
-            Some(s) => s,
-        };
-
-        match stmt {
-            CssStmt::Style(style) => {
-                if style.value.node.is_blank()
-                    && !style.value.node.is_empty_list()
-                    && !style.declared_as_custom_property
-                {
-                    return Ok(false);
-                }
-                // Clone the style to serialize (styles are leaf nodes)
-                let style = style.clone();
-                drop(stmt_ref);
-                self.write_style(style)?;
-                Ok(true)
-            }
-            CssStmt::Comment(comment, span) => {
-                let comment = comment.clone();
-                let span = *span;
-                drop(stmt_ref);
-                self.write_comment(&comment, span)?;
-                // write_comment returns () but may have been a no-op for compressed
-                Ok(true)
-            }
-            CssStmt::Import(import, modifier) => {
-                let import = import.clone();
-                let modifier = modifier.clone();
-                drop(stmt_ref);
-                self.write_import(&import, modifier)?;
-                Ok(true)
-            }
-            CssStmt::RuleSet {
-                selector,
-                is_group_end: _,
-                source_span,
-                ..
-            } => {
-                if selector.is_invisible_or_bogus() {
-                    return Ok(false);
-                }
-                // Check if tree children are all invisible
-                if !tree.has_visible_child(idx) {
-                    return Ok(false);
-                }
-
-                // Clone the selector Rc so we can drop the cell borrow
-                let selector = selector.clone();
-                let source_span = *source_span;
-                drop(stmt_ref);
-
-                self.write_indentation();
-                let sel_list = selector.as_selector_list();
-                let brace_line = Some(self.source_line(sel_list.span.high()));
-                self.write_top_level_selector_list(&sel_list);
-                drop(sel_list);
-
-                // Comment-only body on same line as `{`: render single-line (issue_894)
-                if !self.options.is_compressed() {
-                    let children = tree.children(idx);
-                    let all_comments = !children.is_empty()
-                        && children.iter().all(|&c| {
-                            let s = tree.get(c);
-                            matches!(&*s, Some(CssStmt::Comment(..)))
-                        });
-                    if all_comments {
-                        if let Some(bl) = brace_line {
-                            let all_on_brace_line = children.iter().all(|&c| {
-                                let s = tree.get(c);
-                                match &*s {
-                                    Some(stmt) => self.comment_start_line(stmt) == Some(bl),
-                                    None => true,
-                                }
-                            });
-                            if all_on_brace_line {
-                                self.buffer.extend_from_slice(b" { ");
-                                for &child in children {
-                                    let s = tree.get(child);
-                                    if let Some(CssStmt::Comment(ref comment, span)) = &*s {
-                                        let comment = comment.clone();
-                                        let span = *span;
-                                        drop(s);
-                                        self.write_comment(&comment, span)?;
-                                    }
-                                }
-                                self.buffer.extend_from_slice(b" }");
-                                return Ok(true);
-                            }
-                        }
-                    }
-                }
-
-                self.write_children_from_tree(tree, idx, brace_line, source_span)?;
-                Ok(true)
-            }
-            CssStmt::Media(media_rule, ..) => {
-                if !tree.has_visible_child(idx) {
-                    return Ok(false);
-                }
-
-                self.write_indentation();
-                self.buffer.extend_from_slice(b"@media ");
-
-                if let Some((last, rest)) = media_rule.query.split_last() {
-                    for query in rest {
-                        self.write_media_query(query);
-                        self.buffer.push(b',');
-                        self.write_optional_space();
-                    }
-                    self.write_media_query(last);
-                }
-
-                let brace_line = media_rule
-                    .query_span
-                    .map(|span| self.source_line(span.high()));
-                drop(stmt_ref);
-                self.write_children_from_tree(tree, idx, brace_line, None)?;
-                Ok(true)
-            }
-            CssStmt::Supports(supports_rule, _) => {
-                if !tree.has_visible_child(idx) {
-                    return Ok(false);
-                }
-
-                self.write_indentation();
-                self.buffer.extend_from_slice(b"@supports");
-
-                if !supports_rule.params.is_empty() {
-                    self.buffer.push(b' ');
-                    self.buffer
-                        .extend_from_slice(supports_rule.params.as_bytes());
-                }
-
-                drop(stmt_ref);
-                self.write_children_from_tree(tree, idx, None, None)?;
-                Ok(true)
-            }
-            CssStmt::UnknownAtRule(unknown_at_rule, ..) => {
-                self.write_indentation();
-                self.buffer.push(b'@');
-                self.buffer
-                    .extend_from_slice(unknown_at_rule.name.as_bytes());
-
-                if !unknown_at_rule.params.is_empty() {
-                    self.buffer.push(b' ');
-                    if unknown_at_rule.params.contains('\n') {
-                        self.buffer
-                            .extend_from_slice(unknown_at_rule.params.as_bytes());
-                    } else {
-                        self.buffer.extend_from_slice(
-                            normalize_whitespace(&unknown_at_rule.params).as_bytes(),
-                        );
-                    }
-                }
-
-                if !unknown_at_rule.has_body {
-                    return Ok(true);
-                }
-
-                let children = tree.children(idx);
-                if children.iter().all(|&c| tree.is_invisible_in_tree(c)) {
-                    self.buffer.extend_from_slice(b" {}");
-                    return Ok(true);
-                }
-
-                // Comment-only body renders on a single line
-                let all_comments = !children.is_empty()
-                    && children.iter().all(|&c| {
-                        let s = tree.get(c);
-                        matches!(&*s, Some(CssStmt::Comment(..)))
-                    });
-                if all_comments {
-                    self.buffer.extend_from_slice(b" { ");
-                    for &child in children {
-                        let s = tree.get(child);
-                        if let Some(CssStmt::Comment(ref comment, span)) = &*s {
-                            let comment = comment.clone();
-                            let span = *span;
-                            drop(s);
-                            self.write_comment(&comment, span)?;
-                        }
-                    }
-                    self.buffer.extend_from_slice(b" }");
-                    return Ok(true);
-                }
-
-                drop(stmt_ref);
-                self.write_children_from_tree(tree, idx, None, None)?;
-                Ok(true)
-            }
-            CssStmt::KeyframesRuleSet(keyframes_rule_set) => {
-                self.write_indentation();
-                let selector = keyframes_rule_set
-                    .selector
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                self.buffer.extend_from_slice(selector.as_bytes());
-                drop(stmt_ref);
-                self.write_children_from_tree(tree, idx, None, None)?;
-                Ok(true)
-            }
-        }
-    }
-
-    /// Write children of a container node from the tree (mirrors write_children).
-    /// `parent_source_span` is used for RuleSet closing-brace line detection.
-    fn write_children_from_tree(
-        &mut self,
-        tree: &CssTree,
-        parent_idx: CssTreeIdx,
-        opening_brace_line: Option<usize>,
-        _parent_source_span: Option<Span>,
-    ) -> SassResult<()> {
-        if self.options.is_compressed() {
-            self.buffer.push(b'{');
-        } else {
-            self.buffer.extend_from_slice(b" {");
-        }
-
-        self.indentation += self.indent_width;
-
-        let children = tree.children(parent_idx);
-        // Build a local skip set for consumed inline comments
-        let mut skip: Vec<CssTreeIdx> = Vec::new();
-
-        // Sub-problem B: Check if first visible child is an inline comment
-        // on the same source line as the opening `{`
-        if !self.options.is_compressed() {
-            if let Some(brace_line) = opening_brace_line {
-                if let Some(&first_visible_idx) = children
-                    .iter()
-                    .find(|&&c| !tree.is_invisible_in_tree(c) && !skip.contains(&c))
-                {
-                    let s = tree.get(first_visible_idx);
-                    if let Some(CssStmt::Comment(ref comment, span)) = &*s {
-                        if self.comment_start_line(s.as_ref().unwrap()) == Some(brace_line) {
-                            let comment = comment.clone();
-                            let span = *span;
-                            drop(s);
-                            self.write_inline_comment(&comment, span)?;
-                            skip.push(first_visible_idx);
-                        }
-                    }
-                }
-            }
-        }
-
-        if !self.options.is_compressed() {
-            self.buffer.push(b'\n');
-        }
-
-        let mut child_iter_pos = 0;
-        while child_iter_pos < children.len() {
-            let child_idx = children[child_iter_pos];
-            child_iter_pos += 1;
-
-            if skip.contains(&child_idx) || tree.is_invisible_in_tree(child_idx) {
-                continue;
-            }
-
-            let needs_semicolon;
-            let end_line;
-            let closing_brace_line;
-            let is_last;
-            {
-                let s = tree.get(child_idx);
-                let stmt = match &*s {
-                    None => continue,
-                    Some(st) => st,
-                };
-                needs_semicolon = Self::requires_semicolon(stmt);
-                end_line = self.stmt_end_line(stmt);
-                closing_brace_line = self.stmt_closing_brace_line(stmt);
-                // Check if there are any more visible children after this one
-                is_last = !children[child_iter_pos..]
-                    .iter()
-                    .any(|&c| !skip.contains(&c) && !tree.is_invisible_in_tree(c));
-            }
-
-            let did_write = self.visit_stmt_from_tree(tree, child_idx)?;
-
-            if !did_write {
-                continue;
-            }
-
-            if needs_semicolon {
-                if is_last && self.options.is_compressed() {
-                    // skip trailing semicolon in compressed mode
-                } else {
-                    self.buffer.push(b';');
-                }
-            }
-
-            if !self.options.is_compressed() {
-                // Sub-problem A: inline comment after style on same source line
-                if let Some(style_end_line) = end_line {
-                    if needs_semicolon {
-                        if let Some(next_pos) =
-                            self.next_visible_child(tree, children, child_iter_pos, &skip)
-                        {
-                            let next_child = children[next_pos];
-                            let s = tree.get(next_child);
-                            if let Some(CssStmt::Comment(ref comment, span)) = &*s {
-                                if self.comment_start_line(s.as_ref().unwrap())
-                                    == Some(style_end_line)
-                                {
-                                    let comment = comment.clone();
-                                    let span = *span;
-                                    drop(s);
-                                    self.write_inline_comment(&comment, span)?;
-                                    skip.push(next_child);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Sub-problem C: inline comment after closing `}` on same source line
-                if let Some(brace_line) = closing_brace_line {
-                    if let Some(next_pos) =
-                        self.next_visible_child(tree, children, child_iter_pos, &skip)
-                    {
-                        let next_child = children[next_pos];
-                        let s = tree.get(next_child);
-                        if let Some(CssStmt::Comment(ref comment, span)) = &*s {
-                            if self.comment_start_line(s.as_ref().unwrap()) == Some(brace_line) {
-                                let comment = comment.clone();
-                                let span = *span;
-                                drop(s);
-                                self.write_inline_comment(&comment, span)?;
-                                skip.push(next_child);
-                            }
-                        }
-                    }
-                }
-            }
-
-            self.write_optional_newline();
-        }
-
-        // In compressed mode, remove trailing semicolons before closing brace
-        if self.options.is_compressed() {
-            while self.buffer.last() == Some(&b';') {
-                self.buffer.pop();
-            }
-        }
-
-        self.indentation -= self.indent_width;
-
-        if self.options.is_compressed() {
-            self.buffer.push(b'}');
-        } else {
-            self.write_indentation();
-            self.buffer.extend_from_slice(b"}");
-        }
-
-        Ok(())
-    }
-
-    /// Find the next visible child in a children slice, skipping invisible and skipped nodes.
-    fn next_visible_child(
-        &self,
-        tree: &CssTree,
-        children: &[CssTreeIdx],
-        start: usize,
-        skip: &[CssTreeIdx],
-    ) -> Option<usize> {
-        children
-            .iter()
-            .enumerate()
-            .skip(start)
-            .find(|(_, &child_idx)| {
-                !skip.contains(&child_idx) && !tree.is_invisible_in_tree(child_idx)
-            })
-            .map(|(j, _)| j)
     }
 }
 
@@ -2733,7 +2455,7 @@ fn is_private_use(c: char) -> bool {
 /// character is a hex digit, space, or tab.
 fn write_hex_escape(buffer: &mut Vec<u8>, code_point: u32, next: Option<char>) {
     buffer.push(b'\\');
-    let hex = format!("{:x}", code_point);
+    let hex = format!("{code_point:x}");
     buffer.extend_from_slice(hex.as_bytes());
 
     if let Some(next_ch) = next {

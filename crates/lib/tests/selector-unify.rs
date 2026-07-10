@@ -316,6 +316,7 @@ test!(
     "a {\n  color: selector-unify(\".c.s1-1 > .s1-2\", \".c.s2-1 .s2-2\");\n}\n",
     "a {\n  color: .c.s2-1 .c.s1-1 > .s1-2.s2-2;\n}\n"
 );
+// dart-sass 1.97.3 verified: compound-merge order is selector1-part-first (.c.e), not .e.c
 test!(
     combinator_child_and_child_distinct,
     "a {\n  color: selector-unify(\".c > .d\", \".e > .f\");\n}\n",
@@ -326,6 +327,7 @@ test!(
     "a {\n  color: selector-unify(\".c.s1-1 > .s1-2\", \".c > .s2\");\n}\n",
     "a {\n  color: .c.s1-1 > .s1-2.s2;\n}\n"
 );
+// dart-sass 1.97.3 verified: compound-merge order is selector1-part-first (.c.s1-1.s2-1), not .c.s2-1.s1-1
 test!(
     combinator_child_and_child_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 > .s1-2\", \".c.s2-1 > .s2-2\");\n}\n",
@@ -356,6 +358,7 @@ test!(
     "a {\n  color: selector-unify(\".c ~ .s1\", \".c > .s2\");\n}\n",
     "a {\n  color: .c > .c ~ .s1.s2;\n}\n"
 );
+// dart-sass 1.97.3 verified: third alternative's compound-merge order is .c.e (selector1-first), not .e.c
 test!(
     combinator_sibling_and_sibling_distinct,
     "a {\n  color: selector-unify(\".c ~ .d\", \".e ~ .f\");\n}\n",
@@ -371,6 +374,7 @@ test!(
     "a {\n  color: selector-unify(\".c.s1-1 ~ .s1-2\", \".c ~ .s2\");\n}\n",
     "a {\n  color: .c.s1-1 ~ .s1-2.s2;\n}\n"
 );
+// dart-sass 1.97.3 verified: third alternative's compound-merge order is .c.s1-1.s2-1 (selector1-first), not .c.s2-1.s1-1
 test!(
     combinator_sibling_and_sibling_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 ~ .s1-2\", \".c.s2-1 ~ .s2-2\");\n}\n",
@@ -381,6 +385,7 @@ test!(
     "a {\n  color: selector-unify(\"#s1-1 ~ .s1-2\", \"#s2-1 ~ .s2-2\");\n}\n",
     "a {\n  color: #s1-1 ~ #s2-1 ~ .s1-2.s2-2, #s2-1 ~ #s1-1 ~ .s1-2.s2-2;\n}\n"
 );
+// dart-sass 1.97.3 verified: second alternative's compound-merge order is .c.e (selector1-first), not .e.c
 test!(
     combinator_sibling_and_next_sibling_distinct,
     "a {\n  color: selector-unify(\".c ~ .d\", \".e + .f\");\n}\n",
@@ -396,6 +401,7 @@ test!(
     "a {\n  color: selector-unify(\".c.s1-1 ~ .s1-2\", \".c + .s2\");\n}\n",
     "a {\n  color: .c.s1-1 ~ .c + .s1-2.s2, .c.s1-1 + .s1-2.s2;\n}\n"
 );
+// dart-sass 1.97.3 verified: second alternative's compound-merge order is .c.s1-1.s2-1 (selector1-first), not .c.s2-1.s1-1
 test!(
     combinator_sibling_and_next_sibling_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 ~ .s1-2\", \".c.s2-1 + .s2-2\");\n}\n",
@@ -436,6 +442,7 @@ test!(
     "a {\n  color: selector-unify(\"#s1-1 + .s1-2\", \"#s2-1 ~ .s2-2\");\n}\n",
     "a {\n  color: #s2-1 ~ #s1-1 + .s1-2.s2-2;\n}\n"
 );
+// dart-sass 1.97.3 verified: compound-merge order is .c.e (selector1-first), not .e.c
 test!(
     combinator_next_sibling_and_next_sibling_distinct,
     "a {\n  color: selector-unify(\".c + .d\", \".e + .f\");\n}\n",
@@ -446,6 +453,7 @@ test!(
     "a {\n  color: selector-unify(\".c.s1-1 + .s1-2\", \".c + .s2\");\n}\n",
     "a {\n  color: .c.s1-1 + .s1-2.s2;\n}\n"
 );
+// dart-sass 1.97.3 verified: compound-merge order is .c.s1-1.s2-1 (selector1-first), not .c.s2-1.s1-1
 test!(
     combinator_next_sibling_and_next_sibling_overlap,
     "a {\n  color: selector-unify(\".c.s1-1 + .s1-2\", \".c.s2-1 + .s2-2\");\n}\n",
@@ -471,11 +479,14 @@ test!(
     "a {\n  color: selector-unify(\"+ .c\", \"+ .d\");\n}\n",
     "a {\n  color: + .c.d;\n}\n"
 );
+// dart-sass 1.97.3 verified: leading-combinator ("bogus-combinators") selectors no longer unify as a
+// super-sequence; selector.unify() returns null, and the rule (with no other declarations) is dropped.
 test!(
     combinator_at_start_contiguous_super_sequence,
     "a {\n  color: selector-unify(\"+ ~ > .c\", \"> + ~ > > .d\");\n}\n",
     ""
 );
+// dart-sass 1.97.3 verified: same as above — leading-combinator selectors no longer unify.
 test!(
     combinator_at_start_non_contiguous_super_sequence,
     "a {\n  color: selector-unify(\"+ ~ > .c\", \"+ > ~ ~ > .d\");\n}\n",
@@ -491,16 +502,20 @@ test!(
     "a {\n  color: selector-unify(\".c > .d + .e\", \".f .g ~ .h\");\n}\n",
     "a {\n  color: .f .c > .g ~ .d + .e.h, .f .c > .g.d + .e.h;\n}\n"
 );
+// dart-sass 1.97.3 verified: consecutive-combinator ("bogus-combinators") selectors no longer unify;
+// selector.unify() returns null, and the rule (with no other declarations) is dropped.
 test!(
     combinator_multiple_in_a_row_same,
     "a {\n  color: selector-unify(\".c + ~ > .d\", \".e + ~ > .f\");\n}\n",
     ""
 );
+// dart-sass 1.97.3 verified: same as above — consecutive-combinator selectors no longer unify.
 test!(
     combinator_multiple_in_a_row_contiguous_super_sequence,
     "a {\n  color: selector-unify(\".c + ~ > .d\", \".e > + ~ > > .f\");\n}\n",
     ""
 );
+// dart-sass 1.97.3 verified: same as above — consecutive-combinator selectors no longer unify.
 test!(
     combinator_multiple_in_a_row_non_contiguous_super_sequence,
     "a {\n  color: selector-unify(\".c + ~ > .d\", \".e + > ~ ~ > .f\");\n}\n",
@@ -561,6 +576,7 @@ test!(
     "a {\n  color: selector-unify(\"c:root .d\", \":root .e\");\n}\n",
     "a {\n  color: c:root .d.e;\n}\n"
 );
+// dart-sass 1.97.3 verified: compound-merge order is .c.e:root (selector1-first), not .e.c:root
 test!(
     root_in_both_can_unify,
     "a {\n  color: selector-unify(\".c:root .d\", \".e:root .f\");\n}\n",

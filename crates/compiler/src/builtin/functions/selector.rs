@@ -46,7 +46,7 @@ pub(crate) fn simple_selectors(
 
     Ok(Value::List(
         Rc::new(
-            compound
+            Rc::unwrap_or_clone(compound)
                 .components
                 .into_iter()
                 .map(|simple| Value::String(simple.to_string().into(), QuoteKind::None))
@@ -76,12 +76,6 @@ pub(crate) fn selector_nest(args: ArgumentResult, visitor: &mut Visitor) -> Sass
         .into_iter()
         .map(|sel| sel.node.to_selector_unnamed(visitor, true, span))
         .collect::<SassResult<Vec<Selector>>>()?;
-
-    if let Some(first) = parsed_selectors.first() {
-        if first.contains_parent_selector() {
-            return Err(("Parent selectors aren't allowed here.", span).into());
-        }
-    }
 
     Ok(parsed_selectors
         .into_iter()
@@ -118,24 +112,25 @@ pub(crate) fn selector_append(args: ArgumentResult, visitor: &mut Visitor) -> Sa
                     .map(|complex| -> SassResult<ComplexSelector> {
                         let compound = complex.components.first();
                         if let Some(ComplexSelectorComponent::Compound(compound)) = compound {
-                            let mut components = vec![match compound.clone().prepend_parent() {
-                                Some(v) => ComplexSelectorComponent::Compound(v),
-                                None => {
-                                    return Err((
-                                        format!(
-                                            "Can't append {} to {}.",
-                                            complex,
-                                            serialize_selector_list(
-                                                &parent.0,
-                                                visitor.options,
-                                                span
-                                            )
-                                        ),
-                                        span,
-                                    )
-                                        .into())
-                                }
-                            }];
+                            let mut components =
+                                vec![match (**compound).clone().prepend_parent() {
+                                    Some(v) => ComplexSelectorComponent::Compound(Rc::new(v)),
+                                    None => {
+                                        return Err((
+                                            format!(
+                                                "Can't append {} to {}.",
+                                                complex,
+                                                serialize_selector_list(
+                                                    &parent.0,
+                                                    visitor.options,
+                                                    span
+                                                )
+                                            ),
+                                            span,
+                                        )
+                                            .into())
+                                    }
+                                }];
                             components.extend(complex.components.into_iter().skip(1));
                             Ok(ComplexSelector::new(components, false))
                         } else {
@@ -226,12 +221,36 @@ pub(crate) fn selector_unify(mut args: ArgumentResult, visitor: &mut Visitor) ->
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("is-superselector", Builtin::new(is_superselector));
-    f.insert("simple-selectors", Builtin::new(simple_selectors));
-    f.insert("selector-parse", Builtin::new(selector_parse));
-    f.insert("selector-nest", Builtin::new(selector_nest));
-    f.insert("selector-append", Builtin::new(selector_append));
-    f.insert("selector-extend", Builtin::new(selector_extend));
-    f.insert("selector-replace", Builtin::new(selector_replace));
-    f.insert("selector-unify", Builtin::new(selector_unify));
+    f.insert(
+        "is-superselector",
+        Builtin::new(is_superselector).with_deprecated_global("selector", "is-superselector"),
+    );
+    f.insert(
+        "simple-selectors",
+        Builtin::new(simple_selectors).with_deprecated_global("selector", "simple-selectors"),
+    );
+    f.insert(
+        "selector-parse",
+        Builtin::new(selector_parse).with_deprecated_global("selector", "parse"),
+    );
+    f.insert(
+        "selector-nest",
+        Builtin::new(selector_nest).with_deprecated_global("selector", "nest"),
+    );
+    f.insert(
+        "selector-append",
+        Builtin::new(selector_append).with_deprecated_global("selector", "append"),
+    );
+    f.insert(
+        "selector-extend",
+        Builtin::new(selector_extend).with_deprecated_global("selector", "extend"),
+    );
+    f.insert(
+        "selector-replace",
+        Builtin::new(selector_replace).with_deprecated_global("selector", "replace"),
+    );
+    f.insert(
+        "selector-unify",
+        Builtin::new(selector_unify).with_deprecated_global("selector", "unify"),
+    );
 }

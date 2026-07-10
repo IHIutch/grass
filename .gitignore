@@ -2,20 +2,32 @@
 *.css
 !input.scss
 !crates/static/_index.scss
+!crates/lib/tests/trybuild/invalid.scss
+!crates/lib/tests/trybuild/multi/main.scss
+!crates/lib/tests/trybuild/multi/_partial.scss
 node_modules/
+
+# generated at test-run time by include_sass_trybuild.rs (embeds an
+# absolute, machine-specific path — not meant to be checked in)
+/crates/lib/tests/trybuild/multi_file_generated.rs
+/crates/lib/tests/trybuild/multi_file_generated_relative.rs
 
 # devops
 /target
+*.node
 coverage
 pkg
 flamegraph.svg
-perf*
+perf.data*
 dhat*
 *.tar.gz
 
 # editor specific
 .idea
 .vscode
+
+# local agent settings
+.claude/
 
 # automation tools
 *.py
@@ -38,7 +50,3 @@ sass-fairy
 duomo
 ibm-cloud-cognitive
 pico
-
-# Dolt database files (added by bd init)
-.dolt/
-*.db

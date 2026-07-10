@@ -18,7 +18,8 @@ include = [
     "LICENSE",
 ]
 default-run = "grass"
-rust-version = "1.80"
+# MSRV: ar_archive_writer 0.5.2 (via psm/stacker) requires Rust 1.88.
+rust-version = "1.88"
 
 [[bin]]
 name = "grass"
@@ -48,19 +49,31 @@ grass_compiler = { path = "../compiler", version = "=0.13.4", default-features =
 include_sass = { path = "../include_sass", version = "0.13.4", optional = true }
 clap = { version = "4.3.10", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
+notify = { version = "8", optional = true }
 
 [features]
 # todo: no commandline by default
-default = ["commandline", "random"]
-# Option (enabled by default): build a binary using clap
-commandline = ["clap", "mimalloc"]
+default = ["commandline", "random", "stacker", "custom-builtin-fns"]
+# Option (enabled by default): build a binary using clap. Also pulls in
+# `notify` for `--watch`/`--poll` -- both are CLI-only concerns, so there's
+# no separate feature gate for watch support.
+commandline = ["clap", "mimalloc", "dep:notify"]
 random = ["grass_compiler/random"]
 wasm-exports = ["grass_compiler/wasm-exports", "wasm-bindgen"]
+# Option (enabled by default): register Rust functions as Sass builtins via
+# `Options::add_custom_fn`/`Builtin` (re-exported from `grass_compiler`).
+custom-builtin-fns = ["grass_compiler/custom-builtin-fns"]
+# Option (enabled by default): grow the stack on demand at recursive parse
+# chokepoints instead of a small fixed depth limit. Not supported on wasm32;
+# the wasm build (crates/lib/pkg-publish, built with --no-default-features)
+# omits this feature and falls back to a lower fixed limit — see
+# grass_compiler's `stacker` feature and crate::stack::maybe_grow.
+stacker = ["grass_compiler/stacker"]
 # Option: include the proc macro `include_sass!`
 macro = ["include_sass"]
-parallel = ["grass_compiler/parallel"]
 nightly = ["include_sass/nightly"]
 
 [dev-dependencies]
 tempfile = "3.3.0"
 paste = "1.0.3"
+trybuild = "1.0"

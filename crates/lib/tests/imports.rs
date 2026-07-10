@@ -20,7 +20,7 @@ fn null_fs_cannot_import() {
             ()
         }
         Ok(..) => panic!("did not fail"),
-        Err(e) => panic!("failed in the wrong way: {}", e),
+        Err(e) => panic!("failed in the wrong way: {e}"),
     }
 }
 
@@ -377,6 +377,81 @@ fn imports_explicit_file_extension() {
 
     assert_eq!(
         "a {\n  color: red;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
+
+#[test]
+fn imports_import_only_explicit_file_extension() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("a.import.scss", r#"a { color: red; }"#);
+
+    let input = r#"
+        @import "a.scss";
+    "#;
+
+    assert_eq!(
+        "a {\n  color: red;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
+
+#[test]
+fn conflicting_import_only_explicit_file_extension() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_a.import.scss", r#"a { color: red; }"#);
+    fs.add_file("a.import.scss", r#"a { color: blue; }"#);
+
+    let input = r#"
+        @import "a.scss";
+    "#;
+
+    match grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)) {
+        Ok(..) => panic!("did not fail"),
+        Err(e) => assert!(
+            e.to_string()
+                .starts_with("Error: It's not clear which file to import. Found:\n  _a.import.scss\n  a.import.scss"),
+            "{e}"
+        ),
+    }
+}
+
+#[test]
+fn conflicting_regular_explicit_file_extension_partials() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_a.scss", r#"a { color: red; }"#);
+    fs.add_file("a.scss", r#"a { color: blue; }"#);
+
+    let input = r#"
+        @import "a.scss";
+    "#;
+
+    match grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)) {
+        Ok(..) => panic!("did not fail"),
+        Err(e) => assert!(
+            e.to_string().starts_with(
+                "Error: It's not clear which file to import. Found:\n  _a.scss\n  a.scss"
+            ),
+            "{e}"
+        ),
+    }
+}
+
+#[test]
+fn explicit_plain_css_import_is_preserved() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("a.css", r#"a { color: red; }"#);
+
+    let input = r#"
+        @import "a.css";
+    "#;
+
+    assert_eq!(
+        "@import \"a.css\";\n",
         &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
     );
 }

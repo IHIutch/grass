@@ -1,6 +1,6 @@
 #![allow(clippy::similar_names)]
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, rc::Rc};
 
 use super::super::{
     Combinator, ComplexSelector, ComplexSelectorComponent, CompoundSelector, Pseudo, SimpleSelector,
@@ -21,56 +21,41 @@ pub(crate) fn unify_complex(
 
     let mut unified_base: Option<CompoundSelector> = None;
     let mut trailing_combinator: Option<Combinator> = None;
+    let mut complexes_without_bases: Vec<Vec<ComplexSelectorComponent>> =
+        Vec::with_capacity(complexes.len());
 
-    for complex in &complexes {
-        let base = complex.last()?;
-
+    for mut complex in complexes {
         // Handle trailing combinators: strip them and track separately.
         // In dart-sass, each component carries its own combinators, but in grass
         // they're separate list elements. So [Compound(.e), Combinator(>)] has
         // the combinator as the last element.
-        let base_compound = match base {
+        let base_compound = match complex.pop()? {
             ComplexSelectorComponent::Compound(c) => c,
-            ComplexSelectorComponent::Combinator(c) => {
-                // Last element is a combinator — look for the compound before it
-                if let Some(new_trailing) = Some(*c) {
-                    if let Some(existing) = trailing_combinator {
-                        if existing != new_trailing {
-                            return None;
-                        }
-                    } else {
-                        trailing_combinator = Some(new_trailing);
+            ComplexSelectorComponent::Combinator(new_trailing) => {
+                if let Some(existing) = trailing_combinator {
+                    if existing != new_trailing {
+                        return None;
                     }
+                } else {
+                    trailing_combinator = Some(new_trailing);
                 }
-                // The compound is the second-to-last element
-                match complex.get(complex.len().wrapping_sub(2)) {
+                // The compound is the element before the combinator we just popped
+                match complex.pop() {
                     Some(ComplexSelectorComponent::Compound(c)) => c,
                     _ => return None,
                 }
             }
         };
 
-        if let Some(existing) = unified_base {
-            unified_base = Some(existing.unify(base_compound.clone())?);
-        } else {
-            unified_base = Some(base_compound.clone());
-        }
+        unified_base = Some(match unified_base {
+            Some(existing) => existing.unify(&base_compound)?,
+            None => Rc::unwrap_or_clone(base_compound),
+        });
+
+        complexes_without_bases.push(complex);
     }
 
-    let mut complexes_without_bases: Vec<Vec<ComplexSelectorComponent>> = complexes
-        .into_iter()
-        .map(|mut complex| {
-            // Pop trailing combinator if present
-            if let Some(ComplexSelectorComponent::Combinator(_)) = complex.last() {
-                complex.pop();
-            }
-            // Pop the base compound
-            complex.pop();
-            complex
-        })
-        .collect();
-
-    let mut base_components = vec![ComplexSelectorComponent::Compound(unified_base?)];
+    let mut base_components = vec![ComplexSelectorComponent::Compound(Rc::new(unified_base?))];
     if let Some(combinator) = trailing_combinator {
         base_components.push(ComplexSelectorComponent::Combinator(combinator));
     }
@@ -119,17 +104,33 @@ pub(crate) fn weave(
         };
 
         if complex.is_empty() {
-            for prefix in &mut prefixes {
+            let last = prefixes.len().saturating_sub(1);
+            for (i, prefix) in prefixes.iter_mut().enumerate() {
+                if i == last {
+                    continue;
+                }
                 prefix.push(target.clone());
+            }
+            if let Some(prefix) = prefixes.last_mut() {
+                prefix.push(target);
             }
             continue;
         }
 
+        // `complex` is moved into `parents` below; every prefix but the last
+        // needs its own copy, so only the final iteration can move it outright.
         let parents: Vec<ComplexSelectorComponent> = complex;
+        let last_prefix = prefixes.len().saturating_sub(1);
+        let mut parents = Some(parents);
         let mut new_prefixes: Vec<Vec<ComplexSelectorComponent>> = Vec::new();
 
-        for prefix in prefixes {
-            if let Some(parent_prefixes) = weave_parents(prefix, parents.clone()) {
+        for (i, prefix) in prefixes.into_iter().enumerate() {
+            let these_parents = if i == last_prefix {
+                parents.take().unwrap()
+            } else {
+                parents.clone().unwrap()
+            };
+            if let Some(parent_prefixes) = weave_parents(prefix, these_parents) {
                 for mut parent_prefix in parent_prefixes {
                     parent_prefix.push(target.clone());
                     new_prefixes.push(parent_prefix);
@@ -168,7 +169,7 @@ fn weave_parents(
 
     match (first_if_root(&mut queue_one), first_if_root(&mut queue_two)) {
         (Some(root_one), Some(root_two)) => {
-            let root = ComplexSelectorComponent::Compound(root_one.unify(root_two)?);
+            let root = ComplexSelectorComponent::Compound(Rc::new(root_one.unify(&root_two)?));
             queue_one.push_front(root.clone());
             queue_two.push_front(root);
         }
@@ -218,7 +219,7 @@ fn weave_parents(
                 return None;
             }
 
-            unified.first().cloned()
+            unified.into_iter().next()
         }),
     );
 
@@ -335,30 +336,32 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
     let mut selections: Vec<Vec<Option<T>>> = vec![vec![None; list_two.len()]; list_one.len()];
 
     for i in 0..list_one.len() {
-        for j in 0..list_two.len() {
-            let selection = select(&list_one[i], &list_two[j]);
-            selections[i][j] = selection.clone();
+        for (j, list_two_item) in list_two.iter().enumerate() {
+            let selection = select(&list_one[i], list_two_item);
             lengths[i + 1][j + 1] = if selection.is_none() {
                 std::cmp::max(lengths[i + 1][j], lengths[i][j + 1])
             } else {
                 lengths[i][j] + 1
             };
+            selections[i][j] = selection;
         }
     }
 
     fn backtrack<T: Clone>(
         i: isize,
         j: isize,
-        lengths: Vec<Vec<i32>>,
-        selections: &mut Vec<Vec<Option<T>>>,
+        lengths: &[Vec<i32>],
+        selections: &[Vec<Option<T>>],
     ) -> Vec<T> {
         if i == -1 || j == -1 {
             return Vec::new();
         }
 
-        let selection = selections.get(i as usize).cloned().unwrap_or_default();
-
-        if let Some(Some(selection)) = selection.get(j as usize) {
+        if let Some(Some(selection)) = selections
+            .get(i as usize)
+            .and_then(|row| row.get(j as usize))
+            .map(Option::as_ref)
+        {
             let mut tmp = backtrack(i - 1, j - 1, lengths, selections);
             tmp.push(selection.clone());
             return tmp;
@@ -373,8 +376,8 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
     backtrack(
         (list_one.len() as isize).saturating_sub(1),
         (list_two.len() as isize).saturating_sub(1),
-        lengths,
-        &mut selections,
+        &lengths,
+        &selections,
     )
 }
 
@@ -457,12 +460,12 @@ fn merge_final_combinators(
 
             match (combinator_one, combinator_two) {
                 (Combinator::FollowingSibling, Combinator::FollowingSibling) => {
-                    if compound_one.is_super_selector(&compound_two, &None) {
+                    if compound_one.is_super_selector(&compound_two, None) {
                         result.push_front(vec![vec![
                             ComplexSelectorComponent::Compound(compound_two),
                             ComplexSelectorComponent::Combinator(Combinator::FollowingSibling),
                         ]]);
-                    } else if compound_two.is_super_selector(&compound_one, &None) {
+                    } else if compound_two.is_super_selector(&compound_one, None) {
                         result.push_front(vec![vec![
                             ComplexSelectorComponent::Compound(compound_one),
                             ComplexSelectorComponent::Combinator(Combinator::FollowingSibling),
@@ -483,9 +486,9 @@ fn merge_final_combinators(
                             ],
                         ];
 
-                        if let Some(unified) = compound_one.unify(compound_two) {
+                        if let Some(unified) = compound_one.unify(&compound_two) {
                             choices.push(vec![
-                                ComplexSelectorComponent::Compound(unified),
+                                ComplexSelectorComponent::Compound(Rc::new(unified)),
                                 ComplexSelectorComponent::Combinator(Combinator::FollowingSibling),
                             ]);
                         }
@@ -508,7 +511,7 @@ fn merge_final_combinators(
                         compound_one.clone()
                     };
 
-                    if following_sibling_selector.is_super_selector(&next_sibling_selector, &None) {
+                    if following_sibling_selector.is_super_selector(&next_sibling_selector, None) {
                         result.push_front(vec![vec![
                             ComplexSelectorComponent::Compound(next_sibling_selector),
                             ComplexSelectorComponent::Combinator(Combinator::NextSibling),
@@ -522,10 +525,10 @@ fn merge_final_combinators(
                         ]];
 
                         if let Some(unified) =
-                            following_sibling_selector.unify(next_sibling_selector)
+                            following_sibling_selector.unify(&next_sibling_selector)
                         {
                             v.push(vec![
-                                ComplexSelectorComponent::Compound(unified),
+                                ComplexSelectorComponent::Compound(Rc::new(unified)),
                                 ComplexSelectorComponent::Combinator(Combinator::NextSibling),
                             ]);
                         }
@@ -557,10 +560,10 @@ fn merge_final_combinators(
                         return None;
                     }
 
-                    let unified = compound_one.unify(compound_two)?;
+                    let unified = compound_one.unify(&compound_two)?;
 
                     result.push_front(vec![vec![
-                        ComplexSelectorComponent::Compound(unified),
+                        ComplexSelectorComponent::Compound(Rc::new(unified)),
                         ComplexSelectorComponent::Combinator(*combinator_one),
                     ]]);
                 }
@@ -572,7 +575,7 @@ fn merge_final_combinators(
             if *combinator_one == Combinator::Child && !components_two.is_empty() {
                 if let Some(ComplexSelectorComponent::Compound(c1)) = components_one.back() {
                     if let Some(ComplexSelectorComponent::Compound(c2)) = components_two.back() {
-                        if c2.is_super_selector(c1, &None) {
+                        if c2.is_super_selector(c1, None) {
                             components_two.pop_back();
                         }
                     }
@@ -590,7 +593,7 @@ fn merge_final_combinators(
             if *combinator_two == Combinator::Child && !components_one.is_empty() {
                 if let Some(ComplexSelectorComponent::Compound(c1)) = components_one.back() {
                     if let Some(ComplexSelectorComponent::Compound(c2)) = components_two.back() {
-                        if c1.is_super_selector(c2, &None) {
+                        if c1.is_super_selector(c2, None) {
                             components_one.pop_back();
                         }
                     }
@@ -609,7 +612,7 @@ fn merge_final_combinators(
 
 /// If the first element of `queue` has a `::root` selector, removes and returns
 /// that element.
-fn first_if_root(queue: &mut VecDeque<ComplexSelectorComponent>) -> Option<CompoundSelector> {
+fn first_if_root(queue: &mut VecDeque<ComplexSelectorComponent>) -> Option<Rc<CompoundSelector>> {
     if queue.is_empty() {
         return None;
     }
@@ -617,7 +620,7 @@ fn first_if_root(queue: &mut VecDeque<ComplexSelectorComponent>) -> Option<Compo
         if !has_root(c) {
             return None;
         }
-        let compound = c.clone();
+        let compound = Rc::clone(c);
         queue.pop_front();
         Some(compound)
     } else {
@@ -709,7 +712,7 @@ fn chunks<T: Clone>(
         (false, true) => vec![chunk_one],
         (false, false) => {
             let mut l1 = chunk_one.clone();
-            l1.append(&mut chunk_two.clone());
+            l1.extend(chunk_two.iter().cloned());
 
             let mut l2 = chunk_two;
             l2.append(&mut chunk_one);
@@ -738,15 +741,16 @@ fn complex_is_parent_superselector(
     if complex_one.len() > complex_two.len() {
         return false;
     }
-    let base = CompoundSelector {
+    let base = Rc::new(CompoundSelector {
         components: vec![SimpleSelector::Placeholder(String::new())],
-    };
+    });
     let mut one = complex_one.to_vec();
     let mut two = complex_two.to_vec();
     one.push(ComplexSelectorComponent::Compound(base.clone()));
     two.push(ComplexSelectorComponent::Compound(base));
 
-    ComplexSelector::new(one, false).is_super_selector(&ComplexSelector::new(two, false))
+    ComplexSelector::new_transient(one, false)
+        .is_super_selector(&ComplexSelector::new_transient(two, false))
 }
 
 /// Returns a list of all possible paths through the given lists.

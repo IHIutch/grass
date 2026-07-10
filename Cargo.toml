@@ -22,10 +22,9 @@ codegen-units = 1
 panic = 'abort'
 strip = true
 
-# WASM-optimized: max speed, no debug info
-[profile.wasm]
-inherits = 'release'
-opt-level = 3
-debug = false
-strip = true
+# napi cdylib must unwind: a panic in the compiler becomes a JS exception
+# instead of aborting the host Node.js process.
+[profile.release-napi]
+inherits = "release"
+panic = "unwind"
 

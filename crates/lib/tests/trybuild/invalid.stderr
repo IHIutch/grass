@@ -1,0 +1,11 @@
+error: Failed to compile Sass
+       Error: expected "}".
+         ╷
+       1 │ a {
+         │    ^^^
+         ╵
+       ./../../../../crates/lib/tests/trybuild/invalid.scss:1:4
+ --> tests/trybuild/invalid.rs:2:38
+  |
+2 |     let _css: &str = grass::include!("../../../../crates/lib/tests/trybuild/invalid.scss");
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

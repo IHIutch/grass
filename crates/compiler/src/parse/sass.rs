@@ -1,8 +1,10 @@
-use std::path::Path;
+use std::{cell::Cell, path::Path};
 
 use codemap::Span;
 
-use crate::{ast::*, error::SassResult, lexer::Lexer, ContextFlags, Options, Token};
+use crate::{
+    ast::*, deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token,
+};
 
 use super::{BaseParser, StylesheetParser};
 
@@ -18,6 +20,8 @@ pub(crate) struct SassParser<'a> {
     pub spaces: Option<bool>,
     pub next_indentation_end: Option<usize>,
     pub consume_newlines: bool,
+    pub recursion_depth: Cell<usize>,
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> BaseParser for SassParser<'a> {
@@ -123,8 +127,16 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         self.arena
     }
 
-    fn parse_style_rule_selector(&mut self) -> SassResult<Interpolation<'a>> {
-        let mut buffer = Interpolation::new();
+    fn recursion_depth(&self) -> &Cell<usize> {
+        &self.recursion_depth
+    }
+
+    fn parse_time_warnings_mut(&mut self) -> &mut Vec<(Deprecation, Span, String)> {
+        &mut self.parse_time_warnings
+    }
+
+    fn parse_style_rule_selector(&mut self) -> SassResult<InterpolationBuilder<'a>> {
+        let mut buffer = InterpolationBuilder::new();
 
         loop {
             buffer.add_interpolation(self.almost_any_value(true)?);
@@ -289,7 +301,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         }
 
         Ok(AstStmt::SilentComment(AstSilentComment {
-            text: buffer,
+            text: self.arena().alloc_str(&buffer),
             span: self.toks.span_from(start),
         }))
     }
@@ -301,7 +313,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
 
         let mut first = true;
 
-        let mut buffer = Interpolation::new_plain("/*".to_owned());
+        let mut buffer = InterpolationBuilder::new_plain("/*".to_owned());
         let parent_indentation = self.current_indentation;
 
         loop {
@@ -314,7 +326,9 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
                     self.read_indentation()?;
                     buffer.add_char(' ');
                 } else {
-                    buffer.add_string(self.toks.raw_text(beginning_of_comment));
+                    buffer
+                        .trailing_string_mut()
+                        .extend(self.toks.raw_chars(beginning_of_comment));
                 }
             } else {
                 buffer.add_string("\n * ".to_owned());
@@ -412,7 +426,7 @@ impl<'a> StylesheetParser<'a> for SassParser<'a> {
         }
 
         Ok(AstLoudComment {
-            text: buffer,
+            text: buffer.finish(self.arena()),
             span: self.toks.span_from(start),
         })
     }
@@ -442,6 +456,8 @@ impl<'a> SassParser<'a> {
             next_indentation_end: None,
             spaces: None,
             consume_newlines: false,
+            recursion_depth: Cell::new(0),
+            parse_time_warnings: Vec::new(),
         }
     }
 
@@ -634,10 +650,7 @@ impl<'a> SassParser<'a> {
 
             if child_indent != indentation {
                 return Err((
-                    format!(
-                        "Inconsistent indentation, expected {child_indent} spaces.",
-                        child_indent = child_indent
-                    ),
+                    format!("Inconsistent indentation, expected {child_indent} spaces."),
                     self.toks.current_span(),
                 )
                     .into());
@@ -657,9 +670,10 @@ impl<'a> SassParser<'a> {
             Some(Token {
                 kind: '\n' | '\r', ..
             }) => return Ok(None),
-            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(Box::new(
-                self.parse_variable_declaration_without_namespace(None, None)?,
-            )),
+            Some(Token { kind: '$', .. }) => AstStmt::VariableDecl(
+                self.arena()
+                    .alloc(self.parse_variable_declaration_without_namespace(None, None)?),
+            ),
             Some(Token { kind: '/', .. }) => match self.toks.peek_n(1) {
                 Some(Token { kind: '/', .. }) => self.parse_silent_comment()?,
                 Some(Token { kind: '*', .. }) => AstStmt::LoudComment(self.parse_loud_comment()?),

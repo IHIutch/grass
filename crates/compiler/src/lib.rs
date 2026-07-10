@@ -59,16 +59,9 @@ grass input.scss
     unknown_lints,
 )]
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use parse::{CssParser, SassParser, StylesheetParser};
-
-std::thread_local! {
-    /// Cumulative time spent parsing imported modules during evaluation.
-    /// Only used when GRASS_TIMING is set.
-    pub(crate) static IMPORT_PARSE_TIME: std::cell::Cell<std::time::Duration> =
-        const { std::cell::Cell::new(std::time::Duration::ZERO) };
-}
 use sass_ast::StyleSheet;
 use serializer::Serializer;
 #[cfg(feature = "wasm-exports")]
@@ -76,15 +69,18 @@ use wasm_bindgen::prelude::*;
 
 use codemap::CodeMap;
 
+pub use crate::deprecation::Deprecation;
 pub use crate::error::{
     PublicSassErrorKind as ErrorKind, SassError as Error, SassResult as Result,
 };
-pub use crate::fs::{Fs, NullFs, StdFs};
+pub use crate::fs::{DirListing, EntryKind, Fs, NullFs, StdFs};
+pub use crate::importer::{ImportResolution, ImportSource, Importer};
 pub use crate::logger::{Logger, NullLogger, StdLogger};
 pub use crate::options::{InputSyntax, Options, OutputStyle};
+pub use crate::source_map::{encode_uri, SourceMapData};
+use crate::{ast::CssStmt, lexer::Lexer, parse::ScssParser};
 pub use crate::{builtin::Builtin, evaluate::Visitor};
 pub(crate) use crate::{context_flags::ContextFlags, lexer::Token};
-use crate::{lexer::Lexer, parse::ScssParser};
 
 pub mod sass_value {
     pub use crate::{
@@ -110,9 +106,11 @@ mod builtin;
 mod color;
 mod common;
 mod context_flags;
+mod deprecation;
 mod error;
 mod evaluate;
 mod fs;
+mod importer;
 mod interner;
 mod lexer;
 mod logger;
@@ -120,6 +118,8 @@ mod options;
 mod parse;
 mod selector;
 mod serializer;
+mod source_map;
+mod stack;
 mod unit;
 mod utils;
 mod value;
@@ -129,6 +129,10 @@ fn raw_to_parse_error(map: &CodeMap, err: Error, unicode: bool) -> Box<Error> {
     Box::new(Error::from_loc(message, map.look_up_span(span), unicode))
 }
 
+/// ⚠ Memory note: each call permanently leaks its parse arena (the returned
+/// `StyleSheet<'static>` borrows from it). Do not call this per-request in a
+/// long-running process; for one-shot compilation use [`from_string`] /
+/// [`from_path`], which free everything.
 pub fn parse_stylesheet<P: AsRef<Path>>(
     input: String,
     file_name: P,
@@ -160,6 +164,7 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
     // Safety: We leak the arena so that the returned StyleSheet's references remain valid.
     // This is necessary because parse_stylesheet returns a StyleSheet that outlives this function.
     // The arena memory will not be freed, which is acceptable for this API.
+    // INVARIANT: the erased-'static StyleSheet must not outlive the arena it was allocated in.
     let stylesheet = match stylesheet {
         Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
@@ -176,13 +181,152 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
     file_name: P,
     options: &Options,
 ) -> Result<String> {
-    let timing = std::env::var("GRASS_TIMING").is_ok();
-    let t_start = std::time::Instant::now();
+    let (css, _mappings, _sources, _sources_content, _loaded_files) =
+        compile_impl(input, file_name, options)?;
+    Ok(css)
+}
 
+/// Compile CSS from a string, additionally returning a [`SourceMapData`]
+/// when [`Options::source_map`] is enabled.
+///
+/// Only top-level style declarations and selectors produce mappings (see
+/// `docs/design/source-maps.md`). The second tuple element is `None`
+/// whenever `options.source_map()` was not set to `true`, in which case
+/// this function's CSS output is byte-identical to [`from_string`].
+///
+/// This has no real input path, so — matching the JS API's
+/// `compileString` without a `url` option — the sole `sources` entry is a
+/// `data:` URL of `input` itself, rather than a literal `"stdin"` string.
+/// Any additional files pulled in via `@use`/`@import` are recorded under
+/// their real (resolved) paths.
+pub fn from_string_with_source_map<S: Into<String>>(
+    input: S,
+    options: &Options,
+) -> Result<(String, Option<SourceMapData>)> {
+    let input = input.into();
+    // Only clone the input when a map was actually requested — this is the
+    // one extra cost `from_string` callers must never pay, so it's gated on
+    // the same flag that already gates all other source-map bookkeeping.
+    let input_for_data_url = if options.source_map {
+        Some(input.clone())
+    } else {
+        None
+    };
+
+    let (css, mappings, mut sources, sources_content, loaded_files) =
+        compile_impl(input, "stdin", options)?;
+
+    let map = if options.source_map {
+        if let Some(idx) = sources.iter().position(|name| name == "stdin") {
+            sources[idx] = crate::source_map::stdin_data_url(
+                input_for_data_url.as_deref().unwrap_or_default(),
+            );
+        }
+        Some(SourceMapData::new(
+            &mappings,
+            sources,
+            sources_content,
+            loaded_files,
+        ))
+    } else {
+        None
+    };
+
+    Ok((css, map))
+}
+
+/// Like [`from_string_with_source_map`], but seeds the entrypoint's canonical
+/// URL / relative-import base with `url` (matching the JS API's
+/// `compileString({ url })`). `@use`/`@import` written relative to the entry
+/// resolve against `url` — it becomes the entry's `current_import_path`, and
+/// is the `containing_url` handed to custom importers for the entry's OWN
+/// loads — and the source map's sole entrypoint `sources` entry is `url`
+/// itself rather than the synthetic `data:` URL that
+/// [`from_string_with_source_map`] uses when no URL is known.
+pub fn from_string_with_url_and_source_map<S: Into<String>>(
+    input: S,
+    url: &str,
+    options: &Options,
+) -> Result<(String, Option<SourceMapData>)> {
+    let (css, mappings, sources, sources_content, loaded_files) =
+        compile_impl(input.into(), url, options)?;
+
+    let map = if options.source_map {
+        Some(SourceMapData::new(
+            &mappings,
+            sources,
+            sources_content,
+            loaded_files,
+        ))
+    } else {
+        None
+    };
+
+    Ok((css, map))
+}
+
+/// Compile CSS from a path, additionally returning a [`SourceMapData`] when
+/// [`Options::source_map`] is enabled. See [`from_string_with_source_map`]
+/// for the general contract; unlike that function, `sources` entries here
+/// are real file paths (as given, and as resolved by any `@use`/`@import`),
+/// never `data:` URLs.
+#[inline]
+pub fn from_path_with_source_map<P: AsRef<Path>>(
+    p: P,
+    options: &Options,
+) -> Result<(String, Option<SourceMapData>)> {
+    let input = String::from_utf8(options.fs.read(p.as_ref())?)?;
+    let (css, mappings, sources, sources_content, loaded_files) = compile_impl(input, p, options)?;
+
+    let map = if options.source_map {
+        Some(SourceMapData::new(
+            &mappings,
+            sources,
+            sources_content,
+            loaded_files,
+        ))
+    } else {
+        None
+    };
+
+    Ok((css, map))
+}
+
+/// Compile CSS from a path and return the files loaded during compilation
+/// without collecting source-map mappings.
+///
+/// This is the dependency-only path used by `--watch`. Set
+/// [`Options::dependency_tracking`] to `true` before calling this function;
+/// the returned list is empty otherwise. Unlike
+/// [`from_path_with_source_map`], this path never enables serializer mapping
+/// state unless [`Options::source_map`] is also set.
+#[inline]
+pub fn from_path_with_loaded_files<P: AsRef<Path>>(
+    p: P,
+    options: &Options,
+) -> Result<(String, Vec<std::path::PathBuf>)> {
+    let input = String::from_utf8(options.fs.read(p.as_ref())?)?;
+    let (css, _mappings, _sources, _sources_content, loaded_files) =
+        compile_impl(input, p, options)?;
+    Ok((css, loaded_files))
+}
+
+#[allow(clippy::type_complexity)]
+fn compile_impl<P: AsRef<Path>>(
+    input: String,
+    file_name: P,
+    options: &Options,
+) -> Result<(
+    String,
+    Vec<crate::source_map::RawMapping>,
+    Vec<String>,
+    Vec<Arc<codemap::File>>,
+    Vec<std::path::PathBuf>,
+)> {
     let arena = bumpalo::Bump::new();
     let mut map = CodeMap::new();
     let path = file_name.as_ref();
-    let file = map.add_file(path.to_string_lossy().into_owned(), input.clone());
+    let file = map.add_file(path.to_string_lossy().into_owned(), input);
     let empty_span = file.span.subspan(0, 0);
     let lexer = Lexer::new_from_file(&file);
 
@@ -196,280 +340,138 @@ pub fn from_string_with_file_name<P: AsRef<Path>>(
         InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(),
     };
 
-    let t_parse = std::time::Instant::now();
-
     // Safety: the arena lives on the stack for the entire compilation.
     // The stylesheet references data in the arena, which won't be dropped
     // until after the visitor finishes and this function returns.
+    // INVARIANT: the erased-'static StyleSheet must not outlive the arena it was allocated in.
     let stylesheet = match stylesheet {
         Ok(v) => unsafe { crate::ast::erase_stylesheet_lifetime(v) },
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     };
 
-    // Auto-detect parallelism opportunity: if the entry file is mostly @forward
-    // statements with enough independent modules, compile in parallel.
-    // Skip if we're already inside a parallel worker (prevent recursive spawning).
-    let in_worker = IN_PARALLEL_WORKER.with(|c| c.get());
-    if !in_worker {
-        if let Some(result) = try_parallel_compile(&stylesheet, &input, path, options) {
-            return result;
-        }
-    }
-
     let mut visitor = Visitor::new(path, options, &mut map, &arena, empty_span);
-
-    // Pre-parse all @use/@forward dependencies before evaluation.
-    // This front-loads CodeMap mutations so the eval phase doesn't need to parse.
-    match visitor.pre_parse_dependencies(&stylesheet) {
-        Ok(_) => {}
-        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
-    }
-
     match visitor.visit_stylesheet(&stylesheet) {
         Ok(_) => {}
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     }
-    let (css_tree, combined_imports, import_tree_count, has_ooo) =
-        match visitor.finish_for_tree_walk() {
-            Ok(v) => v,
-            Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
-        };
-
-    let t_eval = std::time::Instant::now();
+    // Gathered before `finish()` (which consumes `visitor`) and gated on
+    // Keep dependency tracking independent from source-map mapping state:
+    // watch mode needs the complete visitor load graph, while the serializer
+    // must remain on its normal no-mapping path. Independent of whether any
+    // of these files contributed an emitted CSS mapping — see
+    // `Visitor::loaded_files`.
+    let loaded_files = if options.source_map || options.dependency_tracking {
+        let mut files = visitor.loaded_files();
+        let entry_path = options
+            .fs
+            .canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf());
+        if files.binary_search(&entry_path).is_err() {
+            files.push(entry_path);
+            files.sort_unstable();
+        }
+        files
+    } else {
+        Vec::new()
+    };
+    let stmts = match visitor.finish() {
+        Ok(s) => s,
+        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
+    };
 
     let mut serializer = Serializer::with_capacity(options, &map, false, empty_span, 256 * 1024);
 
-    let prev_requires_semicolon = serializer
-        .serialize_tree(&css_tree, &combined_imports, import_tree_count, has_ooo)
-        .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
+    let mut prev_was_group_end = false;
+    let mut prev_requires_semicolon = false;
+    let mut had_previous_visible = false;
+    let mut stmts: std::collections::VecDeque<CssStmt> = stmts.into();
 
-    let result = serializer.finish(prev_requires_semicolon);
-
-    if timing {
-        let t_serial = std::time::Instant::now();
-        let total = t_serial - t_start;
-        let entry_parse = t_parse - t_start;
-        let eval_phase = t_eval - t_parse;
-        let serial = t_serial - t_eval;
-
-        let import_parse = IMPORT_PARSE_TIME.with(|t| {
-            let v = t.get();
-            t.set(std::time::Duration::ZERO);
-            v
-        });
-
-        let total_parse = entry_parse + import_parse;
-        let pure_eval = eval_phase - import_parse;
-
-        eprintln!(
-            "TIMING: total={:.1}ms  parse={:.1}ms ({:.0}%) [entry={:.1}ms + imports={:.1}ms]  eval={:.1}ms ({:.0}%)  serialize={:.1}ms ({:.0}%)",
-            total.as_secs_f64() * 1000.0,
-            total_parse.as_secs_f64() * 1000.0,
-            total_parse.as_secs_f64() / total.as_secs_f64() * 100.0,
-            entry_parse.as_secs_f64() * 1000.0,
-            import_parse.as_secs_f64() * 1000.0,
-            pure_eval.as_secs_f64() * 1000.0,
-            pure_eval.as_secs_f64() / total.as_secs_f64() * 100.0,
-            serial.as_secs_f64() * 1000.0,
-            serial.as_secs_f64() / total.as_secs_f64() * 100.0,
-        );
-    }
-
-    Ok(result)
-}
-
-/// Minimum number of independent @forward statements required to trigger
-/// automatic parallel compilation.
-const PARALLEL_MIN_FRONTIER: usize = 8;
-
-// Guard against recursive parallelism. When a worker thread is already
-// running a parallel compilation, inner calls must not spawn more threads.
-thread_local! {
-    static IN_PARALLEL_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Analyze a parsed stylesheet and, if it consists primarily of @forward
-/// statements with enough independent modules, compile in parallel.
-///
-/// Returns `None` if the stylesheet isn't suitable for parallelism,
-/// allowing the caller to fall back to sequential compilation.
-fn try_parallel_compile(
-    stylesheet: &sass_ast::StyleSheet<'static>,
-    input: &str,
-    path: &Path,
-    options: &Options,
-) -> Option<Result<String>> {
-    // Collect @forward URLs — bail if the file has non-trivial content
-    let mut forward_urls: Vec<String> = Vec::new();
-    let mut has_non_forward = false;
-
-    for stmt in stylesheet.body {
-        match stmt {
-            crate::ast::AstStmt::Forward(rule) => {
-                if has_non_forward {
-                    return None; // @forward after other content — can't parallelize
-                }
-                forward_urls.push(rule.url.to_string_lossy().into_owned());
-            }
-            crate::ast::AstStmt::LoudComment(_) | crate::ast::AstStmt::SilentComment(_) => {}
-            _ => {
-                has_non_forward = true;
-            }
+    while let Some(stmt) = stmts.pop_front() {
+        if stmt.is_invisible() {
+            continue;
         }
-    }
 
-    if forward_urls.len() < PARALLEL_MIN_FRONTIER {
-        return None;
-    }
+        let is_group_end = stmt.is_group_end();
+        let requires_semicolon = Serializer::requires_semicolon(&stmt);
+        let closing_brace_line = serializer.stmt_closing_brace_line(&stmt);
 
-    // Split into shared deps (foundation) and independent components
-    let shared_count = detect_shared_prefix_count(&forward_urls, path, options);
-    let component_forwards = &forward_urls[shared_count..];
+        let buf_len_before = serializer.buffer_len();
 
-    if component_forwards.len() < PARALLEL_MIN_FRONTIER {
-        return None;
-    }
+        serializer
+            .visit_group(
+                stmt,
+                prev_was_group_end,
+                prev_requires_semicolon,
+                had_previous_visible,
+            )
+            .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
 
-    Some(compile_parallel_inner(
-        input,
-        path,
-        options,
-        &forward_urls[..shared_count],
-        component_forwards,
-    ))
-}
+        // Track whether any visible statement has been processed,
+        // even if it wrote nothing (e.g. stripped sourcemap comment)
+        had_previous_visible = true;
 
-/// Execute parallel compilation: compile shared deps once, then distribute
-/// component batches across worker threads.
-fn compile_parallel_inner(
-    input: &str,
-    path: &Path,
-    options: &Options,
-    shared_forwards: &[String],
-    component_forwards: &[String],
-) -> Result<String> {
-    let num_threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4);
+        // If the statement wrote nothing (e.g. stripped sourcemap comment),
+        // don't update prev state — the next real statement should get
+        // a normal separator, not group_end or semicolon from the phantom.
+        if serializer.buffer_len() == buf_len_before {
+            continue;
+        }
 
-    // Build shared SCSS from original file text by splitting at the first component
-    let first_component_url = &component_forwards[0];
-    let shared_scss =
-        if let Some(split_pos) = input.find(&format!("@forward \"{}\"", first_component_url)) {
-            input[..split_pos].to_string()
-        } else {
-            let mut s = String::new();
-            for url in shared_forwards {
-                s.push_str(&format!("@forward \"{}\";\n", url));
-            }
-            s
-        };
-
-    // Compile shared deps alone to get the shared CSS prefix
-    let shared_css = if shared_forwards.is_empty() {
-        String::new()
-    } else {
-        from_string_with_file_name(shared_scss.clone(), path, options)?
-    };
-
-    // Partition components across threads
-    let chunk_size = component_forwards.len().div_ceil(num_threads);
-    let chunks: Vec<&[String]> = component_forwards.chunks(chunk_size).collect();
-
-    // Parallel compilation: each thread compiles shared_deps + its component batch
-    let results: Vec<Result<String>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = chunks
-            .iter()
-            .map(|chunk| {
-                let shared_scss = &shared_scss;
-                scope.spawn(move || {
-                    // Mark this thread as a parallel worker to prevent
-                    // recursive parallelism in inner compilations.
-                    IN_PARALLEL_WORKER.with(|c| c.set(true));
-                    let mut wrapper = shared_scss.clone();
-                    for url in *chunk {
-                        wrapper.push_str(&format!("@forward \"{}\";\n", url));
+        // Sub-problem C at top level: comment after closing `}` on same source line
+        let mut spliced_trailing_comment = false;
+        if let Some(brace_line) = closing_brace_line {
+            let next_visible = stmts.iter().position(|s| !s.is_invisible());
+            if let Some(idx) = next_visible {
+                if let Some(comment_line) = serializer.comment_start_line(&stmts[idx]) {
+                    if comment_line == brace_line {
+                        if let CssStmt::Comment(ref comment, span) = stmts[idx] {
+                            let comment = comment.clone();
+                            serializer
+                                .write_inline_comment(&comment, span, true)
+                                .map_err(|e| {
+                                    raw_to_parse_error(&map, *e, options.unicode_error_messages)
+                                })?;
+                            stmts.remove(idx);
+                            spliced_trailing_comment = true;
+                        }
                     }
-                    from_string_with_file_name(wrapper, path, options)
-                })
-            })
-            .collect();
-
-        handles
-            .into_iter()
-            .map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| Err(std::io::Error::other("Worker thread panicked").into()))
-            })
-            .collect()
-    });
-
-    // Normalize shared CSS: strip @charset if present (we'll add it back if needed)
-    let shared_css_stripped = shared_css
-        .strip_prefix("@charset \"UTF-8\";\n")
-        .unwrap_or(&shared_css);
-    let shared_prefix_len = shared_css_stripped.len();
-
-    // Merge: shared_css + stripped component CSS from each thread
-    let mut final_css = shared_css_stripped.to_string();
-    let mut has_non_ascii = shared_css.starts_with("@charset");
-
-    for result in results {
-        let thread_css = result?;
-        let thread_stripped = thread_css
-            .strip_prefix("@charset \"UTF-8\";\n")
-            .unwrap_or(&thread_css);
-        if thread_css.starts_with("@charset") {
-            has_non_ascii = true;
+                }
+            }
         }
 
-        if thread_stripped.len() >= shared_prefix_len
-            && thread_stripped[..shared_prefix_len] == final_css[..shared_prefix_len]
-        {
-            final_css.push_str(&thread_stripped[shared_prefix_len..]);
-        } else if shared_forwards.is_empty() {
-            final_css.push_str(thread_stripped);
-        } else {
-            // Byte-prefix stripping failed — fall back to line-based stripping
-            let shared_line_count = shared_css_stripped.lines().count();
-            let thread_lines: Vec<&str> = thread_stripped.lines().collect();
-            if thread_lines.len() > shared_line_count {
-                let component_part = thread_lines[shared_line_count..].join("\n");
-                if !component_part.is_empty() {
-                    final_css.push('\n');
-                    final_css.push_str(&component_part);
-                    final_css.push('\n');
-                }
+        // dart-sass does not insert its usual blank-line separator before the
+        // next top-level statement when this one's closing `}` absorbed a
+        // trailing same-line comment (verified via npx: `} /* c */\n.r {...}`
+        // has no blank line, unlike a bare `}\n.r {...}`) — so don't count
+        // this as a "group end" for the next iteration's separator decision.
+        prev_was_group_end = is_group_end && !spliced_trailing_comment;
+        prev_requires_semicolon = requires_semicolon;
+    }
+
+    let (mut mappings, sources, sources_content) = serializer.take_mappings();
+    let css = serializer.finish(prev_requires_semicolon);
+
+    // `finish` may have prepended a `@charset "UTF-8";` line (or, in
+    // compressed mode, a BOM) for non-ASCII output — but that happens after
+    // `take_mappings` already captured line/column positions relative to the
+    // pre-prepend buffer. Shift them to match the final string dart-sass
+    // itself emits a leading empty `mappings` group in this case, confirming
+    // its dst positions are absolute over the final output (verified via
+    // `npx sass@1.97.3` on a non-ASCII fixture; see
+    // `crates/lib/tests/cli_source_map.rs`).
+    if css.starts_with("@charset \"UTF-8\";\n") {
+        for m in &mut mappings {
+            m.dst_line += 1;
+        }
+    } else if css.starts_with('\u{FEFF}') {
+        for m in &mut mappings {
+            if m.dst_line == 0 {
+                m.dst_col += 1;
             }
         }
     }
 
-    if has_non_ascii {
-        final_css.insert_str(0, "@charset \"UTF-8\";\n");
-    }
-
-    Ok(final_css)
-}
-
-/// Compile multiple Sass files in parallel.
-///
-/// Returns results in the same order as the input paths.
-/// Each compilation is independent with its own arena and scope.
-///
-/// Requires the `parallel` feature.
-///
-/// ```
-/// # use grass_compiler as grass;
-/// # #[cfg(feature = "parallel")]
-/// fn main() -> Result<(), Box<grass::Error>> {
-///     let results = grass::from_paths(&["a.scss", "b.scss"], &grass::Options::default());
-///     Ok(())
-/// }
-/// ```
-#[cfg(feature = "parallel")]
-pub fn from_paths<P: AsRef<Path> + Sync>(paths: &[P], options: &Options) -> Vec<Result<String>> {
-    use rayon::prelude::*;
-    paths.par_iter().map(|p| from_path(p, options)).collect()
+    Ok((css, mappings, sources, sources_content, loaded_files))
 }
 
 /// Compile CSS from a path
@@ -486,325 +488,6 @@ pub fn from_paths<P: AsRef<Path> + Sync>(paths: &[P], options: &Options) -> Vec<
 #[inline]
 pub fn from_path<P: AsRef<Path>>(p: P, options: &Options) -> Result<String> {
     from_string_with_file_name(String::from_utf8(options.fs.read(p.as_ref())?)?, p, options)
-}
-
-/// Compile CSS from a path using intra-file parallel module evaluation.
-///
-/// Analyzes the entry file's `@forward` structure and, when there are enough
-/// independent modules (≥ `min_frontier`), distributes them across worker
-/// threads. Each worker independently compiles shared dependencies + its
-/// assigned component batch, then the results are merged.
-///
-/// Falls back to sequential compilation when parallelism isn't beneficial.
-///
-/// `num_threads`: number of worker threads (0 = auto-detect CPU count).
-/// `min_frontier`: minimum independent @forwards to trigger parallel mode (default: 4).
-pub fn from_path_parallel<P: AsRef<Path>>(
-    p: P,
-    options: &Options,
-    num_threads: usize,
-    min_frontier: usize,
-) -> Result<String> {
-    let path = p.as_ref();
-    let input = String::from_utf8(options.fs.read(path)?)?;
-
-    // Parse entry file to analyze structure
-    let arena = bumpalo::Bump::new();
-    let mut map = CodeMap::new();
-    let file = map.add_file(path.to_string_lossy().into_owned(), input.clone());
-    let empty_span = file.span.subspan(0, 0);
-    let lexer = Lexer::new_from_file(&file);
-
-    let input_syntax = options
-        .input_syntax
-        .unwrap_or_else(|| InputSyntax::for_path(path));
-
-    let stylesheet = match input_syntax {
-        InputSyntax::Scss => ScssParser::new(lexer, options, empty_span, path, &arena).__parse(),
-        InputSyntax::Sass => SassParser::new(lexer, options, empty_span, path, &arena).__parse(),
-        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(),
-    };
-    let stylesheet = match stylesheet {
-        Ok(v) => v,
-        Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
-    };
-
-    // Extract @forward URLs and loud comments from the entry stylesheet.
-    let mut forward_urls: Vec<String> = Vec::new();
-    let mut has_non_forward = false;
-    let mut can_parallelize = true;
-
-    for stmt in stylesheet.body {
-        match stmt {
-            crate::ast::AstStmt::Forward(rule) => {
-                if has_non_forward {
-                    can_parallelize = false;
-                    break;
-                }
-                forward_urls.push(rule.url.to_string_lossy().into_owned());
-            }
-            crate::ast::AstStmt::LoudComment(_) => {
-                // Comments don't affect parallelism — they're preserved
-                // through the original file text used for shared SCSS
-            }
-            crate::ast::AstStmt::SilentComment(_) => {}
-            _ => {
-                has_non_forward = true;
-            }
-        }
-    }
-
-    // If there aren't enough forwards, or there's mixed content, fall back to sequential
-    if forward_urls.len() < min_frontier || !can_parallelize {
-        return from_string_with_file_name(input, path, options);
-    }
-
-    // Determine shared prefix: the first forwards that other components depend on.
-    // Heuristic: check which of the first N forwards are @used by any later forward.
-    // For simplicity, use a configurable split point. For USWDS, the first 5 are shared.
-    //
-    // Better heuristic: a forward is "shared" if any later forward's module @uses it.
-    // For now, detect this by trying shared_count = 0 first (no shared deps to re-eval).
-    // If that doesn't work (CSS mismatch), increase shared_count.
-    //
-    // Detect shared dependency prefix by scanning component files for @use deps.
-    let shared_count = detect_shared_prefix_count(&forward_urls, path, options);
-    let shared_forwards = &forward_urls[..shared_count];
-    let component_forwards = &forward_urls[shared_count..];
-
-    if component_forwards.len() < min_frontier {
-        return from_string_with_file_name(input, path, options);
-    }
-
-    let num_threads = if num_threads == 0 {
-        std::thread::available_parallelism()
-            .map(|n| n.get().min(8))
-            .unwrap_or(4)
-    } else {
-        num_threads
-    };
-
-    // Build shared SCSS from original file text.
-    // Find the line in the input that corresponds to the first component @forward
-    // and split there.
-    let first_component_url = &component_forwards[0];
-    let shared_scss =
-        if let Some(split_pos) = input.find(&format!("@forward \"{}\"", first_component_url)) {
-            input[..split_pos].to_string()
-        } else {
-            // Can't find the split point — fall back to generated SCSS
-            let mut s = String::new();
-            for url in shared_forwards {
-                s.push_str(&format!("@forward \"{}\";\n", url));
-            }
-            s
-        };
-
-    // Compile shared deps alone to get the shared CSS prefix
-    let shared_css = if shared_forwards.is_empty() {
-        String::new()
-    } else {
-        from_string_with_file_name(shared_scss.clone(), path, options)?
-    };
-
-    // Partition components across threads
-    let chunk_size = component_forwards.len().div_ceil(num_threads);
-    let chunks: Vec<&[String]> = component_forwards.chunks(chunk_size).collect();
-
-    let t_start = std::time::Instant::now();
-
-    // Parallel compilation: each thread compiles shared_deps + its component batch
-    let results: Vec<Result<String>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = chunks
-            .iter()
-            .map(|chunk| {
-                let shared_scss = &shared_scss;
-                scope.spawn(move || {
-                    let mut wrapper = shared_scss.clone();
-                    for url in *chunk {
-                        wrapper.push_str(&format!("@forward \"{}\";\n", url));
-                    }
-                    from_string_with_file_name(wrapper, path, options)
-                })
-            })
-            .collect();
-
-        handles
-            .into_iter()
-            .map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| Err(std::io::Error::other("Worker thread panicked").into()))
-            })
-            .collect()
-    });
-
-    let t_parallel = std::time::Instant::now();
-
-    // Normalize shared CSS: strip @charset if present (we'll add it back if needed)
-    let shared_css_stripped = shared_css
-        .strip_prefix("@charset \"UTF-8\";\n")
-        .unwrap_or(&shared_css);
-    let shared_prefix_len = shared_css_stripped.len();
-
-    // Merge results: shared_css + stripped component CSS from each thread
-    let mut final_css = shared_css_stripped.to_string();
-    let mut has_non_ascii = shared_css.starts_with("@charset");
-
-    for result in results {
-        let thread_css = result?;
-        // Strip @charset from thread output if present
-        let thread_stripped = thread_css
-            .strip_prefix("@charset \"UTF-8\";\n")
-            .unwrap_or(&thread_css);
-        if thread_css.starts_with("@charset") {
-            has_non_ascii = true;
-        }
-
-        // Strip the shared CSS prefix from the thread's output
-        if thread_stripped.len() >= shared_prefix_len
-            && thread_stripped[..shared_prefix_len] == final_css[..shared_prefix_len]
-        {
-            final_css.push_str(&thread_stripped[shared_prefix_len..]);
-        } else if shared_forwards.is_empty() {
-            final_css.push_str(thread_stripped);
-        } else {
-            // Byte-prefix stripping failed — fall back to line-based stripping
-            let shared_line_count = shared_css_stripped.lines().count();
-            let thread_lines: Vec<&str> = thread_stripped.lines().collect();
-            if thread_lines.len() > shared_line_count {
-                let component_part = thread_lines[shared_line_count..].join("\n");
-                if !component_part.is_empty() {
-                    final_css.push('\n');
-                    final_css.push_str(&component_part);
-                    final_css.push('\n');
-                }
-            }
-        }
-    }
-
-    // Add @charset back if any thread produced non-ASCII output
-    if has_non_ascii {
-        final_css.insert_str(0, "@charset \"UTF-8\";\n");
-    }
-
-    if std::env::var("GRASS_TIMING").is_ok() {
-        eprintln!(
-            "PARALLEL: {:.1}ms wall ({} threads, {} shared + {} components)",
-            (t_parallel - t_start).as_secs_f64() * 1000.0,
-            chunks.len(),
-            shared_forwards.len(),
-            component_forwards.len(),
-        );
-    }
-
-    Ok(final_css)
-}
-
-/// Detect how many of the initial @forward statements form the "shared dependency
-/// base" that later components depend on.
-///
-/// Resolves each forward URL to a file, scans it for `@use` statements, and
-/// checks if any later forward `@use`s a module rooted at an earlier forward's
-/// path. The shared prefix is the longest initial run of forwards where at least
-/// one later forward depends on them.
-///
-/// Falls back to 0 (no shared prefix) if resolution fails.
-fn detect_shared_prefix_count(forward_urls: &[String], path: &Path, options: &Options) -> usize {
-    if forward_urls.len() < 2 {
-        return 0;
-    }
-
-    // Collect the base module names from each forward URL.
-    // e.g., "my-core/src/styles" → "my-core"
-    // e.g., "button/src/styles" → "button"
-    let base_names: Vec<&str> = forward_urls
-        .iter()
-        .map(|url| {
-            // Take the first path component as the module base name
-            url.split('/').next().unwrap_or(url.as_str())
-        })
-        .collect();
-
-    // For each forward (starting from the end), resolve the file and scan for @use.
-    // If it @uses a module whose base name matches an earlier forward, that earlier
-    // forward is "shared".
-    let entry_dir = path.parent().unwrap_or(Path::new(""));
-    let mut max_shared = 0;
-
-    // Check a sample of later forwards to find their dependencies
-    let sample_count = forward_urls.len().min(10);
-    let sample_start = forward_urls.len().saturating_sub(sample_count);
-
-    for url in &forward_urls[sample_start..] {
-        // Try to resolve and read the file
-        let file_content = resolve_and_read_forward(url, entry_dir, options);
-        let content = match file_content {
-            Some(c) => c,
-            None => continue,
-        };
-
-        // Scan for @use statements and check if they reference earlier forwards
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if let Some(use_url) = extract_use_url(trimmed) {
-                let use_base = use_url.split('/').next().unwrap_or(use_url);
-                // Check if this @use matches any earlier forward's base name
-                for (i, base) in base_names.iter().enumerate() {
-                    if *base == use_base && i < forward_urls.len() - 1 {
-                        max_shared = max_shared.max(i + 1);
-                    }
-                }
-            }
-        }
-    }
-
-    max_shared
-}
-
-/// Try to resolve a forward URL to a file path and read its content.
-fn resolve_and_read_forward(url: &str, entry_dir: &Path, options: &Options) -> Option<String> {
-    let base_path = entry_dir.join(url);
-
-    // Try common Sass file resolution patterns
-    let candidates = [
-        base_path.with_extension("scss"),
-        base_path.join("_index.scss"),
-        base_path
-            .with_file_name(format!("_{}", base_path.file_name()?.to_str()?))
-            .with_extension("scss"),
-    ];
-
-    for candidate in &candidates {
-        if let Ok(content) = options.fs.read(candidate) {
-            return String::from_utf8(content).ok();
-        }
-    }
-
-    // Try load paths
-    for load_path in &options.load_paths {
-        let lp_base = load_path.join(url);
-        let lp_candidates = [lp_base.with_extension("scss"), lp_base.join("_index.scss")];
-        for candidate in &lp_candidates {
-            if let Ok(content) = options.fs.read(candidate) {
-                return String::from_utf8(content).ok();
-            }
-        }
-    }
-
-    None
-}
-
-/// Extract the URL from a `@use "url"` statement, if the line is one.
-fn extract_use_url(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("@use")?;
-    let rest = rest.trim_start();
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let rest = &rest[1..];
-    let end = rest.find(quote)?;
-    Some(&rest[..end])
 }
 
 /// Compile CSS from a string
@@ -831,13 +514,17 @@ pub fn from_string_js(input: String) -> std::result::Result<String, String> {
 #[cfg(feature = "wasm-exports")]
 mod wasm_fs {
     use std::{
+        ffi::OsString,
         io::{self, Error, ErrorKind},
         path::{Path, PathBuf},
     };
 
     use wasm_bindgen::prelude::*;
 
-    use crate::Fs;
+    use crate::{
+        fs::{DirListing, EntryKind},
+        Fs,
+    };
 
     #[wasm_bindgen]
     extern "C" {
@@ -860,16 +547,21 @@ mod wasm_fs {
             this: &JsFsCallbacks,
             candidates: Vec<String>,
         ) -> Result<JsValue, JsValue>;
+
+        /// Batches many per-candidate `is_file`/`is_dir` boundary crossings
+        /// into a single directory read. Each returned entry is a string
+        /// whose first byte is a kind tag (`f` file / `d` dir / anything
+        /// else = unknown/symlink) followed immediately by the entry's file
+        /// name. Optional: if the JS side doesn't implement this method (or
+        /// it throws), the call errors and `dir_listing` falls back to
+        /// per-candidate checks, exactly as before this method existed.
+        #[wasm_bindgen(method, catch, js_name = readdirSync)]
+        fn readdir_sync(this: &JsFsCallbacks, dir: &str) -> Result<Vec<String>, JsValue>;
     }
 
     pub struct JsFs {
         callbacks: JsFsCallbacks,
     }
-
-    // Safety: WASM is single-threaded, so Send+Sync are trivially safe.
-    // These are required because the Fs trait has Send+Sync supertraits.
-    unsafe impl Send for JsFs {}
-    unsafe impl Sync for JsFs {}
 
     impl std::fmt::Debug for JsFs {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -910,8 +602,7 @@ mod wasm_fs {
                 .canonicalize(&path.to_string_lossy())
                 .map(PathBuf::from)
                 .map_err(|e| {
-                    Error::new(
-                        ErrorKind::Other,
+                    Error::other(
                         e.as_string()
                             .unwrap_or_else(|| "canonicalize error".to_string()),
                     )
@@ -935,21 +626,66 @@ mod wasm_fs {
                 Err(_) => candidates.iter().find(|p| self.is_file(p)).cloned(),
             }
         }
+
+        fn dir_listing(&self, dir: &Path) -> Option<DirListing> {
+            let entries = self.callbacks.readdir_sync(&dir.to_string_lossy()).ok()?;
+            let mut listing = DirListing::default();
+            for entry in entries {
+                if entry.is_empty() {
+                    continue;
+                }
+                let (kind_tag, name) = entry.split_at(1);
+                let kind = match kind_tag {
+                    "f" => EntryKind::File,
+                    "d" => EntryKind::Dir,
+                    _ => EntryKind::Other,
+                };
+                listing.insert(OsString::from(name), kind);
+            }
+            Some(listing)
+        }
     }
+}
+
+/// Builds the `{css, sourceMap}` object returned to JS by `compile_js`/
+/// `compile_file_js` when source maps are wired up. `sourceMap` is a real
+/// parsed JS object (via `JSON.parse`, over the same JSON text the CLI and
+/// napi surfaces build), not a string — matching the shape those surfaces
+/// use, and never has a `file` key (that field is CLI-only).
+#[cfg(feature = "wasm-exports")]
+fn wasm_compile_result(css: String, map: Option<SourceMapData>, include_sources: bool) -> JsValue {
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(&obj, &JsValue::from_str("css"), &JsValue::from_str(&css)).unwrap();
+
+    let source_map = match map {
+        Some(map) => {
+            js_sys::JSON::parse(&map.to_json(None, include_sources)).unwrap_or(JsValue::UNDEFINED)
+        }
+        None => JsValue::UNDEFINED,
+    };
+    js_sys::Reflect::set(&obj, &JsValue::from_str("sourceMap"), &source_map).unwrap();
+
+    obj.into()
 }
 
 #[cfg(feature = "wasm-exports")]
 #[wasm_bindgen(js_name = compile)]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_js(
     input: String,
     load_paths: Vec<String>,
     style: &str,
     quiet: bool,
+    source_map: bool,
+    source_map_include_sources: bool,
     fs_callbacks: wasm_fs::JsFsCallbacks,
-) -> std::result::Result<String, String> {
+) -> std::result::Result<JsValue, String> {
     let js_fs = wasm_fs::JsFs::new(fs_callbacks);
 
-    let mut options = Options::default().fs(&js_fs).quiet(quiet);
+    let mut options = Options::default()
+        .fs(&js_fs)
+        .quiet(quiet)
+        .source_map(source_map);
 
     if style == "compressed" {
         options = options.style(OutputStyle::Compressed);
@@ -959,21 +695,28 @@ pub fn compile_js(
         options = options.load_path(lp);
     }
 
-    from_string(input, &options).map_err(|e| e.to_string())
+    let (css, map) = from_string_with_source_map(input, &options).map_err(|e| e.to_string())?;
+    Ok(wasm_compile_result(css, map, source_map_include_sources))
 }
 
 #[cfg(feature = "wasm-exports")]
 #[wasm_bindgen(js_name = compile_file)]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_file_js(
     path: String,
     load_paths: Vec<String>,
     style: &str,
     quiet: bool,
+    source_map: bool,
+    source_map_include_sources: bool,
     fs_callbacks: wasm_fs::JsFsCallbacks,
-) -> std::result::Result<String, String> {
+) -> std::result::Result<JsValue, String> {
     let js_fs = wasm_fs::JsFs::new(fs_callbacks);
 
-    let mut options = Options::default().fs(&js_fs).quiet(quiet);
+    let mut options = Options::default()
+        .fs(&js_fs)
+        .quiet(quiet)
+        .source_map(source_map);
 
     if style == "compressed" {
         options = options.style(OutputStyle::Compressed);
@@ -983,5 +726,6 @@ pub fn compile_file_js(
         options = options.load_path(lp);
     }
 
-    from_path(&path, &options).map_err(|e| e.to_string())
+    let (css, map) = from_path_with_source_map(&path, &options).map_err(|e| e.to_string())?;
+    Ok(wasm_compile_result(css, map, source_map_include_sources))
 }

@@ -1,8 +1,18 @@
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{builtin::Builtin, Fs, Logger, StdFs, StdLogger};
+use crate::{builtin::Builtin, importer::Importer, Deprecation, Fs, Logger, StdFs, StdLogger};
+
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+use std::sync::Arc;
+
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+use crate::{
+    ast::ArgumentResult, builtin::split_signature_name, builtin::DynamicBuiltinFn,
+    error::SassResult, evaluate::Visitor, value::Value,
+};
 
 /// Configuration for Sass compilation
 ///
@@ -14,11 +24,19 @@ pub struct Options<'a> {
     pub(crate) logger: &'a dyn Logger,
     pub(crate) style: OutputStyle,
     pub(crate) load_paths: Vec<PathBuf>,
+    pub(crate) importers: Vec<Rc<dyn Importer>>,
     pub(crate) allows_charset: bool,
     pub(crate) unicode_error_messages: bool,
     pub(crate) quiet: bool,
     pub(crate) input_syntax: Option<InputSyntax>,
     pub(crate) custom_fns: FxHashMap<String, Builtin>,
+    pub(crate) silence_deprecations: FxHashSet<Deprecation>,
+    pub(crate) fatal_deprecations: FxHashSet<Deprecation>,
+    pub(crate) future_deprecations: FxHashSet<Deprecation>,
+    pub(crate) source_map: bool,
+    /// Collect the files loaded during compilation without enabling source-map
+    /// mapping state in the serializer. Used by watch mode's dependency set.
+    pub(crate) dependency_tracking: bool,
 }
 
 impl Default for Options<'_> {
@@ -29,11 +47,17 @@ impl Default for Options<'_> {
             logger: &StdLogger,
             style: OutputStyle::Expanded,
             load_paths: Vec::new(),
+            importers: Vec::new(),
             allows_charset: true,
             unicode_error_messages: true,
             quiet: false,
             input_syntax: None,
             custom_fns: FxHashMap::default(),
+            silence_deprecations: FxHashSet::default(),
+            fatal_deprecations: FxHashSet::default(),
+            future_deprecations: FxHashSet::default(),
+            source_map: false,
+            dependency_tracking: false,
         }
     }
 }
@@ -122,6 +146,19 @@ impl<'a> Options<'a> {
         self
     }
 
+    /// Register a custom importer, checked (in registration order, ahead
+    /// of all other importers already registered and ahead of the default
+    /// filesystem/load-path resolution) whenever a `@use`/`@forward`/
+    /// `@import` URL needs to be resolved.
+    ///
+    /// See [`Importer`] for more information.
+    #[must_use]
+    #[inline]
+    pub fn add_importer(mut self, importer: Rc<dyn Importer>) -> Self {
+        self.importers.push(importer);
+        self
+    }
+
     /// This flag tells Sass whether to emit a `@charset`
     /// declaration or a UTF-8 byte-order mark.
     ///
@@ -172,6 +209,95 @@ impl<'a> Options<'a> {
     #[cfg(any(feature = "custom-builtin-fns", doc))]
     pub fn add_custom_fn<S: Into<String>>(mut self, name: S, func: Builtin) -> Self {
         self.custom_fns.insert(name.into(), func);
+        self
+    }
+
+    /// Add a custom function accessible from within Sass, whose call
+    /// arguments are pre-bound to the parameters declared in `signature`
+    /// (positional/named/defaults/`$rest...`) before `f` is invoked — the
+    /// same calling convention as an `@function`, rather than the raw
+    /// unbound [`ArgumentResult`](crate::sass_value::ArgumentResult) that
+    /// [`Builtin::new`]/[`Options::add_custom_fn`] receive.
+    ///
+    /// `signature` is a full function signature string, e.g.
+    /// `"sum($a, $b: 1)"` or `"scale($a, $b: $a)"` (defaults may reference
+    /// earlier parameters). The name portion is normalized the same way as
+    /// `@function` names (`_` becomes `-`). Returns an error if `signature`
+    /// isn't of the form `"name(...)"`; the `(...)` portion itself is
+    /// parsed lazily, the first time the function is called in a given
+    /// compilation.
+    #[inline]
+    #[cfg(any(feature = "custom-builtin-fns", doc))]
+    pub fn add_custom_fn_with_signature<S, F>(mut self, signature: S, f: F) -> SassResult<Self>
+    where
+        S: AsRef<str>,
+        F: Fn(ArgumentResult, &mut Visitor) -> SassResult<Value> + Send + Sync + 'static,
+    {
+        let (name, arg_text) = split_signature_name(signature.as_ref())?;
+        let f: Arc<DynamicBuiltinFn> = Arc::new(f);
+        self.custom_fns
+            .insert(name, Builtin::new_dynamic(f, Some(Arc::from(arg_text))));
+        Ok(self)
+    }
+
+    /// Silence warnings for the given deprecation.
+    ///
+    /// By default, all active (non-future) deprecations emit a warning when
+    /// triggered. This method adds a single deprecation to the set that is
+    /// silenced instead.
+    #[must_use]
+    #[inline]
+    pub fn silence_deprecation(mut self, deprecation: Deprecation) -> Self {
+        self.silence_deprecations.insert(deprecation);
+        self
+    }
+
+    /// Treat the given deprecation as a fatal error instead of a warning.
+    ///
+    /// This method adds a single deprecation to the set that, when
+    /// triggered, causes compilation to fail with an error instead of
+    /// emitting a warning.
+    #[must_use]
+    #[inline]
+    pub fn fatal_deprecation(mut self, deprecation: Deprecation) -> Self {
+        self.fatal_deprecations.insert(deprecation);
+        self
+    }
+
+    /// Opt in to a deprecation that is not yet active by default.
+    ///
+    /// Some deprecations (dart-sass's "future" deprecations) are disabled by
+    /// default until a later release. This method adds a single deprecation
+    /// to the set that is opted into early.
+    #[must_use]
+    #[inline]
+    pub fn future_deprecation(mut self, deprecation: Deprecation) -> Self {
+        self.future_deprecations.insert(deprecation);
+        self
+    }
+
+    /// Enable collection of a Source Map v3 mapping alongside the compiled CSS.
+    ///
+    /// This is a design-spike prototype: only top-level style declarations and
+    /// selectors are mapped, and only [`crate::from_string_with_source_map`]
+    /// consumes this flag. It has no effect on [`crate::from_string`] or
+    /// [`crate::from_path`], and it never changes CSS output.
+    ///
+    /// By default, this value is `false`.
+    #[must_use]
+    #[inline]
+    pub const fn source_map(mut self, source_map: bool) -> Self {
+        self.source_map = source_map;
+        self
+    }
+
+    /// Enable collection of files loaded during compilation without enabling
+    /// source-map generation. This is intended for watch-mode dependency
+    /// tracking and does not affect CSS output.
+    #[must_use]
+    #[inline]
+    pub const fn dependency_tracking(mut self, dependency_tracking: bool) -> Self {
+        self.dependency_tracking = dependency_tracking;
         self
     }
 

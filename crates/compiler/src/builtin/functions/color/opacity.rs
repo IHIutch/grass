@@ -30,16 +30,42 @@ mod test {
     }
 }
 
+/// Global `alpha()`: warns unless called with the legacy Microsoft filter
+/// syntax (`alpha(opacity=NN)`, parsed as an unquoted string) or with a
+/// non-legacy color (which `alpha` itself rejects with an error, matching
+/// dart-sass not warning in that case either). `color.alpha()` (the module
+/// form) uses `alpha` directly, without this check. The rest-args overload
+/// (more than one positional argument) never warns in dart-sass either.
+fn global_alpha(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    if args.len() <= 1 {
+        let peek = args
+            .named
+            .get(&Identifier::from("color"))
+            .or_else(|| args.positional.first());
+
+        let skip_warn = match peek {
+            Some(Value::String(s, QuoteKind::None)) => is_ms_filter(s),
+            Some(Value::Color(c)) => !c.color_space().is_legacy(),
+            _ => false,
+        };
+
+        if !skip_warn {
+            visitor.emit_deprecation(Deprecation::GlobalBuiltin, args.span(), || {
+                Ok(global_builtin_message("color", "alpha"))
+            })?;
+        }
+    }
+
+    alpha(args, visitor)
+}
+
 pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     if args.len() <= 1 {
         let color = args.get_err(0, "color")?;
 
         if let Value::String(s, QuoteKind::None) = &color {
             if is_ms_filter(s) {
-                return Ok(Value::String(
-                    format!("alpha({})", s).into(),
-                    QuoteKind::None,
-                ));
+                return Ok(Value::String(format!("alpha({s})").into(), QuoteKind::None));
             }
         }
 
@@ -81,11 +107,35 @@ pub(crate) fn alpha(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     }
 }
 
+/// Module-level `color.alpha()`: like the global form, an argument (or
+/// arguments) in the legacy Microsoft filter syntax still passes through as
+/// a plain CSS `alpha(...)` string, but the module form additionally warns
+/// `color-module-compat`.
+pub(crate) fn module_alpha(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let span = args.span();
+    let result = alpha(args, visitor)?;
+
+    if let Value::String(ref s, QuoteKind::None) = result {
+        visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+            Ok(format!(
+                "Using color.alpha() for a Microsoft filter is deprecated.\n\nRecommendation: {s}"
+            ))
+        })?;
+    }
+
+    Ok(result)
+}
+
 pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
     let span = args.span();
     match args.get_err(0, "color")? {
-        Value::Color(c) => Ok(Value::Dimension(SassNumber::new_unitless(c.alpha()))),
+        Value::Color(c) => {
+            visitor.emit_deprecation(Deprecation::GlobalBuiltin, span, || {
+                Ok(global_builtin_message("color", "opacity"))
+            })?;
+            Ok(Value::Dimension(SassNumber::new_unitless(c.alpha())))
+        }
         Value::Dimension(SassNumber {
             num,
             unit,
@@ -110,46 +160,86 @@ pub(crate) fn opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     }
 }
 
-fn opacify(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+/// Shared implementation of `opacify()`/`fade-in()` — `name` is the name the
+/// call was made through, since dart-sass's `_opacify` uses it verbatim in
+/// the deprecation message.
+fn opacify(
+    name: &'static str,
+    mut args: ArgumentResult,
+    visitor: &mut Visitor,
+) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
-            "opacify() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            format!("{name}() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument."),
+            span,
         ).into());
     }
 
     let amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds_with_unit("amount", 0.0, 1.0, &Unit::None, args.span())?;
+    amount.assert_bounds_with_unit("amount", 0.0, 1.0, &Unit::None, span)?;
+
+    let suggestion = suggest_scale_and_adjust(
+        color.alpha(),
+        amount.num,
+        LegacyChannel::Alpha,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "{name}() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.fade_in(amount.num))))
 }
 
-fn transparentize(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+/// Shared implementation of `transparentize()`/`fade-out()` — see `opacify`.
+fn transparentize(
+    name: &'static str,
+    mut args: ArgumentResult,
+    visitor: &mut Visitor,
+) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
-            "transparentize() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            format!("{name}() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument."),
+            span,
         ).into());
     }
 
     let amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds_with_unit("amount", 0.0, 1.0, &Unit::None, args.span())?;
+    amount.assert_bounds_with_unit("amount", 0.0, 1.0, &Unit::None, span)?;
+
+    let suggestion = suggest_scale_and_adjust(
+        color.alpha(),
+        -amount.num,
+        LegacyChannel::Alpha,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "{name}() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.fade_out(amount.num))))
 }
@@ -157,10 +247,7 @@ fn transparentize(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
 /// Module-level `color.opacity()` — allows color and number passthrough,
 /// but NOT special function passthrough (var(), calc(), etc.).
 /// `color.opacity(var(--c))` errors, while `color.opacity(0.5)` passes through.
-pub(crate) fn module_opacity(
-    mut args: ArgumentResult,
-    _visitor: &mut Visitor,
-) -> SassResult<Value> {
+pub(crate) fn module_opacity(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
     let span = args.span();
     match args.get_err(0, "color")? {
@@ -169,10 +256,20 @@ pub(crate) fn module_opacity(
             num,
             unit,
             as_slash: _,
-        }) => Ok(Value::String(
-            format!("opacity({}{})", num.inspect(), unit).into(),
-            QuoteKind::None,
-        )),
+        }) => {
+            let result = format!("opacity({}{})", num.inspect(), unit);
+            visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+                // Reproduces dart-sass's message verbatim, including its
+                // missing closing paren after the number.
+                Ok(format!(
+                    "Passing a number ({}{} to color.opacity() is deprecated.\n\n\
+                     Recommendation: {result}",
+                    num.inspect(),
+                    unit
+                ))
+            })?;
+            Ok(Value::String(result.into(), QuoteKind::None))
+        }
         v => Err((
             format!("$color: {} is not a color.", v.inspect(span)?),
             span,
@@ -181,11 +278,42 @@ pub(crate) fn module_opacity(
     }
 }
 
+fn opacify_call(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    opacify("opacify", args, visitor)
+}
+
+fn fade_in_call(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    opacify("fade-in", args, visitor)
+}
+
+fn transparentize_call(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    transparentize("transparentize", args, visitor)
+}
+
+fn fade_out_call(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    transparentize("fade-out", args, visitor)
+}
+
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("alpha", Builtin::new(alpha));
+    // alpha/opacity warn conditionally on argument shape; the warning is
+    // emitted inline in their own function bodies above, not generically
+    // here (avoids a double warning).
+    f.insert("alpha", Builtin::new(global_alpha));
     f.insert("opacity", Builtin::new(opacity));
-    f.insert("opacify", Builtin::new(opacify));
-    f.insert("fade-in", Builtin::new(opacify));
-    f.insert("transparentize", Builtin::new(transparentize));
-    f.insert("fade-out", Builtin::new(transparentize));
+    f.insert(
+        "opacify",
+        Builtin::new(opacify_call).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "fade-in",
+        Builtin::new(fade_in_call).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "transparentize",
+        Builtin::new(transparentize_call).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "fade-out",
+        Builtin::new(fade_out_call).with_deprecated_global("color", "adjust"),
+    );
 }

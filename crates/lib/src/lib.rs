@@ -66,12 +66,18 @@ grass input.scss
 )]
 
 pub use grass_compiler::{
-    from_path, from_path_parallel, from_string, Error, ErrorKind, Fs, InputSyntax, Logger, NullFs,
-    NullLogger, Options, OutputStyle, Result, StdFs, StdLogger,
+    from_path, from_path_with_loaded_files, from_path_with_source_map, from_string,
+    from_string_with_source_map, from_string_with_url_and_source_map, Deprecation, Error,
+    ErrorKind, Fs, ImportResolution, ImportSource, Importer, InputSyntax, Logger, NullFs,
+    NullLogger, Options, OutputStyle, Result, SourceMapData, StdFs, StdLogger,
 };
 
-#[cfg(feature = "parallel")]
-pub use grass_compiler::from_paths;
+/// Support for registering custom Sass functions implemented in Rust, via
+/// [`Options::add_custom_fn`] and [`Builtin`].
+///
+/// Requires the `custom-builtin-fns` feature, which is enabled by default.
+#[cfg(any(feature = "custom-builtin-fns", doc))]
+pub use grass_compiler::{sass_value, Builtin, Visitor};
 
 /// Include CSS in your binary at compile time from a Sass source file
 ///

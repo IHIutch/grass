@@ -310,8 +310,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { compile, compileString, compileAsync, compileStringAsync } = nativeBinding
+const { SassNumber, SassString, SassList, compile, compileString, compileAsync, compileStringAsync } = nativeBinding
 
+module.exports.SassNumber = SassNumber
+module.exports.SassString = SassString
+module.exports.SassList = SassList
 module.exports.compile = compile
 module.exports.compileString = compileString
 module.exports.compileAsync = compileAsync

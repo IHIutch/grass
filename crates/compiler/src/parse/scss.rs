@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::{cell::Cell, path::Path};
 
 use codemap::Span;
 
-use crate::{lexer::Lexer, ContextFlags, Options};
+use crate::{deprecation::Deprecation, lexer::Lexer, ContextFlags, Options};
 
 use super::{BaseParser, StylesheetParser};
 
@@ -13,6 +13,8 @@ pub(crate) struct ScssParser<'a> {
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
     pub arena: &'a bumpalo::Bump,
+    pub recursion_depth: Cell<usize>,
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> ScssParser<'a> {
@@ -34,6 +36,8 @@ impl<'a> ScssParser<'a> {
             flags,
             options,
             arena,
+            recursion_depth: Cell::new(0),
+            parse_time_warnings: Vec::new(),
         }
     }
 }
@@ -83,5 +87,13 @@ impl<'a> StylesheetParser<'a> for ScssParser<'a> {
 
     fn arena(&self) -> &'a bumpalo::Bump {
         self.arena
+    }
+
+    fn recursion_depth(&self) -> &Cell<usize> {
+        &self.recursion_depth
+    }
+
+    fn parse_time_warnings_mut(&mut self) -> &mut Vec<(Deprecation, Span, String)> {
+        &mut self.parse_time_warnings
     }
 }

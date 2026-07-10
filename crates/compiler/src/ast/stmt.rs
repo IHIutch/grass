@@ -8,14 +8,15 @@ use crate::{
     ast::{ArgumentDeclaration, ArgumentInvocation, AstExpr, CssStmt},
     ast::{Interpolation, MediaQuery},
     common::Identifier,
+    deprecation::Deprecation,
     utils::{BaseMapView, LimitedMapView, MapView, UnprefixedMapView},
     value::Value,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(unused)]
-pub struct AstSilentComment {
-    pub text: String,
+pub struct AstSilentComment<'a> {
+    pub text: &'a str,
     pub span: Span,
 }
 
@@ -35,7 +36,7 @@ pub struct AstSassImport {
 
 #[derive(Debug, Clone)]
 pub struct AstIf<'a> {
-    pub if_clauses: Vec<AstIfClause<'a>>,
+    pub if_clauses: &'a [AstIfClause<'a>],
     pub else_clause: Option<&'a [AstStmt<'a>]>,
 }
 
@@ -57,7 +58,6 @@ pub struct AstFor<'a> {
 #[derive(Debug, Clone)]
 pub struct AstReturn<'a> {
     pub val: AstExpr<'a>,
-    #[allow(unused)]
     pub span: Span,
 }
 
@@ -87,6 +87,10 @@ impl<'a> AstStyle<'a> {
 pub struct AstEach<'a> {
     pub variables: Vec<Identifier>,
     pub list: AstExpr<'a>,
+    /// Span of `list`, kept alongside it since `AstExpr` doesn't carry its own
+    /// span — needed so `without_slash` warnings for each assigned element
+    /// point at the list expression, matching dart's `_expressionNode(node.list)`.
+    pub list_span: Span,
     pub body: &'a [AstStmt<'a>],
 }
 
@@ -285,7 +289,7 @@ impl<'a> AstImport<'a> {
 pub struct AstUseRule<'a> {
     pub url: PathBuf,
     pub namespace: Option<String>,
-    pub configuration: Vec<ConfiguredVariable<'a>>,
+    pub configuration: &'a [ConfiguredVariable<'a>],
     pub span: Span,
 }
 
@@ -429,7 +433,7 @@ pub struct AstForwardRule<'a> {
     pub hidden_mixins_and_functions: Option<FxHashSet<Identifier>>,
     pub hidden_variables: Option<FxHashSet<Identifier>>,
     pub prefix: Option<String>,
-    pub configuration: Vec<ConfiguredVariable<'a>>,
+    pub configuration: &'a [ConfiguredVariable<'a>],
     pub span: Span,
 }
 
@@ -437,7 +441,7 @@ impl<'a> AstForwardRule<'a> {
     pub fn new(
         url: PathBuf,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable<'a>>>,
+        configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
     ) -> Self {
         Self {
@@ -447,7 +451,7 @@ impl<'a> AstForwardRule<'a> {
             hidden_mixins_and_functions: None,
             hidden_variables: None,
             prefix,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         }
     }
@@ -457,7 +461,7 @@ impl<'a> AstForwardRule<'a> {
         shown_mixins_and_functions: FxHashSet<Identifier>,
         shown_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable<'a>>>,
+        configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
     ) -> Self {
         Self {
@@ -467,7 +471,7 @@ impl<'a> AstForwardRule<'a> {
             hidden_mixins_and_functions: None,
             hidden_variables: None,
             prefix,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         }
     }
@@ -477,7 +481,7 @@ impl<'a> AstForwardRule<'a> {
         hidden_mixins_and_functions: FxHashSet<Identifier>,
         hidden_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
-        configuration: Option<Vec<ConfiguredVariable<'a>>>,
+        configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
     ) -> Self {
         Self {
@@ -487,7 +491,7 @@ impl<'a> AstForwardRule<'a> {
             hidden_mixins_and_functions: Some(hidden_mixins_and_functions),
             hidden_variables: Some(hidden_variables),
             prefix,
-            configuration: configuration.unwrap_or_default(),
+            configuration,
             span,
         }
     }
@@ -520,38 +524,42 @@ pub struct AstSupportsRule<'a> {
     pub condition: AstSupportsCondition<'a>,
     pub body: &'a [AstStmt<'a>],
     pub span: Span,
+    /// Span of the `@supports` keyword itself, used for source-map mappings
+    pub at_rule_span: Span,
 }
 
-/// AST statement node. Large variants are boxed to keep the enum small
-/// (~96 bytes instead of ~272 bytes), improving cache utilization and
-/// reducing the cost of cloning statements in loop bodies.
+/// AST statement node. Large variants are arena-referenced to keep the enum
+/// small, improving cache utilization and reducing the cost of cloning
+/// statements in loop bodies. Payloads live in the same bump arena as the
+/// rest of the AST (see Plan 091 / todo #276) rather than on the heap, so
+/// they die with the arena instead of leaking their backing allocation.
 #[derive(Debug, Clone)]
 pub enum AstStmt<'a> {
     If(AstIf<'a>),
-    For(Box<AstFor<'a>>),
+    For(&'a AstFor<'a>),
     Return(AstReturn<'a>),
     RuleSet(AstRuleSet<'a>),
-    Style(Box<AstStyle<'a>>),
-    Each(Box<AstEach<'a>>),
+    Style(&'a AstStyle<'a>),
+    Each(&'a AstEach<'a>),
     Media(AstMedia<'a>),
-    Include(Box<AstInclude<'a>>),
-    While(Box<AstWhile<'a>>),
-    VariableDecl(Box<AstVariableDecl<'a>>),
+    Include(&'a AstInclude<'a>),
+    While(&'a AstWhile<'a>),
+    VariableDecl(&'a AstVariableDecl<'a>),
     LoudComment(AstLoudComment<'a>),
-    SilentComment(AstSilentComment),
+    SilentComment(AstSilentComment<'a>),
     FunctionDecl(AstFunctionDecl<'a>),
     Mixin(AstMixin<'a>),
-    ContentRule(Box<AstContentRule<'a>>),
+    ContentRule(&'a AstContentRule<'a>),
     Warn(AstWarn<'a>),
-    UnknownAtRule(Box<AstUnknownAtRule<'a>>),
+    UnknownAtRule(&'a AstUnknownAtRule<'a>),
     ErrorRule(AstErrorRule<'a>),
     Extend(AstExtendRule<'a>),
     AtRootRule(AstAtRootRule<'a>),
     Debug(AstDebugRule<'a>),
     ImportRule(AstImportRule<'a>),
-    Use(Box<AstUseRule<'a>>),
-    Forward(Box<AstForwardRule<'a>>),
-    Supports(Box<AstSupportsRule<'a>>),
+    Use(&'a AstUseRule<'a>),
+    Forward(&'a AstForwardRule<'a>),
+    Supports(&'a AstSupportsRule<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -572,6 +580,12 @@ pub struct StyleSheet<'a> {
     /// configuration conflicts: a module "could be configured" if it has `!default`
     /// variables matching the configuration keys.
     pub configurable_variables: FxHashSet<Identifier>,
+
+    /// Deprecation warnings discovered while parsing (e.g. `@elseif`), to be
+    /// emitted during evaluation once a logger is available. Mirrors
+    /// dart-sass's `Stylesheet.parseTimeWarnings`, replayed by
+    /// `Visitor::visit_stylesheet`.
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> StyleSheet<'a> {
@@ -584,6 +598,7 @@ impl<'a> StyleSheet<'a> {
             forwards: Vec::new(),
             pre_declared_global_variables: FxHashSet::default(),
             configurable_variables: FxHashSet::default(),
+            parse_time_warnings: Vec::new(),
         }
     }
 
@@ -624,7 +639,7 @@ fn collect_globals_from_stmt<'a>(stmt: &AstStmt<'a>, globals: &mut FxHashSet<Ide
             }
         }
         AstStmt::If(if_stmt) => {
-            for clause in &if_stmt.if_clauses {
+            for clause in if_stmt.if_clauses {
                 collect_globals_from_stmts(clause.body, globals);
             }
             if let Some(else_clause) = &if_stmt.else_clause {

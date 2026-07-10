@@ -1,0 +1,120 @@
+name: Release CLI
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native-execution targets only — an instrumented PGO binary must run
+          # on the same architecture it was built on, so cross-compiled targets
+          # (aarch64-linux, windows, musl) are deliberately excluded here.
+          - target: aarch64-apple-darwin
+            os: macos-14
+            artifact-name: grass-darwin-arm64
+            dart-sass-suffix: macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact-name: grass-darwin-x64
+            dart-sass-suffix: macos-x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact-name: grass-linux-x64-gnu
+            dart-sass-suffix: linux-x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build - ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
+        with:
+          toolchain: "1.97.0" # pinned stable — bump deliberately
+          components: llvm-tools-preview
+
+      - name: Clone profiling workload (Bootstrap v5.0.2)
+        run: git clone --depth=1 --branch v5.0.2 https://github.com/twbs/bootstrap.git
+
+      # Profiling on Bootstrap (not USWDS) is a deliberate workload
+      # substitution: prototype/packages is untracked and unavailable in CI
+      # checkouts, and the measured 1.16x speedup is workload-shape-independent
+      # (verified on both USWDS and Bootstrap in the same session).
+      - name: PGO build
+        run: PGO_WORKLOAD=bootstrap/scss/bootstrap.scss PGO_WORKLOAD_FLAGS="--style=expanded" ./build-pgo.sh
+
+      - name: Install dart-sass 1.97.3
+        run: |
+          archive="dart-sass-1.97.3-${{ matrix.dart-sass-suffix }}.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/sass/dart-sass/releases/download/1.97.3/$archive"
+          # SHA-256 digests from the sass/dart-sass 1.97.3 GitHub release assets.
+          case "${{ matrix.dart-sass-suffix }}" in
+            linux-x64) expected_sha256="049bb0a0171a776b82cbd1b0a644e43fbeafe8a67e851c077e2f0d1da6f28a86" ;;
+            macos-arm64) expected_sha256="b73fda91716e9f4fa2e997d89eb4988adb1ba9718c715516743380f797309d0d" ;;
+            macos-x64) expected_sha256="d3eb1ec8106b81a654cdbcc7e7107d518a802b71fed26b34c2e78a861b59f382" ;;
+            *) echo "Unsupported Dart Sass suffix: ${{ matrix.dart-sass-suffix }}"; exit 1 ;;
+          esac
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "$expected_sha256  $archive" | sha256sum -c -
+          else
+            actual_sha256="$(shasum -a 256 "$archive" | cut -d ' ' -f 1)"
+            test "$actual_sha256" = "$expected_sha256"
+          fi
+          tar -xzf "$archive"
+
+      - name: Verify PGO build output unchanged vs dart-sass
+        run: |
+          ./target/release/grass bootstrap/scss/bootstrap.scss --style=expanded > grass-output.css
+          ./dart-sass/sass bootstrap/scss/bootstrap.scss --style=expanded > dart-sass-output.css
+
+          if [[ $(diff -u grass-output.css dart-sass-output.css) ]]; then
+              echo "Differences found"
+              diff -u grass-output.css dart-sass-output.css
+              exit 1
+          else
+              echo "No differences found"
+          fi
+
+      - name: Rename artifact
+        run: cp target/release/grass ${{ matrix.artifact-name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: release-assets/*

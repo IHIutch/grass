@@ -1,9 +1,9 @@
-pub(crate) use bin_op::{cmp, div};
+pub(crate) use bin_op::div;
 pub(crate) use env::Environment;
 pub use visitor::Visitor;
 
 mod bin_op;
-pub(crate) mod css_tree;
+mod css_tree;
 mod env;
 mod scope;
 mod visitor;

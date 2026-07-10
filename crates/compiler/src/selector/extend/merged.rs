@@ -63,8 +63,6 @@ impl MergedExtension {
             specificity: left.specificity,
             is_optional: true,
             is_original: false,
-            left: None,
-            right: None,
         }
     }
 }

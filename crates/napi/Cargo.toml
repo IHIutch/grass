@@ -5,15 +5,25 @@ edition = "2021"
 description = "Native Node.js binding for the grass Sass compiler"
 license = "MIT"
 publish = false
+# MSRV: napi-build 2.3.2 requires Rust 1.88.
+rust-version = "1.88"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-grass_compiler = { path = "../compiler", features = ["random", "parallel"] }
-napi = { version = "2", features = ["napi4"] }
+grass_compiler = { path = "../compiler", default-features = false, features = ["random", "custom-builtin-fns"] }
+napi = { version = "2", features = ["napi4", "serde-json"] }
 napi-derive = "2"
 mimalloc = { version = "0.1", default-features = false }
+serde_json = "1"
+url = "2"
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false, features = ["local_dynamic_tls"] }
+
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+grass_compiler = { path = "../compiler", features = ["stacker"] }
 
 [build-dependencies]
 napi-build = "2"

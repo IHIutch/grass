@@ -409,6 +409,9 @@ test!(
     "a,\nb {\n  color: red;\n}\n",
     "a,\nb {\n  color: red;\n}\n"
 );
+// dart-sass 1.97.3 verified: nested rules hoist out and emit in written order relative to the
+// containing rule's own declarations; `a c, b c {...}` (written first) emits before `a, b {...}` —
+// grass already matches. Same mechanism as mixins.rs's mixin_ruleset_and_style.
 test!(
     nested_multiple_newline,
     "a,\nb {\n  c {\n    color: blue;\n  }\n  color: red;\n}\n",
@@ -473,6 +476,9 @@ test!(
     "\\! {\n  color: red;\n}\n",
     "\\! {\n  color: red;\n}\n"
 );
+// dart-sass 1.97.3 verified: consecutive leading combinators ("bogus-combinators") make the selector
+// invalid CSS; the rule is omitted from output entirely (with a deprecation warning), not passed
+// through literally — grass already matches.
 test!(
     multiple_consecutive_immediate_child,
     "> > foo {\n  color: foo;\n}\n",
@@ -656,6 +662,9 @@ test!(
     "ℓ {\n  color: red;\n}\n",
     "@charset \"UTF-8\";\nℓ {\n  color: red;\n}\n"
 );
+// dart-sass 1.97.3 verified: a bare leading combinator ("bogus-combinators") makes the selector
+// invalid CSS; the rule is omitted from output entirely (with a deprecation warning) — grass
+// already matches.
 test!(plus_in_selector, "+ {\n  color: &;\n}\n", "");
 test!(
     invalid_chars_in_pseudo_parens,
@@ -888,8 +897,10 @@ test!(
     }"#,
     "::foo(\"red\") {\n  color: ::foo(\"red\");\n}\n"
 );
+// dart-sass 1.97.3 verified: an unknown pseudo-element's functional argument is passed through
+// verbatim, preserving the original quote style (single quotes stay single) — not normalized to
+// double quotes. grass already matches.
 test!(
-    // dart-sass preserves single quotes in pseudo-element args; grass converts to double
     pseudo_element_single_quotes,
     r#"::foo('red') {
         color: &;
@@ -989,10 +1000,7 @@ error!(
     ":#ab {}", "Error: Expected identifier."
 );
 error!(nothing_after_colon, "a:{}", "Error: Expected identifier.");
-error!(
-    toplevel_parent_selector_after_combinator,
-    "~&{}", "Error: Top-level selectors may not contain the parent selector \"&\"."
-);
+test!(toplevel_parent_selector_after_combinator, "~&{}", "");
 error!(
     toplevel_parent_selector_after_element,
     "a&{}", "Error: \"&\" may only used at the beginning of a compound selector."

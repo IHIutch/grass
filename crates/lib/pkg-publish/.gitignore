@@ -1,0 +1,15 @@
+# pkg-publish is a publish staging dir: build artifacts land here (CI: release_napi.yml).
+# Everything is ignored except the hand-written source files below.
+*
+!.gitignore
+!package.json
+!index.js
+!index.d.ts
+!browser.js
+!browser.d.ts
+!workers.js
+!workers.d.ts
+!test/
+!test/*.mjs
+!README.md
+!LICENSE

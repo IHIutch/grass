@@ -117,27 +117,18 @@ a
     "a {\n  color: orange;\n}\n",
     grass::Options::default().input_syntax(InputSyntax::Sass)
 );
-// dart-sass 1.97.3 errors on multiline comments in indented Sass value
-// positions. grass is more permissive and accepts them.
-// TODO: match dart-sass behavior if this becomes a conformance issue.
-#[test]
-#[ignore = "grass accepts multiline comments in Sass value positions where dart-sass errors"]
-#[allow(non_snake_case)]
-fn multiline_comment_in_value_position() {
-    let input = "$a: /*\nloud */ red\n";
-    let opts = grass::Options::default().input_syntax(grass::InputSyntax::Sass);
-    match grass::from_string(input.to_string(), &opts) {
-        Ok(..) => panic!("did not fail"),
-        Err(e) => assert_eq!(
-            "Error: expected */.",
-            e.to_string()
-                .chars()
-                .take_while(|c| *c != '\n')
-                .collect::<String>()
-                .as_str()
-        ),
-    }
-}
+// dart-sass 1.97.3 verified: a loud comment spanning a newline in value position is accepted in
+// Sass-indented syntax (exit 0, no output since this is a bare variable declaration with no rule);
+// the "expected */." parse error this test expected no longer reproduces. grass already matches.
+test!(
+    multiline_comment_in_value_position,
+    r#"
+$a: /*
+loud */ red
+"#,
+    "",
+    grass::Options::default().input_syntax(InputSyntax::Sass)
+);
 error!(
     document_starts_with_spaces,
     r#"    "#,

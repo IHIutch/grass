@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Write},
     hash::{Hash, Hasher},
+    rc::Rc,
 };
 
 use codemap::Span;
@@ -85,17 +86,17 @@ impl SimpleSelector {
 impl fmt::Display for SimpleSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Id(name) => write!(f, "#{}", name),
-            Self::Class(name) => write!(f, ".{}", name),
-            Self::Placeholder(name) => write!(f, "%{}", name),
-            Self::Universal(namespace) => write!(f, "{}*", namespace),
-            Self::Pseudo(pseudo) => write!(f, "{}", pseudo),
-            Self::Type(name) => write!(f, "{}", name),
-            Self::Attribute(attr) => write!(f, "{}", attr),
+            Self::Id(name) => write!(f, "#{name}"),
+            Self::Class(name) => write!(f, ".{name}"),
+            Self::Placeholder(name) => write!(f, "%{name}"),
+            Self::Universal(namespace) => write!(f, "{namespace}*"),
+            Self::Pseudo(pseudo) => write!(f, "{pseudo}"),
+            Self::Type(name) => write!(f, "{name}"),
+            Self::Attribute(attr) => write!(f, "{attr}"),
             Self::Parent(suffix) => {
                 write!(f, "&")?;
                 if let Some(s) = suffix {
-                    write!(f, "{}", s)?;
+                    write!(f, "{s}")?;
                 }
                 Ok(())
             }
@@ -174,7 +175,7 @@ impl SimpleSelector {
                 ..
             }) => name.push_str(suffix),
             // todo: add test for this?
-            _ => return Err((format!("Invalid parent selector \"{}\"", self), span).into()),
+            _ => return Err((format!("Invalid parent selector \"{self}\""), span).into()),
         };
         Ok(())
     }
@@ -600,7 +601,7 @@ impl fmt::Display for Pseudo {
         }
 
         if let Some(sel) = &self.selector {
-            write!(f, "{}", sel)?;
+            write!(f, "{sel}")?;
         }
 
         f.write_char(')')
@@ -621,16 +622,16 @@ impl Pseudo {
     pub fn is_super_selector(
         &self,
         compound: &CompoundSelector,
-        parents: Option<Vec<ComplexSelectorComponent>>,
+        parents: Option<&[ComplexSelectorComponent]>,
     ) -> bool {
         debug_assert!(self.selector.is_some());
         match self.normalized_name() {
             "matches" | "is" | "any" | "where" => {
-                selector_pseudos_named(compound.clone(), &self.name, true).any(move |pseudo2| {
+                selector_pseudos_named(compound, &self.name, true).any(move |pseudo2| {
                     self.selector
                         .as_ref()
                         .unwrap()
-                        .is_superselector(&pseudo2.selector.unwrap())
+                        .is_superselector(pseudo2.selector.as_ref().unwrap())
                 }) || self
                     .selector
                     .as_ref()
@@ -638,27 +639,28 @@ impl Pseudo {
                     .components
                     .iter()
                     .any(move |complex1| {
-                        let mut components = parents.clone().unwrap_or_default();
-                        components.push(ComplexSelectorComponent::Compound(compound.clone()));
-                        complex1.is_super_selector(&ComplexSelector::new(components, false))
+                        let mut components: Vec<ComplexSelectorComponent> =
+                            parents.map(<[_]>::to_vec).unwrap_or_default();
+                        components.push(ComplexSelectorComponent::Compound(Rc::new(
+                            compound.clone(),
+                        )));
+                        complex1
+                            .is_super_selector(&ComplexSelector::new_transient(components, false))
                     })
             }
-            "has" | "host" | "host-context" => {
-                selector_pseudos_named(compound.clone(), &self.name, true).any(|pseudo2| {
-                    self.selector
-                        .as_ref()
-                        .unwrap()
-                        .is_superselector(&pseudo2.selector.unwrap())
-                })
-            }
-            "slotted" => {
-                selector_pseudos_named(compound.clone(), &self.name, false).any(|pseudo2| {
+            "has" | "host" | "host-context" => selector_pseudos_named(compound, &self.name, true)
+                .any(|pseudo2| {
                     self.selector
                         .as_ref()
                         .unwrap()
                         .is_superselector(pseudo2.selector.as_ref().unwrap())
-                })
-            }
+                }),
+            "slotted" => selector_pseudos_named(compound, &self.name, false).any(|pseudo2| {
+                self.selector
+                    .as_ref()
+                    .unwrap()
+                    .is_superselector(pseudo2.selector.as_ref().unwrap())
+            }),
             "not" => self
                 .selector
                 .as_ref()
@@ -703,7 +705,7 @@ impl Pseudo {
                         }
                     })
                 }),
-            "current" => selector_pseudos_named(compound.clone(), &self.name, self.is_class)
+            "current" => selector_pseudos_named(compound, &self.name, self.is_class)
                 .any(|pseudo2| self.selector == pseudo2.selector),
             "nth-child" | "nth-last-child" => compound.components.iter().any(|pseudo2| {
                 if let SimpleSelector::Pseudo(
@@ -764,8 +766,8 @@ impl Pseudo {
             let mut min = 0;
             let mut max = 0;
             for complex in &selector.components {
-                min = min.max(complex.min_specificity());
-                max = max.max(complex.max_specificity());
+                min = min.max(complex.max_specificity());
+                max = max.max(complex.min_specificity());
             }
             Specificity { min, max }
         } else {
@@ -773,8 +775,8 @@ impl Pseudo {
             let mut min = BASE_SPECIFICITY.pow(3_u32);
             let mut max = 0;
             for complex in &selector.components {
-                min = min.min(complex.min_specificity());
-                max = max.max(complex.max_specificity());
+                min = min.min(complex.max_specificity());
+                max = max.max(complex.min_specificity());
             }
             Specificity { min, max }
         }
@@ -788,14 +790,14 @@ impl Pseudo {
 
 /// Returns all pseudo selectors in `compound` that have a selector argument,
 /// and that have the given `name`.
-fn selector_pseudos_named(
-    compound: CompoundSelector,
-    name: &str,
+fn selector_pseudos_named<'a>(
+    compound: &'a CompoundSelector,
+    name: &'a str,
     is_class: bool,
-) -> impl Iterator<Item = Pseudo> + '_ {
+) -> impl Iterator<Item = &'a Pseudo> + 'a {
     compound
         .components
-        .into_iter()
+        .iter()
         .filter_map(|c| {
             if let SimpleSelector::Pseudo(p) = c {
                 Some(p)

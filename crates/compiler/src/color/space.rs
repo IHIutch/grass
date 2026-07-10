@@ -113,15 +113,15 @@ impl ColorSpace {
             ],
             Self::Hsl => [
                 ChannelDef::new("hue", 0.0, 360.0, true, None),
-                // Internal storage is [0, 1], CSS display is [0%, 100%]
-                ChannelDef::new("saturation", 0.0, 1.0, false, Some(1.0)),
-                ChannelDef::new("lightness", 0.0, 1.0, false, Some(1.0)),
+                // Internal storage matches dart-sass: already 100-scaled, same as CSS display
+                ChannelDef::new("saturation", 0.0, 100.0, false, Some(100.0)),
+                ChannelDef::new("lightness", 0.0, 100.0, false, Some(100.0)),
             ],
             Self::Hwb => [
                 ChannelDef::new("hue", 0.0, 360.0, true, None),
-                // Internal storage is [0, 1], CSS display is [0%, 100%]
-                ChannelDef::new("whiteness", 0.0, 1.0, false, Some(1.0)),
-                ChannelDef::new("blackness", 0.0, 1.0, false, Some(1.0)),
+                // Internal storage matches dart-sass: already 100-scaled, same as CSS display
+                ChannelDef::new("whiteness", 0.0, 100.0, false, Some(100.0)),
+                ChannelDef::new("blackness", 0.0, 100.0, false, Some(100.0)),
             ],
             Self::SRgb
             | Self::SRgbLinear
@@ -186,25 +186,40 @@ impl ColorSpace {
 
     /// Parse a color space name from a CSS/Sass string.
     pub fn from_name(name: &str) -> Option<Self> {
-        let lower = name.to_ascii_lowercase();
-        match lower.as_str() {
-            "rgb" => Some(Self::Rgb),
-            "hsl" => Some(Self::Hsl),
-            "hwb" => Some(Self::Hwb),
-            "srgb" => Some(Self::SRgb),
-            "srgb-linear" => Some(Self::SRgbLinear),
-            "display-p3" => Some(Self::DisplayP3),
-            "display-p3-linear" => Some(Self::DisplayP3Linear),
-            "a98-rgb" => Some(Self::A98Rgb),
-            "prophoto-rgb" => Some(Self::ProphotoRgb),
-            "rec2020" => Some(Self::Rec2020),
-            "lab" => Some(Self::Lab),
-            "lch" => Some(Self::Lch),
-            "oklab" => Some(Self::Oklab),
-            "oklch" => Some(Self::Oklch),
-            "xyz-d50" => Some(Self::XyzD50),
-            "xyz" | "xyz-d65" => Some(Self::XyzD65),
-            _ => None,
+        if name.eq_ignore_ascii_case("rgb") {
+            Some(Self::Rgb)
+        } else if name.eq_ignore_ascii_case("hsl") {
+            Some(Self::Hsl)
+        } else if name.eq_ignore_ascii_case("hwb") {
+            Some(Self::Hwb)
+        } else if name.eq_ignore_ascii_case("srgb") {
+            Some(Self::SRgb)
+        } else if name.eq_ignore_ascii_case("srgb-linear") {
+            Some(Self::SRgbLinear)
+        } else if name.eq_ignore_ascii_case("display-p3") {
+            Some(Self::DisplayP3)
+        } else if name.eq_ignore_ascii_case("display-p3-linear") {
+            Some(Self::DisplayP3Linear)
+        } else if name.eq_ignore_ascii_case("a98-rgb") {
+            Some(Self::A98Rgb)
+        } else if name.eq_ignore_ascii_case("prophoto-rgb") {
+            Some(Self::ProphotoRgb)
+        } else if name.eq_ignore_ascii_case("rec2020") {
+            Some(Self::Rec2020)
+        } else if name.eq_ignore_ascii_case("lab") {
+            Some(Self::Lab)
+        } else if name.eq_ignore_ascii_case("lch") {
+            Some(Self::Lch)
+        } else if name.eq_ignore_ascii_case("oklab") {
+            Some(Self::Oklab)
+        } else if name.eq_ignore_ascii_case("oklch") {
+            Some(Self::Oklch)
+        } else if name.eq_ignore_ascii_case("xyz-d50") {
+            Some(Self::XyzD50)
+        } else if name.eq_ignore_ascii_case("xyz") || name.eq_ignore_ascii_case("xyz-d65") {
+            Some(Self::XyzD65)
+        } else {
+            None
         }
     }
 
@@ -212,8 +227,8 @@ impl ColorSpace {
     pub fn white_channels(self) -> [Option<f64>; 3] {
         match self {
             Self::Rgb => [Some(255.0), Some(255.0), Some(255.0)],
-            Self::Hsl => [None, Some(0.0), Some(1.0)], // hue=none (powerless), sat=0, lightness=1.0 (100%)
-            Self::Hwb => [None, Some(1.0), Some(0.0)], // hue=none (powerless), whiteness=1.0, blackness=0
+            Self::Hsl => [None, Some(0.0), Some(100.0)], // hue=none (powerless), sat=0, lightness=100%
+            Self::Hwb => [None, Some(100.0), Some(0.0)], // hue=none (powerless), whiteness=100%, blackness=0
             Self::SRgb
             | Self::DisplayP3
             | Self::DisplayP3Linear
@@ -235,7 +250,7 @@ impl ColorSpace {
         match self {
             Self::Rgb => [Some(0.0), Some(0.0), Some(0.0)],
             Self::Hsl => [None, Some(0.0), Some(0.0)], // hue=none (powerless)
-            Self::Hwb => [None, Some(0.0), Some(1.0)], // hue=none (powerless)
+            Self::Hwb => [None, Some(0.0), Some(100.0)], // hue=none (powerless)
             Self::SRgb
             | Self::SRgbLinear
             | Self::DisplayP3

@@ -36,6 +36,8 @@ test!(
     "$a: 1px;\n$b: 2px;\na {\n  color: min($a, $b);\n}\n",
     "a {\n  color: 1px;\n}\n"
 );
+// npx sass@1.97.3: dart-sass now treats `min(...)` with a non-numeric arg as
+// a special (passthrough) function rather than erroring; matches grass.
 test!(
     min_arg_of_incorrect_type,
     "$a: 1px;\n$b: 2px;\na {\n  color: min($a, $b, foo);\n}\n",
@@ -90,6 +92,8 @@ test!(
     "a {\n  color: max(100% - lightness(red) - 2%);\n}\n",
     "a {\n  color: 48%;\n}\n"
 );
+// npx sass@1.97.3: dart-sass now treats `max(...)` with a non-numeric arg as
+// a special (passthrough) function rather than erroring; matches grass.
 test!(
     max_arg_of_incorrect_type,
     "$a: 1px;\n$b: 2px;\na {\n  color: max($a, $b, foo);\n}\n",
@@ -161,7 +165,7 @@ error!(
 );
 error!(
     min_contains_special_fn_calc_space_separated_list,
-    "a {\n  color: min(calc(1  2));\n}\n", r#"Error: expected "+", "-", "*", "/", or ")"."#
+    "a {\n  color: min(calc(1  2));\n}\n", "Error: Missing math operator."
 );
 test!(
     min_contains_special_fn_var,
@@ -180,7 +184,7 @@ test!(
 );
 error!(
     min_contains_calc_contains_multiline_comment,
-    "a {\n  color: min(calc(1 /**/ 2));\n}\n", r#"Error: expected "+", "-", "*", "/", or ")"."#
+    "a {\n  color: min(calc(1 /**/ 2));\n}\n", "Error: Missing math operator."
 );
 test!(
     min_contains_calc_contains_multiline_comment_with_interpolation,
@@ -220,6 +224,8 @@ error!(
     min_hash_without_interpolation,
     "a {\n  color: min(#a);\n}\n", "Error: #a is not a number."
 );
+// npx sass@1.97.3: dart-sass now passes these bare identifiers through as
+// plain `min(...)`/`max(...)` calls rather than erroring; matches grass.
 test!(
     min_calc_no_parens,
     "a {\n  color: min(calc);\n}\n",
@@ -261,6 +267,5 @@ error!(
 );
 error!(
     min_calc_parens_no_args,
-    "a {\n  color: min(calc());\n}\n",
-    "Error: Expected number, variable, function, or calculation."
+    "a {\n  color: min(calc());\n}\n", "Error: Missing argument."
 );

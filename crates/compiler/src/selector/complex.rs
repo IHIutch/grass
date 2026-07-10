@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Display, Write},
     hash::{BuildHasher, Hash, Hasher},
+    rc::Rc,
 };
 
 use codemap::Span;
@@ -52,9 +53,22 @@ pub(crate) struct ComplexSelector {
     /// Whether a line break should be emitted *before* this selector.
     pub line_break: bool,
 
-    /// Pre-computed hash of components (computed at construction time).
+    /// Pre-computed hash of components (computed at construction time), unless
+    /// this is a transient selector (see `new_transient`), in which case it's
+    /// meaningless and must never be read.
     /// Since components are never mutated after construction, this is always valid.
     cached_hash: u64,
+
+    /// Pre-computed specificity (computed at construction time).
+    /// Since components are never mutated after construction, this is always valid.
+    cached_specificity: Specificity,
+
+    /// True for selectors built via `new_transient`, which skip computing
+    /// `cached_hash` because they exist only to be compared (e.g. via
+    /// `is_super_selector`) and are discarded immediately after. Checked by a
+    /// debug assertion in `Hash::hash` — transient selectors must never be
+    /// inserted into a `ComplexSelectorHashSet` or used as a hash map/set key.
+    is_transient: bool,
 }
 
 impl PartialEq for ComplexSelector {
@@ -67,6 +81,11 @@ impl Eq for ComplexSelector {}
 
 impl Hash for ComplexSelector {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        debug_assert!(
+            !self.is_transient,
+            "attempted to hash a transient ComplexSelector (built via new_transient); \
+             transient selectors must never be inserted into a hash map/set"
+        );
         state.write_u64(self.cached_hash);
     }
 }
@@ -81,7 +100,7 @@ impl fmt::Display for ComplexSelector {
                     f.write_char(' ')?;
                 }
             }
-            write!(f, "{}", component)?;
+            write!(f, "{component}")?;
             last_component = Some(component);
         }
         Ok(())
@@ -142,31 +161,61 @@ fn omit_spaces_around(component: &ComplexSelectorComponent) -> bool {
 impl ComplexSelector {
     pub fn new(components: Vec<ComplexSelectorComponent>, line_break: bool) -> Self {
         let cached_hash = FxBuildHasher.hash_one(&components);
+        let cached_specificity = Self::compute_specificity(&components);
         Self {
             components,
             line_break,
             cached_hash,
+            cached_specificity,
+            is_transient: false,
         }
     }
 
-    pub fn max_specificity(&self) -> i32 {
-        self.specificity().min
+    /// Like `new`, but skips computing the hash. Only use this for
+    /// comparison-only selectors (e.g. built solely to call
+    /// `is_super_selector` on) that are discarded immediately and never
+    /// inserted into a `ComplexSelectorHashSet` or used as a hash map/set key
+    /// — doing so trips the debug assertion in `Hash::hash`.
+    pub fn new_transient(components: Vec<ComplexSelectorComponent>, line_break: bool) -> Self {
+        let cached_specificity = Self::compute_specificity(&components);
+        Self {
+            components,
+            line_break,
+            cached_hash: 0,
+            cached_specificity,
+            is_transient: true,
+        }
     }
 
-    pub fn min_specificity(&self) -> i32 {
-        self.specificity().max
-    }
-
-    pub fn specificity(&self) -> Specificity {
+    fn compute_specificity(components: &[ComplexSelectorComponent]) -> Specificity {
         let mut min = 0;
         let mut max = 0;
-        for component in &self.components {
+        for component in components {
             if let ComplexSelectorComponent::Compound(compound) = component {
                 min += compound.min_specificity();
                 max += compound.max_specificity();
             }
         }
         Specificity::new(min, max)
+    }
+
+    // NOTE (Plan 028): these accessors were historically crossed (max read
+    // `.min` and vice versa). All call sites were verbatim-preserving that
+    // crossing, so this normalization also flips every call site's method
+    // name to keep behavior byte-identical. See Solo scratchpad #77 / todo
+    // #174 for the empirical fixture battery that ruled out a real semantic
+    // bug here (grass's old min/max pseudo-range model happens to agree with
+    // dart-sass's modern single-specificity model on every reachable case).
+    pub fn max_specificity(&self) -> i32 {
+        self.specificity().max
+    }
+
+    pub fn min_specificity(&self) -> i32 {
+        self.specificity().min
+    }
+
+    pub fn specificity(&self) -> Specificity {
+        self.cached_specificity
     }
 
     pub fn is_invisible(&self) -> bool {
@@ -200,7 +249,16 @@ impl ComplexSelector {
             }
         }
 
-        // Multiple adjacent combinators
+        self.has_adjacent_combinators()
+    }
+
+    /// Whether this selector has two or more consecutive combinator
+    /// components anywhere (e.g. `a > + b`, or a doubled leading combinator
+    /// `+ + a`). Matches dart-sass's `leadingCombinators.length > 1 ||
+    /// component.combinators.length > 1` check (dart groups a compound with
+    /// its *trailing* combinators; grass's flat component list makes both
+    /// cases the same "two adjacent combinator components" scan).
+    fn has_adjacent_combinators(&self) -> bool {
         let mut prev_was_combinator = false;
         for component in &self.components {
             let is_combinator = component.is_combinator();
@@ -211,6 +269,25 @@ impl ComplexSelector {
         }
 
         false
+    }
+
+    /// Whether this selector has exactly one leading combinator (e.g. `+ a`).
+    /// Doubled leading combinators are covered separately by
+    /// [`ComplexSelector::is_useless`], matching dart-sass's
+    /// `leadingCombinators.isNotEmpty` check used by the `bogus-combinators`
+    /// deprecation warning.
+    pub fn has_leading_combinator(&self) -> bool {
+        matches!(self.components.first(), Some(c) if c.is_combinator())
+    }
+
+    /// Whether this selector is bogus *and* can't be transformed into valid
+    /// CSS by `@extend` or nesting — i.e. it has a doubled/adjacent
+    /// combinator run anywhere (leading or not). Matches dart-sass's
+    /// `Selector.isUseless` (recursion into nested pseudo-selector arguments
+    /// is not replicated here — this only checks this selector's own
+    /// top-level component list).
+    pub fn is_useless(&self) -> bool {
+        self.has_adjacent_combinators()
     }
 
     /// Returns whether `self` is a superselector of `other`.
@@ -266,16 +343,10 @@ impl ComplexSelector {
                     return false;
                 }
 
-                let parents = other
-                    .components
-                    .iter()
-                    .take(other.components.len() - 1)
-                    .skip(i2)
-                    .cloned()
-                    .collect();
+                let parents = &other.components[i2..other.components.len() - 1];
                 return compound1.is_super_selector(
                     other.components.last().unwrap().as_compound(),
-                    &Some(parents),
+                    Some(parents),
                 );
             }
 
@@ -284,18 +355,11 @@ impl ComplexSelector {
                 if let Some(ComplexSelectorComponent::Compound(compound2)) =
                     other.components.get(after_super_selector - 1)
                 {
-                    if compound1.is_super_selector(
-                        compound2,
-                        &Some(
-                            other
-                                .components
-                                .iter()
-                                .take(after_super_selector - 1)
-                                .skip(i2 + 1)
-                                .cloned()
-                                .collect(),
-                        ),
-                    ) {
+                    let parents = other
+                        .components
+                        .get(i2 + 1..after_super_selector - 1)
+                        .unwrap_or(&[]);
+                    if compound1.is_super_selector(compound2, Some(parents)) {
                         break;
                     }
                 }
@@ -371,6 +435,23 @@ impl ComplexSelector {
             }
         })
     }
+
+    pub fn contains_parent_selector_with_suffix(&self) -> bool {
+        self.components.iter().any(|c| {
+            if let ComplexSelectorComponent::Compound(compound) = c {
+                compound.components.iter().any(|simple| match simple {
+                    SimpleSelector::Parent(Some(_)) => true,
+                    SimpleSelector::Pseudo(Pseudo {
+                        selector: Some(sel),
+                        ..
+                    }) => sel.contains_parent_selector_with_suffix(),
+                    _ => false,
+                })
+            } else {
+                false
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Copy, Hash)]
@@ -404,10 +485,16 @@ impl Display for Combinator {
     }
 }
 
+/// The `Compound` variant is `Rc`-wrapped so that weave/extend's pervasive
+/// per-prefix and per-parent cloning of component chains (see
+/// `selector/extend/functions.rs`) is a refcount bump instead of a deep
+/// clone of the `CompoundSelector` (and its `Vec<SimpleSelector>`). `Rc<T>`'s
+/// `PartialEq`/`Eq`/`Hash` impls compare/hash through to `T`'s content, not
+/// the pointer, so equality and hashing semantics are unchanged.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum ComplexSelectorComponent {
     Combinator(Combinator),
-    Compound(CompoundSelector),
+    Compound(Rc<CompoundSelector>),
 }
 
 impl ComplexSelectorComponent {
@@ -432,14 +519,14 @@ impl ComplexSelectorComponent {
         parent: SelectorList,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         match self {
-            Self::Compound(c) => c.resolve_parent_selectors(span, parent),
+            Self::Compound(c) => Rc::unwrap_or_clone(c).resolve_parent_selectors(span, parent),
             Self::Combinator(..) => todo!(),
         }
     }
 
     pub fn as_compound(&self) -> &CompoundSelector {
         match self {
-            Self::Compound(c) => c,
+            Self::Compound(c) => c.as_ref(),
             Self::Combinator(..) => unreachable!(),
         }
     }
@@ -448,8 +535,50 @@ impl ComplexSelectorComponent {
 impl Display for ComplexSelectorComponent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Compound(c) => write!(f, "{}", c),
-            Self::Combinator(c) => write!(f, "{}", c),
+            Self::Compound(c) => write!(f, "{c}"),
+            Self::Combinator(c) => write!(f, "{c}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Combinator, ComplexSelectorComponent};
+
+    fn dummy_components(n: usize) -> Vec<ComplexSelectorComponent> {
+        (0..n)
+            .map(|i| {
+                if i % 2 == 0 {
+                    ComplexSelectorComponent::Combinator(Combinator::Child)
+                } else {
+                    ComplexSelectorComponent::Combinator(Combinator::NextSibling)
+                }
+            })
+            .collect()
+    }
+
+    /// Range-equivalence check for the slice conversion in `is_super_selector`:
+    /// `take(n - 1).skip(m + 1)` must always agree with `[m + 1..n - 1]`.
+    #[test]
+    fn range_equivalence_take_skip_vs_slice() {
+        let components = dummy_components(8);
+
+        // (n, m) combos matching real usage shapes: remaining1 == 1 case (n ==
+        // components.len()), the inner-scan case (n == after_super_selector), and
+        // the first-loop-iteration edge case where m + 1 > n - 1 (empty range).
+        for &(n, m) in &[(8usize, 0usize), (6, 2), (5, 1), (4, 3)] {
+            let via_take_skip: Vec<ComplexSelectorComponent> =
+                components.iter().take(n - 1).skip(m + 1).cloned().collect();
+            // Mirrors the real call site's `.get(range).unwrap_or(&[])` guard,
+            // since a plain slice index panics when m + 1 > n - 1.
+            let via_slice: &[ComplexSelectorComponent] =
+                components.get(m + 1..n - 1).unwrap_or(&[]);
+
+            assert_eq!(
+                via_take_skip.as_slice(),
+                via_slice,
+                "n={n}, m={m}: take/skip and slice disagree"
+            );
         }
     }
 }

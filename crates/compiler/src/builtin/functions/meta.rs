@@ -2,11 +2,14 @@ use compact_str::CompactString;
 
 use crate::builtin::builtin_imports::*;
 
-// todo: this should be a constant of some sort. we shouldn't be allocating this
-// every time
-pub(crate) fn if_arguments() -> ArgumentDeclaration<'static> {
+/// `AstExpr` (via `Argument::default`) holds `Rc<Color>`, so this can't be a
+/// `static`/`LazyLock` (not `Sync`) -- the caller's own arena is used
+/// instead, matching how the rest of the AST is allocated (see Plan 091 /
+/// todo #276): the three `Argument`s die with the arena's chunk rather than
+/// leaking a fresh heap `Vec` on every call, as the old code did.
+pub(crate) fn if_arguments<'a>(arena: &'a bumpalo::Bump) -> ArgumentDeclaration<'a> {
     ArgumentDeclaration {
-        args: vec![
+        args: arena.alloc_slice_fill_iter(vec![
             Argument {
                 name: Identifier::from("condition"),
                 default: None,
@@ -19,7 +22,7 @@ pub(crate) fn if_arguments() -> ArgumentDeclaration<'static> {
                 name: Identifier::from("if-false"),
                 default: None,
             },
-        ],
+        ]),
         rest: None,
     }
 }
@@ -35,10 +38,19 @@ fn if_(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
 
 pub(crate) fn feature_exists(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
+    let span = args.span();
     let feature = args
         .get_err(0, "feature")?
-        .assert_string_with_name("feature", args.span())?
+        .assert_string_with_name("feature", span)?
         .0;
+
+    visitor.emit_deprecation(Deprecation::FeatureExists, span, || {
+        Ok(
+            "The feature-exists() function is deprecated.\n\nMore info: \
+            https://sass-lang.com/d/feature-exists"
+                .to_string(),
+        )
+    })?;
 
     #[allow(clippy::match_same_arms)]
     Ok(match feature.as_str() {
@@ -280,7 +292,7 @@ pub(crate) fn get_function(mut args: ArgumentResult, visitor: &mut Visitor) -> S
 
     match func {
         Some(func) => Ok(Value::FunctionRef(Box::new(func))),
-        None => Err((format!("Function not found: {}", name), args.span()).into()),
+        None => Err((format!("Function not found: {name}"), args.span()).into()),
     }
 }
 
@@ -337,7 +349,7 @@ pub(crate) fn get_mixin(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
 
     match mixin {
         Some(mixin) => Ok(Value::MixinRef(Box::new(SassMixin { name, mixin }))),
-        None => Err((format!("Mixin not found: {}", name), args.span()).into()),
+        None => Err((format!("Mixin not found: {name}"), args.span()).into()),
     }
 }
 
@@ -371,7 +383,21 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     let span = args.span();
     let func = match args.get_err(0, "function")? {
         Value::FunctionRef(f) => *f,
-        Value::String(name, ..) => {
+        value @ Value::String(..) => {
+            // dart-sass's message reconstructs the function name via the
+            // string Value's own `toString()`, which preserves its original
+            // quotedness (e.g. `unquote("if")` shows as `if`, not `"if"`).
+            let quoted_name = value.to_css_string(span, false)?;
+            visitor.emit_deprecation(Deprecation::CallString, span, || {
+                Ok(format!(
+                    "Passing a string to call() is deprecated and will be illegal in Dart Sass \
+                     2.0.0.\n\nRecommendation: call(get-function({quoted_name}))"
+                ))
+            })?;
+
+            let Value::String(name, ..) = value else {
+                unreachable!()
+            };
             let name = Identifier::from(name.as_str());
 
             match visitor.env.get_fn(name, None, span)? {
@@ -445,21 +471,61 @@ pub(crate) fn keywords(mut args: ArgumentResult, visitor: &mut Visitor) -> SassR
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    // No module equivalent in dart-sass; never warns.
     f.insert("if", Builtin::new(if_));
-    f.insert("feature-exists", Builtin::new(feature_exists));
-    f.insert("unit", Builtin::new(unit));
-    f.insert("type-of", Builtin::new(type_of));
-    f.insert("unitless", Builtin::new(unitless));
-    f.insert("inspect", Builtin::new(inspect));
-    f.insert("variable-exists", Builtin::new(variable_exists));
+    f.insert(
+        "feature-exists",
+        Builtin::new(feature_exists).with_deprecated_global("meta", "feature-exists"),
+    );
+    // "unit"/"unitless" live here for shared code, but their dart-sass module
+    // replacement is math.unit / math.is-unitless, not meta.*.
+    f.insert(
+        "unit",
+        Builtin::new(unit).with_deprecated_global("math", "unit"),
+    );
+    f.insert(
+        "type-of",
+        Builtin::new(type_of).with_deprecated_global("meta", "type-of"),
+    );
+    f.insert(
+        "unitless",
+        Builtin::new(unitless).with_deprecated_global("math", "is-unitless"),
+    );
+    f.insert(
+        "inspect",
+        Builtin::new(inspect).with_deprecated_global("meta", "inspect"),
+    );
+    f.insert(
+        "variable-exists",
+        Builtin::new(variable_exists).with_deprecated_global("meta", "variable-exists"),
+    );
     f.insert(
         "global-variable-exists",
-        Builtin::new(global_variable_exists),
+        Builtin::new(global_variable_exists)
+            .with_deprecated_global("meta", "global-variable-exists"),
     );
-    f.insert("mixin-exists", Builtin::new(mixin_exists));
-    f.insert("function-exists", Builtin::new(function_exists));
-    f.insert("get-function", Builtin::new(get_function));
-    f.insert("call", Builtin::new(call));
-    f.insert("content-exists", Builtin::new(content_exists));
-    f.insert("keywords", Builtin::new(keywords));
+    f.insert(
+        "mixin-exists",
+        Builtin::new(mixin_exists).with_deprecated_global("meta", "mixin-exists"),
+    );
+    f.insert(
+        "function-exists",
+        Builtin::new(function_exists).with_deprecated_global("meta", "function-exists"),
+    );
+    f.insert(
+        "get-function",
+        Builtin::new(get_function).with_deprecated_global("meta", "get-function"),
+    );
+    f.insert(
+        "call",
+        Builtin::new(call).with_deprecated_global("meta", "call"),
+    );
+    f.insert(
+        "content-exists",
+        Builtin::new(content_exists).with_deprecated_global("meta", "content-exists"),
+    );
+    f.insert(
+        "keywords",
+        Builtin::new(keywords).with_deprecated_global("meta", "keywords"),
+    );
 }

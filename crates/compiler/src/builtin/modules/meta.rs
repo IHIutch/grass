@@ -38,6 +38,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
 
     let configuration = if let Some(with) = with {
         let mut values = FxHashMap::default();
+        let mut emitted_private_deprecation = false;
         for (key, value) in with {
             let name = Identifier::from(
                 key.node
@@ -48,10 +49,20 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
 
             if values.contains_key(&name) {
                 return Err((
-                    format!("The variable {name} was configured twice.", name = name),
+                    format!("The variable {name} was configured twice."),
                     key.span,
                 )
                     .into());
+            }
+
+            if !name.is_public() && !emitted_private_deprecation {
+                emitted_private_deprecation = true;
+                visitor.emit_deprecation(Deprecation::WithPrivate, span, || {
+                    Ok(format!(
+                        "Configuring private variables (such as ${name}) is deprecated.\nThis \
+                         will be an error in Dart Sass 2.0.0."
+                    ))
+                })?;
             }
 
             values.insert(name, ConfiguredValue::explicit(value, args.span()));
@@ -80,7 +91,7 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
     if let Some(ref configuration) = configuration {
         if is_builtin && !configuration.borrow().is_implicit() {
             return Err((
-                format!("Built-in module {} can't be configured.", url),
+                format!("Built-in module {url} can't be configured."),
                 configuration.borrow().span.unwrap(),
             )
                 .into());

@@ -160,16 +160,20 @@ test!(
     "a {\n  color: 5 % (1/0);\n}\n",
     "a {\n  color: 5;\n}\n"
 );
+// dart-sass 1.97.3 verified: finite % infinity is calc(NaN), not calc(infinity) — grass already matches.
 test!(
     negative_finite_mod_infinity,
     "a {\n  color: -5 % (1/0);\n}\n",
     "a {\n  color: calc(NaN);\n}\n"
 );
+// dart-sass 1.97.3 verified: finite % -infinity is calc(NaN), not calc(-infinity) — grass already matches.
 test!(
     positive_finite_mod_negative_infinity,
     "a {\n  color: 5 % (-1/0);\n}\n",
     "a {\n  color: calc(NaN);\n}\n"
 );
+// dart-sass 1.97.3 verified: negative-finite % -infinity is the finite operand itself (-5), not
+// calc(NaN) — grass already matches.
 test!(
     negative_finite_mod_negative_infinity,
     "a {\n  color: -5 % (-1/0);\n}\n",

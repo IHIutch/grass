@@ -162,7 +162,7 @@ pub(crate) fn str_split(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         let limit_int = limit.assert_int_with_name("limit", args.span())?;
         if limit_int < 1 {
             return Err((
-                format!("$limit: Must be 1 or greater, was {}.", limit_int),
+                format!("$limit: Must be 1 or greater, was {limit_int}."),
                 args.span(),
             )
                 .into());
@@ -226,18 +226,20 @@ pub(crate) fn str_insert(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
     // Insert substring at char position, rather than byte position
     let insert = |idx, s1: &str, s2: &str| -> String {
-        s1.chars()
-            .enumerate()
-            .map(|(i, c)| {
-                if i + 1 == idx {
-                    c.to_string() + s2
-                } else if idx == 0 && i == 0 {
-                    s2.to_owned() + &c.to_string()
-                } else {
-                    c.to_string()
-                }
-            })
-            .collect::<String>()
+        let mut result = String::with_capacity(s1.len() + s2.len());
+
+        if idx == 0 {
+            result.push_str(s2);
+        }
+
+        for (i, c) in s1.chars().enumerate() {
+            result.push(c);
+            if i + 1 == idx {
+                result.push_str(s2);
+            }
+        }
+
+        result
     };
 
     let string = if index_int > 0 {
@@ -263,20 +265,47 @@ pub(crate) fn unique_id(args: ArgumentResult, _: &mut Visitor) -> SassResult<Val
         .take(12)
         .collect();
     Ok(Value::String(
-        format!("id-{}", string).into(),
+        format!("id-{string}").into(),
         QuoteKind::None,
     ))
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("to-upper-case", Builtin::new(to_upper_case));
-    f.insert("to-lower-case", Builtin::new(to_lower_case));
-    f.insert("str-length", Builtin::new(str_length));
-    f.insert("quote", Builtin::new(quote));
-    f.insert("unquote", Builtin::new(unquote));
-    f.insert("str-slice", Builtin::new(str_slice));
-    f.insert("str-index", Builtin::new(str_index));
-    f.insert("str-insert", Builtin::new(str_insert));
+    f.insert(
+        "to-upper-case",
+        Builtin::new(to_upper_case).with_deprecated_global("string", "to-upper-case"),
+    );
+    f.insert(
+        "to-lower-case",
+        Builtin::new(to_lower_case).with_deprecated_global("string", "to-lower-case"),
+    );
+    f.insert(
+        "str-length",
+        Builtin::new(str_length).with_deprecated_global("string", "length"),
+    );
+    f.insert(
+        "quote",
+        Builtin::new(quote).with_deprecated_global("string", "quote"),
+    );
+    f.insert(
+        "unquote",
+        Builtin::new(unquote).with_deprecated_global("string", "unquote"),
+    );
+    f.insert(
+        "str-slice",
+        Builtin::new(str_slice).with_deprecated_global("string", "slice"),
+    );
+    f.insert(
+        "str-index",
+        Builtin::new(str_index).with_deprecated_global("string", "index"),
+    );
+    f.insert(
+        "str-insert",
+        Builtin::new(str_insert).with_deprecated_global("string", "insert"),
+    );
     #[cfg(feature = "random")]
-    f.insert("unique-id", Builtin::new(unique_id));
+    f.insert(
+        "unique-id",
+        Builtin::new(unique_id).with_deprecated_global("string", "unique-id"),
+    );
 }

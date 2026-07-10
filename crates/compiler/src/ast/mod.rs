@@ -28,50 +28,46 @@ mod unknown;
 ///
 /// The arena is created at the entry point (lib.rs) and lives until the
 /// compilation result is returned to the caller.
-#[allow(dead_code)]
-pub(crate) unsafe fn erase_fn_decl_lifetime<'a>(
-    decl: AstFunctionDecl<'a>,
-) -> AstFunctionDecl<'static> {
-    std::mem::transmute(decl)
-}
-
-/// See `erase_fn_decl_lifetime` for safety justification.
-#[allow(dead_code)]
-pub(crate) unsafe fn erase_mixin_lifetime<'a>(mixin: AstMixin<'a>) -> AstMixin<'static> {
-    std::mem::transmute(mixin)
-}
-
-/// See `erase_fn_decl_lifetime` for safety justification.
-#[allow(dead_code)]
-pub(crate) unsafe fn erase_content_block_lifetime<'a>(
-    block: AstContentBlock<'a>,
-) -> AstContentBlock<'static> {
-    std::mem::transmute(block)
-}
-
-/// See `erase_fn_decl_lifetime` for safety justification.
-#[allow(dead_code)]
-pub(crate) unsafe fn erase_forward_rule_lifetime<'a>(
-    rule: AstForwardRule<'a>,
-) -> AstForwardRule<'static> {
-    std::mem::transmute(rule)
-}
-
-/// See `erase_fn_decl_lifetime` for safety justification.
+/// See the module-level safety doc above for justification.
+///
+/// INVARIANT: the returned `'static`-erased value must not outlive the
+/// arena backing the compilation that produced it (see call sites in
+/// `lib.rs` and `evaluate/visitor.rs`).
 pub(crate) unsafe fn erase_stylesheet_lifetime<'a>(sheet: StyleSheet<'a>) -> StyleSheet<'static> {
     std::mem::transmute(sheet)
 }
 
-/// See `erase_fn_decl_lifetime` for safety justification.
-#[allow(dead_code)]
-pub(crate) unsafe fn erase_stmt_lifetime<'a>(stmt: AstStmt<'a>) -> AstStmt<'static> {
-    std::mem::transmute(stmt)
+/// Safety: mirrors [`erase_stylesheet_lifetime`] — this is only used to
+/// erase the lifetime of an `ArgumentDeclaration` parsed against a
+/// `Visitor`'s own arena (see `Visitor::parse_dynamic_signature`), which
+/// lives for the entire compilation. The erased value is cached on the
+/// `Visitor` itself (never on `Builtin`/`Options`, which can outlive any
+/// single compilation), so it cannot outlive the arena it borrows from.
+pub(crate) unsafe fn erase_argument_declaration_lifetime<'a>(
+    decl: ArgumentDeclaration<'a>,
+) -> ArgumentDeclaration<'static> {
+    std::mem::transmute(decl)
 }
 
-/// See `erase_fn_decl_lifetime` for safety justification.
-#[allow(dead_code)]
-pub(crate) unsafe fn erase_configured_variable_lifetime<'a>(
-    cv: ConfiguredVariable<'a>,
-) -> ConfiguredVariable<'static> {
-    std::mem::transmute(cv)
+/// Safety: mirrors [`erase_stylesheet_lifetime`] — used when the evaluator
+/// arena-allocates a new node during evaluation (e.g. rebuilding an
+/// `IfCondition` while evaluating CSS-native `if()`), producing a reference
+/// tied to the `Visitor`'s real arena lifetime `'a` that must be widened to
+/// the `'static` erasure used throughout the AST/runtime boundary. Sound
+/// under the same invariant: the arena outlives the compilation that
+/// produced the reference.
+pub(crate) unsafe fn erase_ref_lifetime<T: ?Sized>(r: &T) -> &'static T {
+    std::mem::transmute(r)
+}
+
+/// Safety: mirrors [`erase_stylesheet_lifetime`] — used when the evaluator
+/// rebuilds an `Interpolation` while evaluating CSS-native `if()` conditions,
+/// finishing an [`InterpolationBuilder`] against the `Visitor`'s own arena
+/// lifetime `'a` that must be widened to the `'static` erasure used
+/// throughout the AST/runtime boundary. Sound under the same invariant: the
+/// arena outlives the compilation that produced the value.
+pub(crate) unsafe fn erase_interpolation_lifetime<'a>(
+    interp: Interpolation<'a>,
+) -> Interpolation<'static> {
+    std::mem::transmute(interp)
 }

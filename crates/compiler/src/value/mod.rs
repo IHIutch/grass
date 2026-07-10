@@ -26,6 +26,7 @@ pub use sass_number::SassNumber;
 
 mod arglist;
 mod calculation;
+mod key_hash;
 mod map;
 pub(crate) mod number;
 mod sass_function;
@@ -79,6 +80,12 @@ impl PartialEq for Value {
                     }
                 }
                 Value::Map(map2) => list1.is_empty() && map2.is_empty(),
+                Value::ArgList(list2) => {
+                    *sep1 == list2.separator
+                        && *brackets1 == Brackets::None
+                        && list1.len() == list2.elems.len()
+                        && list1.iter().zip(list2.elems.iter()).all(|(a, b)| a == b)
+                }
                 _ => false,
             },
             Value::Null => matches!(other, Value::Null),
@@ -112,18 +119,11 @@ impl PartialEq for Value {
             }
             Value::ArgList(list1) => match other {
                 Value::ArgList(list2) => list1 == list2,
-                Value::List(list2, ListSeparator::Comma, ..) => {
-                    if list1.len() != list2.len() {
-                        return false;
-                    }
-
-                    for (el1, el2) in list1.elems.iter().zip(list2.iter()) {
-                        if el1 != el2 {
-                            return false;
-                        }
-                    }
-
-                    true
+                Value::List(list2, sep2, brackets2) => {
+                    list1.separator == *sep2
+                        && *brackets2 == Brackets::None
+                        && list1.len() == list2.len()
+                        && list1.elems.iter().zip(list2.iter()).all(|(a, b)| a == b)
                 }
                 _ => false,
             },
@@ -366,7 +366,7 @@ impl Value {
                 }) => {
                     if !unit.comparable(unit2) {
                         return Err(
-                            (format!("Incompatible units {} and {}.", unit2, unit), span).into(),
+                            (format!("Incompatible units {unit2} and {unit}."), span).into()
                         );
                     }
                     if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {
@@ -456,6 +456,17 @@ impl Value {
             Value::Map(m) => m.as_list(),
             Value::ArgList(v) => v.elems,
             v => vec![v],
+        }
+    }
+
+    /// Returns the length `self` would have as a list, without cloning any
+    /// elements. Must mirror the arms of [`Value::as_list`] exactly.
+    pub fn list_len(&self) -> usize {
+        match self {
+            Value::List(v, ..) => v.len(),
+            Value::Map(m) => m.iter().count(),
+            Value::ArgList(v) => v.elems.len(),
+            _ => 1,
         }
     }
 

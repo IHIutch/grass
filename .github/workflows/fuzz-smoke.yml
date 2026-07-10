@@ -1,0 +1,177 @@
+name: Scheduled fuzz smoke
+
+on:
+  schedule:
+    - cron: "17 3 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-smoke
+  cancel-in-progress: false
+
+jobs:
+  core-fuzz:
+    name: Core libFuzzer smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz in the runner
+        run: cargo +nightly install cargo-fuzz --version 0.12.0 --locked
+
+      - name: Run bounded fuzz targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz/artifacts
+          printf 'commit=%s\n' "$GITHUB_SHA" > fuzz/artifacts/core-summary.txt
+          targets="$(cargo fuzz list)"
+          failed=0
+          while IFS= read -r target; do
+            [[ -n "$target" ]] || continue
+            corpus="fuzz/corpus/$target"
+            artifacts="fuzz/artifacts/$target"
+            log="$artifacts/run.log"
+            mkdir -p "$corpus" "$artifacts"
+            echo "starting target=$target corpus=$corpus artifacts=$artifacts"
+            set +e
+            cargo fuzz run "$target" "$corpus" -- \
+              -runs=64 \
+              -max_total_time=20 \
+              -timeout=2 \
+              -artifact_prefix="$artifacts/" \
+              -print_final_stats=1 > "$log" 2>&1
+            status=$?
+            set -e
+            printf '%s status=%s corpus=%s artifacts=%s\n' \
+              "$target" "$status" "$corpus" "$artifacts" | tee -a fuzz/artifacts/core-summary.txt
+            [[ "$status" -eq 0 ]] || failed=1
+          done <<< "$targets"
+          {
+            echo "### Core fuzz smoke"
+            echo
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo
+            echo '```text'
+            cat fuzz/artifacts/core-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Retained corpus/crash paths: fuzz/corpus/<target>/ and fuzz/artifacts/<target>/"
+          exit "$failed"
+
+      - name: Upload core fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-core-${{ github.run_id }}
+          path: |
+            fuzz/corpus
+            fuzz/artifacts
+          if-no-files-found: warn
+
+  runtime-fuzz:
+    name: N-API and WASM callback smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1
+        with:
+          toolchain: "1.97.0"
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install N-API dependencies
+        working-directory: crates/napi
+        run: npm ci
+
+      - name: Build native N-API fixture
+        working-directory: crates/napi
+        run: npm run build-debug
+
+      - name: Install wasm-pack
+        run: |
+          version=0.15.0
+          archive="wasm-pack-v${version}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${version}/$archive"
+          echo "c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a  $archive" | sha256sum -c -
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+
+      - name: Build WASM fixture
+        run: |
+          cd crates/lib
+          wasm-pack build --dev --target web --out-name grass --no-default-features --features wasm-exports,random
+          cp pkg/grass.js ../lib/pkg-publish/
+          cp pkg/grass.d.ts ../lib/pkg-publish/
+          cp pkg/grass_bg.wasm ../lib/pkg-publish/
+          cp pkg/grass_bg.wasm.d.ts ../lib/pkg-publish/
+
+      - name: Run bounded runtime harnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz/artifacts/napi_callbacks fuzz/artifacts/wasm_callbacks
+          printf 'commit=%s\n' "$GITHUB_SHA" > fuzz/artifacts/runtime-summary.txt
+          failed=0
+          for target in napi_callbacks wasm_callbacks; do
+            log="fuzz/artifacts/$target/run.log"
+            echo "starting target=$target artifacts=fuzz/artifacts/$target"
+            set +e
+            timeout --signal=TERM 45s env FUZZ_RUNS=64 node "fuzz/runtime/$target.mjs" > "$log" 2>&1
+            status=$?
+            set -e
+            completed=0
+            if [[ "$status" -eq 0 ]]; then
+              completed=64
+            fi
+            crash_count="$(find "fuzz/artifacts/$target" -maxdepth 1 -type f -name 'crash-*' | wc -l | tr -d ' ')"
+            printf '%s status=%s cases=64 artifacts=fuzz/artifacts/%s\n' \
+              "$target" "$status" "$target" | tee -a fuzz/artifacts/runtime-summary.txt
+            printf '%s completed=%s expected_errors=0 crash_artifacts=%s\n' \
+              "$target" "$completed" "$crash_count" | tee -a fuzz/artifacts/runtime-summary.txt
+            if [[ "$status" -ne 0 ]]; then
+              cp "$log" "fuzz/artifacts/$target/failure.log"
+              failed=1
+            fi
+          done
+          printf 'sass_spec_baseline=ci/sass-spec-baseline.txt digest=' >> fuzz/artifacts/runtime-summary.txt
+          sha256sum ci/sass-spec-baseline.txt | cut -d ' ' -f 1 >> fuzz/artifacts/runtime-summary.txt
+          {
+            echo "### Runtime fuzz smoke"
+            echo
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo
+            echo '```text'
+            cat fuzz/artifacts/runtime-summary.txt
+            echo '```'
+            echo
+            echo 'The blocking sass-spec baseline remains enforced by `.github/workflows/tests.yml`; this smoke records its digest for attribution.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Retained runtime paths: fuzz/artifacts/<target>/"
+          exit "$failed"
+
+      - name: Upload runtime fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-runtime-${{ github.run_id }}
+          path: fuzz/artifacts
+          if-no-files-found: warn

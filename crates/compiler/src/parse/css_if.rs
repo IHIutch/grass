@@ -138,8 +138,11 @@ fn detect_css_if_syntax<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResul
         let _ = parser.parse_identifier(false, false);
 
         if parser.toks().next_char_is('(') {
-            let name = parser.toks().raw_text(ident_start);
-            let lower = name.to_ascii_lowercase();
+            let lower: String = parser
+                .toks()
+                .raw_chars(ident_start)
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
 
             // Known new-syntax functions
             if matches!(lower.as_str(), "sass" | "css" | "var" | "attr" | "if") {
@@ -209,7 +212,7 @@ fn parse_if_condition<'a>(parser: &mut impl StylesheetParser<'a>) -> SassResult<
             check_not_followed_by_combinator(parser)?;
             check_not_followed_by_raw(parser)?;
 
-            return Ok(IfCondition::Not(Box::new(inner), span));
+            return Ok(IfCondition::Not(parser.arena().alloc(inner), span));
         }
         parser.toks_mut().set_cursor(start);
     }
@@ -462,10 +465,12 @@ fn try_extend_with_raw<'a>(
 ) -> SassResult<IfCondition<'a>> {
     let (first_interp, first_span) = match first {
         IfCondition::Atom(IfConditionAtom::Css(interp, span))
-        | IfCondition::Atom(IfConditionAtom::CssRaw(interp, span)) => (interp, span),
+        | IfCondition::Atom(IfConditionAtom::CssRaw(interp, span)) => {
+            (InterpolationBuilder::from_interpolation(interp), span)
+        }
         IfCondition::Atom(IfConditionAtom::Interp(expr, span)) => {
             // Convert interpolation to a CSS atom with an interpolation expression
-            let mut interp = Interpolation::new();
+            let mut interp = InterpolationBuilder::new();
             interp.add_expr(Spanned { node: expr, span });
             (interp, span)
         }
@@ -598,7 +603,7 @@ fn try_extend_with_raw<'a>(
                 // `and(`/`or(` without space → error
                 if matches!(lower.as_str(), "and" | "or") && !parser.looking_at_identifier_body() {
                     return Err((
-                        format!("Whitespace is required between \"{}\" and \"(\"", name),
+                        format!("Whitespace is required between \"{name}\" and \"(\""),
                         parser.toks().current_span(),
                     )
                         .into());
@@ -612,7 +617,7 @@ fn try_extend_with_raw<'a>(
                 if had_whitespace {
                     buffer.add_char(' ');
                 }
-                buffer.add_string(format!("{}(", name));
+                buffer.add_string(format!("{name}("));
                 buffer.add_interpolation(content);
                 buffer.add_char(')');
                 has_extra = true;
@@ -629,11 +634,15 @@ fn try_extend_with_raw<'a>(
     }
 
     if !has_extra {
-        return Ok(IfCondition::Atom(IfConditionAtom::Css(buffer, first_span)));
+        return Ok(IfCondition::Atom(IfConditionAtom::Css(
+            buffer.finish(parser.arena()),
+            first_span,
+        )));
     }
 
     Ok(IfCondition::Atom(IfConditionAtom::CssRaw(
-        buffer, first_span,
+        buffer.finish(parser.arena()),
+        first_span,
     )))
 }
 
@@ -663,7 +672,7 @@ fn parse_condition_primary<'a>(
         parser.whitespace()?;
         parser.expect_char(')')?;
         parser.set_consume_newlines(was_consuming);
-        return Ok(IfCondition::Paren(Box::new(inner)));
+        return Ok(IfCondition::Paren(parser.arena().alloc(inner)));
     }
 
     // `#{` → interpolation (may form function name if followed by `(`)
@@ -686,7 +695,7 @@ fn parse_condition_primary<'a>(
             let content = parse_css_function_args(parser)?;
             parser.expect_char(')')?;
 
-            let mut interp = Interpolation::new();
+            let mut interp = InterpolationBuilder::new();
             let expr_span = parser.toks_mut().span_from(start);
             interp.add_expr(Spanned {
                 node: expr.node,
@@ -696,7 +705,10 @@ fn parse_condition_primary<'a>(
             interp.add_interpolation(content);
             interp.add_char(')');
             let span = parser.toks_mut().span_from(start);
-            return Ok(IfCondition::Atom(IfConditionAtom::Css(interp, span)));
+            return Ok(IfCondition::Atom(IfConditionAtom::Css(
+                interp.finish(parser.arena()),
+                span,
+            )));
         }
 
         let span = parser.toks_mut().span_from(start);
@@ -717,7 +729,7 @@ fn parse_condition_primary<'a>(
         "not" | "and" | "or" => {
             if parser.toks().next_char_is('(') {
                 return Err((
-                    format!("Whitespace is required between \"{}\" and \"(\"", name),
+                    format!("Whitespace is required between \"{name}\" and \"(\""),
                     parser.toks().current_span(),
                 )
                     .into());
@@ -763,22 +775,25 @@ fn parse_condition_primary<'a>(
             parser.expect_char(')')?;
             parser.set_consume_newlines(was_consuming);
 
-            let mut interp = Interpolation::new_plain(format!("{}(", name));
+            let mut interp = InterpolationBuilder::new_plain(format!("{name}("));
             interp.add_interpolation(content);
             interp.add_char(')');
             let span = parser.toks_mut().span_from(ident_start);
-            Ok(IfCondition::Atom(IfConditionAtom::Css(interp, span)))
+            Ok(IfCondition::Atom(IfConditionAtom::Css(
+                interp.finish(parser.arena()),
+                span,
+            )))
         }
     }
 }
 
-/// Parse the arguments of a CSS function as an Interpolation<'a>.
+/// Parse the arguments of a CSS function as an InterpolationBuilder<'a>.
 /// Preserves raw text exactly (including quote style), only processing #{...}.
 /// Stops at the unmatched closing `)` (not consumed).
 fn parse_css_function_args<'a>(
     parser: &mut impl StylesheetParser<'a>,
-) -> SassResult<Interpolation<'a>> {
-    let mut buffer = Interpolation::new();
+) -> SassResult<InterpolationBuilder<'a>> {
+    let mut buffer = InterpolationBuilder::new();
     let mut depth = 0; // track nested parens
 
     while let Some(tok) = parser.toks().peek() {

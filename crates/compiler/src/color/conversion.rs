@@ -706,6 +706,33 @@ const OKLAB_OKLAB_TO_LMS: Mat3 = [
     -1.29148554801940940,
 ];
 
+// Direct LMS <-> XYZ-D50 matrices, used for OKLab/OKLCH <-> Lab/LCH/XYZ-D50 so
+// those conversions don't take an unnecessary (and lossy, at extreme
+// magnitudes) detour through XYZ-D65.
+const LMS_TO_XYZ_D50: Mat3 = [
+    1.28858621817270600,
+    -0.53787174449737450,
+    0.21358120275423640,
+    -0.00253387643187372,
+    1.09231679887191650,
+    -0.08978292244004273,
+    -0.06937382305734124,
+    -0.29500839894431263,
+    1.18948682451211420,
+];
+
+const XYZ_D50_TO_LMS: Mat3 = [
+    0.77070004204311720,
+    0.34924840261939616,
+    -0.11202351884164681,
+    0.00559649248368848,
+    0.93707234011367690,
+    0.06972568836252771,
+    0.04633714262191069,
+    0.25277531574310524,
+    0.85145807674679600,
+];
+
 // ---- Transfer functions (gamma encode/decode) ----
 
 /// sRGB gamma encode (linear -> sRGB)
@@ -769,7 +796,7 @@ const REC2020_BETA: f64 = 0.018053968510807;
 
 /// Rec2020 gamma encode
 fn rec2020_encode(c: f64) -> f64 {
-    if c.abs() >= REC2020_BETA {
+    if c.abs() > REC2020_BETA {
         c.signum() * (REC2020_ALPHA * c.abs().powf(0.45) - (REC2020_ALPHA - 1.0))
     } else {
         c * 4.5
@@ -788,8 +815,14 @@ fn rec2020_decode(c: f64) -> f64 {
 // ---- Non-linear color space conversions ----
 
 /// Convert HSL to sRGB [0,1].
-/// h in [0,360], s and l in [0,1].
+/// h in [0,360], s and l in [0,100] (dart-sass's internal HSL storage scale).
 pub fn hsl_to_srgb(h: f64, s: f64, l: f64) -> [f64; 3] {
+    // s and l arrive already-100-scaled (dart's internal HSL storage); scale
+    // down once here, matching dart's HslColorSpace.convert doing the same
+    // division at the point of converting toward sRGB.
+    let s = s / 100.0;
+    let l = l / 100.0;
+
     let h = h % 360.0;
     let scaled_hue = h / 360.0;
 
@@ -827,10 +860,11 @@ fn hue_to_channel(m1: f64, m2: f64, mut hue: f64) -> f64 {
 }
 
 /// Convert sRGB to HSL.
-/// Returns (hue, saturation, lightness). Handles out-of-gamut inputs
-/// where values may be outside [0,1].
+/// Returns (hue [0,360], saturation [0,100], lightness [0,100]) -- matching
+/// dart-sass's internal HSL storage scale. Handles out-of-gamut inputs where
+/// values may be outside [0,1].
 ///
-/// Matches dart-sass's algorithm: saturation = (max - lightness) / min(lightness, 1 - lightness).
+/// Matches dart-sass's algorithm: saturation = 100 * (max - lightness) / min(lightness, 1 - lightness).
 /// Hue is set to 0 when saturation is fuzzy-zero (< 1e-11).
 pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     // NaN propagation: if any channel is NaN, all HSL components depend on it
@@ -842,31 +876,34 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
 
     let min = r.min(g.min(b));
     let max = r.max(g.max(b));
+    // `lightness` here is the raw 0-1 fraction; it's scaled by 100 only at
+    // the return points below, matching dart's `lightness * 100`.
     let lightness = (min + max) / 2.0;
 
     if max == min {
-        return [0.0, 0.0, lightness];
+        return [0.0, 0.0, lightness * 100.0];
     }
 
     let delta = max - min;
 
-    // dart-sass formula: saturation = (max - lightness) / min(lightness, 1 - lightness)
+    // dart-sass formula: saturation = 100 * (max - lightness) / min(lightness, 1 - lightness)
+    // -- the *100 is applied to the numerator BEFORE dividing (operation order
+    // load-bearing for bit-exactness), and the result is dart's already-100-scaled
+    // internal storage value (no further scaling).
     // Guard against division by zero when lightness is exactly 0 or 1.
     let mut saturation = if lightness == 0.0 || lightness == 1.0 {
         0.0
     } else {
-        (max - lightness) / lightness.min(1.0 - lightness)
+        100.0 * (max - lightness) / lightness.min(1.0 - lightness)
     };
 
     let mut hue = if (max - b).abs() < f64::EPSILON && max != r {
-        4.0 + (r - g) / delta
+        60.0 * (r - g) / delta + 240.0
     } else if (max - g).abs() < f64::EPSILON {
-        2.0 + (b - r) / delta
+        60.0 * (b - r) / delta + 120.0
     } else {
-        (g - b) / delta
+        60.0 * (g - b) / delta + 360.0
     };
-
-    hue *= 60.0;
 
     // For out-of-gamut values, saturation can come out negative.
     // Normalize by flipping sign and rotating hue by 180°.
@@ -878,21 +915,24 @@ pub fn srgb_to_hsl(r: f64, g: f64, b: f64) -> [f64; 3] {
     // When saturation is effectively zero (fuzzy), set hue to 0.
     // This catches near-achromatic colors from conversion roundtrips.
     if saturation.abs() < 1e-11 {
-        return [0.0, 0.0, lightness];
+        return [0.0, 0.0, lightness * 100.0];
     }
 
     if hue < 0.0 {
         hue += 360.0;
     }
 
-    [hue % 360.0, saturation, lightness]
+    [hue % 360.0, saturation, lightness * 100.0]
 }
 
 /// Convert HWB to sRGB [0,1].
-/// h in [0,360], w and b in [0,1].
+/// h in [0,360], w and b in [0,100] (dart-sass's internal HWB storage scale).
 pub fn hwb_to_srgb(h: f64, w: f64, b: f64) -> [f64; 3] {
-    let mut white = w;
-    let mut black = b;
+    // w and b arrive already-100-scaled; scale down once here, matching
+    // dart's HwbColorSpace.convert doing the same division at the point of
+    // converting toward sRGB.
+    let mut white = w / 100.0;
+    let mut black = b / 100.0;
     let sum = white + black;
     if sum > 1.0 {
         white /= sum;
@@ -910,7 +950,8 @@ pub fn hwb_to_srgb(h: f64, w: f64, b: f64) -> [f64; 3] {
 }
 
 /// Convert sRGB [0,1] to HWB.
-/// Returns (hue [0,360], whiteness [0,1], blackness [0,1]).
+/// Returns (hue [0,360], whiteness [0,100], blackness [0,100]) -- matching
+/// dart-sass's internal HWB storage scale.
 ///
 /// Unlike HSL, HWB uses the raw hue without saturation-based correction.
 /// When saturation is negative (out-of-gamut), HSL rotates hue by 180° and
@@ -929,7 +970,11 @@ pub fn srgb_to_hwb(r: f64, g: f64, b: f64) -> [f64; 3] {
         raw_hue(r, g, b, max, max - min)
     };
 
-    [hue, min, 1.0 - max]
+    // dart-sass formula: whiteness = min * 100, blackness = 100 - max * 100
+    // (scale max BEFORE subtracting from 100 — operation order load-bearing).
+    // Both are dart's already-100-scaled internal storage values (no further
+    // scaling needed).
+    [hue, min * 100.0, 100.0 - max * 100.0]
 }
 
 /// Compute the raw hue from sRGB values, without saturation-based correction.
@@ -1019,37 +1064,69 @@ pub fn lch_to_lab(l: f64, c: f64, h: f64) -> [f64; 3] {
     [l, c * h_rad.cos(), c * h_rad.sin()]
 }
 
+/// Normalize a hue to `[0, 360)`, matching dart-sass's `SassColor._normalizeHue`.
+/// This is deliberately a double modulo (not a single conditional add): dart-sass
+/// applies this exact formula whenever it constructs an Lch/OKLch/HSL/HWB color,
+/// and the extra `% 360.0` after the `+ 360.0` can shift the last bit relative to
+/// a plain `if h < 0.0 { h += 360.0 }`, which matters at extreme out-of-gamut
+/// magnitudes. `invert` is dart-sass's flip for a negative chroma/saturation.
+fn normalize_hue(hue: f64, invert: bool) -> f64 {
+    (hue % 360.0 + 360.0 + if invert { 180.0 } else { 0.0 }) % 360.0
+}
+
 /// Convert Lab to LCH.
 pub fn lab_to_lch(l: f64, a: f64, b: f64) -> [f64; 3] {
     let c = (a * a + b * b).sqrt();
-    let mut h = b.atan2(a) * 180.0 / PI;
-    if h < 0.0 {
-        h += 360.0;
-    }
-    [l, c, h]
+    let h = b.atan2(a) * 180.0 / PI;
+    // dart-sass computes this in two separate stages that are NOT equivalent
+    // in IEEE double arithmetic: labToLch's own conditional `hue + 360` for a
+    // negative angle, THEN a second, independent renormalization when the Lch
+    // color is constructed (see `normalize_hue`). Collapsing these into one
+    // call changes the last bit at extreme magnitudes.
+    let h = if h >= 0.0 { h } else { h + 360.0 };
+    [l, c, normalize_hue(h, false)]
 }
 
 /// Convert OKLab to XYZ-D65.
 pub fn oklab_to_xyz_d65(l: f64, a: f64, b: f64) -> [f64; 3] {
-    // OKLab -> LMS (cube roots)
-    let lms_g = mat3_mul(&OKLAB_OKLAB_TO_LMS, [l, a, b]);
-    // Undo cube root
-    let lms = [lms_g[0].powi(3), lms_g[1].powi(3), lms_g[2].powi(3)];
     // LMS -> XYZ-D65
-    mat3_mul(&OKLAB_LMS_TO_XYZ, lms)
+    mat3_mul(&OKLAB_LMS_TO_XYZ, oklab_to_lms_raw(l, a, b))
 }
 
 /// Convert XYZ-D65 to OKLab.
 pub fn xyz_d65_to_oklab(x: f64, y: f64, z: f64) -> [f64; 3] {
     // XYZ-D65 -> LMS
     let lms = mat3_mul(&OKLAB_XYZ_TO_LMS, [x, y, z]);
-    // Cube root
+    lms_raw_to_oklab(lms)
+}
+
+/// Convert OKLab to XYZ-D50, via the direct LMS<->XYZ-D50 matrix. Used for
+/// OKLab/OKLCH <-> Lab/LCH/XYZ-D50 conversions, which dart-sass routes through
+/// XYZ-D50 rather than XYZ-D65.
+fn oklab_to_xyz_d50(l: f64, a: f64, b: f64) -> [f64; 3] {
+    mat3_mul(&LMS_TO_XYZ_D50, oklab_to_lms_raw(l, a, b))
+}
+
+/// Convert XYZ-D50 to OKLab, via the direct LMS<->XYZ-D50 matrix.
+fn xyz_d50_to_oklab(x: f64, y: f64, z: f64) -> [f64; 3] {
+    let lms = mat3_mul(&XYZ_D50_TO_LMS, [x, y, z]);
+    lms_raw_to_oklab(lms)
+}
+
+/// OKLab -> raw (un-cube-rooted) LMS.
+fn oklab_to_lms_raw(l: f64, a: f64, b: f64) -> [f64; 3] {
+    let lms_g = mat3_mul(&OKLAB_OKLAB_TO_LMS, [l, a, b]);
+    // Undo cube root
+    [lms_g[0].powi(3), lms_g[1].powi(3), lms_g[2].powi(3)]
+}
+
+/// Raw (un-cube-rooted) LMS -> OKLab.
+fn lms_raw_to_oklab(lms: [f64; 3]) -> [f64; 3] {
     let lms_g = [
         cbrt_like_dart(lms[0]),
         cbrt_like_dart(lms[1]),
         cbrt_like_dart(lms[2]),
     ];
-    // LMS -> OKLab
     mat3_mul(&OKLAB_LMS_TO_OKLAB, lms_g)
 }
 
@@ -1373,6 +1450,87 @@ pub fn convert(channels: [f64; 3], from: ColorSpace, to: ColorSpace) -> [f64; 3]
             from_linear_rgb(linear, to)
         }
 
+        // Source is XYZ-D50, target is Lab/LCH: already in D50, convert directly
+        // without an XYZ-D65 round trip (matches dart-sass's XyzD50ColorSpace.convert,
+        // which special-cases this exact pair to skip the linear-transform step).
+        (None, None)
+            if from == ColorSpace::XyzD50 && (to == ColorSpace::Lab || to == ColorSpace::Lch) =>
+        {
+            let lab = xyz_d50_to_lab(channels[0], channels[1], channels[2]);
+            if to == ColorSpace::Lch {
+                lab_to_lch(lab[0], lab[1], lab[2])
+            } else {
+                lab
+            }
+        }
+
+        // Source is Lab/LCH, target is XYZ-D50: convert directly without an
+        // XYZ-D65 round trip (matches dart-sass's LabColorSpace.convert, which
+        // computes the XyzD50 triple directly and passes it straight through).
+        (None, None)
+            if to == ColorSpace::XyzD50 && (from == ColorSpace::Lab || from == ColorSpace::Lch) =>
+        {
+            let [c0, c1, c2] = channels;
+            let lab = if from == ColorSpace::Lch {
+                lch_to_lab(c0, c1, c2)
+            } else {
+                channels
+            };
+            lab_to_xyz_d50(lab[0], lab[1], lab[2])
+        }
+
+        // Source is OKLab/OKLCH, target is Lab/LCH or XYZ-D50: convert via the
+        // direct LMS<->XYZ-D50 matrices, without an XYZ-D65 round trip (matches
+        // dart-sass's LmsColorSpace.convert, which uses its `lmsToXyzD50`
+        // transformation matrix directly for these destinations).
+        (None, None)
+            if (from == ColorSpace::Oklab || from == ColorSpace::Oklch)
+                && (to == ColorSpace::Lab || to == ColorSpace::Lch || to == ColorSpace::XyzD50) =>
+        {
+            let [c0, c1, c2] = channels;
+            let oklab = if from == ColorSpace::Oklch {
+                oklch_to_oklab(c0, c1, c2)
+            } else {
+                channels
+            };
+            let xyz_d50 = oklab_to_xyz_d50(oklab[0], oklab[1], oklab[2]);
+            match to {
+                ColorSpace::XyzD50 => xyz_d50,
+                ColorSpace::Lch => {
+                    let lab = xyz_d50_to_lab(xyz_d50[0], xyz_d50[1], xyz_d50[2]);
+                    lab_to_lch(lab[0], lab[1], lab[2])
+                }
+                _ => xyz_d50_to_lab(xyz_d50[0], xyz_d50[1], xyz_d50[2]),
+            }
+        }
+
+        // Source is Lab/LCH or XYZ-D50, target is OKLab/OKLCH: convert via the
+        // direct LMS<->XYZ-D50 matrices, without an XYZ-D65 round trip (matches
+        // dart-sass's XyzD50ColorSpace.convert, which uses its `xyzD50ToLms`
+        // transformation matrix directly for these destinations).
+        (None, None)
+            if (to == ColorSpace::Oklab || to == ColorSpace::Oklch)
+                && (from == ColorSpace::Lab
+                    || from == ColorSpace::Lch
+                    || from == ColorSpace::XyzD50) =>
+        {
+            let [c0, c1, c2] = channels;
+            let xyz_d50 = match from {
+                ColorSpace::XyzD50 => channels,
+                ColorSpace::Lch => {
+                    let lab = lch_to_lab(c0, c1, c2);
+                    lab_to_xyz_d50(lab[0], lab[1], lab[2])
+                }
+                _ => lab_to_xyz_d50(c0, c1, c2),
+            };
+            let oklab = xyz_d50_to_oklab(xyz_d50[0], xyz_d50[1], xyz_d50[2]);
+            if to == ColorSpace::Oklch {
+                oklab_to_oklch(oklab[0], oklab[1], oklab[2])
+            } else {
+                oklab
+            }
+        }
+
         // Fallback: go through XYZ-D65 (for XYZ↔XYZ, Lab↔OKLab, etc.)
         _ => {
             let xyz_d65 = to_xyz_d65(channels, from);
@@ -1433,9 +1591,22 @@ fn convert_direct(channels: [f64; 3], from: ColorSpace, to: ColorSpace) -> Optio
         (ColorSpace::Lab, ColorSpace::Lch) => Some(lab_to_lch(c0, c1, c2)),
         (ColorSpace::Lch, ColorSpace::Lab) => Some(lch_to_lab(c0, c1, c2)),
 
-        // OKLab ↔ OKLch
+        // OKLab <- OKLch: dart-sass's OklchColorSpace.convert computes a/b from
+        // chroma/hue, then always delegates to OklabColorSpace.convert, which
+        // only special-cases `dest == oklch` (a direct shortcut). For any other
+        // dest -- including oklab itself -- it falls through to the generic LMS
+        // path: cube the oklab-space values into raw LMS, then (via
+        // LmsColorSpace.convert's `case oklab`) cube-root them back and
+        // reapply the inverse matrix. That round trip is not a no-op in
+        // floating point, so it must be transcribed rather than shortcut.
+        (ColorSpace::Oklch, ColorSpace::Oklab) => {
+            let oklab = oklch_to_oklab(c0, c1, c2);
+            let lms = oklab_to_lms_raw(oklab[0], oklab[1], oklab[2]);
+            Some(lms_raw_to_oklab(lms))
+        }
+        // OKLab -> OKLch: OklabColorSpace.convert special-cases `dest == oklch`
+        // with a direct labToLch shortcut (no LMS round trip), so this stays exact.
         (ColorSpace::Oklab, ColorSpace::Oklch) => Some(oklab_to_oklch(c0, c1, c2)),
-        (ColorSpace::Oklch, ColorSpace::Oklab) => Some(oklch_to_oklab(c0, c1, c2)),
 
         // DisplayP3 ↔ DisplayP3Linear
         (ColorSpace::DisplayP3, ColorSpace::DisplayP3Linear) => Some([
@@ -1679,7 +1850,7 @@ mod tests {
     fn rgb_to_hsl_roundtrip() {
         // Pure red
         let hsl = srgb_to_hsl(1.0, 0.0, 0.0);
-        assert_approx(hsl, [0.0, 1.0, 0.5], 1e-10);
+        assert_approx(hsl, [0.0, 100.0, 50.0], 1e-10);
 
         let rgb = hsl_to_srgb(hsl[0], hsl[1], hsl[2]);
         assert_approx(rgb, [1.0, 0.0, 0.0], 1e-10);

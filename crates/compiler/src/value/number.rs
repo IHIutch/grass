@@ -45,6 +45,18 @@ pub(crate) fn fuzzy_equals(a: f64, b: f64) -> bool {
     (a - b).abs() <= epsilon() && (a * inverse_epsilon()).round() == (b * inverse_epsilon()).round()
 }
 
+/// A hash component consistent with [`fuzzy_equals`]: `fuzzy_equals(a, b)`
+/// implies `fuzzy_hash_component(a) == fuzzy_hash_component(b)`, since
+/// `fuzzy_equals` requires (among other things) that the two values round to
+/// the same value on the same `inverse_epsilon()` grid. This mirrors
+/// dart-sass's `fuzzyHashCode` (lib/src/util/number.dart); unlike dart-sass we
+/// don't special-case non-finite values, since Rust's float-to-int cast
+/// saturates instead of panicking, which already gives a deterministic result
+/// for +/-infinity and NaN.
+pub(crate) fn fuzzy_hash_component(n: f64) -> i64 {
+    (n * inverse_epsilon()).round() as i64
+}
+
 pub(crate) fn fuzzy_as_int(num: f64) -> Option<i64> {
     if !num.is_finite() {
         return None;
@@ -126,7 +138,7 @@ impl Number {
                 } else {
                     format!("{}", self.0)
                 };
-                Err((format!("{} is not an int.", display), span).into())
+                Err((format!("{display} is not an int."), span).into())
             }
         }
     }
@@ -173,24 +185,41 @@ impl Number {
             return self;
         }
 
-        debug_assert!(from.comparable(to), "from: {:?}, to: {:?}", from, to);
+        debug_assert!(from.comparable(to), "from: {from:?}, to: {to:?}");
 
-        // For complex units, multiply conversion factors for each pair
+        // For complex units, multiply conversion factors for each pair. Units are
+        // matched by comparability rather than position, since compound units are
+        // unordered bags (e.g. `1px*em` and `1em*px` are the same unit in dart-sass).
         if let (Unit::Complex(_), Unit::Complex(_)) = (from, to) {
             let (from_numer, from_denom) = from.clone().numer_and_denom();
             let (to_numer, to_denom) = to.clone().numer_and_denom();
             let mut factor = 1.0_f64;
-            for (f, t) in from_numer.iter().zip(&to_numer) {
-                if f != t {
-                    factor *= UNIT_CONVERSION_TABLE[t][f];
+
+            let mut remaining_numer = from_numer;
+            for t in &to_numer {
+                let idx = remaining_numer
+                    .iter()
+                    .position(|f| f.comparable(t))
+                    .expect("complex units must have comparable numerators");
+                let f = remaining_numer.remove(idx);
+                if &f != t {
+                    factor *= UNIT_CONVERSION_TABLE[t][&f];
                 }
             }
+
             // Denominator conversion is inverted
-            for (f, t) in from_denom.iter().zip(&to_denom) {
-                if f != t {
-                    factor /= UNIT_CONVERSION_TABLE[t][f];
+            let mut remaining_denom = from_denom;
+            for t in &to_denom {
+                let idx = remaining_denom
+                    .iter()
+                    .position(|f| f.comparable(t))
+                    .expect("complex units must have comparable denominators");
+                let f = remaining_denom.remove(idx);
+                if &f != t {
+                    factor /= UNIT_CONVERSION_TABLE[t][&f];
                 }
             }
+
             return Number(self.0 * factor);
         }
 
@@ -316,14 +345,14 @@ impl Number {
         // notation and has <= 10 decimal places; otherwise fall back to {:.10}
         let formatted;
         let trimmed = if short.contains('e') || short.contains('E') {
-            formatted = format!("{:.10}", num);
+            formatted = format!("{num:.10}");
             formatted.trim_end_matches('0').trim_end_matches('.')
         } else if let Some(dot_pos) = short.find('.') {
             let short_decimals = short.len() - dot_pos - 1;
             if short_decimals <= 10 {
                 short.trim_end_matches('0').trim_end_matches('.')
             } else {
-                formatted = format!("{:.10}", num);
+                formatted = format!("{num:.10}");
                 formatted.trim_end_matches('0').trim_end_matches('.')
             }
         } else {

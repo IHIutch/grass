@@ -141,9 +141,10 @@ test!(
     "a {\n  color: selector-nest(\"a\", \":not(&):matches(:not(a))\");\n}\n",
     "a {\n  color: :not(a):matches(:not(a));\n}\n"
 );
-error!(
-    disallows_parent_selector_as_first_arg,
-    "a {\n  color: selector-nest(\"&\");\n}\n", "Error: Parent selectors aren't allowed here."
+test!(
+    allows_parent_selector_as_first_arg,
+    "a {\n  color: selector-nest(\"&\");\n}\n",
+    "a {\n  color: &;\n}\n"
 );
 error!(
     disallows_parent_not_at_start_of_compound_selector_attribute,

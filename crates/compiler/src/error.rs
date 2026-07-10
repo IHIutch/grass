@@ -2,8 +2,8 @@ use std::{
     error::Error,
     fmt::{self, Display},
     io,
+    rc::Rc,
     string::FromUtf8Error,
-    sync::Arc,
 };
 
 use codemap::{Span, SpanLoc};
@@ -93,7 +93,7 @@ pub enum PublicSassErrorKind {
     ///
     /// Files that cannot be found using `@import`, `@use`, and `@forward` will
     /// emit [`Self::ParseError`]s
-    IoError(Arc<io::Error>),
+    IoError(Rc<io::Error>),
 
     /// The entry-point file or an imported file was not valid UTF-8.
     FromUtf8Error(String),
@@ -111,7 +111,7 @@ enum SassErrorKind {
         unicode: bool,
     },
     // we put `IoError`s in an `Arc` to allow them to be cloneable
-    IoError(Arc<io::Error>),
+    IoError(Rc<io::Error>),
     FromUtf8Error(String),
 }
 
@@ -128,7 +128,7 @@ impl Display for SassError {
                 unicode,
             } => (message, loc, *unicode),
             SassErrorKind::FromUtf8Error(..) => return writeln!(f, "Error: Invalid UTF-8."),
-            SassErrorKind::IoError(s) => return writeln!(f, "Error: {}", s),
+            SassErrorKind::IoError(s) => return writeln!(f, "Error: {s}"),
             SassErrorKind::Raw(..) => unreachable!(),
         };
 
@@ -139,11 +139,11 @@ impl Display for SassError {
 
         let line = loc.begin.line + 1;
         let col = loc.begin.column + 1;
-        writeln!(f, "Error: {}", message)?;
-        let padding = vec![' '; format!("{}", line).len() + 1]
+        writeln!(f, "Error: {message}")?;
+        let padding = vec![' '; format!("{line}").len() + 1]
             .iter()
             .collect::<String>();
-        writeln!(f, "{}{}", padding, first_bar)?;
+        writeln!(f, "{padding}{first_bar}")?;
         writeln!(
             f,
             "{} {} {}",
@@ -161,7 +161,7 @@ impl Display for SassError {
                 .iter()
                 .collect::<String>()
         )?;
-        writeln!(f, "{}{}", padding, fourth_bar)?;
+        writeln!(f, "{padding}{fourth_bar}")?;
 
         if unicode {
             writeln!(f, "./{}:{}:{}", loc.file.name(), line, col)?;
@@ -176,7 +176,7 @@ impl From<io::Error> for Box<SassError> {
     #[inline]
     fn from(error: io::Error) -> Box<SassError> {
         Box::new(SassError {
-            kind: SassErrorKind::IoError(Arc::new(error)),
+            kind: SassErrorKind::IoError(Rc::new(error)),
         })
     }
 }

@@ -28,6 +28,19 @@ impl Lexer {
             .collect()
     }
 
+    /// Iterates the characters in `[start, cursor)` without allocating a `String`.
+    pub fn raw_chars(&self, start: usize) -> impl Iterator<Item = char> + '_ {
+        self.buf[start..self.cursor].iter().map(|t| t.kind)
+    }
+
+    /// Like [`Lexer::raw_text`], but for an arbitrary `[start, end)` range of
+    /// buffer indices rather than `[start, cursor)`. Used to recover the
+    /// source text of an already-parsed operand (e.g. for the `strict-unary`
+    /// deprecation message) after the cursor has moved past it.
+    pub fn raw_text_range(&self, start: usize, end: usize) -> String {
+        self.buf[start..end].iter().map(|t| t.kind).collect()
+    }
+
     pub fn next_char_is(&self, c: char) -> bool {
         matches!(self.peek(), Some(Token { kind, .. }) if kind == c)
     }
@@ -151,13 +164,16 @@ impl<'a> Iterator for TokenLexer<'a> {
 
 impl Lexer {
     pub fn new_from_file(file: &Arc<File>) -> Self {
-        let buf = TokenLexer::new(file.source().chars().peekable()).collect();
+        let source = file.source();
+        let mut buf = Vec::with_capacity(source.len());
+        buf.extend(TokenLexer::new(source.chars().peekable()));
         Self::new(buf, file.span, false)
     }
 
     pub fn new_from_string(s: &str, entire_span: Span) -> Self {
         let is_expanded = s.len() as u64 > entire_span.len();
-        let buf = TokenLexer::new(s.chars().peekable()).collect();
+        let mut buf = Vec::with_capacity(s.len());
+        buf.extend(TokenLexer::new(s.chars().peekable()));
 
         Self::new(buf, entire_span, is_expanded)
     }

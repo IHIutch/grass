@@ -10,7 +10,8 @@ keywords = ["scss", "sass", "css", "web"]
 repository = "https://github.com/connorskees/grass"
 authors = ["Connor Skees <39542938+ConnorSkees@users.noreply.github.com>"]
 include = ["src", "Cargo.toml", "../README.md", "../CHANGELOG.md", "../LICENSE"]
-rust-version = "1.80"
+# MSRV: ar_archive_writer 0.5.2 (via psm/stacker) requires Rust 1.88.
+rust-version = "1.88"
 
 [lib]
 proc-macro = true

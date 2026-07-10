@@ -1,13 +1,10 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    iter::Iterator,
-    mem,
-};
+use std::{iter::Iterator, mem};
 
 use codemap::{Span, Spanned};
+use rustc_hash::FxHashSet;
 
 use crate::{
-    common::{Identifier, ListSeparator},
+    common::{Identifier, ListSeparator, NamedArgsView, SmallOrderedMap},
     error::SassResult,
     utils::to_sentence,
     value::Value,
@@ -23,22 +20,22 @@ pub struct Argument<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ArgumentDeclaration<'a> {
-    pub args: Vec<Argument<'a>>,
+    pub args: &'a [Argument<'a>],
     pub rest: Option<Identifier>,
 }
 
 impl<'a> ArgumentDeclaration<'a> {
     pub fn empty() -> Self {
         Self {
-            args: Vec::new(),
+            args: &[],
             rest: None,
         }
     }
 
-    pub fn verify<T>(
+    pub fn verify<T, N: NamedArgsView<Identifier, T> + ?Sized>(
         &self,
         num_positional: usize,
-        names: &BTreeMap<Identifier, T>,
+        names: &N,
         span: Span,
     ) -> SassResult<()> {
         let mut named_used = 0;
@@ -90,21 +87,14 @@ impl<'a> ArgumentDeclaration<'a> {
         }
 
         if named_used < names.len() {
-            let mut unknown_names = names.keys().copied().collect::<BTreeSet<_>>();
+            // Dart-sass's `namedArguments` is a `LinkedHashMap`, so unknown-name
+            // enumeration reports call-site (insertion) order, not sorted order.
+            let mut unknown_names = names.keys().copied().collect::<Vec<_>>();
 
-            for arg in &self.args {
-                unknown_names.remove(&arg.name);
-            }
+            unknown_names.retain(|name| !self.args.iter().any(|arg| &arg.name == name));
 
             if unknown_names.len() == 1 {
-                return Err((
-                    format!(
-                        "No argument named ${}.",
-                        unknown_names.iter().next().unwrap()
-                    ),
-                    span,
-                )
-                    .into());
+                return Err((format!("No argument named ${}.", unknown_names[0]), span).into());
             }
 
             if unknown_names.len() > 1 {
@@ -114,7 +104,7 @@ impl<'a> ArgumentDeclaration<'a> {
                         to_sentence(
                             unknown_names
                                 .into_iter()
-                                .map(|name| format!("${name}", name = name))
+                                .map(|name| format!("${name}"))
                                 .collect(),
                             "or"
                         )
@@ -131,8 +121,8 @@ impl<'a> ArgumentDeclaration<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ArgumentInvocation<'a> {
-    pub(crate) positional: Vec<AstExpr<'a>>,
-    pub(crate) named: BTreeMap<Identifier, AstExpr<'a>>,
+    pub(crate) positional: &'a [AstExpr<'a>],
+    pub(crate) named: &'a [(Identifier, AstExpr<'a>)],
     pub(crate) rest: Option<AstExpr<'a>>,
     pub(crate) keyword_rest: Option<AstExpr<'a>>,
     pub(crate) span: Span,
@@ -141,8 +131,8 @@ pub struct ArgumentInvocation<'a> {
 impl<'a> ArgumentInvocation<'a> {
     pub fn empty(span: Span) -> Self {
         Self {
-            positional: Vec::new(),
-            named: BTreeMap::new(),
+            positional: &[],
+            named: &[],
             rest: None,
             keyword_rest: None,
             span,
@@ -151,9 +141,17 @@ impl<'a> ArgumentInvocation<'a> {
 }
 
 // todo: hack for builtin `call`
+//
+// Two lifetimes: `'b` is how long *this borrow* of the invocation is held
+// (may be short-lived, e.g. a reference into an owned `AstInclude` field),
+// while `'a` is the arena/AST content lifetime (always 'static in practice).
+// Keeping them separate lets callers pass either a genuinely `'static`
+// reference (e.g. `FunctionCallExpr::arguments`, which is itself an arena
+// reference) or a shorter-lived one (e.g. `&include_stmt.args`) without
+// forcing the latter to prove it's `'static`.
 #[derive(Debug, Clone)]
-pub(crate) enum MaybeEvaledArguments<'a> {
-    Invocation(ArgumentInvocation<'a>),
+pub(crate) enum MaybeEvaledArguments<'b, 'a> {
+    Invocation(&'b ArgumentInvocation<'a>),
     Evaled(ArgumentResult),
 }
 
@@ -164,11 +162,11 @@ pub(crate) enum MaybeEvaledArguments<'a> {
 #[derive(Debug, Clone)]
 pub struct ArgumentResult {
     pub(crate) positional: Vec<Value>,
-    pub(crate) named: BTreeMap<Identifier, Value>,
+    pub(crate) named: SmallOrderedMap<Identifier, Value>,
     pub(crate) separator: ListSeparator,
     pub(crate) span: Span,
     // todo: hack
-    pub(crate) touched: BTreeSet<usize>,
+    pub(crate) touched: FxHashSet<usize>,
 }
 
 impl ArgumentResult {
@@ -176,7 +174,7 @@ impl ArgumentResult {
     ///
     /// Removes the argument
     pub fn get_named<T: Into<Identifier>>(&mut self, val: T) -> Option<Spanned<Value>> {
-        self.named.remove(&val.into()).map(|n| Spanned {
+        self.named.shift_remove(&val.into()).map(|n| Spanned {
             node: n,
             span: self.span,
         })
@@ -216,7 +214,7 @@ impl ArgumentResult {
             Some(v) => Ok(v.node),
             None => match self.get_positional(position) {
                 Some(v) => Ok(v.node),
-                None => Err((format!("Missing argument ${}.", name), self.span()).into()),
+                None => Err((format!("Missing argument ${name}."), self.span()).into()),
             },
         }
     }
@@ -251,7 +249,7 @@ impl ArgumentResult {
         if len > max {
             let mut err = String::with_capacity(50);
             #[allow(unknown_lints, clippy::format_push_string)]
-            err.push_str(&format!("Only {max} argument", max = max));
+            err.push_str(&format!("Only {max} argument"));
             if max != 1 {
                 err.push('s');
             }
@@ -288,14 +286,14 @@ impl ArgumentResult {
     /// Error if any named arguments remain unconsumed.
     pub(crate) fn no_remaining_named(&self) -> SassResult<()> {
         if let Some((name, _)) = self.named.iter().next() {
-            return Err((format!("No argument named ${}.", name), self.span).into());
+            return Err((format!("No argument named ${name}."), self.span).into());
         }
         Ok(())
     }
 
     pub(crate) fn get_variadic(self) -> SassResult<Vec<Spanned<Value>>> {
         if let Some((name, _)) = self.named.iter().next() {
-            return Err((format!("No argument named ${}.", name), self.span).into());
+            return Err((format!("No argument named ${name}."), self.span).into());
         }
 
         let Self {

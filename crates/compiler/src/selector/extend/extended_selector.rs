@@ -88,7 +88,6 @@ impl SelectorHashSet {
         self.0.insert(selector);
     }
 
-    #[allow(dead_code)]
     pub fn iter(&self) -> Iter<'_, ExtendedSelector> {
         self.0.iter()
     }

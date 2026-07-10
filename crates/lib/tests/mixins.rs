@@ -27,6 +27,9 @@ test!(
     "@mixin a {\n  b {\n    color: red;\n  }\n  c {\n    color: blue;\n  }\n}\nd {\n  @include a;\n}\n",
     "d b {\n  color: red;\n}\nd c {\n  color: blue;\n}\n"
 );
+// dart-sass 1.97.3 verified: nested rules are hoisted out and emitted in their written order relative
+// to the containing rule's own block; `d b {...}` (written first) emits before `d {...}` (written
+// second) — grass already matches. The stale expectation had the order reversed.
 test!(
     mixin_ruleset_and_style,
     "@mixin a {\n  b {\n    color: red;\n  }\n  color: blue;\n}\nd {\n  @include a;\n}\n",
@@ -608,6 +611,10 @@ test!(
     @include foo();",
     "a {\n  display: none;\n}\n\nb {\n  display: block;\n}\n"
 );
+// dart-sass 1.97.3 verified: because @content interleaves a nested `.parent .child {...}` rule
+// between the two `.parent` declarations, the two `.parent {...}` blocks are NOT merged into one —
+// dart emits background-color and border-color as two separate .parent rules straddling the nested
+// rule. grass already matches; the stale expectation had them merged into a single .parent block.
 test!(
     sass_spec__188_test_mixin_content,
     "$color: blue;

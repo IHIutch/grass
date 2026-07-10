@@ -6,7 +6,7 @@ use crate::ast::CssStmt;
 use crate::selector::ExtendedSelector;
 
 #[derive(Debug, Clone)]
-pub(crate) struct CssTree {
+pub(super) struct CssTree {
     // None is tombstone
     stmts: Vec<RefCell<Option<CssStmt>>>,
     pub parent_to_child: FxHashMap<CssTreeIdx, Vec<CssTreeIdx>>,
@@ -20,7 +20,7 @@ pub(crate) struct CssTree {
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub(crate) struct CssTreeIdx(pub(crate) usize);
+pub(super) struct CssTreeIdx(usize);
 
 impl CssTree {
     pub const ROOT: CssTreeIdx = CssTreeIdx(0);
@@ -253,41 +253,6 @@ impl CssTree {
             .map_or(0, |children| children.len())
     }
 
-    /// Move children of `from_parent` (starting at index `start`) to `to_parent`.
-    /// Used to re-parent CSS nodes that were added to ROOT during module
-    /// evaluation but need to be nested under a different parent (e.g., for
-    /// nested @import).
-    #[allow(dead_code)]
-    pub fn reparent_children(
-        &mut self,
-        from_parent: CssTreeIdx,
-        to_parent: CssTreeIdx,
-        start: usize,
-    ) {
-        let children_to_move: Vec<CssTreeIdx> = self
-            .parent_to_child
-            .get(&from_parent)
-            .map_or_else(Vec::new, |children| children[start..].to_vec());
-
-        if children_to_move.is_empty() {
-            return;
-        }
-
-        // Remove from old parent
-        if let Some(children) = self.parent_to_child.get_mut(&from_parent) {
-            children.truncate(start);
-        }
-
-        // Add to new parent and update child_to_parent + child_position
-        for child_idx in children_to_move {
-            let children = self.parent_to_child.entry(to_parent).or_default();
-            let pos = children.len();
-            children.push(child_idx);
-            self.child_to_parent.insert(child_idx, to_parent);
-            self.child_position.insert(child_idx, pos);
-        }
-    }
-
     /// Returns the CssTreeIdx values of children under `parent`, starting at
     /// index `start`. Used to identify which ROOT children were added during
     /// a module's execution.
@@ -402,105 +367,6 @@ impl CssTree {
         }
 
         new_idx
-    }
-
-    /// Get children indices for a parent node
-    pub(crate) fn children(&self, idx: CssTreeIdx) -> &[CssTreeIdx] {
-        self.parent_to_child
-            .get(&idx)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
-    }
-
-    /// Check if a node is invisible in the tree context (uses tree's child map
-    /// instead of CssStmt::body which is empty during tree-walking)
-    pub(crate) fn is_invisible_in_tree(&self, idx: CssTreeIdx) -> bool {
-        if self.hidden.contains(&idx) {
-            return true;
-        }
-        let stmt = self.stmts[idx.0].borrow();
-        match &*stmt {
-            None => true,
-            Some(s) => !self.is_stmt_visible(idx, s),
-        }
-    }
-
-    /// Merge another CssTree into this one. All statements from `other` are
-    /// appended to `self`, with indices remapped. The other tree's ROOT children
-    /// become ROOT children in this tree.
-    ///
-    /// Returns the remapped indices of `other`'s ROOT children (for tracking
-    /// which CSS came from the merged module).
-    pub fn merge_from(&mut self, other: CssTree) -> Vec<CssTreeIdx> {
-        let CssTree {
-            stmts: other_stmts,
-            parent_to_child: other_p2c,
-            child_to_parent: _other_c2p,
-            child_position: other_pos,
-            hidden: other_hidden,
-        } = other;
-
-        // We skip other's ROOT (index 0) — we'll remap its children to our ROOT.
-        // Other's index i (i > 0) maps to self's index: self.stmts.len() + (i - 1)
-        let base = self.stmts.len();
-        let remap = |idx: CssTreeIdx| -> CssTreeIdx {
-            debug_assert!(idx.0 > 0, "ROOT should not be remapped via this function");
-            CssTreeIdx(idx.0 - 1 + base)
-        };
-
-        // Save ROOT children info before consuming
-        let other_root_children: Vec<CssTreeIdx> =
-            other_p2c.get(&Self::ROOT).cloned().unwrap_or_default();
-
-        // Append all non-ROOT statements
-        for (i, stmt) in other_stmts.into_iter().enumerate() {
-            if i == 0 {
-                continue;
-            }
-            self.stmts.push(stmt);
-        }
-
-        // Remap and merge parent_to_child relationships
-        for (parent, children) in other_p2c {
-            if parent == Self::ROOT {
-                // Other's ROOT children → our ROOT children
-                let our_children = self.parent_to_child.entry(Self::ROOT).or_default();
-                for child in &children {
-                    let new_child = remap(*child);
-                    let pos = our_children.len();
-                    our_children.push(new_child);
-                    self.child_to_parent.insert(new_child, Self::ROOT);
-                    self.child_position.insert(new_child, pos);
-                }
-            } else {
-                let new_parent = remap(parent);
-                let new_children: Vec<CssTreeIdx> = children.iter().map(|c| remap(*c)).collect();
-                for &new_child in &new_children {
-                    self.child_to_parent.insert(new_child, new_parent);
-                }
-                self.parent_to_child.insert(new_parent, new_children);
-            }
-        }
-
-        // Remap child_position for non-ROOT children
-        for (child, pos) in other_pos {
-            if child == Self::ROOT {
-                continue;
-            }
-            let new_child = remap(child);
-            // Only insert if not already set (ROOT children were set above)
-            self.child_position.entry(new_child).or_insert(pos);
-        }
-
-        // Remap hidden set
-        for idx in other_hidden {
-            if idx != Self::ROOT {
-                self.hidden.insert(remap(idx));
-            }
-        }
-
-        // Return remapped ROOT children
-        other_root_children.iter().map(|c| remap(*c)).collect()
     }
 
     fn add_stmt_inner(&mut self, stmt: CssStmt) -> CssTreeIdx {

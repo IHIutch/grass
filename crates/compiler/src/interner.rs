@@ -1,132 +1,55 @@
-use lasso::{Spur, ThreadedRodeo};
+use lasso::{Rodeo, Spur};
 
-use std::cell::UnsafeCell;
-use std::collections::HashMap;
+use std::cell::RefCell;
 use std::fmt::{self, Display};
-use std::sync::LazyLock;
 
-// Global interner storage. Uses ThreadedRodeo for thread-safe interning.
-// Cross-thread InternedString compatibility is required for parallel module
-// evaluation: a Spur interned on one thread must resolve correctly on another.
-static STRINGS: LazyLock<ThreadedRodeo<Spur>> = LazyLock::new(ThreadedRodeo::default);
-
-// Thread-local cache for both interning and resolution.
-// Avoids DashMap overhead on the hot paths.
+// Global interner storage. Uses thread_local! to eliminate mutex overhead entirely.
+// Each thread gets its own Rodeo, which is sound because cargo test runs tests on
+// separate threads. In production (single-threaded compilation), there is exactly
+// one Rodeo instance with zero synchronization cost.
 thread_local! {
-    static LOCAL_CACHE: UnsafeCell<LocalCache> = UnsafeCell::new(LocalCache::new());
+    static STRINGS: RefCell<Rodeo<Spur>> = RefCell::new(Rodeo::default());
 }
 
-struct LocalCache {
-    /// Fast-path for get_or_intern: maps string content → Spur.
-    /// Avoids DashMap lookup for previously-seen strings on this thread.
-    intern_map: HashMap<&'static str, Spur>,
-    /// Fast-path for resolve: maps Spur index → &'static str.
-    /// Direct array access, no hashing needed.
-    resolve_ptrs: Vec<*const u8>,
-    resolve_lens: Vec<usize>,
-}
-
-impl LocalCache {
-    fn new() -> Self {
-        Self {
-            intern_map: HashMap::new(),
-            resolve_ptrs: Vec::new(),
-            resolve_lens: Vec::new(),
-        }
-    }
-
-    #[inline]
-    fn resolve(&self, idx: usize) -> Option<&'static str> {
-        if idx < self.resolve_ptrs.len() {
-            let ptr = self.resolve_ptrs[idx];
-            if !ptr.is_null() {
-                let len = self.resolve_lens[idx];
-                // SAFETY: ptr came from ThreadedRodeo's arena (static lifetime).
-                return Some(unsafe {
-                    std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len))
-                });
-            }
-        }
-        None
-    }
-
-    #[inline]
-    fn cache_resolved(&mut self, idx: usize, s: &'static str) {
-        if idx >= self.resolve_ptrs.len() {
-            self.resolve_ptrs.resize(idx + 1, std::ptr::null());
-            self.resolve_lens.resize(idx + 1, 0);
-        }
-        self.resolve_ptrs[idx] = s.as_ptr();
-        self.resolve_lens[idx] = s.len();
-    }
-}
-
-/// Resolve a Spur from the global ThreadedRodeo and return a 'static reference.
-#[inline]
-fn resolve_static(key: Spur) -> &'static str {
-    // SAFETY: ThreadedRodeo stores strings in stable arena memory that lives
-    // for the program's lifetime (static LazyLock). The arena memory is never
-    // deallocated or moved.
-    let resolved = STRINGS.resolve(&key);
-    unsafe { &*(resolved as *const str) }
-}
-
+/// Keys index a **thread-local** interning table (see `STRINGS` above).
+/// Ideally this type would be `!Send`/`!Sync` to make cross-thread misuse a
+/// compile error: moving a key to another thread resolves it against that
+/// thread's own (unrelated) table, silently yielding the wrong string or
+/// panicking. In practice `Unit::Unknown(InternedString)` is stored in
+/// `static LazyLock<...>` conversion tables (`crates/compiler/src/unit/conversion.rs`)
+/// that require `Send + Sync`, so a `!Send`/`!Sync` marker is not viable
+/// without restructuring those tables. Treat this doc comment as the
+/// enforcement instead: do not send an `InternedString` (or any type
+/// containing one) across threads and then resolve it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct InternedString(Spur);
 
 impl InternedString {
     pub fn get_or_intern<T: AsRef<str>>(s: T) -> Self {
-        LOCAL_CACHE.with(|cell| {
-            // SAFETY: thread-local, no concurrent access
-            let cache = unsafe { &mut *cell.get() };
-            let s_ref = s.as_ref();
-
-            // Fast path: check if already interned locally
-            if let Some(&key) = cache.intern_map.get(s_ref) {
-                return Self(key);
-            }
-
-            // Slow path: intern in global ThreadedRodeo
-            let key = STRINGS.get_or_intern(s_ref);
-            let idx = lasso::Key::into_usize(key);
-
-            // Cache the resolution
-            let stable = resolve_static(key);
-            cache.cache_resolved(idx, stable);
-            cache.intern_map.insert(stable, key);
-
-            Self(key)
-        })
+        STRINGS.with(|cell| Self(cell.borrow_mut().get_or_intern(s)))
     }
 
-    #[allow(dead_code)]
-    pub fn resolve(self) -> String {
-        self.resolve_ref().to_owned()
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(self) -> bool {
-        self.resolve_ref() == ""
-    }
-
-    pub fn resolve_ref<'a>(self) -> &'a str {
-        LOCAL_CACHE.with(|cell| {
-            // SAFETY: thread-local, no concurrent access
-            let cache = unsafe { &mut *cell.get() };
-            let idx = lasso::Key::into_usize(self.0);
-            if let Some(s) = cache.resolve(idx) {
-                return s;
-            }
-            // Cache miss — resolve from global and cache locally
-            let stable = resolve_static(self.0);
-            cache.cache_resolved(idx, stable);
-            stable
-        })
+    /// Resolve without copying.
+    ///
+    /// SAFETY invariants (why the returned reference is usable):
+    /// - lasso's `Rodeo` stores strings in stable arena memory that is never
+    ///   moved or freed while the `Rodeo` lives;
+    /// - the `Rodeo` lives in a `thread_local!`, destroyed only at thread exit;
+    /// - in practice, one compilation runs on one thread and does not stash
+    ///   this key or the resolved `&str` past that thread's lifetime (see the
+    ///   type-level doc comment above: this is a convention, not a
+    ///   compiler-enforced guarantee, since `InternedString` cannot be made
+    ///   `!Send` without breaking the `Unit` conversion tables). Callers must
+    ///   not stash the result in a `static`/leaked struct that outlives the
+    ///   thread, nor move an `InternedString` to another thread and resolve
+    ///   it there.
+    pub fn resolve_ref(self) -> &'static str {
+        STRINGS.with(|cell| unsafe { &*(cell.borrow().resolve(&self.0) as *const str) })
     }
 }
 
 impl Display for InternedString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.resolve_ref())
+        STRINGS.with(|cell| write!(f, "{}", cell.borrow().resolve(&self.0)))
     }
 }

@@ -1,5 +1,6 @@
 use std::{iter::Iterator, rc::Rc};
 
+use bumpalo::Bump;
 use codemap::{Span, Spanned};
 use compact_str::CompactString;
 
@@ -10,7 +11,10 @@ use crate::{
     value::{CalculationName, Number},
 };
 
-use super::{ArgumentInvocation, AstSupportsCondition, Interpolation, InterpolationPart};
+use super::{
+    ArgumentInvocation, AstSupportsCondition, Interpolation, InterpolationBuilder,
+    InterpolationPart,
+};
 
 /// Represented by the legacy `if($condition, $if-true, $if-false)` function
 #[derive(Debug, Clone)]
@@ -35,10 +39,10 @@ pub enum IfConditionAtom<'a> {
 #[derive(Debug, Clone)]
 pub enum IfCondition<'a> {
     Atom(IfConditionAtom<'a>),
-    Not(Box<IfCondition<'a>>, Span),
+    Not(&'a IfCondition<'a>, Span),
     And(Vec<IfCondition<'a>>),
     Or(Vec<IfCondition<'a>>),
-    Paren(Box<IfCondition<'a>>),
+    Paren(&'a IfCondition<'a>),
     /// The `else` keyword — always true
     Else,
 }
@@ -57,9 +61,9 @@ pub struct CssIfExpression<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ListExpr<'a> {
-    pub elems: Vec<Spanned<AstExpr<'a>>>,
+    pub elems: &'a [Spanned<AstExpr<'a>>],
     pub separator: ListSeparator,
     pub brackets: Brackets,
 }
@@ -85,8 +89,29 @@ pub struct InterpolatedFunction<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct AstSassMap<'a>(pub Vec<(Spanned<AstExpr<'a>>, AstExpr<'a>)>);
+/// A call to a CSS math function name (e.g. `min`, `sqrt`, `round`) that dart-sass
+/// treats as shadowable: a user-defined or module function of the same name takes
+/// precedence over the calculation at evaluation time (scope isn't known at parse
+/// time). Carries both parses of the same argument text so the evaluator can pick
+/// one without reparsing. `calc` and `clamp` use this as well, since
+/// user-defined functions with those names shadow the calculation syntax.
+#[derive(Debug, Clone)]
+pub struct CalculationWithFallbackExpr<'a> {
+    /// Lowercased function name, used to look up a possible override in scope.
+    pub name: Identifier,
+    /// The calculation node, evaluated when no override is found.
+    pub calculation: AstExpr<'a>,
+    /// The original calculation parse error, if the calculation syntax was
+    /// invalid. A user-defined function still shadows this error.
+    pub calculation_error: Option<(String, Span)>,
+    /// The same call parsed as an ordinary function invocation, used when an
+    /// override is found.
+    pub invocation: &'a ArgumentInvocation<'a>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AstSassMap<'a>(pub &'a [(Spanned<AstExpr<'a>>, AstExpr<'a>)]);
 
 #[derive(Debug, Clone)]
 pub struct BinaryOpExpr<'a> {
@@ -97,18 +122,25 @@ pub struct BinaryOpExpr<'a> {
     pub span: Span,
 }
 
+/// Arena-boxed to keep `AstExpr` within its size guard — `args: Vec<Self>` made
+/// this the largest inline variant even before a span field was needed.
+#[derive(Debug, Clone)]
+pub struct CalculationExpr<'a> {
+    pub name: CalculationName,
+    pub args: Vec<AstExpr<'a>>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub enum AstExpr<'a> {
     BinaryOp(&'a BinaryOpExpr<'a>),
     True,
     False,
-    Calculation {
-        name: CalculationName,
-        args: Vec<Self>,
-    },
+    Calculation(&'a CalculationExpr<'a>),
+    CalculationWithFallback(&'a CalculationWithFallbackExpr<'a>),
     Color(Rc<Color>),
     CssIf(&'a CssIfExpression<'a>),
-    FunctionCall(FunctionCallExpr<'a>),
+    FunctionCall(&'a FunctionCallExpr<'a>),
     If(&'a Ternary<'a>),
     InterpolatedFunction(&'a InterpolatedFunction<'a>),
     List(ListExpr<'a>),
@@ -138,7 +170,7 @@ impl<'a> StringExpr<'a> {
     fn quote_inner_text(
         text: &str,
         quote: char,
-        buffer: &mut Interpolation<'a>,
+        buffer: &mut InterpolationBuilder<'a>,
         // default=false
         is_static: bool,
     ) {
@@ -187,6 +219,7 @@ impl<'a> StringExpr<'a> {
         self,
         is_static: bool,
         preferred_quote: Option<char>,
+        arena: &'a Bump,
     ) -> Interpolation<'a> {
         if self.1 == QuoteKind::None {
             return self.0;
@@ -195,26 +228,26 @@ impl<'a> StringExpr<'a> {
         let quote = Self::best_quote(
             self.0.contents.iter().filter_map(|c| match c {
                 InterpolationPart::Expr(..) => None,
-                InterpolationPart::String(text) => Some(text.as_str()),
+                InterpolationPart::String(text) => Some(*text),
             }),
             preferred_quote,
         );
 
-        let mut buffer = Interpolation::new();
+        let mut buffer = InterpolationBuilder::new();
         buffer.add_char(quote);
 
-        for value in self.0.contents {
+        for value in self.0 {
             match value {
-                InterpolationPart::Expr(e) => buffer.add_expr(e),
+                InterpolationPart::Expr(e) => buffer.add_expr(e.clone()),
                 InterpolationPart::String(text) => {
-                    Self::quote_inner_text(&text, quote, &mut buffer, is_static);
+                    Self::quote_inner_text(text, quote, &mut buffer, is_static);
                 }
             }
         }
 
         buffer.add_char(quote);
 
-        buffer
+        buffer.finish(arena)
     }
 }
 
@@ -226,7 +259,8 @@ impl<'a> AstExpr<'a> {
     pub fn is_slash_operand(&self) -> bool {
         match self {
             Self::Number { .. } => true,
-            Self::Calculation { name, .. } => *name == CalculationName::Calc,
+            Self::Calculation(calc) => calc.name == CalculationName::Calc,
+            Self::CalculationWithFallback(calc) => calc.name.as_str() == "calc",
             Self::BinaryOp(binop) => binop.allows_slash,
             _ => false,
         }
@@ -252,12 +286,14 @@ mod size_tests {
     use super::*;
     use std::mem::size_of;
 
-    /// Verify AstExpr stays ≤ 64 bytes. If this fails, a new large variant
-    /// was added without boxing — check which variant grew and box it.
+    /// Verify AstExpr stays <= 40 bytes. FunctionCall was arena-allocated (Plan
+    /// 024), matching every other multi-field variant, dropping the enum from
+    /// 64 to 40 bytes. If this fails, a new large variant was added without
+    /// boxing/arena-refing it — check which variant grew and box it.
     #[test]
     fn ast_expr_size() {
         assert!(
-            size_of::<AstExpr>() <= 64,
+            size_of::<AstExpr>() <= 40,
             "AstExpr grew to {} bytes",
             size_of::<AstExpr>()
         );

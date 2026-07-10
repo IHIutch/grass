@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, hash::Hash};
+use std::{collections::VecDeque, hash::Hash, rc::Rc};
 
 use codemap::Span;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -65,7 +65,11 @@ pub(crate) struct ExtensionStore {
 
     /// A map from all simple selectors in extenders to the extensions that those
     /// extenders define.
-    extensions_by_extender: FxHashMap<SimpleSelector, Vec<Extension>>,
+    ///
+    /// `Rc`-shared so registering a compound selector with several simple
+    /// selectors bumps a refcount per selector instead of cloning the whole
+    /// `Extension`.
+    extensions_by_extender: FxHashMap<SimpleSelector, Vec<Rc<Extension>>>,
 
     /// A map from CSS selectors to the media query contexts they're defined in.
     ///
@@ -100,11 +104,6 @@ pub(crate) struct ExtensionStore {
 }
 
 impl ExtensionStore {
-    /// An `Extender` that contains no extensions and can have no extensions added.
-    // TODO: empty extender
-    #[allow(dead_code)]
-    const EMPTY: () = ();
-
     pub fn extend(
         selector: SelectorList,
         source: SelectorList,
@@ -200,7 +199,7 @@ impl ExtensionStore {
                 }
 
                 if let Some(exts) = self.extensions_by_extender.get(target) {
-                    extensions_to_extend.extend(exts.iter().cloned());
+                    extensions_to_extend.extend(exts.iter().map(|e| (**e).clone()));
                 }
 
                 if let Some(sels) = self.selectors.get(target) {
@@ -289,8 +288,7 @@ impl ExtensionStore {
                 if !extension.is_optional && !extension.is_original {
                     return Err((
                         format!(
-                            "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
-                            target
+                            "The target selector was not found.\nUse \"@extend {target} !optional\" to avoid this error."
                         ),
                         extension.span,
                     )
@@ -335,7 +333,7 @@ impl ExtensionStore {
                 if complex.components.len() == 1 {
                     Ok(complex.components.first().unwrap().as_compound().clone())
                 } else {
-                    Err((format!("Can't extend complex selector {}.", complex), span).into())
+                    Err((format!("Can't extend complex selector {complex}."), span).into())
                 }
             })
             .collect::<SassResult<Vec<CompoundSelector>>>()?;
@@ -357,7 +355,7 @@ impl ExtensionStore {
                     .map(|simple| (simple, extenders.clone()))
                     .collect();
 
-            current = store.extend_list(current, Some(&extensions), &None)?;
+            current = store.extend_list(current, Some(&extensions), None)?;
         }
         Ok(current)
     }
@@ -374,7 +372,7 @@ impl ExtensionStore {
         &mut self,
         list: SelectorList,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<SelectorList> {
         // This could be written more simply using Vec<Vec<T>>, but we want to avoid
         // any allocations in the common case where no extends apply.
@@ -414,7 +412,7 @@ impl ExtensionStore {
         &mut self,
         complex: &ComplexSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // The complex selectors that each compound selector in `complex.components`
         // can expand to.
@@ -540,7 +538,7 @@ impl ExtensionStore {
         &mut self,
         compound: &CompoundSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
         in_original: bool,
     ) -> SassResult<Option<Vec<ComplexSelector>>> {
         // If there's more than one target and they all need to match, we track
@@ -598,7 +596,7 @@ impl ExtensionStore {
             if let Some(states) = options.first() {
                 for state in states {
                     state.assert_compatible_media_context(media_query_context)?;
-                    result.push(state.extender.clone());
+                    result.push(state.extender.as_ref().clone());
                 }
             }
             return Ok(Some(result));
@@ -637,18 +635,22 @@ impl ExtensionStore {
                 // modified, but we don't have to do any unification.
                 first = false;
 
-                vec![vec![ComplexSelectorComponent::Compound(CompoundSelector {
-                    components: path
-                        .iter()
-                        .flat_map(|state| {
-                            debug_assert!(state.extender.components.len() == 1);
-                            match state.extender.components.last() {
-                                Some(ComplexSelectorComponent::Compound(c)) => c.components.clone(),
-                                Some(..) | None => unreachable!(),
-                            }
-                        })
-                        .collect(),
-                })]]
+                vec![vec![ComplexSelectorComponent::Compound(Rc::new(
+                    CompoundSelector {
+                        components: path
+                            .iter()
+                            .flat_map(|state| {
+                                debug_assert!(state.extender.components.len() == 1);
+                                match state.extender.components.last() {
+                                    Some(ComplexSelectorComponent::Compound(c)) => {
+                                        c.components.clone()
+                                    }
+                                    Some(..) | None => unreachable!(),
+                                }
+                            })
+                            .collect(),
+                    },
+                ))]]
             } else {
                 let mut to_unify: VecDeque<Vec<ComplexSelectorComponent>> = VecDeque::new();
                 let mut originals: Vec<SimpleSelector> = Vec::new();
@@ -666,11 +668,11 @@ impl ExtensionStore {
                     }
                 }
                 if !originals.is_empty() {
-                    to_unify.push_front(vec![ComplexSelectorComponent::Compound(
+                    to_unify.push_front(vec![ComplexSelectorComponent::Compound(Rc::new(
                         CompoundSelector {
                             components: originals,
                         },
-                    )]);
+                    ))]);
                 }
 
                 match unify_complex(Vec::from(to_unify)) {
@@ -714,7 +716,7 @@ impl ExtensionStore {
         &mut self,
         simple: &SimpleSelector,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
         targets_used: &mut FxHashSet<SimpleSelector>,
     ) -> SassResult<Option<Vec<Vec<Extension>>>> {
         if let SimpleSelector::Pseudo(pseudo) = simple {
@@ -750,7 +752,7 @@ impl ExtensionStore {
         &mut self,
         pseudo: Pseudo,
         extensions: Option<&FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>>,
-        media_query_context: &Option<Vec<CssMediaQuery>>,
+        media_query_context: Option<&Vec<CssMediaQuery>>,
     ) -> SassResult<Option<Vec<Pseudo>>> {
         let extended = self.extend_list(
             pseudo
@@ -774,7 +776,7 @@ impl ExtensionStore {
         let mut complexes = if pseudo.normalized_name() == "not"
             && !pseudo
                 .selector
-                .clone()
+                .as_deref()
                 .unwrap()
                 .components
                 .iter()
@@ -860,7 +862,7 @@ impl ExtensionStore {
         // In order to support those browsers, we break up the contents of a `:not`
         // unless it originally contained a selector list.
         if pseudo.normalized_name() == "not"
-            && pseudo.selector.clone().unwrap().components.len() == 1
+            && pseudo.selector.as_deref().unwrap().components.len() == 1
         {
             let result = complexes
                 .into_iter()
@@ -916,9 +918,11 @@ impl ExtensionStore {
         let specificity = Some(*self.source_specificity.get(&simple).unwrap_or(&0_i32));
         Extension::one_off(
             ComplexSelector::new(
-                vec![ComplexSelectorComponent::Compound(CompoundSelector {
-                    components: vec![simple],
-                })],
+                vec![ComplexSelectorComponent::Compound(Rc::new(
+                    CompoundSelector {
+                        components: vec![simple],
+                    },
+                ))],
                 false,
             ),
             specificity,
@@ -935,7 +939,10 @@ impl ExtensionStore {
         };
         let specificity = Some(self.source_specificity_for(&compound));
         Extension::one_off(
-            ComplexSelector::new(vec![ComplexSelectorComponent::Compound(compound)], false),
+            ComplexSelector::new(
+                vec![ComplexSelectorComponent::Compound(Rc::new(compound))],
+                false,
+            ),
             specificity,
             true,
             self.span,
@@ -1016,7 +1023,7 @@ impl ExtensionStore {
             // trimmed, and thus that if there are two identical selectors only one is
             // trimmed.
             let should_continue = result.iter().any(|complex2| {
-                complex2.min_specificity() >= max_specificity
+                complex2.max_specificity() >= max_specificity
                     && complex2.is_super_selector(complex1)
             });
             if should_continue {
@@ -1024,7 +1031,7 @@ impl ExtensionStore {
             }
 
             let should_continue = selectors.iter().take(i).any(|complex2| {
-                complex2.min_specificity() >= max_specificity
+                complex2.max_specificity() >= max_specificity
                     && complex2.is_super_selector(complex1)
             });
             if should_continue {
@@ -1052,20 +1059,20 @@ impl ExtensionStore {
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<ExtendedSelector> {
         if !selector.is_invisible() {
-            for complex in selector.components.clone() {
-                self.originals.insert(&complex);
+            for complex in &selector.components {
+                self.originals.insert(complex);
             }
         }
 
         if !self.extensions.is_empty() {
-            selector = self.extend_list(selector, None, media_query_context)?;
+            selector = self.extend_list(selector, None, media_query_context.as_ref())?;
         }
         let extended_selector = ExtendedSelector::new(selector.clone());
         if let Some(media_query_context) = media_query_context.clone() {
             self.media_contexts
                 .insert(extended_selector.clone(), media_query_context);
         }
-        self.register_selector(selector, &extended_selector);
+        self.register_selector(&selector, &extended_selector);
         Ok(extended_selector)
     }
 
@@ -1076,30 +1083,30 @@ impl ExtensionStore {
     pub fn register_existing_selector(&mut self, selector: &ExtendedSelector) -> SassResult<()> {
         let mut list = selector.as_selector_list().clone();
         if !list.is_invisible() {
-            for complex in list.components.clone() {
-                self.originals.insert(&complex);
+            for complex in &list.components {
+                self.originals.insert(complex);
             }
         }
         // Apply pending extensions to this selector (e.g., @extend a before load-css)
         if !self.extensions.is_empty() {
-            list = self.extend_list(list, None, &None)?;
+            list = self.extend_list(list, None, None)?;
             selector.set_inner(list.clone());
         }
-        self.register_selector(list, selector);
+        self.register_selector(&list, selector);
         Ok(())
     }
 
     /// Registers the `SimpleSelector`s in `list` to point to `selector` in
     /// `self.selectors`.
-    fn register_selector(&mut self, list: SelectorList, selector: &ExtendedSelector) {
-        for complex in list.components {
-            for component in complex.components {
+    fn register_selector(&mut self, list: &SelectorList, selector: &ExtendedSelector) {
+        for complex in &list.components {
+            for component in &complex.components {
                 if let ComplexSelectorComponent::Compound(component) = component {
-                    for simple in component.components {
+                    for simple in &component.components {
                         // PERF: we compute the hash twice, which isn't great, but we avoid a superfluous
                         // clone in cases where we have already seen a simple selector (common in
                         // scenarios in which there is a lot of nesting)
-                        if let Some(entry) = self.selectors.get_mut(&simple) {
+                        if let Some(entry) = self.selectors.get_mut(simple) {
                             entry.insert(selector.clone());
                         } else {
                             self.selectors
@@ -1113,7 +1120,7 @@ impl ExtensionStore {
                             ..
                         }) = simple
                         {
-                            self.register_selector(*simple_selector, selector);
+                            self.register_selector(simple_selector, selector);
                         }
                     }
                 }
@@ -1148,17 +1155,19 @@ impl ExtensionStore {
 
         let mut new_extensions: Option<FxIndexMap<ComplexSelector, Extension>> = None;
 
+        // Built once and `Rc::clone`d per complex selector below, instead of
+        // deep-cloning the whole media-query Vec for every one.
+        let media_context_rc: Option<Rc<Vec<CssMediaQuery>>> = media_context.clone().map(Rc::new);
+
         for complex in extender.components {
             let state = Extension {
-                specificity: complex.max_specificity(),
-                extender: complex.clone(),
+                specificity: complex.min_specificity(),
+                extender: Rc::new(complex.clone()),
                 target: Some(target.clone()),
                 span,
-                media_context: media_context.clone(),
+                media_context: media_context_rc.clone(),
                 is_optional: extend.is_optional,
                 is_original: false,
-                left: None,
-                right: None,
             };
 
             let sources = self
@@ -1177,17 +1186,20 @@ impl ExtensionStore {
 
             sources.insert(complex.clone(), state.clone());
 
-            for simple in simple_selectors_in_complex(&complex) {
+            // Shared across every simple selector below so pushing into
+            // `extensions_by_extender` is a refcount bump, not a full clone.
+            let state_rc = Rc::new(state.clone());
+            simple_selectors_in_complex(&complex, &mut |simple| {
                 self.extensions_by_extender
                     .entry(simple.clone())
                     .or_insert_with(Vec::new)
-                    .push(state.clone());
+                    .push(Rc::clone(&state_rc));
                 // Only source specificity for the original selector is relevant.
                 // Selectors generated by `@extend` don't get new specificity.
                 self.source_specificity
                     .entry(simple.clone())
-                    .or_insert_with(|| complex.max_specificity());
-            }
+                    .or_insert_with(|| complex.min_specificity());
+            });
 
             if selectors.is_some() || had_existing_extensions {
                 new_extensions
@@ -1206,7 +1218,9 @@ impl ExtensionStore {
         new_extensions_by_target.insert(target.clone(), new_extensions);
 
         if let Some(existing_extensions) = if had_existing_extensions {
-            self.extensions_by_extender.get(target).cloned()
+            self.extensions_by_extender
+                .get(target)
+                .map(|v| v.iter().map(|e| (**e).clone()).collect::<Vec<Extension>>())
         } else {
             None
         } {
@@ -1248,21 +1262,22 @@ impl ExtensionStore {
             FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>,
         > = None;
         for extension in extensions {
-            let mut sources = self
-                .extensions
-                .get(&extension.target.clone().unwrap())
-                .unwrap()
-                .clone();
+            let target = extension.target.as_ref().unwrap();
+            let mut sources = self.extensions.remove(target).unwrap();
 
             // `extend_existing_selectors` would have thrown already.
-            let selectors: Vec<ComplexSelector> = if let Some(v) = self.extend_complex(
+            let selectors: Vec<ComplexSelector> = match self.extend_complex(
                 &extension.extender,
                 Some(new_extensions),
-                &extension.media_context,
+                extension.media_context.as_deref(),
             )? {
-                v
-            } else {
-                continue;
+                Some(v) => v,
+                None => {
+                    // No expansion happened; `sources` is unmodified, so put it back
+                    // exactly as taken.
+                    self.extensions.insert(target.clone(), sources);
+                    continue;
+                }
             };
             // todo: when we add error handling, this error is special
             /*
@@ -1274,7 +1289,7 @@ impl ExtensionStore {
             }
             */
 
-            let contains_extension = selectors.first() == Some(&extension.extender);
+            let contains_extension = selectors.first() == Some(extension.extender.as_ref());
 
             let mut first = true;
             for complex in selectors {
@@ -1293,29 +1308,31 @@ impl ExtensionStore {
                 } else {
                     sources.insert(complex.clone(), with_extender.clone());
 
+                    // Shared across every simple selector below so pushing into
+                    // `extensions_by_extender` is a refcount bump, not a full clone.
+                    let with_extender_rc = Rc::new(with_extender.clone());
                     for component in &complex.components {
                         if let ComplexSelectorComponent::Compound(compound) = component {
                             for simple in &compound.components {
                                 self.extensions_by_extender
                                     .entry(simple.clone())
                                     .or_insert_with(Vec::new)
-                                    .push(with_extender.clone());
+                                    .push(Rc::clone(&with_extender_rc));
                             }
                         }
                     }
 
-                    if new_extensions.contains_key(&extension.target.clone().unwrap()) {
+                    if new_extensions.contains_key(target) {
                         additional_extensions
                             .get_or_insert_with(FxHashMap::default)
-                            .entry(extension.target.clone().unwrap())
+                            .entry(target.clone())
                             .or_insert_with(FxIndexMap::default)
                             .insert(complex.clone(), with_extender);
                     }
                 }
             }
             // Write the modified sources back to self.extensions.
-            self.extensions
-                .insert(extension.target.clone().unwrap(), sources);
+            self.extensions.insert(target.clone(), sources);
         }
         Ok(additional_extensions)
     }
@@ -1327,20 +1344,21 @@ impl ExtensionStore {
         new_extensions: &FxHashMap<SimpleSelector, FxIndexMap<ComplexSelector, Extension>>,
     ) -> SassResult<()> {
         for selector in selectors {
-            let old_value = selector.clone().into_selector().0;
-            selector.set_inner(self.extend_list(
-                old_value.clone(),
+            let media_query_context = self.media_contexts.get(&selector).cloned();
+            let old_value = selector.as_selector_list().clone();
+            let new_value = self.extend_list(
+                old_value,
                 Some(new_extensions),
-                &self.media_contexts.get(&selector).cloned(),
-            )?);
+                media_query_context.as_ref(),
+            )?;
 
             // If no extends actually happened (for example because unification
             // failed), we don't need to re-register the selector.
-            let selector_as_selector = selector.clone().into_selector().0;
-            if old_value == selector_as_selector {
+            if new_value == *selector.as_selector_list() {
                 continue;
             }
-            self.register_selector(selector_as_selector, &selector);
+            selector.set_inner(new_value.clone());
+            self.register_selector(&new_value, &selector);
         }
         Ok(())
     }
@@ -1349,25 +1367,23 @@ impl ExtensionStore {
 /// Returns all simple selectors in `complex`, including those nested inside
 /// pseudo-selectors like `:is()`, `:matches()`, `:not()`, etc.
 /// Matches dart-sass's `_simpleSelectors` helper.
-fn simple_selectors_in_complex(complex: &ComplexSelector) -> Vec<SimpleSelector> {
-    let mut result = Vec::new();
+fn simple_selectors_in_complex(complex: &ComplexSelector, f: &mut impl FnMut(&SimpleSelector)) {
     for component in &complex.components {
         if let ComplexSelectorComponent::Compound(compound) = component {
             for simple in &compound.components {
-                result.push(simple.clone());
+                f(simple);
                 if let SimpleSelector::Pseudo(Pseudo {
                     selector: Some(sel),
                     ..
                 }) = simple
                 {
                     for inner_complex in &sel.components {
-                        result.extend(simple_selectors_in_complex(inner_complex));
+                        simple_selectors_in_complex(inner_complex, f);
                     }
                 }
             }
         }
     }
-    result
 }
 
 /// Returns whether a component list has adjacent combinators (two combinators

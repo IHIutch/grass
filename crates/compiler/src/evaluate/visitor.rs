@@ -1,12 +1,12 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fmt,
     iter::FromIterator,
     mem,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
 use codemap::{CodeMap, Span, Spanned};
@@ -18,15 +18,20 @@ type FxIndexSet<V> = indexmap::IndexSet<V, FxBuildHasher>;
 use crate::{
     ast::*,
     builtin::{
+        global_builtin_message,
         meta::if_arguments,
         modules::{
             declare_module_color, declare_module_list, declare_module_map, declare_module_math,
             declare_module_meta, declare_module_selector, declare_module_string, Module,
         },
-        GLOBAL_FUNCTIONS,
+        BuiltinFn, GLOBAL_FUNCTIONS,
     },
-    common::{unvendor, BinaryOp, Identifier, ListSeparator, QuoteKind, UnaryOp},
-    error::{SassError, SassResult},
+    common::{
+        unvendor, BinaryOp, Identifier, ListSeparator, NamedArgsView, QuoteKind, SmallOrderedMap,
+        UnaryOp,
+    },
+    error::SassResult,
+    importer::{ImportResolution, ImportSource},
     interner::InternedString,
     lexer::Lexer,
     parse::{
@@ -37,12 +42,14 @@ use crate::{
         ComplexSelectorComponent, ExtendRule, ExtendedSelector, Extension, ExtensionStore,
         SelectorList, SelectorParser, SimpleSelector,
     },
+    serializer::serialize_number,
+    unit::Unit,
     utils::{to_sentence, trim_ascii},
     value::{
         ArgList, CalculationArg, CalculationName, Number, SassCalculation, SassFunction, SassMap,
         SassNumber, UserDefinedFunction, Value,
     },
-    ContextFlags, InputSyntax, Options,
+    ContextFlags, Deprecation, InputSyntax, Options,
 };
 
 use super::{
@@ -50,6 +57,91 @@ use super::{
     css_tree::{CssTree, CssTreeIdx},
     env::Environment,
 };
+
+/// Maximum nesting depth allowed for recursive user-defined
+/// function/mixin/content-block invocation during evaluation — see
+/// `Visitor::run_user_defined_callable`. This is separate from, and much
+/// tighter than, `MAX_PARSER_RECURSION_DEPTH` (parse/stylesheet.rs): a
+/// recursive callable's evaluation frame (argument binding, scope setup,
+/// the full `visit_stmt`/`visit_expr` chain for its body, the closure passed
+/// to `run_user_defined_callable`) costs far more stack per level than a
+/// parser recursion step, so the same constant would force the worse of the
+/// two everywhere.
+///
+/// Measured unguarded crash boundaries for callable recursion (a
+/// `sum($n)`-shaped function — `@if $n <= 0 { @return 0 } @return $n +
+/// sum($n - 1)`, no tail-call elimination since Sass has none — on an
+/// explicit small-stack thread):
+///
+///   - release build, 1 MiB stack (napi's real worker-thread size, and the
+///     only stack size this recursion actually runs on in production —
+///     napi/CLI/wasm all ship release builds): survives 120, crashes at 128.
+///   - debug build, 2 MiB stack (cargo test's actual default thread stack):
+///     survives 56, crashes at 64.
+///
+/// These two numbers are in direct tension with dart-sass compatibility:
+/// `sum(40)` and `sum(100)`-style bounded recursion compile in every other
+/// Sass implementation and must compile here too (grass previously rejected
+/// `sum(40)`, a confirmed regression — see solo todo #123 round-2 review).
+/// Supporting `sum(100)` requires a guard of at least 101, which:
+///
+///   - leaves only ~1.2x margin under the release+1 MiB *crash* point (128)
+///     and is 8% below the highest depth directly confirmed safe there (120)
+///     — nowhere near a full 2x margin, because 128 is the actual ceiling in
+///     the one environment this code ships on, not an arbitrary choice.
+///   - has NO margin under debug+2 MiB — that environment's own unguarded
+///     ceiling (64) is below what dart-sass-compatible recursion needs, so
+///     no guard value can be both dart-sass-compatible and safe on a 2 MiB
+///     debug stack. debug+2 MiB is never a deployment target (only
+///     `cargo test`'s own process), so this constant is sized against the
+///     real release+1 MiB deployment ceiling instead. The tests in
+///     crates/lib/tests/deep_nesting.rs that exercise callable recursion
+///     near this limit run on an explicitly larger stack for exactly this
+///     reason — see the comment there.
+///
+/// 110 sits 10 levels below the confirmed-safe 120 in release+1 MiB (real,
+/// measured margin, short of 2x) and 9 above the 101 `sum(100)` needs.
+const MAX_CALLABLE_RECURSION_DEPTH: usize = 110;
+
+/// Guards against stack overflow from plain style-rule nesting (`a { b { c {
+/// ... } } }`), independent of `MAX_CALLABLE_RECURSION_DEPTH` above (which
+/// only guards function/mixin/content-block invocation). `visit_ruleset`
+/// recurses through `with_parent` -> `visit_stmt` for every nested `RuleSet`
+/// child with no bound of its own — see solo todo #196, filed because todo
+/// #148 wrapped the *parser's* recursion guard in `crate::stack::maybe_grow`
+/// and raised `MAX_PARSER_RECURSION_DEPTH`, but the full `grass::from_string`
+/// pipeline (parse + evaluate + serialize) then crashed with a genuine,
+/// unguarded stack overflow during evaluation at depths well below the new
+/// parser limit, because this chokepoint was never protected.
+///
+/// Measured unguarded full-pipeline crash boundaries for `a{a{a{...}}}`-shaped
+/// input (todo #196, with the parser's own stack growth already active):
+///
+///   - release-napi profile, 1 MiB stack (napi's real worker-thread size, the
+///     actual napi deployment ceiling): survives 370, crashes at 380.
+///   - debug build, 2 MiB stack (cargo test's own default thread stack):
+///     survives 260, crashes at 270.
+///
+/// This constant's chokepoint (`visit_ruleset`) is wrapped in the same
+/// `crate::stack::maybe_grow` helper todo #148 added for the parser, which
+/// moves the crash boundary out dramatically (measured, todo #196, both
+/// limits temporarily raised to isolate this chokepoint): confirmed safe
+/// (no crash, sub-second) at depth 1500 on release-napi/1 MiB and at depth
+/// 1024 on debug/2 MiB — both far past the old ~380/~270 unguarded crash
+/// points above. A stack overflow reappears somewhere between depth 12,000
+/// (confirmed safe, though ~46s — compile time, not stack safety, is the
+/// practical limit that far out) and depth 15,000 (crashes) on
+/// release-napi/1 MiB; that reappearance was not root-caused (time-boxed —
+/// it's far outside any depth a real stylesheet would use, and may be an
+/// entirely different unguarded recursion, e.g. recursive `Drop` of the
+/// nested AST/CssTree, not this chokepoint).
+///
+/// 1024 is chosen with over 10x margin under the reappeared ~12-15k crash
+/// zone — well past this project's usual ~30% convention, because the
+/// guarded boundary is so much higher than the unguarded one that matching
+/// dart-sass 1.97.3's own ~450-500 level tolerance (with headroom, not bare
+/// parity) was the real binding choice, not the crash point.
+const MAX_STYLE_RULE_RECURSION_DEPTH: usize = 1024;
 
 /// Result of evaluating an if() condition.
 /// Sass atoms evaluate to True/False; CSS atoms remain as CSS.
@@ -86,52 +178,34 @@ fn condition_has_raw(cond: &IfCondition<'static>) -> bool {
 /// Unwrap a Paren wrapper — used when simplifying And/Or to a single operand.
 fn unwrap_paren(cond: IfCondition<'static>) -> IfCondition<'static> {
     match cond {
-        IfCondition::Paren(inner) => *inner,
+        IfCondition::Paren(inner) => inner.clone(),
         other => other,
     }
 }
 
 pub(crate) trait UserDefinedCallable {
-    #[allow(dead_code)]
-    fn name(&self) -> Identifier;
     fn arguments(&self) -> &ArgumentDeclaration<'static>;
 }
 
 impl UserDefinedCallable for AstFunctionDecl<'static> {
-    fn name(&self) -> Identifier {
-        self.name.node
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.arguments
     }
 }
 
 impl UserDefinedCallable for Rc<AstFunctionDecl<'static>> {
-    fn name(&self) -> Identifier {
-        self.name.node
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.arguments
     }
 }
 
 impl UserDefinedCallable for AstMixin<'static> {
-    fn name(&self) -> Identifier {
-        self.name
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.args
     }
 }
 
 impl UserDefinedCallable for Rc<CallableContentBlock> {
-    fn name(&self) -> Identifier {
-        Identifier::from("@content")
-    }
-
     fn arguments(&self) -> &ArgumentDeclaration<'static> {
         &self.content.args
     }
@@ -139,8 +213,27 @@ impl UserDefinedCallable for Rc<CallableContentBlock> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CallableContentBlock {
+    // Stored owned rather than as `&'static AstContentBlock<'static>`: doing so
+    // would require `visit_include_stmt`'s `include_stmt` parameter (and its
+    // whole dispatch chain back through `visit_stmt_ref`) to be typed as a
+    // genuinely `'static` reference rather than the anonymous elided lifetime
+    // used throughout the visitor, which is out of scope for this pass. The
+    // clone here is bounded by the mixin's declared-argument count, not by
+    // call/loop-iteration count, unlike the `ArgumentInvocation` clones this
+    // plan targets.
     content: AstContentBlock<'static>,
     env: Environment,
+}
+
+/// Key for `Visitor::import_cache`. A real filesystem path and an
+/// importer-supplied canonical URL string live in separate variants so a
+/// `scheme:foo`-style canonical URL can never collide with (and shadow) a
+/// real file path that happens to have the same text — see
+/// `ImportSource::Resolved`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImportKey {
+    Path(PathBuf),
+    Url(String),
 }
 
 /// Evaluation context of the current execution
@@ -155,6 +248,18 @@ pub struct Visitor<'a> {
     pub(crate) original_selector: Option<SelectorList>,
     // avoid emitting duplicate warnings for the same span
     pub(crate) warnings_emitted: FxHashSet<Span>,
+    // avoid emitting duplicate deprecation warnings for the same deprecation + span. This
+    // matters in practice: a deprecation site inside a function/mixin body can be evaluated
+    // many times (e.g. once per @each iteration). This is the fast-path check in
+    // `emit_deprecation` — first-time call sites stop here without ever building a message.
+    pub(crate) deprecation_warnings_emitted: FxHashSet<(Deprecation, Span)>,
+    // Second-level dedup, matching dart-sass's `_warningsEmitted` key of (message, span):
+    // a call site already recorded above that's revisited with a DIFFERENT message (e.g.
+    // bogus-combinators' interpolated selector text, or the same source line evaluated with
+    // different operands across loop iterations) must still warn again. Only consulted once
+    // a (deprecation, span) pair has already fired once, so the common one-shot case above
+    // never pays for this.
+    pub(crate) deprecation_messages_emitted: FxHashSet<(Span, String)>,
     pub(crate) media_queries: Option<Vec<MediaQuery>>,
     pub(crate) media_query_sources: Option<FxIndexSet<MediaQuery>>,
     pub(crate) extender: ExtensionStore,
@@ -212,19 +317,45 @@ pub struct Visitor<'a> {
     pub(crate) arena: &'a bumpalo::Bump,
     // todo: remove
     empty_span: Span,
-    import_cache: FxHashMap<PathBuf, StyleSheet<'static>>,
+    import_cache: FxHashMap<ImportKey, StyleSheet<'static>>,
     /// As a simple heuristic, we don't cache the results of an import unless it
     /// has been seen in the past. In the majority of cases, files are imported
     /// at most once.
     files_seen: FxHashSet<PathBuf>,
-    /// Cache for resolved import paths, keyed by (context_dir, requested path, for_import flag).
-    /// Avoids redundant filesystem probing for the same import path from the same context.
-    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<PathBuf>>>,
+    /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
+    /// flag). Avoids redundant importer calls and filesystem probing for the same import path
+    /// from the same context without conflating files that share a directory.
+    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<ImportSource>>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
+    /// Cache of directory listings, used to batch existence probes for many
+    /// import candidates sharing the same parent directory into a single
+    /// directory read. Wrapped in `RefCell` so it can be populated from the
+    /// `&self`-only candidate-resolution helpers. `None` means the directory
+    /// couldn't be listed (or the embedder's `Fs` doesn't support batching).
+    dir_listing_cache: RefCell<FxHashMap<PathBuf, Option<Rc<crate::fs::DirListing>>>>,
+    /// Cache of parsed argument declarations for closure-backed
+    /// (`BuiltinFn::Dynamic`) custom functions, keyed by their raw `(...)`
+    /// signature text. Parsing happens lazily against this `Visitor`'s own
+    /// `arena`/`map` (see `parse_dynamic_signature`), so the cache lives
+    /// here rather than on `Builtin`/`Options` — a `Builtin` can outlive
+    /// any single compilation (e.g. a reused `Options` across `--watch`
+    /// recompiles), but the parsed declaration must not outlive the arena
+    /// it borrows from.
+    dynamic_signature_cache: FxHashMap<Arc<str>, Rc<ArgumentDeclaration<'static>>>,
+    /// Nesting depth of user-defined function/mixin/content-block invocations.
+    /// Guards against stack overflow from unbounded recursion (e.g. a
+    /// function that calls itself with no terminating `@if`); see
+    /// `run_user_defined_callable`.
+    recursion_depth: usize,
+    /// Nesting depth of plain style-rule bodies (`a { b { c { ... } } }`).
+    /// This is a *separate* recursion source from `recursion_depth` above —
+    /// callable invocation and style-rule nesting can each contribute depth
+    /// independently (a mixin body that nests style rules pays into both) —
+    /// see `MAX_STYLE_RULE_RECURSION_DEPTH` and solo todo #196.
+    style_rule_recursion_depth: usize,
 }
 
-#[allow(dead_code)]
 impl<'a> Visitor<'a> {
     pub fn new(
         path: &Path,
@@ -246,6 +377,8 @@ impl<'a> Visitor<'a> {
             original_selector: None,
             flags,
             warnings_emitted: FxHashSet::default(),
+            deprecation_warnings_emitted: FxHashSet::default(),
+            deprecation_messages_emitted: FxHashSet::default(),
             media_queries: None,
             media_query_sources: None,
             env: Environment::new(),
@@ -281,6 +414,10 @@ impl<'a> Visitor<'a> {
             files_seen: FxHashSet::default(),
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
+            dir_listing_cache: RefCell::new(FxHashMap::default()),
+            dynamic_signature_cache: FxHashMap::default(),
+            recursion_depth: 0,
+            style_rule_recursion_depth: 0,
         }
     }
 
@@ -299,94 +436,50 @@ impl<'a> Visitor<'a> {
         result
     }
 
-    /// Pre-parse all `@use`/`@forward` dependencies recursively before evaluation.
-    /// This front-loads all parsing and CodeMap mutations, enabling the evaluation
-    /// phase to run without modifying the CodeMap. Pre-parsed stylesheets are
-    /// stored in `import_cache` so `import_like_node` returns them instantly.
-    pub fn pre_parse_dependencies(&mut self, entry: &StyleSheet<'static>) -> SassResult<()> {
-        let mut to_visit: std::collections::VecDeque<(PathBuf, PathBuf)> =
-            std::collections::VecDeque::new();
-
-        // Collect @use/@forward URLs from the entry stylesheet
-        Self::collect_dep_urls(entry, &mut to_visit);
-
-        while let Some((url, parent_path)) = to_visit.pop_front() {
-            // Skip builtin modules
-            if url.to_string_lossy().starts_with("sass:") {
-                continue;
-            }
-
-            // Resolve the URL relative to the parent path
-            let old_import_path = mem::replace(&mut self.current_import_path, parent_path);
-
-            let resolved = match self.find_import(&url, false, self.empty_span)? {
-                Some(p) => p,
-                None => {
-                    self.current_import_path = old_import_path;
-                    continue; // Will be caught as error during evaluation
-                }
-            };
-            let canonical = self.canonicalize(&resolved);
-
-            self.current_import_path = old_import_path;
-
-            // Skip if already parsed
-            if self.import_cache.contains_key(&canonical) {
-                continue;
-            }
-
-            // Read the file
-            let content = match self.options.fs.read(&canonical) {
-                Ok(c) => c,
-                Err(_) => continue, // Will be caught during evaluation
-            };
-            let content = match String::from_utf8(content) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            // Add to CodeMap and parse
-            let file = self
-                .map
-                .add_file(canonical.to_string_lossy().into(), content);
-            let empty_span = file.span.subspan(0, 0);
-            let lexer = Lexer::new_from_file(&file);
-
-            let stylesheet = match self.parse_file(lexer, &canonical, empty_span) {
-                Ok(s) => s,
-                Err(_) => continue, // Will be caught during evaluation
-            };
-
-            // Collect deps from this stylesheet before caching it
-            Self::collect_dep_urls(&stylesheet, &mut to_visit);
-
-            // Cache in import_cache so import_like_node returns it directly
-            self.import_cache.insert(canonical.clone(), stylesheet);
-            self.files_seen.insert(canonical);
+    /// Cached directory listing, used to batch existence probes for many
+    /// import candidates in the same directory into a single directory read.
+    /// Works from `&self` (via `RefCell`) so it can be used inside the
+    /// `&self`-only candidate-resolution helpers in `find_import_uncached`.
+    fn dir_listing(&self, dir: &Path) -> Option<Rc<crate::fs::DirListing>> {
+        if let Some(cached) = self.dir_listing_cache.borrow().get(dir) {
+            return cached.clone();
         }
-
-        Ok(())
+        let listing = self.options.fs.dir_listing(dir).map(Rc::new);
+        self.dir_listing_cache
+            .borrow_mut()
+            .insert(dir.to_path_buf(), listing.clone());
+        listing
     }
 
-    /// Extract @use/@forward URLs from a stylesheet's body and add them
-    /// to the work queue with the stylesheet's URL as parent path.
-    fn collect_dep_urls(
-        stylesheet: &StyleSheet<'static>,
-        queue: &mut std::collections::VecDeque<(PathBuf, PathBuf)>,
-    ) {
-        let parent = stylesheet.url.clone();
-        for &idx in stylesheet.uses.iter().chain(stylesheet.forwards.iter()) {
-            if idx < stylesheet.body.len() {
-                match &stylesheet.body[idx] {
-                    AstStmt::Use(rule) => {
-                        queue.push_back((rule.url.clone(), parent.clone()));
-                    }
-                    AstStmt::Forward(rule) => {
-                        queue.push_back((rule.url.clone(), parent.clone()));
-                    }
-                    _ => {}
-                }
-            }
+    /// Like `self.options.fs.is_file(path)`, but consults the cached
+    /// directory listing first to avoid a filesystem call when existence (or
+    /// absence) can be proven from an already-read directory listing. Falls
+    /// back to a direct `is_file` call whenever the listing is unavailable or
+    /// ambiguous (symlinks, case-only variants) — see `DirListing::probe_is_file`.
+    fn is_file_fast(&self, path: &Path) -> bool {
+        let (dir, name) = match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) => (dir, name),
+            _ => return self.options.fs.is_file(path),
+        };
+        match self.dir_listing(dir) {
+            Some(listing) => listing
+                .probe_is_file(name)
+                .unwrap_or_else(|| self.options.fs.is_file(path)),
+            None => self.options.fs.is_file(path),
+        }
+    }
+
+    /// Like `is_file_fast`, but for directories.
+    fn is_dir_fast(&self, path: &Path) -> bool {
+        let (dir, name) = match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) => (dir, name),
+            _ => return self.options.fs.is_dir(path),
+        };
+        match self.dir_listing(dir) {
+            Some(listing) => listing
+                .probe_is_dir(name)
+                .unwrap_or_else(|| self.options.fs.is_dir(path)),
+            None => self.options.fs.is_dir(path),
         }
     }
 
@@ -399,6 +492,11 @@ impl<'a> Visitor<'a> {
             self.plain_css_style_rule_depth = 0;
         }
         let old_import_path = mem::replace(&mut self.current_import_path, style_sheet.url.clone());
+
+        for (deprecation, span, message) in &style_sheet.parse_time_warnings {
+            let message = message.clone();
+            self.emit_deprecation(*deprecation, *span, || Ok(message))?;
+        }
 
         for stmt in style_sheet.body {
             let result = self.visit_stmt(stmt)?;
@@ -414,9 +512,174 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
+    /// Breaks the `Rc<RefCell<Module>>` reference cycles inside the
+    /// `@use`/`@forward` module graph so it can actually be freed once this
+    /// `Visitor` is dropped (solo todo #272).
+    ///
+    /// The module graph holds strong `Rc` references in every direction:
+    /// `Module::Environment.upstream` points from a module to the modules it
+    /// `@use`s, while `Environment.global_modules`/`forwarded_modules`/
+    /// `modules`/`imported_modules`/`nested_forwarded_modules` point right
+    /// back out again (namespaced lookups, `@forward`, `@import` chains).
+    /// With no `Weak` references anywhere in this graph, cycles across these
+    /// fields (empirically confirmed — see #272 comment #393; no single
+    /// field is "the" back-edge, several overlap) mean the whole graph would
+    /// otherwise leak for the life of the process, measured at ~20-27 MiB
+    /// per compile (~87.5% of that walked away by this pass; the small
+    /// residual is tracked separately, not caused by these fields).
+    ///
+    /// This walks every `Module` reachable from the roots that can hold one
+    /// — the per-compile module caches on `Visitor` and the corresponding
+    /// fields on `self.env` — and clears the six back-reference fields on
+    /// each `Module::Environment` node once all of them have been visited
+    /// (nothing downstream of `finish()` reads the module graph again; only
+    /// `css_tree.finish()`/`combined_import_section` handling follows).
+    ///
+    /// `Environment.content` and `ForwardedModule`/`ShadowedModule.inner`
+    /// are deliberately left untouched: both were tested in isolation and
+    /// contribute nothing to the cycle (content is a genuine forward-owned
+    /// `@content` closure; `.inner` is the wrapper's own non-cyclic
+    /// ownership of the module it wraps/shadows) — clearing them would only
+    /// add risk (`.inner` in particular backs `Module::scope()`) for zero
+    /// measured benefit.
+    fn teardown_module_graph(&mut self) {
+        let mut visited: FxHashSet<*const RefCell<Module>> = FxHashSet::default();
+        let mut stack: Vec<Rc<RefCell<Module>>> = Vec::new();
+        // DIAG(#278/#279): dedup sets so a scope-map shared by `new_closure()`
+        // (module env + every closure it spawned) is only mutated once.
+        let mut seen_fn_maps: FxHashSet<*const RefCell<FxHashMap<Identifier, SassFunction>>> =
+            FxHashSet::default();
+        let mut seen_mixin_maps: FxHashSet<*const RefCell<FxHashMap<Identifier, Mixin>>> =
+            FxHashSet::default();
+
+        stack.extend(self.modules.values().cloned());
+        stack.extend(self.import_cloned_modules.values().cloned());
+        stack.extend(self.upstream_modules.iter().cloned());
+        stack.extend(self.env.modules.borrow().0.values().cloned());
+        stack.extend(self.env.global_modules.iter().cloned());
+        stack.extend(self.env.forwarded_modules.borrow().iter().cloned());
+        stack.extend(self.env.imported_modules.borrow().iter().cloned());
+        if let Some(nested) = &self.env.nested_forwarded_modules {
+            for inner in nested.borrow().iter() {
+                stack.extend(inner.borrow().iter().cloned());
+            }
+        }
+
+        while let Some(module_rc) = stack.pop() {
+            if !visited.insert(Rc::as_ptr(&module_rc)) {
+                continue;
+            }
+
+            let mut module = module_rc.borrow_mut();
+
+            match &mut *module {
+                Module::Environment { upstream, env, .. } => {
+                    stack.extend(upstream.iter().cloned());
+                    stack.extend(env.global_modules.iter().cloned());
+                    stack.extend(env.forwarded_modules.borrow().iter().cloned());
+                    stack.extend(env.modules.borrow().0.values().cloned());
+                    stack.extend(env.imported_modules.borrow().iter().cloned());
+                    if let Some(nested) = &env.nested_forwarded_modules {
+                        for inner in nested.borrow().iter() {
+                            stack.extend(inner.borrow().iter().cloned());
+                        }
+                    }
+
+                    // DIAG(#278/#279 causal probe): `SassFunction::UserDefined`/
+                    // `Mixin::UserDefined` closures embed a full `Environment`
+                    // captured via `Environment::new_closure()` at declaration
+                    // time. `new_closure()` element-wise `Rc::clone`s
+                    // `global_modules` into a brand-new, private `Vec` (unlike
+                    // `modules`/`forwarded_modules`/`imported_modules`, which
+                    // share the same `Rc<RefCell<..>>` as the declaring env and
+                    // so get cleared above "for free"). This walk never
+                    // followed `env.scopes.functions`/`.mixins` before, so
+                    // every closure's private `global_modules` snapshot (and
+                    // any nested-forwarded-modules copy) survived teardown
+                    // untouched, keeping the modules it points at alive.
+                    for map in env.scopes.functions_mut().iter() {
+                        let ptr = Rc::as_ptr(map);
+                        if !seen_fn_maps.insert(ptr) {
+                            continue;
+                        }
+                        for value in map.borrow_mut().values_mut() {
+                            if let SassFunction::UserDefined(udf) = value {
+                                stack.append(&mut udf.env.global_modules);
+                                stack.extend(udf.env.forwarded_modules.borrow().iter().cloned());
+                                stack.extend(udf.env.modules.borrow().0.values().cloned());
+                                stack.extend(udf.env.imported_modules.borrow().iter().cloned());
+                                if let Some(nested) = &udf.env.nested_forwarded_modules {
+                                    for inner in nested.borrow().iter() {
+                                        stack.extend(inner.borrow().iter().cloned());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for map in env.scopes.mixins_mut().iter() {
+                        let ptr = Rc::as_ptr(map);
+                        if !seen_mixin_maps.insert(ptr) {
+                            continue;
+                        }
+                        for value in map.borrow_mut().values_mut() {
+                            if let Mixin::UserDefined(_, closure_env, _) = value {
+                                stack.append(&mut closure_env.global_modules);
+                                stack
+                                    .extend(closure_env.forwarded_modules.borrow().iter().cloned());
+                                stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                stack.extend(closure_env.imported_modules.borrow().iter().cloned());
+                                if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                    for inner in nested.borrow().iter() {
+                                        stack.extend(inner.borrow().iter().cloned());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    upstream.clear();
+                    env.global_modules.clear();
+                    env.forwarded_modules.borrow_mut().clear();
+                    env.modules.borrow_mut().0.clear();
+                    env.imported_modules.borrow_mut().clear();
+                    env.nested_forwarded_modules = None;
+                }
+                Module::Forwarded(forwarded) => stack.push(Rc::clone(&forwarded.inner)),
+                Module::Shadowed(shadowed) => stack.push(Rc::clone(&shadowed.inner)),
+                Module::Builtin { .. } => {}
+            }
+        }
+    }
+
+    /// The full set of files loaded during this compile via `@use`/
+    /// `@forward` (`self.modules`) and `@import` (`self.import_cache` plus
+    /// `self.files_seen`, which catches a file's *first* `@import` --
+    /// `import_cache` itself is only populated starting from a file's
+    /// *second* import, see `import_like_node`) -- independent of whether
+    /// any of those files contributed an emitted CSS mapping. Unlike
+    /// `SourceMapData::sources`, this includes `@use`d partials containing
+    /// only variables/mixins/functions, which never produce a mapping.
+    /// Deduplicated and sorted for a deterministic return order (none of
+    /// the backing maps/sets iterate deterministically).
+    pub(crate) fn loaded_files(&self) -> Vec<PathBuf> {
+        let mut files: FxHashSet<PathBuf> = FxHashSet::default();
+        files.extend(self.modules.keys().cloned());
+        // `ImportKey::Url` entries are importer-supplied canonical URLs, not
+        // real files on disk — they have no filesystem path to report here.
+        files.extend(self.import_cache.keys().filter_map(|key| match key {
+            ImportKey::Path(p) => Some(p.clone()),
+            ImportKey::Url(_) => None,
+        }));
+        files.extend(self.files_seen.iter().cloned());
+        let mut files: Vec<PathBuf> = files.into_iter().collect();
+        files.sort_unstable();
+        files
+    }
+
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
         self.flush_pending_imports(true);
         self.extend_modules()?;
+        self.teardown_module_graph();
         let mut finished_tree = self.css_tree.finish();
         if self.combined_import_section.is_empty() {
             Ok(finished_tree)
@@ -439,21 +702,6 @@ impl<'a> Visitor<'a> {
                 Ok(self.combined_import_section)
             }
         }
-    }
-
-    /// Like `finish()`, but returns the CssTree directly without materializing
-    /// children into Vec<CssStmt> bodies. Used for direct tree-walking serialization.
-    pub(crate) fn finish_for_tree_walk(
-        mut self,
-    ) -> SassResult<(CssTree, Vec<CssStmt>, usize, bool)> {
-        self.flush_pending_imports(true);
-        self.extend_modules()?;
-        Ok((
-            self.css_tree,
-            self.combined_import_section,
-            self.import_section_tree_count,
-            self.has_out_of_order_imports,
-        ))
     }
 
     /// Returns the index after the last @import in a sequence of imports and
@@ -797,8 +1045,7 @@ impl<'a> Visitor<'a> {
 
             return Err((
                 format!(
-                    "The target selector was not found.\nUse \"@extend {} !optional\" to avoid this error.",
-                    target_str
+                    "The target selector was not found.\nUse \"@extend {target_str} !optional\" to avoid this error."
                 ),
                 ext.span,
             )
@@ -806,12 +1053,6 @@ impl<'a> Visitor<'a> {
         }
 
         Ok(())
-    }
-
-    fn visit_return_rule(&mut self, ret: AstReturn<'static>) -> SassResult<Option<Value>> {
-        let val = self.visit_expr(ret.val)?;
-
-        Ok(Some(self.without_slash(val)))
     }
 
     pub(crate) fn visit_stmt_arc(&mut self, stmt: &AstStmt<'static>) -> SassResult<Option<Value>> {
@@ -827,7 +1068,7 @@ impl<'a> Visitor<'a> {
             AstStmt::VariableDecl(decl) => self.visit_variable_decl_ref(decl),
             AstStmt::Return(ret) => {
                 let val = self.visit_expr_ref(&ret.val)?;
-                Ok(Some(self.without_slash(val)))
+                Ok(Some(self.without_slash(val, || ret.span)?))
             }
             AstStmt::Style(style) => self.visit_style_ref(style),
             AstStmt::If(if_stmt) => self.visit_if_stmt_ref(if_stmt),
@@ -853,13 +1094,19 @@ impl<'a> Visitor<'a> {
                 let value = self.visit_expr_ref(&err.value)?.inspect(err.span)?;
                 Err((value, err.span).into())
             }
-            // For remaining variants, clone and delegate to owned visitor.
-            // Cloning is cheap: arena refs are just pointer copies.
+            // Each/Media/Include/ContentRule delegate to `_ref`/borrowing visitors
+            // above and no longer clone at dispatch. The remaining variants below
+            // still clone and delegate to an owned visitor; that clone is NOT
+            // always cheap — RuleSet/UnknownAtRule/Extend/AtRootRule clone an
+            // owned `Interpolation`, For clones owned `AstExpr` bounds, and
+            // FunctionDecl/Mixin/Use/Forward clone owned argument/config Vecs.
+            // Converting those (declaration sites, not call sites) is out of
+            // scope for this pass (see Plan 022).
             AstStmt::RuleSet(ruleset) => self.visit_ruleset(ruleset.clone()),
-            AstStmt::For(for_stmt) => self.visit_for_stmt(*for_stmt.clone()),
-            AstStmt::Each(each_stmt) => self.visit_each_stmt(*each_stmt.clone()),
-            AstStmt::Media(media_rule) => self.visit_media_rule(media_rule.clone()),
-            AstStmt::Include(include_stmt) => self.visit_include_stmt(*include_stmt.clone()),
+            AstStmt::For(for_stmt) => self.visit_for_stmt((*for_stmt).clone()),
+            AstStmt::Each(each_stmt) => self.visit_each_stmt(each_stmt),
+            AstStmt::Media(media_rule) => self.visit_media_rule(media_rule),
+            AstStmt::Include(include_stmt) => self.visit_include_stmt(include_stmt),
             AstStmt::While(while_stmt) => self.visit_while_stmt(while_stmt),
             AstStmt::FunctionDecl(func) => {
                 self.visit_function_decl(func.clone());
@@ -869,23 +1116,23 @@ impl<'a> Visitor<'a> {
                 self.visit_mixin_decl(mixin.clone());
                 Ok(None)
             }
-            AstStmt::ContentRule(content_rule) => self.visit_content_rule(*content_rule.clone()),
+            AstStmt::ContentRule(content_rule) => self.visit_content_rule(content_rule),
             AstStmt::UnknownAtRule(unknown_at_rule) => {
-                self.visit_unknown_at_rule(*unknown_at_rule.clone())
+                self.visit_unknown_at_rule((*unknown_at_rule).clone())
             }
             AstStmt::Extend(extend_rule) => self.visit_extend_rule(extend_rule.clone()),
             AstStmt::AtRootRule(at_root_rule) => self.visit_at_root_rule(at_root_rule.clone()),
             AstStmt::ImportRule(import_rule) => self.visit_import_rule(import_rule.clone()),
             AstStmt::Use(use_rule) => {
-                self.visit_use_rule(*use_rule.clone())?;
+                self.visit_use_rule((*use_rule).clone())?;
                 Ok(None)
             }
             AstStmt::Forward(forward_rule) => {
-                self.visit_forward_rule(*forward_rule.clone())?;
+                self.visit_forward_rule((*forward_rule).clone())?;
                 Ok(None)
             }
             AstStmt::Supports(supports_rule) => {
-                self.visit_supports_rule(*supports_rule.clone())?;
+                self.visit_supports_rule((*supports_rule).clone())?;
                 Ok(None)
             }
         }
@@ -922,17 +1169,17 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            if self.env.var_exists(decl.name, decl.namespace, decl.span)? {
-                let value = self.env.get_var(name, decl.namespace).unwrap();
-
+            if let Some(value) = self.env.try_get_var(name, decl.namespace)? {
                 if value != Value::Null {
                     return Ok(None);
                 }
             }
         }
 
+        self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
+
         let value = self.visit_expr_ref(&decl.value)?;
-        let value = self.without_slash(value);
+        let value = self.without_slash(value, || decl.span)?;
 
         self.env.insert_var(
             name,
@@ -972,7 +1219,7 @@ impl<'a> Visitor<'a> {
     /// Reference-based if-statement visitor.
     fn visit_if_stmt_ref(&mut self, if_stmt: &AstIf<'static>) -> SassResult<Option<Value>> {
         let mut matched_body: Option<&[AstStmt<'static>]> = None;
-        for clause in &if_stmt.if_clauses {
+        for clause in if_stmt.if_clauses {
             if self.visit_expr_ref(&clause.condition)?.is_truthy() {
                 matched_body = Some(clause.body);
                 break;
@@ -1028,7 +1275,7 @@ impl<'a> Visitor<'a> {
         let mut name = self.perform_interpolation_ref(&style.name, true)?;
 
         if let Some(declaration_name) = &self.declaration_name {
-            name = format!("{}-{}", declaration_name, name);
+            name = format!("{declaration_name}-{name}");
         }
 
         if let Some(value) = style
@@ -1161,7 +1408,7 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Rc<RefCell<Configuration>>> {
         let mut new_values = FxHashMap::from_iter((*config).borrow().values.iter());
 
-        for variable in &forward_rule.configuration {
+        for variable in forward_rule.configuration {
             if variable.is_guarded {
                 let old_value = (*config).borrow_mut().remove(variable.name.node);
 
@@ -1179,9 +1426,8 @@ impl<'a> Visitor<'a> {
                 }
             }
 
-            // todo: superfluous clone?
-            let value = self.visit_expr(variable.expr.node.clone())?;
-            let value = self.without_slash(value);
+            let value = self.visit_expr_ref(&variable.expr.node)?;
+            let value = self.without_slash(value, || variable.expr.span)?;
 
             new_values.insert(
                 variable.name.node,
@@ -1268,7 +1514,7 @@ impl<'a> Visitor<'a> {
                 self.parenthesize_supports_condition((*inner).clone(), None)?
             )),
             AstSupportsCondition::Interpolation(expr) => {
-                self.evaluate_to_css(expr.clone(), QuoteKind::None, self.empty_span)
+                self.evaluate_to_css(expr, QuoteKind::None, self.empty_span)
             }
             AstSupportsCondition::Declaration { name, value } => {
                 let old_in_supports_decl = self.flags.in_supports_declaration();
@@ -1283,9 +1529,9 @@ impl<'a> Visitor<'a> {
 
                 let result = format!(
                     "({}:{}{})",
-                    self.evaluate_to_css(name.clone(), QuoteKind::Quoted, self.empty_span)?,
+                    self.evaluate_to_css(name, QuoteKind::Quoted, self.empty_span)?,
                     if is_custom_property { "" } else { " " },
-                    self.evaluate_to_css(value.clone(), QuoteKind::Quoted, self.empty_span)?,
+                    self.evaluate_to_css(value, QuoteKind::Quoted, self.empty_span)?,
                 );
 
                 self.flags
@@ -1295,12 +1541,12 @@ impl<'a> Visitor<'a> {
             }
             AstSupportsCondition::Function { name, args } => Ok(format!(
                 "{}({})",
-                self.perform_interpolation(name.clone(), false)?,
-                self.perform_interpolation(args.clone(), false)?
+                self.perform_interpolation_ref(name, false)?,
+                self.perform_interpolation_ref(args, false)?
             )),
             AstSupportsCondition::Anything { contents } => Ok(format!(
                 "({})",
-                self.perform_interpolation(contents.clone(), false)?,
+                self.perform_interpolation_ref(contents, false)?,
             )),
         }
     }
@@ -1314,12 +1560,14 @@ impl<'a> Visitor<'a> {
                 .into());
         }
 
+        let at_rule_span = supports_rule.at_rule_span;
         let condition = self.visit_supports_condition(supports_rule.condition)?;
 
         let css_supports_rule = CssStmt::Supports(
             SupportsRule {
                 params: condition,
                 body: Vec::new(),
+                at_rule_span: Some(at_rule_span),
             },
             false,
         );
@@ -1469,10 +1717,6 @@ impl<'a> Visitor<'a> {
         // Create a fresh ExtensionStore for this module (per-module scoping).
         let mut module_extension_store = ExtensionStore::new(self.empty_span);
         let mut module_upstream: Vec<Rc<RefCell<Module>>> = Vec::new();
-        // Fresh CssTree for this module — enables independent CSS building
-        // per module, a prerequisite for parallel evaluation.
-        let mut module_css_tree = CssTree::new();
-        let mut module_css_indices: Vec<CssTreeIdx> = Vec::new();
 
         self.with_environment::<SassResult<()>, _>(env.new_closure(), |visitor| {
             let old_parent = visitor.parent;
@@ -1506,28 +1750,34 @@ impl<'a> Visitor<'a> {
             mem::swap(&mut visitor.extender, &mut module_extension_store);
             let old_upstream = mem::take(&mut visitor.upstream_modules);
 
-            // Swap in a fresh CssTree for this module.
-            mem::swap(&mut visitor.css_tree, &mut module_css_tree);
+            // Snapshot ROOT children count to track which CSS this module adds.
+            let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
 
             visitor.visit_stylesheet(&stylesheet)?;
 
             // Flush any remaining pending imports from this module.
             visitor.flush_pending_imports(true);
 
-            // All ROOT children in the module's tree are this module's CSS.
-            let root_children: Vec<CssTreeIdx> = visitor
+            // Record this module's root-level CSS indices for potential cloning.
+            let new_css_indices: Vec<CssTreeIdx> = visitor
                 .css_tree
-                .root_children_from(0)
+                .root_children_from(root_children_before)
                 .into_iter()
                 .filter(|idx| !visitor.css_tree.is_hidden(*idx))
                 .collect();
+            visitor
+                .module_css_indices
+                .insert(url.clone(), new_css_indices.clone());
 
-            // When this module is being evaluated inside a nested @import,
-            // resolve parent selectors on the module's tree (before merging).
+            // When this module is being evaluated inside a nested @import
+            // (i.e., `a { @import "file-that-uses-modules" }`), the module's
+            // CSS was emitted at ROOT with parent=None. We need to resolve
+            // module CSS selectors with the enclosing parent selector so that
+            // they appear nested under the parent in the output.
             if visitor.in_import_context {
                 if let Some(ref parent_selector) = old_style_rule {
                     let parent_list = parent_selector.as_selector_list().clone();
-                    for idx in &root_children {
+                    for idx in &new_css_indices {
                         let needs_resolution = {
                             let stmt = visitor.css_tree.get(*idx);
                             matches!(&*stmt, Some(CssStmt::RuleSet { .. }))
@@ -1544,22 +1794,17 @@ impl<'a> Visitor<'a> {
                                 let resolved = old_list
                                     .resolve_parent_selectors(Some(parent_list.clone()), true)?;
                                 selector.set_inner(resolved);
+                                // Clear group_end since these are conceptually
+                                // children of the enclosing style rule, flattened
+                                // to top level. Blank-line insertion should be
+                                // controlled by the enclosing context, not the
+                                // module's internal evaluation.
                                 *is_group_end = false;
                             }
                         }
                     }
                 }
             }
-
-            // Swap back the parent's CssTree and merge the module's tree into it.
-            mem::swap(&mut visitor.css_tree, &mut module_css_tree);
-            let merged_indices = visitor.css_tree.merge_from(module_css_tree);
-
-            // Record merged indices for potential cloning.
-            module_css_indices = merged_indices.clone();
-            visitor
-                .module_css_indices
-                .insert(url.clone(), merged_indices);
 
             // Swap back the parent's ExtensionStore and capture the module's.
             mem::swap(&mut visitor.extender, &mut module_extension_store);
@@ -2002,8 +2247,8 @@ impl<'a> Visitor<'a> {
             let mut values = FxHashMap::default();
 
             for var in use_rule.configuration {
-                let value = self.visit_expr(var.expr.node)?;
-                let value = self.without_slash(value);
+                let value = self.visit_expr_ref(&var.expr.node)?;
+                let value = self.without_slash(value, || var.expr.span)?;
                 values.insert(
                     var.name.node,
                     ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span)),
@@ -2054,10 +2299,7 @@ impl<'a> Visitor<'a> {
         let Spanned { node: name, span } = config.first().unwrap();
 
         let msg = if name_in_error {
-            format!(
-                "${name} was not declared with !default in the @used module.",
-                name = name
-            )
+            format!("${name} was not declared with !default in the @used module.")
         } else {
             "This variable was not declared with !default in the @used module.".to_owned()
         };
@@ -2081,6 +2323,28 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
+    /// Walks `self.options.importers` in registration order, returning the
+    /// first result other than [`ImportResolution::NotFound`] (or `None` if
+    /// every importer declined, or none are registered).
+    fn resolve_via_importers(
+        &self,
+        path: &Path,
+        for_import: bool,
+        span: Span,
+    ) -> SassResult<Option<ImportResolution>> {
+        let url = path.to_str().unwrap_or_default();
+        let containing_url = self.current_import_path.to_str();
+
+        for importer in &self.options.importers {
+            match importer.canonicalize(url, for_import, containing_url, span)? {
+                ImportResolution::NotFound => continue,
+                other => return Ok(Some(other)),
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Searches the current directory of the file then searches in `load_paths` directories
     /// if the import has not yet been found.
     ///
@@ -2092,15 +2356,14 @@ impl<'a> Visitor<'a> {
         path: &Path,
         for_import: bool,
         span: Span,
-    ) -> SassResult<Option<PathBuf>> {
-        // Cache key must include the import context (parent dir of current file)
-        // because the same relative path resolves differently from different files
-        let context_dir = self
-            .current_import_path
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_path_buf();
-        let cache_key = (context_dir, path.to_path_buf(), for_import);
+    ) -> SassResult<Option<ImportSource>> {
+        // Cache key must include the full containing URL because a custom importer can resolve
+        // the same requested path differently from two files in the same directory.
+        let cache_key = (
+            self.current_import_path.clone(),
+            path.to_path_buf(),
+            for_import,
+        );
         if let Some(result) = self.import_path_cache.get(&cache_key) {
             return result.clone();
         }
@@ -2118,8 +2381,18 @@ impl<'a> Visitor<'a> {
         for component in path.components() {
             match component {
                 Component::ParentDir => {
-                    if !result.pop() {
-                        result.push(component);
+                    match result.components().next_back() {
+                        // There's a real segment to cancel against — pop it.
+                        Some(Component::Normal(_)) => {
+                            result.pop();
+                        }
+                        // `..` above the root is a no-op; it stays clamped there
+                        // rather than growing an invalid `/../..` path.
+                        Some(Component::RootDir) | Some(Component::Prefix(_)) => {}
+                        // Nothing to cancel against yet (empty result, or the
+                        // last component is itself an unresolved `..`) — the
+                        // `..` must accumulate, not silently vanish.
+                        _ => result.push(component),
                     }
                 }
                 Component::CurDir => {}
@@ -2134,7 +2407,7 @@ impl<'a> Visitor<'a> {
         path: &Path,
         for_import: bool,
         span: Span,
-    ) -> SassResult<Option<PathBuf>> {
+    ) -> SassResult<Option<ImportSource>> {
         let path_buf = if path.is_absolute() {
             Self::normalize_path(path)
         } else {
@@ -2158,6 +2431,16 @@ impl<'a> Visitor<'a> {
             let basename = path.file_name().unwrap_or_else(|| OsStr::new(".."));
             let partial = dirname.join(format!("_{}", basename.to_str().unwrap()));
             vec![path, partial]
+        }
+
+        // Build candidates for an explicit non-CSS extension. Unlike the
+        // general path candidates above, partials take priority within each
+        // group so conflicts are reported in Sass's order.
+        fn explicit_extension_candidates(path: PathBuf) -> Vec<PathBuf> {
+            let dirname = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+            let basename = path.file_name().unwrap_or_else(|| OsStr::new(".."));
+            let partial = dirname.join(format!("_{}", basename.to_str().unwrap()));
+            vec![partial, path]
         }
 
         // Build non-css candidates for conflict detection.
@@ -2211,10 +2494,8 @@ impl<'a> Visitor<'a> {
                                context_dir: &Path,
                                span: Span|
          -> SassResult<Option<PathBuf>> {
-            let existing: Vec<&PathBuf> = candidates
-                .iter()
-                .filter(|p| self.options.fs.is_file(p))
-                .collect();
+            let existing: Vec<&PathBuf> =
+                candidates.iter().filter(|p| self.is_file_fast(p)).collect();
 
             if existing.len() > 1 {
                 let mut msg = "It's not clear which file to import. Found:\n".to_string();
@@ -2265,32 +2546,113 @@ impl<'a> Visitor<'a> {
             Ok(None)
         };
 
+        // Custom importers (`Options::add_importer`) are checked ahead of
+        // the default filesystem/load-path resolution below, in
+        // registration order; the first one to return other than
+        // `NotFound` wins. This branch costs a single `Vec::is_empty()`
+        // check when no importers are registered.
+        if !self.options.importers.is_empty() {
+            if let Some(resolution) = self.resolve_via_importers(path, for_import, span)? {
+                return match resolution {
+                    ImportResolution::DelegateToPath(delegate_path) => {
+                        // A `FileImporter`-style result: treat it exactly
+                        // like a load path (partials/extensions/index
+                        // resolution on top), not like the current file's
+                        // own directory (which additionally fast-paths an
+                        // explicit .scss/.sass/.css extension below) —
+                        // matching the JS contract's "applies the normal
+                        // partial/extension/index-file resolution on top,
+                        // exactly like a load path".
+                        let delegate_path = Self::normalize_path(&delegate_path);
+                        if let Some(found) =
+                            resolve_with_conflicts(&delegate_path, for_import, context_dir, span)?
+                        {
+                            return Ok(Some(ImportSource::Path(found)));
+                        }
+                        if self.is_dir_fast(&delegate_path) {
+                            if let Some(found) = resolve_with_conflicts(
+                                &delegate_path.join("index"),
+                                for_import,
+                                context_dir,
+                                span,
+                            )? {
+                                return Ok(Some(ImportSource::Path(found)));
+                            }
+                        }
+                        Ok(None)
+                    }
+                    ImportResolution::Resolved {
+                        canonical_url,
+                        contents,
+                        syntax,
+                    } => {
+                        // A full `Importer` (canonicalize+load) result:
+                        // bypasses `Fs`/path-based parsing entirely.
+                        // `import_like_node` parses `contents` directly
+                        // under `syntax` and caches the resulting
+                        // stylesheet under `canonical_url` (see
+                        // `ImportKey::Url`) rather than a filesystem path.
+                        Ok(Some(ImportSource::Resolved {
+                            canonical_url,
+                            contents,
+                            syntax,
+                        }))
+                    }
+                    ImportResolution::NotFound => {
+                        unreachable!("resolve_via_importers filters out NotFound")
+                    }
+                };
+            }
+        }
+
         if path_buf.extension() == Some(OsStr::new("scss"))
             || path_buf.extension() == Some(OsStr::new("sass"))
             || path_buf.extension() == Some(OsStr::new("css"))
         {
             let extension = path_buf.extension().unwrap();
+            if extension == OsStr::new("scss") || extension == OsStr::new("sass") {
+                if for_import {
+                    let import_candidates = explicit_extension_candidates(
+                        path_buf.with_extension(format!("import.{}", extension.to_str().unwrap())),
+                    );
+                    if let Some(found) = check_conflicts(&import_candidates, context_dir, span)? {
+                        return Ok(Some(ImportSource::Path(found)));
+                    }
+                }
+
+                let regular_candidates = explicit_extension_candidates(path_buf.clone());
+                if let Some(found) = check_conflicts(&regular_candidates, context_dir, span)? {
+                    return Ok(Some(ImportSource::Path(found)));
+                }
+
+                return Ok(None);
+            }
+
             let mut candidates = Vec::new();
             if for_import {
                 candidates.extend(path_candidates(
-                    path_buf.with_extension(format!(".import{}", extension.to_str().unwrap())),
+                    path_buf.with_extension(format!("import.{}", extension.to_str().unwrap())),
                 ));
             }
             candidates.extend(path_candidates(path_buf));
-            return Ok(self.options.fs.resolve_first_existing(&candidates));
+            return Ok(self
+                .options
+                .fs
+                .resolve_first_existing(&candidates)
+                .map(ImportSource::Path));
         }
 
         // Check base path with conflict detection
         if let Some(found) = resolve_with_conflicts(&path_buf, for_import, context_dir, span)? {
-            return Ok(Some(found));
+            return Ok(Some(ImportSource::Path(found)));
         }
 
         // Also check index files
-        if self.options.fs.is_dir(&path_buf) {
+        if self.is_dir_fast(&path_buf) {
             if let Some(found) =
                 resolve_with_conflicts(&path_buf.join("index"), for_import, context_dir, span)?
             {
-                return Ok(Some(found));
+                return Ok(Some(ImportSource::Path(found)));
             }
         }
 
@@ -2299,14 +2661,14 @@ impl<'a> Visitor<'a> {
             let lp_buf = Self::normalize_path(&load_path.join(path));
 
             if let Some(found) = resolve_with_conflicts(&lp_buf, for_import, context_dir, span)? {
-                return Ok(Some(found));
+                return Ok(Some(ImportSource::Path(found)));
             }
 
-            if self.options.fs.is_dir(&lp_buf) {
+            if self.is_dir_fast(&lp_buf) {
                 if let Some(found) =
                     resolve_with_conflicts(&lp_buf.join("index"), for_import, context_dir, span)?
                 {
-                    return Ok(Some(found));
+                    return Ok(Some(ImportSource::Path(found)));
                 }
             }
         }
@@ -2320,7 +2682,21 @@ impl<'a> Visitor<'a> {
         path: &Path,
         empty_span: Span,
     ) -> SassResult<StyleSheet<'static>> {
-        let result = match InputSyntax::for_path(path) {
+        self.parse_file_with_syntax(lexer, path, empty_span, InputSyntax::for_path(path))
+    }
+
+    /// Like `parse_file`, but takes an explicit `syntax` instead of
+    /// inferring one from `path`'s extension — used by `import_like_node`'s
+    /// `ImportSource::Resolved` arm, where `path` is a synthetic
+    /// (non-filesystem) canonical URL with no meaningful extension.
+    fn parse_file_with_syntax(
+        &mut self,
+        lexer: Lexer,
+        path: &Path,
+        empty_span: Span,
+        syntax: InputSyntax,
+    ) -> SassResult<StyleSheet<'static>> {
+        let result = match syntax {
             InputSyntax::Scss => {
                 ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
             }
@@ -2332,7 +2708,140 @@ impl<'a> Visitor<'a> {
             }
         }?;
         // Safety: the arena lives for the entire compilation (stored in Visitor).
+        // INVARIANT: the erased-'static StyleSheet must not outlive the Visitor's arena.
         Ok(unsafe { crate::ast::erase_stylesheet_lifetime(result) })
+    }
+
+    /// Parses (and caches) the `(...)` argument-declaration text of a
+    /// closure-backed [`BuiltinFn::Dynamic`] custom function's signature,
+    /// using the *current compilation's own* `self.arena`/`self.map`
+    /// rather than a fresh throwaway `CodeMap`. This is load-bearing, not
+    /// style: `codemap`'s `Span`s are only unique within the `CodeMap`
+    /// that minted them (`CodeMap::add_file` starts at `end_pos()+1`; a
+    /// fresh `CodeMap::new()` starts at 0), and `CodeMap::find_file` panics
+    /// on a miss. Parsing eagerly against a synthetic one-off `CodeMap` at
+    /// `Options`-build time would embed spans (in default-value
+    /// expressions) that alias onto the wrong location or panic when later
+    /// looked up against the real compile's `self.map`.
+    fn parse_dynamic_signature(
+        &mut self,
+        signature: &Arc<str>,
+    ) -> SassResult<Rc<ArgumentDeclaration<'static>>> {
+        if let Some(cached) = self.dynamic_signature_cache.get(signature) {
+            return Ok(Rc::clone(cached));
+        }
+
+        let file = self
+            .map
+            .add_file("<custom-fn-signature>".to_string(), signature.to_string());
+        let empty_span = file.span.subspan(0, 0);
+        let lexer = Lexer::new_from_file(&file);
+        let path = Path::new("<custom-fn-signature>");
+
+        let declaration = ScssParser::new(lexer, self.options, empty_span, path, self.arena)
+            .parse_argument_declaration()?;
+
+        // Safety: mirrors `parse_file`'s use of `erase_stylesheet_lifetime` —
+        // the arena lives for the entire compilation (stored in Visitor), and
+        // this cache lives on the Visitor too, so it cannot outlive the arena.
+        let declaration =
+            Rc::new(unsafe { crate::ast::erase_argument_declaration_lifetime(declaration) });
+
+        self.dynamic_signature_cache
+            .insert(Arc::clone(signature), Rc::clone(&declaration));
+
+        Ok(declaration)
+    }
+
+    /// Binds an evaluated (but unbound) [`ArgumentResult`] to `signature`'s
+    /// declared parameters — positional fill → named fill of remaining
+    /// declared slots → missing args fall back to declared defaults
+    /// (evaluated with earlier-bound args visible as `$name` variables, so
+    /// e.g. `"scale($a, $b: $a)"`-style sibling-referencing defaults work)
+    /// → trailing `$rest...` collected into a `Value::ArgList`. Mirrors
+    /// `run_user_defined_callable_inner`'s algorithm, but returns a
+    /// declaration-ordered `ArgumentResult` (rest appended last) instead of
+    /// inserting into a persistent callable scope, since
+    /// `BuiltinFn::Dynamic` closures are plain Rust with no `$name`
+    /// variables to bind into.
+    ///
+    /// Known accepted gap: unlike a real `@function` call, no
+    /// unused-named-arguments-become-an-error check runs after the closure
+    /// returns.
+    fn bind_dynamic_args(
+        &mut self,
+        signature: Option<&Arc<str>>,
+        mut evaluated: ArgumentResult,
+        span: Span,
+    ) -> SassResult<ArgumentResult> {
+        let declaration = match signature {
+            Some(signature) => self.parse_dynamic_signature(signature)?,
+            None => return Ok(evaluated),
+        };
+
+        declaration.verify(evaluated.positional.len(), &evaluated.named, evaluated.span)?;
+
+        self.with_scope(false, true, move |visitor| {
+            let declared_arguments = &declaration.args;
+            let positional_len = evaluated.positional.len();
+            let min_len = positional_len.min(declared_arguments.len());
+
+            let mut bound = Vec::with_capacity(declared_arguments.len() + 1);
+
+            for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
+                visitor
+                    .env
+                    .scopes_mut()
+                    .insert_var_last(declared_arguments[i].name, val.clone());
+                bound.push(val);
+            }
+
+            let additional_declared_args = if declared_arguments.len() > positional_len {
+                &declared_arguments[positional_len..]
+            } else {
+                &[]
+            };
+
+            for argument in additional_declared_args {
+                let value = match evaluated.named.shift_remove(&argument.name) {
+                    Some(v) => v,
+                    None => {
+                        let default = argument.default.as_ref().unwrap();
+                        let v = visitor.visit_expr_ref(default)?;
+                        visitor.without_slash(v, || Self::expr_span(default, span))?
+                    }
+                };
+                visitor
+                    .env
+                    .scopes_mut()
+                    .insert_var_last(argument.name, value.clone());
+                bound.push(value);
+            }
+
+            if declaration.rest.is_some() {
+                let rest = mem::take(&mut evaluated.positional);
+                let were_keywords_accessed = Rc::new(Cell::new(false));
+                let arg_list = ArgList::new(
+                    rest,
+                    were_keywords_accessed,
+                    evaluated.named.clone(),
+                    if evaluated.separator == ListSeparator::Undecided {
+                        ListSeparator::Comma
+                    } else {
+                        evaluated.separator
+                    },
+                );
+                bound.push(Value::ArgList(arg_list));
+            }
+
+            Ok(ArgumentResult {
+                positional: bound,
+                named: SmallOrderedMap::default(),
+                separator: evaluated.separator,
+                span: evaluated.span,
+                touched: FxHashSet::default(),
+            })
+        })
     }
 
     fn import_like_node(
@@ -2341,43 +2850,80 @@ impl<'a> Visitor<'a> {
         for_import: bool,
         span: Span,
     ) -> SassResult<StyleSheet<'static>> {
-        if let Some(name) = self.find_import(url.as_ref(), for_import, span)? {
-            let name = self.canonicalize(&name);
-            if let Some(style_sheet) = self.import_cache.get(&name) {
-                return Ok(style_sheet.clone());
+        match self.find_import(url.as_ref(), for_import, span)? {
+            Some(ImportSource::Path(name)) => {
+                let name = self.canonicalize(&name);
+                if let Some(style_sheet) = self.import_cache.get(&ImportKey::Path(name.clone())) {
+                    return Ok(style_sheet.clone());
+                }
+
+                let file = self.map.add_file(
+                    name.to_string_lossy().into(),
+                    String::from_utf8(self.options.fs.read(&name)?)?,
+                );
+
+                let old_is_use_allowed = self.flags.is_use_allowed();
+                self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
+
+                let style_sheet =
+                    self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
+
+                self.flags
+                    .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
+
+                if self.files_seen.contains(&name) {
+                    self.import_cache
+                        .insert(ImportKey::Path(name), style_sheet.clone());
+                } else {
+                    self.files_seen.insert(name);
+                }
+
+                Ok(style_sheet)
             }
+            Some(ImportSource::Resolved {
+                canonical_url,
+                contents,
+                syntax,
+            }) => {
+                let key = ImportKey::Url(canonical_url.clone());
+                if let Some(style_sheet) = self.import_cache.get(&key) {
+                    return Ok(style_sheet.clone());
+                }
 
-            let file = self.map.add_file(
-                name.to_string_lossy().into(),
-                String::from_utf8(self.options.fs.read(&name)?)?,
-            );
+                // Synthetic, non-filesystem path used only as the parsed
+                // stylesheet's `url` (diagnostics, and the `@use`/`@forward`
+                // module-cache key in `Visitor::modules`) -- never read
+                // from disk, `contents` is parsed directly instead.
+                let synthetic_path = PathBuf::from(&canonical_url);
 
-            let old_is_use_allowed = self.flags.is_use_allowed();
-            self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
+                let file = self.map.add_file(canonical_url.clone(), contents);
 
-            let _parse_start = std::time::Instant::now();
+                let old_is_use_allowed = self.flags.is_use_allowed();
+                self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-            let style_sheet =
-                self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
+                let style_sheet = self.parse_file_with_syntax(
+                    Lexer::new_from_file(&file),
+                    &synthetic_path,
+                    file.span.subspan(0, 0),
+                    syntax,
+                )?;
 
-            if std::env::var("GRASS_TIMING").is_ok() {
-                let elapsed = _parse_start.elapsed();
-                crate::IMPORT_PARSE_TIME.with(|t| t.set(t.get() + elapsed));
+                self.flags
+                    .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
+
+                // Unlike `Path` imports (lazily cached only from a file's
+                // *second* import, see `files_seen` above), `Resolved`
+                // imports are always cached on first sight: the same
+                // canonical URL resolving to the same module is a
+                // correctness requirement (design doc §1.2, "same
+                // canonical URL -> same cached module"), not just a perf
+                // heuristic.
+                self.import_cache.insert(key, style_sheet.clone());
+
+                Ok(style_sheet)
             }
-
-            self.flags
-                .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
-
-            if self.files_seen.contains(&name) {
-                self.import_cache.insert(name, style_sheet.clone());
-            } else {
-                self.files_seen.insert(name);
-            }
-
-            return Ok(style_sheet);
+            None => Err(("Can't find stylesheet to import.", span).into()),
         }
-
-        Err(("Can't find stylesheet to import.", span).into())
     }
 
     pub(crate) fn load_style_sheet(
@@ -2475,7 +3021,7 @@ impl<'a> Visitor<'a> {
             .map(|modifiers| self.interpolation_to_value(modifiers, false, false))
             .transpose()?;
 
-        let node = CssStmt::Import(import, modifiers);
+        let node = CssStmt::Import(import, modifiers, Some(static_import.span));
 
         if self.parent.is_some() && self.parent != Some(CssTree::ROOT) {
             self.css_tree.add_stmt(node, self.parent);
@@ -2490,29 +3036,15 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_debug_rule(&mut self, debug_rule: AstDebugRule<'static>) -> SassResult<Option<Value>> {
-        if self.options.quiet {
-            return Ok(None);
-        }
-
-        let message = self.visit_expr(debug_rule.value)?;
-        let message = message.inspect(debug_rule.span)?;
-
-        let loc = self.map.look_up_span(debug_rule.span);
-        self.options.logger.debug(loc, message.as_str());
-
-        Ok(None)
-    }
-
     fn visit_content_rule(
         &mut self,
-        content_rule: AstContentRule<'static>,
+        content_rule: &AstContentRule<'static>,
     ) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
             #[allow(mutable_borrow_reservation_conflict)]
             self.run_user_defined_callable(
-                MaybeEvaledArguments::Invocation(content_rule.args),
+                MaybeEvaledArguments::Invocation(&content_rule.args),
                 Rc::clone(content),
                 &content.env.clone(),
                 span,
@@ -2578,9 +3110,9 @@ impl<'a> Visitor<'a> {
         &mut self,
         mut at_root_rule: AstAtRootRule<'static>,
     ) -> SassResult<Option<Value>> {
-        let query = match at_root_rule.query.clone() {
+        let query = match at_root_rule.query {
             Some(query) => {
-                let resolved = self.perform_interpolation(query.node, true)?;
+                let resolved = self.perform_interpolation_ref(&query.node, true)?;
 
                 let span = query.span;
 
@@ -2803,6 +3335,30 @@ impl<'a> Visitor<'a> {
 
         let super_selector = self.style_rule_ignoring_at_root.clone().unwrap();
 
+        if let Some(original_selector) = self.original_selector.clone() {
+            for complex in &original_selector.components {
+                if !complex.is_bogus(true) {
+                    continue;
+                }
+
+                let text = complex.to_string();
+                let trimmed = text.trim();
+                let cant_or_shouldnt = if complex.is_useless() {
+                    "can't"
+                } else {
+                    "shouldn't"
+                };
+
+                self.emit_deprecation(Deprecation::BogusCombinators, extend_rule.span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is invalid CSS and {cant_or_shouldnt} be an \
+                         extender.\nThis will be an error in Dart Sass 2.0.0.\n\n\
+                         More info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            }
+        }
+
         let target_text = self.interpolation_to_value(extend_rule.value, false, true)?;
 
         let list = self.parse_selector_from_string(&target_text, false, true, extend_rule.span)?;
@@ -2841,17 +3397,6 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn visit_error_rule(
-        &mut self,
-        error_rule: AstErrorRule<'static>,
-    ) -> SassResult<Box<SassError>> {
-        let value = self
-            .visit_expr(error_rule.value)?
-            .inspect(error_rule.span)?;
-
-        Ok((value, error_rule.span).into())
-    }
-
     fn merge_media_queries(
         queries1: &[MediaQuery],
         queries2: &[MediaQuery],
@@ -2873,15 +3418,15 @@ impl<'a> Visitor<'a> {
 
     fn visit_media_queries(
         &mut self,
-        queries: Interpolation<'static>,
+        queries: &Interpolation<'static>,
         span: Span,
     ) -> SassResult<Vec<CssMediaQuery>> {
-        let resolved = self.perform_interpolation(queries, true)?;
+        let resolved = self.perform_interpolation_ref(queries, true)?;
 
         CssMediaQuery::parse_list(&resolved, span)
     }
 
-    fn visit_media_rule(&mut self, media_rule: AstMedia<'static>) -> SassResult<Option<Value>> {
+    fn visit_media_rule(&mut self, media_rule: &AstMedia<'static>) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
                 "Media rules may not be used within nested declarations.",
@@ -2890,7 +3435,7 @@ impl<'a> Visitor<'a> {
                 .into());
         }
 
-        let queries1 = self.visit_media_queries(media_rule.query, media_rule.query_span)?;
+        let queries1 = self.visit_media_queries(&media_rule.query, media_rule.query_span)?;
 
         let nest_at_rule = self.is_plain_css && self.plain_css_style_rule_depth > 1;
 
@@ -2920,6 +3465,7 @@ impl<'a> Visitor<'a> {
         };
 
         let children = media_rule.body;
+        let at_rule_span = media_rule.span;
 
         let query = merged_queries.clone().unwrap_or_else(|| queries1.clone());
 
@@ -2928,6 +3474,7 @@ impl<'a> Visitor<'a> {
                 query,
                 body: Vec::new(),
                 query_span: Some(media_rule.query_span),
+                at_rule_span: Some(at_rule_span),
             },
             false,
         );
@@ -3024,6 +3571,7 @@ impl<'a> Visitor<'a> {
                     params: value.unwrap_or_default(),
                     body: Vec::new(),
                     has_body: false,
+                    at_rule_span: Some(unknown_at_rule.span),
                 },
                 false,
             );
@@ -3044,6 +3592,7 @@ impl<'a> Visitor<'a> {
             self.flags.set(ContextFlags::IN_UNKNOWN_AT_RULE, true);
         }
 
+        let at_rule_span = unknown_at_rule.span;
         let children = unknown_at_rule.body.unwrap();
 
         let stmt = CssStmt::UnknownAtRule(
@@ -3052,6 +3601,7 @@ impl<'a> Visitor<'a> {
                 params: value.unwrap_or_default(),
                 body: Vec::new(),
                 has_body: true,
+                at_rule_span: Some(at_rule_span),
             },
             false,
         );
@@ -3125,11 +3675,233 @@ impl<'a> Visitor<'a> {
         self.options.logger.warn(loc, message);
     }
 
-    fn visit_warn_rule(&mut self, warn_rule: AstWarn<'static>) -> SassResult<()> {
-        if self.warnings_emitted.insert(warn_rule.span) {
-            let value = self.visit_expr(warn_rule.value)?;
-            let message = value.to_css_string(warn_rule.span, self.options.is_compressed())?;
-            self.emit_warning(&message, warn_rule.span);
+    /// Like [`Visitor::emit_warning`], but for a deprecated feature.
+    ///
+    /// Honors `Options::fatal_deprecation` (turns the warning into an
+    /// error), `Options::silence_deprecation` / `Options::quiet` (drops the
+    /// warning), and `Deprecation::is_future` combined with
+    /// `Options::future_deprecation` (future deprecations are dropped unless
+    /// explicitly opted into).
+    /// `message` is constructed lazily: building a deprecation message can be
+    /// nontrivial (serializing operands, walking `as_slash` chains), and
+    /// most calls end up discarded by dedup/silence/quiet/future gating
+    /// before the text is ever shown. Only the two branches that actually
+    /// consume the text (fatal-error, warn) invoke `message`.
+    pub(crate) fn emit_deprecation(
+        &mut self,
+        deprecation: Deprecation,
+        span: Span,
+        message: impl FnOnce() -> SassResult<String>,
+    ) -> SassResult<()> {
+        // Mirrors dart-sass's `_warningsEmitted` dedup, which runs before fatal/silence
+        // handling: a given call site only ever triggers once, even if evaluated repeatedly
+        // (e.g. inside a function called from a loop).
+        //
+        // dart's actual dedup key is (message, span), not (deprecation, span): a
+        // message that varies by evaluated content at a fixed span (e.g.
+        // bogus-combinators' interpolated selector text, or the same source line
+        // hit with different values across loop iterations) must still warn once
+        // per distinct message, not collapse to whichever text arrived first. We
+        // approximate this without paying for a message build on every call by
+        // only doing the extra (span, message) check on REVISITS to a deprecation
+        // whose message can actually vary per visit
+        // (`Deprecation::message_may_vary_per_visit`) — profiling found that
+        // checking this unconditionally on every revisit regressed Bootstrap
+        // ~5% (GlobalBuiltin, called repeatedly from inside color-manipulation
+        // mixins with an always-identical message, paying for a message build
+        // + clone + hashset insert on every one of those revisits for no
+        // behavioral difference). The first time a (deprecation, span) pair is
+        // seen, this behaves exactly as before (message stays unbuilt until the
+        // fatal/silence/future gates pass) regardless of the deprecation type.
+        let mut message = Some(message);
+        let mut prebuilt_message = None;
+
+        if !self
+            .deprecation_warnings_emitted
+            .insert((deprecation, span))
+        {
+            if !deprecation.message_may_vary_per_visit() {
+                return Ok(());
+            }
+
+            let msg = (message.take().unwrap())()?;
+            if !self
+                .deprecation_messages_emitted
+                .insert((span, msg.clone()))
+            {
+                return Ok(());
+            }
+            prebuilt_message = Some(msg);
+        }
+
+        if self.options.fatal_deprecations.contains(&deprecation) {
+            let message = match prebuilt_message.take() {
+                Some(m) => m,
+                None => (message.take().unwrap())()?,
+            };
+            return Err((
+                format!(
+                    "{message}\n\nThis is only an error because you've set the {} \
+                     deprecation to be fatal.\nRemove this setting if you need to keep using \
+                     this feature.",
+                    deprecation.id()
+                ),
+                span,
+            )
+                .into());
+        }
+
+        if self.options.quiet || self.options.silence_deprecations.contains(&deprecation) {
+            return Ok(());
+        }
+
+        if deprecation.is_future() && !self.options.future_deprecations.contains(&deprecation) {
+            return Ok(());
+        }
+
+        let message = match prebuilt_message {
+            Some(m) => m,
+            None => {
+                // First-ever visit to this (deprecation, span): record the
+                // message now so a later revisit with the SAME text dedupes
+                // against it (see the revisit branch above).
+                let m = (message.take().unwrap())()?;
+                self.deprecation_messages_emitted.insert((span, m.clone()));
+                m
+            }
+        };
+        let loc = self.map.look_up_span(span);
+        self.options
+            .logger
+            .warn_deprecation(loc, &message, deprecation.id());
+
+        Ok(())
+    }
+
+    /// Warns when a `!global` assignment would declare a variable that
+    /// doesn't already exist in the global scope, matching dart-sass's
+    /// `Deprecation.newGlobal`. The message differs depending on whether the
+    /// assignment is already at the stylesheet root (where `!global` is
+    /// redundant) or nested (where the recommendation is to pre-declare the
+    /// variable at the root instead).
+    ///
+    /// Note: unlike dart-sass's `node.originalName`, this uses the
+    /// normalized (underscore-to-hyphen) identifier in the nested-case
+    /// recommendation text, since grass doesn't retain the pre-normalization
+    /// spelling on `AstVariableDecl`.
+    fn maybe_warn_new_global(
+        &mut self,
+        name: Identifier,
+        namespace: Option<Spanned<Identifier>>,
+        is_global: bool,
+        span: Span,
+    ) -> SassResult<()> {
+        if !is_global || namespace.is_some() || self.env.global_var_exists(name, span)? {
+            return Ok(());
+        }
+
+        let at_root = self.env.at_root();
+
+        self.emit_deprecation(Deprecation::NewGlobal, span, || {
+            Ok(if at_root {
+                "As of Dart Sass 2.0.0, !global assignments won't be able to declare new \
+                 variables.\n\nSince this assignment is at the root of the stylesheet, the \
+                 !global flag is\nunnecessary and can safely be removed."
+                    .to_string()
+            } else {
+                format!(
+                    "As of Dart Sass 2.0.0, !global assignments won't be able to declare new \
+                     variables.\n\nRecommendation: add `${name}: null` at the stylesheet root."
+                )
+            })
+        })
+    }
+
+    /// Warns for each bogus complex selector in a style rule's (already
+    /// resolved/extended) selector list, matching dart-sass's
+    /// `_warnForBogusCombinators` (called once per style rule, after its
+    /// children have been visited).
+    ///
+    /// Known, documented simplifications vs dart-sass:
+    /// - Uses the whole rule's `selector_span` rather than a per-complex-
+    ///   selector span (`ComplexSelector` doesn't carry its own span in
+    ///   grass), so multiple distinct bogus selectors within one
+    ///   comma-separated list share a span and (via `emit_deprecation`'s
+    ///   per-span dedup) only the first warns.
+    /// - The "valid for nesting" message omits dart's secondary `MultiSpan`
+    ///   annotation ("this is not a style rule") — grass's `Logger` only
+    ///   supports a single span per warning.
+    /// - The invisibility gate approximates dart's recursive
+    ///   `isInvisibleOtherThanBogusCombinators` (which also considers
+    ///   whether every descendant is invisible) with a selector-only check.
+    /// - A *trailing*-combinator-only selector (e.g. `a >`) is valid dart
+    ///   CSS-nesting syntax when every one of its children is itself a
+    ///   nested style rule (it gets flattened into e.g. `a > b`, which is no
+    ///   longer bogus, and is never warned about) — `only_nests_style_rules`
+    ///   approximates that check from the pre-evaluation AST body, so it
+    ///   doesn't follow control-flow (`@if`/`@each`) wrapping a nested rule.
+    ///   Leading/doubled-combinator bogus-ness persists through flattening
+    ///   in dart too, so those two shapes always warn regardless of this
+    ///   flag — just using the pre-flattened (this rule's own) selector text
+    ///   rather than each descendant's fully-flattened one.
+    fn warn_for_bogus_combinators(
+        &mut self,
+        selector: &SelectorList,
+        original_selector: &SelectorList,
+        selector_span: Span,
+        only_nests_style_rules: bool,
+    ) -> SassResult<()> {
+        if selector.is_invisible() {
+            return Ok(());
+        }
+
+        for complex in &selector.components {
+            if !complex.is_bogus(true) {
+                continue;
+            }
+
+            // A bogus complex selector that only arrived via `@extend` (not
+            // written directly on this rule) belongs to whichever rule wrote
+            // it originally — that rule already warned about it (dart
+            // achieves this via per-complex-selector span dedup; grass
+            // approximates it by only warning for complexes this rule itself
+            // wrote).
+            if !original_selector.components.contains(complex) {
+                continue;
+            }
+
+            let text = complex.to_string();
+            let trimmed = text.trim();
+
+            if complex.is_useless() {
+                self.emit_deprecation(Deprecation::BogusCombinators, selector_span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is invalid CSS. It will be omitted from \
+                         the generated CSS.\nThis will be an error in Dart Sass 2.0.0.\n\n\
+                         More info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            } else if complex.has_leading_combinator() {
+                if self.is_plain_css {
+                    continue;
+                }
+
+                self.emit_deprecation(Deprecation::BogusCombinators, selector_span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is invalid CSS.\nThis will be an error in \
+                         Dart Sass 2.0.0.\n\nMore info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            } else if !only_nests_style_rules {
+                self.emit_deprecation(Deprecation::BogusCombinators, selector_span, || {
+                    Ok(format!(
+                        "The selector \"{trimmed}\" is only valid for nesting and shouldn't\n\
+                         have children other than style rules. It will be omitted from the \
+                         generated CSS.\nThis will be an error in Dart Sass 2.0.0.\n\n\
+                         More info: https://sass-lang.com/d/bogus-combinators"
+                    ))
+                })?;
+            }
         }
 
         Ok(())
@@ -3319,7 +4091,7 @@ impl<'a> Visitor<'a> {
 
     fn visit_include_stmt(
         &mut self,
-        include_stmt: AstInclude<'static>,
+        include_stmt: &AstInclude<'static>,
     ) -> SassResult<Option<Value>> {
         let mixin = self
             .env
@@ -3331,15 +4103,15 @@ impl<'a> Visitor<'a> {
                     return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
 
-                let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
+                let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
                 mixin(args, self)?;
 
                 Ok(None)
             }
             Mixin::BuiltinWithContent(mixin) => {
-                let args = self.eval_args(include_stmt.args, include_stmt.name.span)?;
+                let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
 
-                if let Some(content) = include_stmt.content {
+                if let Some(content) = include_stmt.content.clone() {
                     let callable_content = Rc::new(CallableContentBlock {
                         content,
                         env: self.env.new_closure(),
@@ -3356,7 +4128,8 @@ impl<'a> Visitor<'a> {
                     return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
 
-                let AstInclude { args, content, .. } = include_stmt;
+                let args = &include_stmt.args;
+                let content = include_stmt.content.clone();
 
                 let old_in_mixin = self.flags.in_mixin();
                 self.flags.set(ContextFlags::IN_MIXIN, true);
@@ -3403,8 +4176,8 @@ impl<'a> Visitor<'a> {
         );
     }
 
-    fn visit_each_stmt(&mut self, each_stmt: AstEach<'static>) -> SassResult<Option<Value>> {
-        let list = self.visit_expr(each_stmt.list)?.as_list();
+    fn visit_each_stmt(&mut self, each_stmt: &AstEach<'static>) -> SassResult<Option<Value>> {
+        let list = self.visit_expr_ref(&each_stmt.list)?.as_list();
 
         // todo: not setting semi_global: true maybe means we can't assign to global scope when declared as global
         self.env.scope_enter();
@@ -3413,7 +4186,7 @@ impl<'a> Visitor<'a> {
 
         'outer: for val in list {
             if each_stmt.variables.len() == 1 {
-                let val = self.without_slash(val);
+                let val = self.without_slash(val, || each_stmt.list_span)?;
                 self.env
                     .scopes_mut()
                     .insert_var_last(each_stmt.variables[0], val);
@@ -3423,7 +4196,7 @@ impl<'a> Visitor<'a> {
                         .into_iter()
                         .chain(std::iter::once(Value::Null).cycle()),
                 ) {
-                    let val = self.without_slash(val);
+                    let val = self.without_slash(val, || each_stmt.list_span)?;
                     self.env.scopes_mut().insert_var_last(var, val);
                 }
             }
@@ -3519,10 +4292,7 @@ impl<'a> Visitor<'a> {
         self.with_scope(true, true, |visitor| {
             let mut result = None;
 
-            'outer: while visitor
-                .visit_expr(while_stmt.condition.clone())?
-                .is_truthy()
-            {
+            'outer: while visitor.visit_expr_ref(&while_stmt.condition)?.is_truthy() {
                 for stmt in while_stmt.body.iter() {
                     let val = visitor.visit_stmt_ref(stmt)?;
                     if val.is_some() {
@@ -3536,113 +4306,6 @@ impl<'a> Visitor<'a> {
         })
     }
 
-    fn visit_if_stmt(&mut self, if_stmt: AstIf<'static>) -> SassResult<Option<Value>> {
-        let mut clause: Option<&[AstStmt<'static>]> = if_stmt.else_clause;
-        for clause_to_check in &if_stmt.if_clauses {
-            if self
-                .visit_expr(clause_to_check.condition.clone())?
-                .is_truthy()
-            {
-                clause = Some(clause_to_check.body);
-                break;
-            }
-        }
-
-        // todo: self.with_scope
-        self.env.scope_enter();
-
-        let mut result = None;
-
-        if let Some(stmts) = clause {
-            for stmt in stmts {
-                let val = self.visit_stmt(stmt)?;
-                if val.is_some() {
-                    result = val;
-                    break;
-                }
-            }
-        }
-
-        self.env.scope_exit();
-
-        Ok(result)
-    }
-
-    fn visit_loud_comment(
-        &mut self,
-        comment: AstLoudComment<'static>,
-    ) -> SassResult<Option<Value>> {
-        if self.flags.in_function() {
-            return Ok(None);
-        }
-
-        let comment = CssStmt::Comment(
-            self.perform_interpolation(comment.text, false)?,
-            comment.span,
-        );
-
-        // At ROOT level during the import section, accumulate comments with
-        // pending imports so they can be interleaved correctly in the output.
-        let at_root = self.parent.is_none() || self.parent == Some(CssTree::ROOT);
-        if at_root && self.in_module_import_section {
-            self.pending_import_items.push(comment);
-        } else {
-            self.add_child_to_current_parent(comment);
-        }
-
-        Ok(None)
-    }
-
-    fn visit_variable_decl(&mut self, decl: AstVariableDecl<'static>) -> SassResult<Option<Value>> {
-        let name = Spanned {
-            node: decl.name,
-            span: decl.span,
-        };
-
-        if decl.is_guarded {
-            if decl.namespace.is_none() && self.env.at_root() {
-                let var_override = (*self.configuration).borrow_mut().remove(decl.name);
-                if !matches!(
-                    var_override,
-                    Some(ConfiguredValue {
-                        value: Value::Null,
-                        ..
-                    }) | None
-                ) {
-                    self.env.insert_var(
-                        name,
-                        None,
-                        var_override.unwrap().value,
-                        true,
-                        self.flags.in_semi_global_scope(),
-                    )?;
-                    return Ok(None);
-                }
-            }
-
-            if self.env.var_exists(decl.name, decl.namespace, decl.span)? {
-                let value = self.env.get_var(name, decl.namespace).unwrap();
-
-                if value != Value::Null {
-                    return Ok(None);
-                }
-            }
-        }
-
-        let value = self.visit_expr(decl.value)?;
-        let value = self.without_slash(value);
-
-        self.env.insert_var(
-            name,
-            decl.namespace,
-            value,
-            decl.is_global,
-            self.flags.in_semi_global_scope(),
-        )?;
-
-        Ok(None)
-    }
-
     fn interpolation_to_value(
         &mut self,
         interpolation: Interpolation<'static>,
@@ -3651,7 +4314,7 @@ impl<'a> Visitor<'a> {
         // default=false
         warn_for_color: bool,
     ) -> SassResult<String> {
-        let result = self.perform_interpolation(interpolation, warn_for_color)?;
+        let result = self.perform_interpolation_ref(&interpolation, warn_for_color)?;
 
         Ok(if trim {
             trim_ascii(&result, true).to_owned()
@@ -3670,7 +4333,7 @@ impl<'a> Visitor<'a> {
         let result = match interpolation.contents.len() {
             0 => String::new(),
             1 => match &interpolation.contents[0] {
-                InterpolationPart::String(s) => s.clone(),
+                InterpolationPart::String(s) => (*s).to_owned(),
                 InterpolationPart::Expr(e) => {
                     let span = e.span;
                     let result = self.visit_expr_ref(&e.node)?;
@@ -3681,7 +4344,7 @@ impl<'a> Visitor<'a> {
                 .contents
                 .iter()
                 .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s.clone()),
+                    InterpolationPart::String(s) => Ok((*s).to_owned()),
                     InterpolationPart::Expr(e) => {
                         let span = e.span;
                         let result = self.visit_expr_ref(&e.node)?;
@@ -3694,71 +4357,129 @@ impl<'a> Visitor<'a> {
         Ok(result)
     }
 
-    fn perform_interpolation(
-        &mut self,
-        mut interpolation: Interpolation<'static>,
-        // todo check to emit warning if this is true
-        _warn_for_color: bool,
-    ) -> SassResult<String> {
-        let result = match interpolation.contents.len() {
-            0 => String::new(),
-            1 => match interpolation.contents.pop() {
-                Some(InterpolationPart::String(s)) => s,
-                Some(InterpolationPart::Expr(e)) => {
-                    let span = e.span;
-                    let result = self.visit_expr(e.node)?;
-                    // todo: span for specific expr
-                    self.serialize(result, QuoteKind::None, span)?
-                }
-                None => unreachable!(),
-            },
-            _ => interpolation
-                .contents
-                .into_iter()
-                .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s),
-                    InterpolationPart::Expr(e) => {
-                        let span = e.span;
-                        let result = self.visit_expr(e.node)?;
-                        // todo: span for specific expr
-                        self.serialize(result, QuoteKind::None, span)
-                    }
-                })
-                .collect::<SassResult<String>>()?,
-        };
-
-        Ok(result)
-    }
-
     fn evaluate_to_css(
         &mut self,
-        expr: AstExpr<'static>,
+        expr: &AstExpr<'static>,
         quote: QuoteKind,
         span: Span,
     ) -> SassResult<String> {
-        let result = self.visit_expr(expr)?;
+        let result = self.visit_expr_ref(expr)?;
         self.serialize(result, quote, span)
     }
 
-    #[allow(clippy::unused_self)]
-    fn without_slash(&mut self, v: Value) -> Value {
-        match v {
-            Value::Dimension(SassNumber { .. }) if v.as_slash().is_some() => {
-                // todo: emit warning. we don't currently because it can be quite loud
-                // self.emit_warning(
-                //     Cow::Borrowed("Using / for division is deprecated and will be removed at some point in the future"),
-                //     self.empty_span,
-                // );
+    /// The dart-sass `recommendation()` helper for a slash-separated
+    /// `SassNumber`: recurses through `as_slash` so e.g. a number built from
+    /// `math.div(1, 2)` results in `math.div(1, 2)` rather than the plain
+    /// division result.
+    fn slash_recommendation(number: &SassNumber, span: Span) -> String {
+        match &number.as_slash {
+            Some(parts) => format!(
+                "math.div({}, {})",
+                Self::slash_recommendation(&parts.0, span),
+                Self::slash_recommendation(&parts.1, span)
+            ),
+            None => Value::Dimension(number.clone())
+                .to_css_string(span, false)
+                .unwrap_or_else(|_| format!("{}{}", number.num.0, number.unit)),
+        }
+    }
+
+    /// Best-effort AST-based reconstruction of dart-sass's `recommendation()`
+    /// text for the slash-div warning (dart builds this from the original,
+    /// unevaluated expression's `toString()`, so e.g. `12 / $n` recommends
+    /// `math.div(12, $n)` rather than substituting `$n`'s current value).
+    /// Covers the common shapes explicitly (Number, Variable, Paren, nested
+    /// `/`); returns `None` for anything else so the caller falls back to the
+    /// evaluated value's text.
+    fn div_operand_source_text(expr: &AstExpr<'static>, span: Span) -> Option<String> {
+        match expr {
+            AstExpr::Number { n, unit } => Some(
+                Value::Dimension(SassNumber {
+                    num: *n,
+                    unit: unit.clone(),
+                    as_slash: None,
+                })
+                .to_css_string(span, false)
+                .unwrap_or_else(|_| format!("{}{}", n.0, unit)),
+            ),
+            AstExpr::Variable { name, namespace } => {
+                let ns = namespace
+                    .map(|ns| format!("{}.", ns.node))
+                    .unwrap_or_default();
+                Some(format!("{ns}${}", name.node))
             }
-            _ => {}
+            // dart-sass's `ParenthesizedExpression() => expression.expression.toString()`
+            // reconstructs from the INNER expression's plain syntax, dropping the
+            // parens — critically, this does NOT recurse through the math.div
+            // conversion below: a parenthesized nested division prints as literal
+            // `a / b`, not `math.div(a, b)` (verified: `(12 / $n) / 2` recommends
+            // `math.div(12 / $n, 2)` in dart, not `math.div(math.div(12, $n), 2)`).
+            AstExpr::Paren(inner) => Self::div_operand_plain_text(inner, span),
+            AstExpr::BinaryOp(binop) if binop.op == BinaryOp::Div => Some(format!(
+                "math.div({}, {})",
+                Self::div_operand_source_text(&binop.lhs, span)?,
+                Self::div_operand_source_text(&binop.rhs, span)?
+            )),
+            _ => None,
+        }
+    }
+
+    /// Plain (non-`math.div`-converted) reconstruction used for the content of
+    /// a `Paren` inside `div_operand_source_text` — see its doc comment.
+    fn div_operand_plain_text(expr: &AstExpr<'static>, span: Span) -> Option<String> {
+        match expr {
+            AstExpr::Number { .. } | AstExpr::Variable { .. } => {
+                Self::div_operand_source_text(expr, span)
+            }
+            AstExpr::Paren(inner) => Self::div_operand_plain_text(inner, span),
+            AstExpr::BinaryOp(binop) if binop.op == BinaryOp::Div => Some(format!(
+                "{} / {}",
+                Self::div_operand_plain_text(&binop.lhs, span)?,
+                Self::div_operand_plain_text(&binop.rhs, span)?
+            )),
+            _ => None,
+        }
+    }
+
+    fn without_slash(&mut self, v: Value, span: impl FnOnce() -> Span) -> SassResult<Value> {
+        if let Value::Dimension(number) = &v {
+            if number.as_slash.is_some() {
+                let span = span();
+                self.emit_deprecation(Deprecation::SlashDiv, span, || {
+                    Ok(format!(
+                        "Using / for division is deprecated and will be removed in Dart Sass \
+                         2.0.0.\n\nRecommendation: {}\n\nMore info and automated migrator: \
+                         https://sass-lang.com/d/slash-div",
+                        Self::slash_recommendation(number, span)
+                    ))
+                })?;
+            }
         }
 
-        v.without_slash()
+        Ok(v.without_slash())
+    }
+
+    /// Best-effort span for an expression, for `without_slash` call sites that
+    /// only have a bare (already-parsed) sub-expression to work from rather
+    /// than dart-sass's full AST-node provenance tracking. Falls back to the
+    /// caller's own nearby span when the variant carries none directly.
+    fn expr_span(expr: &AstExpr<'static>, fallback: Span) -> Span {
+        match expr {
+            AstExpr::BinaryOp(binop) => binop.span,
+            AstExpr::String(_, span) | AstExpr::UnaryOp(.., span) => *span,
+            AstExpr::FunctionCall(func) => func.span,
+            AstExpr::InterpolatedFunction(func) => func.span,
+            AstExpr::CalculationWithFallback(calc) => calc.span,
+            AstExpr::Calculation(calc) => calc.span,
+            AstExpr::CssIf(css_if) => css_if.span,
+            AstExpr::Variable { name, .. } => name.span,
+            _ => fallback,
+        }
     }
 
     fn eval_maybe_args(
         &mut self,
-        args: MaybeEvaledArguments<'static>,
+        args: MaybeEvaledArguments<'_, 'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
         match args {
@@ -3769,21 +4490,24 @@ impl<'a> Visitor<'a> {
 
     fn eval_args(
         &mut self,
-        arguments: ArgumentInvocation<'static>,
+        arguments: &ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
         let mut positional = Vec::with_capacity(arguments.positional.len());
 
         for expr in arguments.positional {
-            let val = self.visit_expr(expr)?;
-            positional.push(self.without_slash(val));
+            let val = self.visit_expr_ref(expr)?;
+            positional.push(self.without_slash(val, || Self::expr_span(expr, span))?);
         }
 
-        let mut named = BTreeMap::new();
+        let mut named = SmallOrderedMap::default();
 
         for (key, expr) in arguments.named {
-            let val = self.visit_expr(expr)?;
-            named.insert(key, self.without_slash(val));
+            let val = self.visit_expr_ref(expr)?;
+            named.insert(
+                *key,
+                self.without_slash(val, || Self::expr_span(expr, span))?,
+            );
         }
 
         if arguments.rest.is_none() {
@@ -3792,35 +4516,41 @@ impl<'a> Visitor<'a> {
                 named,
                 separator: ListSeparator::Undecided,
                 span,
-                touched: BTreeSet::new(),
+                touched: FxHashSet::default(),
             });
         }
 
-        let rest = self.visit_expr(arguments.rest.unwrap())?;
+        let rest_expr = arguments.rest.as_ref().unwrap();
+        let rest = self.visit_expr_ref(rest_expr)?;
 
         let mut separator = ListSeparator::Undecided;
 
         match rest {
-            Value::Map(rest) => self.add_rest_map(&mut named, rest)?,
+            Value::Map(rest) => {
+                self.add_rest_map(&mut named, rest, || Self::expr_span(rest_expr, span))?
+            }
             Value::List(elems, list_separator, _) => {
-                positional.extend(
-                    Rc::unwrap_or_clone(elems)
-                        .into_iter()
-                        .map(|e| self.without_slash(e)),
-                );
+                for e in Rc::unwrap_or_clone(elems) {
+                    positional.push(self.without_slash(e, || Self::expr_span(rest_expr, span))?);
+                }
                 separator = list_separator;
             }
             Value::ArgList(arglist) => {
                 // todo: superfluous clone
                 for (&key, value) in arglist.keywords() {
-                    named.insert(key, self.without_slash(value.clone()));
+                    named.insert(
+                        key,
+                        self.without_slash(value.clone(), || Self::expr_span(rest_expr, span))?,
+                    );
                 }
 
-                positional.extend(arglist.elems.into_iter().map(|e| self.without_slash(e)));
+                for e in arglist.elems {
+                    positional.push(self.without_slash(e, || Self::expr_span(rest_expr, span))?);
+                }
                 separator = arglist.separator;
             }
             _ => {
-                positional.push(self.without_slash(rest));
+                positional.push(self.without_slash(rest, || Self::expr_span(rest_expr, span))?);
             }
         }
 
@@ -3830,20 +4560,24 @@ impl<'a> Visitor<'a> {
                 named,
                 separator,
                 span: arguments.span,
-                touched: BTreeSet::new(),
+                touched: FxHashSet::default(),
             });
         }
 
-        match self.visit_expr(arguments.keyword_rest.unwrap())? {
+        let keyword_rest_expr = arguments.keyword_rest.as_ref().unwrap();
+
+        match self.visit_expr_ref(keyword_rest_expr)? {
             Value::Map(keyword_rest) => {
-                self.add_rest_map(&mut named, keyword_rest)?;
+                self.add_rest_map(&mut named, keyword_rest, || {
+                    Self::expr_span(keyword_rest_expr, span)
+                })?;
 
                 Ok(ArgumentResult {
                     positional,
                     named,
                     separator,
                     span: arguments.span,
-                    touched: BTreeSet::new(),
+                    touched: FxHashSet::default(),
                 })
             }
             v => Err((
@@ -3859,13 +4593,14 @@ impl<'a> Visitor<'a> {
 
     fn add_rest_map(
         &mut self,
-        named: &mut BTreeMap<Identifier, Value>,
+        named: &mut SmallOrderedMap<Identifier, Value>,
         rest: SassMap,
+        span: impl Fn() -> Span,
     ) -> SassResult<()> {
         for (key, val) in rest {
             match key.node {
                 Value::String(text, ..) => {
-                    let val = self.without_slash(val);
+                    let val = self.without_slash(val, &span)?;
                     named.insert(Identifier::from(text.as_str()), val);
                 }
                 _ => {
@@ -3888,7 +4623,30 @@ impl<'a> Visitor<'a> {
         R: FnOnce(F, &mut Self) -> SassResult<V>,
     >(
         &mut self,
-        arguments: MaybeEvaledArguments<'static>,
+        arguments: MaybeEvaledArguments<'_, 'static>,
+        func: F,
+        env: &Environment,
+        span: Span,
+        run: R,
+    ) -> SassResult<V> {
+        if self.recursion_depth >= MAX_CALLABLE_RECURSION_DEPTH {
+            return Err(("Too much nesting.", span).into());
+        }
+
+        self.recursion_depth += 1;
+        let result = self.run_user_defined_callable_inner(arguments, func, env, span, run);
+        self.recursion_depth -= 1;
+
+        result
+    }
+
+    fn run_user_defined_callable_inner<
+        F: UserDefinedCallable,
+        V: fmt::Debug,
+        R: FnOnce(F, &mut Self) -> SassResult<V>,
+    >(
+        &mut self,
+        arguments: MaybeEvaledArguments<'_, 'static>,
         func: F,
         env: &Environment,
         span: Span,
@@ -3926,11 +4684,11 @@ impl<'a> Visitor<'a> {
 
                 for argument in additional_declared_args {
                     let name = argument.name;
-                    let value = evaluated.named.remove(&argument.name).map_or_else(
+                    let value = evaluated.named.shift_remove(&argument.name).map_or_else(
                         || {
-                            // todo: superfluous clone
-                            let v = visitor.visit_expr(argument.default.clone().unwrap())?;
-                            Ok(visitor.without_slash(v))
+                            let default = argument.default.as_ref().unwrap();
+                            let v = visitor.visit_expr_ref(default)?;
+                            visitor.without_slash(v, || Self::expr_span(default, span))
                         },
                         SassResult::Ok,
                     )?;
@@ -3991,20 +4749,12 @@ impl<'a> Visitor<'a> {
                     evaluated
                         .named
                         .keys()
-                        .map(|key| format!("${key}", key = key))
+                        .map(|key| format!("${key}"))
                         .collect(),
                     "or",
                 );
 
-                Err((
-                    format!(
-                        "No {argument_word} named {argument_names}.",
-                        argument_word = argument_word,
-                        argument_names = argument_names
-                    ),
-                    span,
-                )
-                    .into())
+                Err((format!("No {argument_word} named {argument_names}."), span).into())
             })
         })
     }
@@ -4012,7 +4762,7 @@ impl<'a> Visitor<'a> {
     pub(crate) fn run_function_callable(
         &mut self,
         func: SassFunction,
-        arguments: ArgumentInvocation<'static>,
+        arguments: &'static ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<Value> {
         self.run_function_callable_with_maybe_evaled(
@@ -4025,14 +4775,20 @@ impl<'a> Visitor<'a> {
     pub(crate) fn run_function_callable_with_maybe_evaled(
         &mut self,
         func: SassFunction,
-        arguments: MaybeEvaledArguments<'static>,
+        arguments: MaybeEvaledArguments<'_, 'static>,
         span: Span,
     ) -> SassResult<Value> {
         match func {
             SassFunction::Builtin(func, _name) => {
                 let evaluated = self.eval_maybe_args(arguments, span)?;
-                let val = func.0(evaluated, self)?;
-                Ok(self.without_slash(val))
+                let val = match &func.0 {
+                    BuiltinFn::Static(f) => f(evaluated, self)?,
+                    BuiltinFn::Dynamic { f, signature } => {
+                        let bound = self.bind_dynamic_args(signature.as_ref(), evaluated, span)?;
+                        f(bound, self)?
+                    }
+                };
+                self.without_slash(val, || span)
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
                 .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
@@ -4063,11 +4819,11 @@ impl<'a> Visitor<'a> {
                 let arguments = match arguments {
                     MaybeEvaledArguments::Invocation(args) => {
                         has_named = !args.named.is_empty() || args.keyword_rest.is_some();
-                        rest = args.rest;
+                        rest = args.rest.as_ref();
 
                         let mut result = Vec::with_capacity(args.positional.len());
                         for arg in args.positional {
-                            let value = self.visit_expr(arg)?;
+                            let value = self.visit_expr_ref(arg)?;
 
                             // When calc() falls back to Plain function (due to
                             // $variables in space-separated content), validate
@@ -4098,7 +4854,7 @@ impl<'a> Visitor<'a> {
                     );
                 }
 
-                let mut buffer = format!("{}(", original_name);
+                let mut buffer = format!("{original_name}(");
                 let mut first = true;
 
                 for argument in arguments {
@@ -4112,7 +4868,7 @@ impl<'a> Visitor<'a> {
                 }
 
                 if let Some(rest_arg) = rest {
-                    let rest = self.visit_expr(rest_arg)?;
+                    let rest = self.visit_expr_ref(rest_arg)?;
                     if !first {
                         buffer.push_str(", ");
                     }
@@ -4145,12 +4901,12 @@ impl<'a> Visitor<'a> {
         Ok(())
     }
 
-    fn visit_list_expr(&mut self, list: ListExpr<'static>) -> SassResult<Value> {
+    fn visit_list_expr(&mut self, list: &ListExpr<'static>) -> SassResult<Value> {
         let elems = list
             .elems
-            .into_iter()
+            .iter()
             .map(|e| {
-                let value = self.visit_expr(e.node)?;
+                let value = self.visit_expr_ref(&e.node)?;
                 Ok(value)
             })
             .collect::<SassResult<Vec<_>>>()?;
@@ -4160,10 +4916,9 @@ impl<'a> Visitor<'a> {
 
     fn visit_function_call_expr(
         &mut self,
-        func_call: FunctionCallExpr<'static>,
+        func_call: &FunctionCallExpr<'static>,
     ) -> SassResult<Value> {
         let name = func_call.name;
-        let original_name = func_call.original_name;
 
         // If the function name starts with -- AND was written with hyphens in source
         // (not underscores normalized to hyphens), treat as CSS custom function
@@ -4171,9 +4926,9 @@ impl<'a> Visitor<'a> {
             return self.run_function_callable(
                 SassFunction::Plain {
                     name,
-                    original_name,
+                    original_name: func_call.original_name.clone(),
                 },
-                func_call.arguments.clone(),
+                func_call.arguments,
                 func_call.span,
             );
         }
@@ -4190,11 +4945,16 @@ impl<'a> Visitor<'a> {
                 if let Some(f) = self.options.custom_fns.get(name.as_str()) {
                     SassFunction::Builtin(f.clone(), name)
                 } else if let Some(f) = GLOBAL_FUNCTIONS.get(name.as_str()) {
+                    if let Some((module, fn_name)) = f.2 {
+                        self.emit_deprecation(Deprecation::GlobalBuiltin, func_call.span, || {
+                            Ok(global_builtin_message(module, fn_name))
+                        })?;
+                    }
                     SassFunction::Builtin(f.clone(), name)
                 } else {
                     SassFunction::Plain {
                         name,
-                        original_name,
+                        original_name: func_call.original_name.clone(),
                     }
                 }
             }
@@ -4202,32 +4962,56 @@ impl<'a> Visitor<'a> {
 
         let old_in_function = self.flags.in_function();
         self.flags.set(ContextFlags::IN_FUNCTION, true);
-        let value =
-            self.run_function_callable(func, func_call.arguments.clone(), func_call.span)?;
+        let value = self.run_function_callable(func, func_call.arguments, func_call.span)?;
         self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
 
         Ok(value)
     }
 
+    /// Evaluate a CSS math function call (min, sqrt, round, ...) that dart-sass
+    /// allows a user-defined or module function to shadow. A user/module function
+    /// of the same name (found via `get_fn`, which never resolves to grass's own
+    /// global builtins) takes precedence over the calculation, matching dart's
+    /// `getFunction`-then-switch order in `visitFunctionExpression`.
+    fn visit_calculation_with_fallback(
+        &mut self,
+        node: &CalculationWithFallbackExpr<'static>,
+    ) -> SassResult<Value> {
+        match self.env.get_fn(node.name, None, node.span)? {
+            Some(func) => {
+                let old_in_function = self.flags.in_function();
+                self.flags.set(ContextFlags::IN_FUNCTION, true);
+                let value = self.run_function_callable(func, node.invocation, node.span);
+                self.flags.set(ContextFlags::IN_FUNCTION, old_in_function);
+                value
+            }
+            None => match &node.calculation_error {
+                Some((message, span)) => Err((message.clone(), *span).into()),
+                None => self.visit_expr_ref(&node.calculation),
+            },
+        }
+    }
+
     fn visit_interpolated_func_expr(
         &mut self,
-        func: InterpolatedFunction<'static>,
+        func: &InterpolatedFunction<'static>,
     ) -> SassResult<Value> {
         let InterpolatedFunction {
             name,
             arguments: args,
             span,
         } = func;
-        let fn_name = self.perform_interpolation(name, false)?;
+        let span = *span;
+        let fn_name = self.perform_interpolation_ref(name, false)?;
 
         if !args.named.is_empty() || args.keyword_rest.is_some() {
             return Err(("Plain CSS functions don't support keyword arguments.", span).into());
         }
 
-        let mut buffer = format!("{}(", fn_name);
+        let mut buffer = format!("{fn_name}(");
 
         let mut first = true;
-        for arg in args.positional.clone() {
+        for arg in args.positional {
             if first {
                 first = false;
             } else {
@@ -4237,8 +5021,8 @@ impl<'a> Visitor<'a> {
             buffer.push_str(&evaluated);
         }
 
-        if let Some(rest_arg) = args.rest {
-            let rest = self.visit_expr(rest_arg)?;
+        if let Some(rest_arg) = &args.rest {
+            let rest = self.visit_expr_ref(rest_arg)?;
             if !first {
                 buffer.push_str(", ");
             }
@@ -4277,32 +5061,27 @@ impl<'a> Visitor<'a> {
             AstExpr::Variable { name, namespace } => self.env.get_var(*name, *namespace)?,
             AstExpr::ParentSelector => self.visit_parent_selector(),
             AstExpr::BinaryOp(binop) => self.visit_bin_op(
-                binop.lhs.clone(),
+                &binop.lhs,
                 binop.op,
-                binop.rhs.clone(),
+                &binop.rhs,
                 binop.allows_slash,
                 binop.span,
             )?,
             AstExpr::Paren(inner) => self.visit_expr_ref(inner)?,
-            AstExpr::UnaryOp(op, inner, span) => {
-                self.visit_unary_op(*op, (*inner).clone(), *span)?
+            AstExpr::UnaryOp(op, inner, span) => self.visit_unary_op(*op, inner, *span)?,
+            AstExpr::List(list) => self.visit_list_expr(list)?,
+            AstExpr::String(StringExpr(text, quote), ..) => self.visit_string(text, *quote)?,
+            AstExpr::Calculation(calc) => {
+                self.visit_calculation_expr(calc.name, &calc.args, calc.span)?
             }
-            AstExpr::List(list) => self.visit_list_expr(list.clone())?,
-            AstExpr::String(StringExpr(text, quote), ..) => {
-                self.visit_string(text.clone(), *quote)?
-            }
-            AstExpr::Calculation { name, args } => {
-                self.visit_calculation_expr(*name, args.clone(), self.empty_span)?
-            }
-            AstExpr::CssIf(css_if) => self.visit_css_if((*css_if).clone())?,
-            AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call.clone())?,
-            AstExpr::If(if_expr) => self.visit_ternary((*if_expr).clone())?,
-            AstExpr::InterpolatedFunction(func) => {
-                self.visit_interpolated_func_expr((*func).clone())?
-            }
-            AstExpr::Map(map) => self.visit_map(map.clone())?,
+            AstExpr::CalculationWithFallback(node) => self.visit_calculation_with_fallback(node)?,
+            AstExpr::CssIf(css_if) => self.visit_css_if(css_if)?,
+            AstExpr::FunctionCall(func_call) => self.visit_function_call_expr(func_call)?,
+            AstExpr::If(if_expr) => self.visit_ternary(if_expr)?,
+            AstExpr::InterpolatedFunction(func) => self.visit_interpolated_func_expr(func)?,
+            AstExpr::Map(map) => self.visit_map(map)?,
             AstExpr::Supports(condition) => Value::String(
-                self.visit_supports_condition((*condition).clone())?.into(),
+                self.visit_supports_condition_ref(condition)?.into(),
                 QuoteKind::None,
             ),
         })
@@ -4336,25 +5115,25 @@ impl<'a> Visitor<'a> {
 
     fn visit_calculation_value(
         &mut self,
-        expr: AstExpr<'static>,
+        expr: &AstExpr<'static>,
         in_min_or_max: bool,
         span: Span,
     ) -> SassResult<CalculationArg> {
         Ok(match expr {
             AstExpr::Paren(inner) => {
-                let result = self.visit_calculation_value(inner.clone(), in_min_or_max, span)?;
+                let result = self.visit_calculation_value(inner, in_min_or_max, span)?;
 
                 match result {
-                    CalculationArg::String(text) => CalculationArg::String(format!("({})", text)),
+                    CalculationArg::String(text) => CalculationArg::String(format!("({text})")),
                     CalculationArg::Interpolation(text) => {
-                        CalculationArg::String(format!("({})", text))
+                        CalculationArg::String(format!("({text})"))
                     }
                     other => other,
                 }
             }
             AstExpr::String(string_expr, _span) => {
                 debug_assert!(string_expr.1 == QuoteKind::None);
-                let text = self.perform_interpolation(string_expr.0.clone(), false)?;
+                let text = self.perform_interpolation_ref(&string_expr.0, false)?;
                 if string_expr.0.contents.len() == 1
                     && matches!(
                         string_expr.0.contents.first(),
@@ -4368,21 +5147,22 @@ impl<'a> Visitor<'a> {
             }
             AstExpr::BinaryOp(binop) => SassCalculation::operate_internal(
                 binop.op,
-                self.visit_calculation_value(binop.lhs.clone(), in_min_or_max, span)?,
-                self.visit_calculation_value(binop.rhs.clone(), in_min_or_max, span)?,
+                self.visit_calculation_value(&binop.lhs, in_min_or_max, span)?,
+                self.visit_calculation_value(&binop.rhs, in_min_or_max, span)?,
                 in_min_or_max,
                 !self.flags.in_supports_declaration(),
                 self.options,
                 span,
             )?,
             AstExpr::Number { .. }
-            | AstExpr::Calculation { .. }
+            | AstExpr::Calculation(..)
+            | AstExpr::CalculationWithFallback(..)
             | AstExpr::Variable { .. }
             | AstExpr::CssIf(..)
             | AstExpr::FunctionCall { .. }
             | AstExpr::If(..)
             | AstExpr::UnaryOp(..) => {
-                let result = self.visit_expr(expr)?;
+                let result = self.visit_expr_ref(expr)?;
                 match result {
                     Value::Dimension(SassNumber {
                         num,
@@ -4407,6 +5187,14 @@ impl<'a> Visitor<'a> {
                     }
                 }
             }
+            AstExpr::List(list) => {
+                let message = if list.elems.is_empty() {
+                    "This expression can't be used in a calculation."
+                } else {
+                    "Missing math operator."
+                };
+                return Err((message, span).into());
+            }
             v => unreachable!("{:?}", v),
         })
     }
@@ -4414,7 +5202,7 @@ impl<'a> Visitor<'a> {
     fn visit_calculation_expr(
         &mut self,
         name: CalculationName,
-        mut ast_args: Vec<AstExpr<'static>>,
+        ast_args: &[AstExpr<'static>],
         span: Span,
     ) -> SassResult<Value> {
         // For single-arg functions (abs, round), when calculation arg
@@ -4426,13 +5214,13 @@ impl<'a> Visitor<'a> {
 
         let resolved = ast_args
             .iter()
-            .map(|arg| self.visit_calculation_value(arg.clone(), name.in_min_or_max(), span))
+            .map(|arg| self.visit_calculation_value(arg, name.in_min_or_max(), span))
             .collect::<SassResult<Vec<_>>>();
 
         let mut args = match resolved {
             Ok(args) => args,
             Err(e) if single_arg_fallback => {
-                let val = self.visit_expr(ast_args.remove(0))?;
+                let val = self.visit_expr_ref(&ast_args[0])?;
                 return match val {
                     Value::Dimension(n) if name == CalculationName::Abs => {
                         Ok(Value::Dimension(SassNumber {
@@ -4453,6 +5241,13 @@ impl<'a> Visitor<'a> {
             }
             Err(e) => return Err(e),
         };
+
+        if name == CalculationName::Calc && args.is_empty() {
+            return Err(("Missing argument.", span).into());
+        }
+        if name == CalculationName::Clamp && args.is_empty() {
+            return Err(("Missing argument.", span).into());
+        }
 
         if self.flags.in_supports_declaration() {
             return Ok(Value::Calculation(SassCalculation::unsimplified(
@@ -4476,7 +5271,27 @@ impl<'a> Visitor<'a> {
             }
             CalculationName::Abs => {
                 Self::check_calc_args(&args, 1, "abs", span)?;
-                SassCalculation::abs(args.pop().unwrap(), self.options, span)
+                let arg = SassCalculation::simplify(args.pop().unwrap());
+                // Mirrors dart-sass's `SassCalculation.abs`: this also covers
+                // the legacy un-namespaced `abs(...)` call (routed here via
+                // `visit_calculation_with_fallback` for calc-safe argument
+                // shapes), not just an explicit `calc(abs(...))`.
+                if let CalculationArg::Number(ref n) = arg {
+                    if n.unit == Unit::Percent {
+                        let number_text = serialize_number(n, self.options, span)?;
+                        self.emit_deprecation(Deprecation::AbsPercent, span, || {
+                            Ok(format!(
+                                "Passing percentage units to the global abs() function is \
+                                 deprecated.\nIn the future, this will emit a CSS abs() function \
+                                 to be resolved by the browser.\nTo preserve current behavior: \
+                                 math.abs({number_text})\nTo emit a CSS abs() now: \
+                                 abs(#{{{number_text}}})\nMore info: \
+                                 https://sass-lang.com/d/abs-percent"
+                            ))
+                        })?;
+                    }
+                }
+                SassCalculation::abs(arg, self.options, span)
             }
             CalculationName::Exp => {
                 Self::check_calc_args(&args, 1, "exp", span)?;
@@ -4575,10 +5390,10 @@ impl<'a> Visitor<'a> {
     fn visit_unary_op(
         &mut self,
         op: UnaryOp,
-        expr: AstExpr<'static>,
+        expr: &AstExpr<'static>,
         span: Span,
     ) -> SassResult<Value> {
-        let operand = self.visit_expr(expr)?;
+        let operand = self.visit_expr_ref(expr)?;
 
         match op {
             UnaryOp::Plus => operand.unary_plus(self, span),
@@ -4588,54 +5403,68 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn visit_ternary(&mut self, if_expr: Ternary<'static>) -> SassResult<Value> {
+    fn visit_ternary(&mut self, if_expr: &Ternary<'static>) -> SassResult<Value> {
         // When rest args are present, evaluate all args eagerly (can't do lazy
         // evaluation since rest values are already evaluated)
         if if_expr.0.rest.is_some() {
             let span = if_expr.0.span;
-            let mut args = self.eval_args(if_expr.0, span)?;
+            let mut args = self.eval_args(&if_expr.0, span)?;
             args.max_args(3)?;
             let value = if args.get_err(0, "condition")?.is_truthy() {
                 args.get_err(1, "if-true")?
             } else {
                 args.get_err(2, "if-false")?
             };
-            return Ok(self.without_slash(value));
+            return self.without_slash(value, || span);
         }
 
-        if_arguments().verify(if_expr.0.positional.len(), &if_expr.0.named, if_expr.0.span)?;
+        if_arguments(self.arena).verify(
+            if_expr.0.positional.len(),
+            if_expr.0.named,
+            if_expr.0.span,
+        )?;
 
-        let mut positional = if_expr.0.positional;
-        let mut named = if_expr.0.named;
+        let positional = if_expr.0.positional;
+        let named = if_expr.0.named;
 
-        let condition = if positional.is_empty() {
-            named.remove(&Identifier::from("condition")).unwrap()
+        // Consume positional args left-to-right, falling back to named lookup
+        // once positional is exhausted (mirrors ArgumentResult::get semantics
+        // without needing to mutate/remove from the borrowed invocation).
+        let mut next_idx = 0;
+
+        let condition = if next_idx < positional.len() {
+            let v = &positional[next_idx];
+            next_idx += 1;
+            v
         } else {
-            positional.remove(0)
+            NamedArgsView::get(named, &Identifier::from("condition")).unwrap()
         };
 
-        let if_true = if positional.is_empty() {
-            named.remove(&Identifier::from("if_true")).unwrap()
+        let if_true = if next_idx < positional.len() {
+            let v = &positional[next_idx];
+            next_idx += 1;
+            v
         } else {
-            positional.remove(0)
+            NamedArgsView::get(named, &Identifier::from("if_true")).unwrap()
         };
 
-        let if_false = if positional.is_empty() {
-            named.remove(&Identifier::from("if_false")).unwrap()
+        let if_false = if next_idx < positional.len() {
+            &positional[next_idx]
         } else {
-            positional.remove(0)
+            NamedArgsView::get(named, &Identifier::from("if_false")).unwrap()
         };
 
-        let value = if self.visit_expr(condition)?.is_truthy() {
-            self.visit_expr(if_true)?
+        let chosen = if self.visit_expr_ref(condition)?.is_truthy() {
+            if_true
         } else {
-            self.visit_expr(if_false)?
+            if_false
         };
+        let value = self.visit_expr_ref(chosen)?;
 
-        Ok(self.without_slash(value))
+        self.without_slash(value, || Self::expr_span(chosen, if_expr.0.span))
     }
 
-    fn visit_css_if(&mut self, css_if: CssIfExpression<'static>) -> SassResult<Value> {
+    fn visit_css_if(&mut self, css_if: &CssIfExpression<'static>) -> SassResult<Value> {
         // Validate: sass() and raw substitutions cannot coexist in same condition
         for clause in &css_if.clauses {
             self.check_no_sass_with_raw(&clause.condition, css_if.span)?;
@@ -4645,14 +5474,15 @@ impl<'a> Visitor<'a> {
         for clause in &css_if.clauses {
             match self.eval_if_condition(&clause.condition)? {
                 ConditionResult::True => {
-                    let value = self.visit_expr(clause.value.clone())?;
-                    return Ok(self.without_slash(value));
+                    let value = self.visit_expr_ref(&clause.value)?;
+                    return self
+                        .without_slash(value, || Self::expr_span(&clause.value, css_if.span));
                 }
                 ConditionResult::False => continue,
                 ConditionResult::Css(remaining) => {
                     // This clause has CSS parts that can't be evaluated.
                     // Collect remaining clauses as CSS output.
-                    return self.build_css_if_output(&remaining, clause, &css_if);
+                    return self.build_css_if_output(&remaining, clause, css_if);
                 }
             }
         }
@@ -4671,9 +5501,8 @@ impl<'a> Visitor<'a> {
 
         // Add the first remaining clause
         let cond_str = self.serialize_if_condition(first_remaining)?;
-        let val_str =
-            self.evaluate_to_css(first_clause.value.clone(), QuoteKind::None, css_if.span)?;
-        parts.push(format!("{}: {}", cond_str, val_str));
+        let val_str = self.evaluate_to_css(&first_clause.value, QuoteKind::None, css_if.span)?;
+        parts.push(format!("{cond_str}: {val_str}"));
 
         // Find remaining clauses after the first CSS one
         let first_idx = css_if
@@ -4686,20 +5515,17 @@ impl<'a> Visitor<'a> {
             match &clause.condition {
                 IfCondition::Else => {
                     let val_str =
-                        self.evaluate_to_css(clause.value.clone(), QuoteKind::None, css_if.span)?;
-                    parts.push(format!("else: {}", val_str));
+                        self.evaluate_to_css(&clause.value, QuoteKind::None, css_if.span)?;
+                    parts.push(format!("else: {val_str}"));
                 }
                 other => {
                     match self.eval_if_condition(other)? {
                         ConditionResult::True => {
                             // Sass condition that's true — this becomes the value
-                            let val_str = self.evaluate_to_css(
-                                clause.value.clone(),
-                                QuoteKind::None,
-                                css_if.span,
-                            )?;
+                            let val_str =
+                                self.evaluate_to_css(&clause.value, QuoteKind::None, css_if.span)?;
                             // Replace all remaining with just this value
-                            parts.push(format!("else: {}", val_str));
+                            parts.push(format!("else: {val_str}"));
                             break;
                         }
                         ConditionResult::False => {
@@ -4708,12 +5534,9 @@ impl<'a> Visitor<'a> {
                         }
                         ConditionResult::Css(remaining) => {
                             let cond_str = self.serialize_if_condition(&remaining)?;
-                            let val_str = self.evaluate_to_css(
-                                clause.value.clone(),
-                                QuoteKind::None,
-                                css_if.span,
-                            )?;
-                            parts.push(format!("{}: {}", cond_str, val_str));
+                            let val_str =
+                                self.evaluate_to_css(&clause.value, QuoteKind::None, css_if.span)?;
+                            parts.push(format!("{cond_str}: {val_str}"));
                         }
                     }
                 }
@@ -4731,20 +5554,28 @@ impl<'a> Visitor<'a> {
         match condition {
             IfCondition::Else => Ok(ConditionResult::True),
             IfCondition::Atom(atom) => self.eval_if_atom(atom),
-            IfCondition::Not(inner, _span) => match self.eval_if_condition(inner)? {
-                ConditionResult::True => Ok(ConditionResult::False),
-                ConditionResult::False => Ok(ConditionResult::True),
-                ConditionResult::Css(inner_cond) => Ok(ConditionResult::Css(IfCondition::Not(
-                    Box::new(inner_cond),
-                    *_span,
-                ))),
-            },
+            IfCondition::Not(inner, _span) => {
+                match self.eval_if_condition(inner)? {
+                    ConditionResult::True => Ok(ConditionResult::False),
+                    ConditionResult::False => Ok(ConditionResult::True),
+                    ConditionResult::Css(inner_cond) => {
+                        // Safety: see `erase_ref_lifetime` — `self.arena` lives for
+                        // the whole compilation, so this reference is valid for
+                        // as long as any other 'static-erased AST reference.
+                        let inner_cond =
+                            unsafe { crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond)) };
+                        Ok(ConditionResult::Css(IfCondition::Not(inner_cond, *_span)))
+                    }
+                }
+            }
             IfCondition::Paren(inner) => match self.eval_if_condition(inner)? {
                 ConditionResult::True => Ok(ConditionResult::True),
                 ConditionResult::False => Ok(ConditionResult::False),
-                ConditionResult::Css(inner_cond) => Ok(ConditionResult::Css(IfCondition::Paren(
-                    Box::new(inner_cond),
-                ))),
+                ConditionResult::Css(inner_cond) => {
+                    let inner_cond =
+                        unsafe { crate::ast::erase_ref_lifetime(self.arena.alloc(inner_cond)) };
+                    Ok(ConditionResult::Css(IfCondition::Paren(inner_cond)))
+                }
             },
             IfCondition::And(operands) => {
                 let mut remaining_css = Vec::new();
@@ -4853,7 +5684,7 @@ impl<'a> Visitor<'a> {
     fn eval_if_atom(&mut self, atom: &IfConditionAtom<'static>) -> SassResult<ConditionResult> {
         match atom {
             IfConditionAtom::Sass(expr, _span) => {
-                let value = self.visit_expr(expr.clone())?;
+                let value = self.visit_expr_ref(expr)?;
                 if value.is_truthy() {
                     Ok(ConditionResult::True)
                 } else {
@@ -4862,21 +5693,37 @@ impl<'a> Visitor<'a> {
             }
             IfConditionAtom::Css(interp, span) | IfConditionAtom::CssRaw(interp, span) => {
                 // Evaluate any interpolations within the CSS text
-                let text = self.perform_interpolation(interp.clone(), false)?;
+                let text = self.perform_interpolation_ref(interp, false)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
-                    IfConditionAtom::Css(Interpolation::new_plain(text), *span),
+                    IfConditionAtom::Css(
+                        unsafe {
+                            crate::ast::erase_interpolation_lifetime(
+                                InterpolationBuilder::new_plain(text).finish(self.arena),
+                            )
+                        },
+                        *span,
+                    ),
                 )))
             }
             IfConditionAtom::Interp(expr, span) => {
-                let value = self.visit_expr(expr.clone())?;
+                let value = self.visit_expr_ref(expr)?;
                 let text = self.serialize(value, QuoteKind::None, *span)?;
                 Ok(ConditionResult::Css(IfCondition::Atom(
-                    IfConditionAtom::Css(Interpolation::new_plain(text), *span),
+                    IfConditionAtom::Css(
+                        unsafe {
+                            crate::ast::erase_interpolation_lifetime(
+                                InterpolationBuilder::new_plain(text).finish(self.arena),
+                            )
+                        },
+                        *span,
+                    ),
                 )))
             }
         }
     }
 
+    // `self` is required for recursive calls; this is a 1.88 clippy gate allowance.
+    #[allow(clippy::only_used_in_recursion)]
     fn serialize_if_condition(&mut self, condition: &IfCondition<'static>) -> SassResult<String> {
         match condition {
             IfCondition::Else => Ok("else".to_string()),
@@ -4893,11 +5740,11 @@ impl<'a> Visitor<'a> {
             },
             IfCondition::Not(inner, _) => {
                 let inner_str = self.serialize_if_condition(inner)?;
-                Ok(format!("not {}", inner_str))
+                Ok(format!("not {inner_str}"))
             }
             IfCondition::Paren(inner) => {
                 let inner_str = self.serialize_if_condition(inner)?;
-                Ok(format!("({})", inner_str))
+                Ok(format!("({inner_str})"))
             }
             IfCondition::And(operands) => {
                 let parts: Vec<String> = operands
@@ -4918,7 +5765,7 @@ impl<'a> Visitor<'a> {
 
     fn visit_string(
         &mut self,
-        mut text: Interpolation<'static>,
+        text: &Interpolation<'static>,
         quote: QuoteKind,
     ) -> SassResult<Value> {
         // Don't use [performInterpolation] here because we need to get the raw text
@@ -4928,25 +5775,24 @@ impl<'a> Visitor<'a> {
 
         let result = match text.contents.len() {
             0 => String::new(),
-            1 => match text.contents.pop() {
-                Some(InterpolationPart::String(s)) => s,
-                Some(InterpolationPart::Expr(Spanned { node, span })) => {
-                    match self.visit_expr(node)? {
+            1 => match &text.contents[0] {
+                InterpolationPart::String(s) => (*s).to_owned(),
+                InterpolationPart::Expr(Spanned { node, span }) => {
+                    match self.visit_expr_ref(node)? {
                         Value::String(s, ..) => s.to_string(),
-                        e => self.serialize(e, QuoteKind::None, span)?,
+                        e => self.serialize(e, QuoteKind::None, *span)?,
                     }
                 }
-                None => unreachable!(),
             },
             _ => text
                 .contents
-                .into_iter()
+                .iter()
                 .map(|part| match part {
-                    InterpolationPart::String(s) => Ok(s),
+                    InterpolationPart::String(s) => Ok((*s).to_owned()),
                     InterpolationPart::Expr(Spanned { node, span }) => {
-                        match self.visit_expr(node)? {
+                        match self.visit_expr_ref(node)? {
                             Value::String(s, ..) => Ok(s.to_string()),
-                            e => self.serialize(e, QuoteKind::None, span),
+                            e => self.serialize(e, QuoteKind::None, *span),
                         }
                     }
                 })
@@ -4961,13 +5807,13 @@ impl<'a> Visitor<'a> {
         Ok(Value::String(result.into(), quote))
     }
 
-    fn visit_map(&mut self, map: AstSassMap<'static>) -> SassResult<Value> {
+    fn visit_map(&mut self, map: &AstSassMap<'static>) -> SassResult<Value> {
         let mut sass_map = SassMap::new();
 
         for pair in map.0 {
             let key_span = pair.0.span;
-            let key = self.visit_expr(pair.0.node)?;
-            let value = self.visit_expr(pair.1)?;
+            let key = self.visit_expr_ref(&pair.0.node)?;
+            let value = self.visit_expr_ref(&pair.1)?;
 
             if sass_map.get_ref(&key).is_some() {
                 return Err(("Duplicate key.", key_span).into());
@@ -4987,62 +5833,62 @@ impl<'a> Visitor<'a> {
 
     fn visit_bin_op(
         &mut self,
-        lhs: AstExpr<'static>,
+        lhs: &AstExpr<'static>,
         op: BinaryOp,
-        rhs: AstExpr<'static>,
+        rhs: &AstExpr<'static>,
         allows_slash: bool,
         span: Span,
     ) -> SassResult<Value> {
-        let left = self.visit_expr(lhs)?;
+        let left = self.visit_expr_ref(lhs)?;
 
         Ok(match op {
             BinaryOp::SingleEq => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 single_eq(&left, &right, self.options, span)?
             }
             BinaryOp::Or => {
                 if left.is_truthy() {
                     left
                 } else {
-                    self.visit_expr(rhs)?
+                    self.visit_expr_ref(rhs)?
                 }
             }
             BinaryOp::And => {
                 if left.is_truthy() {
-                    self.visit_expr(rhs)?
+                    self.visit_expr_ref(rhs)?
                 } else {
                     left
                 }
             }
             BinaryOp::Equal => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 Value::bool(left == right)
             }
             BinaryOp::NotEqual => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 Value::bool(left != right)
             }
             BinaryOp::GreaterThan
             | BinaryOp::GreaterThanEqual
             | BinaryOp::LessThan
             | BinaryOp::LessThanEqual => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 cmp(&left, &right, self.options, span, op)?
             }
             BinaryOp::Plus => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 add(left, right, self.options, span)?
             }
             BinaryOp::Minus => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 sub(left, right, self.options, span)?
             }
             BinaryOp::Mul => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 mul(left, right, self.options, span)?
             }
             BinaryOp::Div => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
 
                 let left_is_number = matches!(left, Value::Dimension { .. });
                 let right_is_number = matches!(right, Value::Dimension { .. });
@@ -5055,19 +5901,38 @@ impl<'a> Visitor<'a> {
                         span,
                     );
                 } else if left_is_number && right_is_number {
-                    // todo: emit warning here. it prints too frequently, so we do not currently
-                    // self.emit_warning(
-                    //     Cow::Borrowed(format!(
-                    //         "Using / for division outside of calc() is deprecated"
-                    //     )),
-                    //     span,
-                    // );
+                    // dart-sass builds this recommendation from the original
+                    // (unevaluated) expression AST, so e.g. `12 / $n`
+                    // recommends `math.div(12, $n)` rather than substituting
+                    // $n's current value. `div_operand_source_text` covers
+                    // the common shapes (Number, Variable, Paren, nested `/`)
+                    // structurally, without evaluating; anything else falls
+                    // back to the evaluated value's text (dart-exact for
+                    // literal operands like `(1/2)`, diverges for e.g.
+                    // function-call operands — narrower than dart's general
+                    // AST `toString()`, see todo #159).
+                    self.emit_deprecation(Deprecation::SlashDiv, span, || {
+                        let left_text = match Self::div_operand_source_text(lhs, span) {
+                            Some(t) => t,
+                            None => left.to_css_string(span, false)?,
+                        };
+                        let right_text = match Self::div_operand_source_text(rhs, span) {
+                            Some(t) => t,
+                            None => right.to_css_string(span, false)?,
+                        };
+                        Ok(format!(
+                            "Using / for division outside of calc() is deprecated and will be \
+                             removed in Dart Sass 2.0.0.\n\nRecommendation: math.div({left_text}, \
+                             {right_text}) or calc({left_text} / {right_text})\n\nMore info and \
+                             automated migrator: https://sass-lang.com/d/slash-div"
+                        ))
+                    })?;
                 }
 
                 div(left, right, self.options, span)?
             }
             BinaryOp::Rem => {
-                let right = self.visit_expr(rhs)?;
+                let right = self.visit_expr_ref(rhs)?;
                 rem(left, right, self.options, span)?
             }
         })
@@ -5086,6 +5951,20 @@ impl<'a> Visitor<'a> {
         &mut self,
         ruleset: AstRuleSet<'static>,
     ) -> SassResult<Option<Value>> {
+        if self.style_rule_recursion_depth >= MAX_STYLE_RULE_RECURSION_DEPTH {
+            return Err(("Too much nesting.", ruleset.span).into());
+        }
+
+        self.style_rule_recursion_depth += 1;
+        let result = crate::stack::maybe_grow(256 * 1024, 1024 * 1024, || {
+            self.visit_ruleset_inner(ruleset)
+        });
+        self.style_rule_recursion_depth -= 1;
+
+        result
+    }
+
+    fn visit_ruleset_inner(&mut self, ruleset: AstRuleSet<'static>) -> SassResult<Option<Value>> {
         if self.declaration_name.is_some() {
             return Err((
                 "Style rules may not be used within nested declarations.",
@@ -5119,6 +5998,7 @@ impl<'a> Visitor<'a> {
             let keyframes_ruleset = CssStmt::KeyframesRuleSet(KeyframesRuleSet {
                 selector: parsed_selector,
                 body: Vec::new(),
+                selector_span: Some(span),
             });
 
             let was_in_keyframes_rule = self.flags.in_keyframes_rule();
@@ -5213,6 +6093,17 @@ impl<'a> Visitor<'a> {
             .extender
             .add_selector(parsed_selector, &self.media_queries)?;
 
+        let only_nests_style_rules = !ruleset_body.is_empty()
+            && ruleset_body
+                .iter()
+                .all(|stmt| matches!(stmt, AstStmt::RuleSet(..)));
+        self.warn_for_bogus_combinators(
+            &selector.as_selector_list(),
+            &original_selector,
+            ruleset.selector_span,
+            only_nests_style_rules,
+        )?;
+
         let rule = CssStmt::RuleSet {
             selector: selector.clone(),
             body: Vec::new(),
@@ -5291,74 +6182,75 @@ impl<'a> Visitor<'a> {
     fn style_rule_exists(&self) -> bool {
         !self.flags.at_root_excluding_style_rule() && self.style_rule_ignoring_at_root.is_some()
     }
+}
 
-    pub(crate) fn visit_style(&mut self, style: AstStyle<'static>) -> SassResult<Option<Value>> {
-        if !self.style_rule_exists()
-            && !self.flags.in_unknown_at_rule()
-            && !self.flags.in_keyframes()
-        {
-            return Err((
-                "Declarations may only be used within style rules.",
-                style.span,
-            )
-                .into());
-        }
+#[cfg(test)]
+mod normalize_path_tests {
+    use super::Visitor;
+    use std::path::Path;
 
-        let is_custom_property = style.is_custom_property();
+    fn normalize(s: &str) -> String {
+        Visitor::normalize_path(Path::new(s))
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
 
-        if is_custom_property && self.declaration_name.is_some() {
-            return Err((
-                "Declarations whose names begin with \"--\" may not be nested.",
-                style.span,
-            )
-                .into());
-        }
+    #[test]
+    fn dot_and_dotdot_mixed() {
+        assert_eq!(normalize("./a/./b"), "a/b");
+    }
 
-        let mut name = self.interpolation_to_value(style.name, false, true)?;
+    #[test]
+    fn dotdot_cancels_real_segment() {
+        assert_eq!(normalize("a/b/../c"), "a/c");
+    }
 
-        if let Some(declaration_name) = &self.declaration_name {
-            name = format!("{}-{}", declaration_name, name);
-        }
+    #[test]
+    fn trailing_dotdot_cancels_single_segment() {
+        assert_eq!(normalize("a/.."), "");
+    }
 
-        if let Some(value) = style
-            .value
-            .map(|s| {
-                SassResult::Ok(Spanned {
-                    node: self.visit_expr(s.node)?,
-                    span: s.span,
-                })
-            })
-            .transpose()?
-        {
-            // If the value is an empty list, preserve it, because converting it to CSS
-            // will throw an error that we want the user to see.
-            if !value.is_blank() || value.is_empty_list() || is_custom_property {
-                // todo: superfluous clones?
-                self.add_child_to_current_parent(CssStmt::Style(Style {
-                    property: InternedString::get_or_intern(&name),
-                    value: Box::new(value),
-                    declared_as_custom_property: is_custom_property,
-                    property_span: style.span,
-                }));
-            }
-        }
+    #[test]
+    fn leading_dotdot_accumulates_after_first_cancel() {
+        // The first ".." cancels "a"; the second has nothing left to cancel
+        // against and must accumulate rather than vanish.
+        assert_eq!(normalize("a/../../b"), "../b");
+    }
 
-        let children = style.body;
+    #[test]
+    fn bare_dotdot() {
+        assert_eq!(normalize(".."), "..");
+    }
 
-        if !children.is_empty() {
-            let old_declaration_name = self.declaration_name.take();
-            self.declaration_name = Some(name);
-            self.with_scope::<SassResult<()>, _>(false, true, |visitor| {
-                for stmt in children {
-                    let result = visitor.visit_stmt(stmt)?;
-                    debug_assert!(result.is_none());
-                }
+    #[test]
+    fn two_leading_dotdot_accumulate() {
+        assert_eq!(normalize("../../a/b"), "../../a/b");
+    }
 
-                Ok(())
-            })?;
-            self.declaration_name = old_declaration_name;
-        }
+    #[test]
+    fn one_leading_dotdot_odd() {
+        assert_eq!(normalize("../a"), "../a");
+    }
 
-        Ok(None)
+    #[test]
+    fn three_leading_dotdot_odd() {
+        assert_eq!(normalize("../../../a"), "../../../a");
+    }
+
+    #[test]
+    fn four_leading_dotdot_even() {
+        assert_eq!(normalize("../../../../a"), "../../../../a");
+    }
+
+    #[test]
+    fn absolute_path_dotdot_clamps_at_root() {
+        // ".." above the filesystem root is a no-op, not an invalid "/.."
+        assert_eq!(normalize("/../a"), "/a");
+    }
+
+    #[test]
+    fn absolute_path_multiple_dotdot_clamp_at_root() {
+        assert_eq!(normalize("/../../a/../b"), "/b");
     }
 }

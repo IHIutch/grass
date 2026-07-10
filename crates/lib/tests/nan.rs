@@ -23,12 +23,15 @@ test!(
     "a {\n  color: abs((0/0));\n}\n",
     "a {\n  color: calc(NaN);\n}\n"
 );
-// dart-sass 1.97.3 crashes on round(NaN) with an unhandled exception:
-// "Unsupported operation: NaN.round()". grass handles it gracefully.
-test!(
+// dart-sass 1.97.3 CRASHES on this input (unhandled JS exception "Unsupported operation:
+// NaN.round()" inside SassCalculation.roundInternal) rather than throwing the normal
+// SassException ("Infinity or NaN toInt") this test expects. Confirmed ceil()/floor() with the
+// same NaN input DO throw that normal error in dart (round() alone hits the buggy code path).
+// grass's calc(NaN) is defensible in the absence of a working dart oracle for round().
+error!(
+    #[ignore = "dart-sass 1.97.3 crashes on this input (unhandled NaN.round() exception, upstream); grass returns calc(NaN)"]
     unitless_nan_round_number,
-    "a {\n  color: round((0/0));\n}\n",
-    "a {\n  color: calc(NaN);\n}\n"
+    "a {\n  color: round((0/0));\n}\n", "Error: Infinity or NaN toInt"
 );
 error!(
     unitless_nan_ceil_number,
@@ -101,12 +104,12 @@ error!(
     "@use \"sass:math\";\na {\n  color: percentage(math.acos(2));\n}\n",
     "Error: $number: Expected calc(NaN * 1deg) to have no units."
 );
-// dart-sass 1.97.3 crashes on round() with unitful NaN with an unhandled
-// exception: "Unsupported operation: NaN.round()". grass handles it gracefully.
-test!(
+// dart-sass 1.97.3 CRASHES on this input (same unhandled NaN.round() exception as
+// unitless_nan_round_number above); grass returns calc(NaN * 1deg).
+error!(
+    #[ignore = "dart-sass 1.97.3 crashes on this input (unhandled NaN.round() exception, upstream); grass returns calc(NaN * 1deg)"]
     unitful_nan_round,
-    "@use \"sass:math\";\na {\n  color: round(math.acos(2));\n}\n",
-    "a {\n  color: calc(NaN * 1deg);\n}\n"
+    "@use \"sass:math\";\na {\n  color: round(math.acos(2));\n}\n", "Error: Infinity or NaN toInt"
 );
 error!(
     unitful_nan_ceil,

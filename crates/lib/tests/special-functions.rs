@@ -8,7 +8,7 @@ test!(
 );
 error!(
     calc_newline,
-    "a {\n  color: calc(\n);\n}\n", "Error: Expected number, variable, function, or calculation."
+    "a {\n  color: calc(\n);\n}\n", "Error: Missing argument."
 );
 error!(
     calc_multiple_args,
@@ -40,12 +40,15 @@ error!(
 );
 error!(
     calc_retains_multiline_comment,
-    "a {\n  color: calc(/**/);\n}\n", "Error: Expected number, variable, function, or calculation."
+    "a {\n  color: calc(/**/);\n}\n", "Error: Missing argument."
 );
 error!(
     calc_complex_unit,
     "a {\n  color: calc(1% + 1px * 2px);\n}\n",
-    "Error: Number 2px*px isn't compatible with CSS calculations."
+    // npx-verified against dart-sass 1.97.3: the error message's number
+    // formatting uses inspect-style serialization, which wraps complex-unit
+    // numbers in calc(...) (see crates/compiler/src/serializer.rs, todo #193).
+    "Error: Number calc(2px * 1px) isn't compatible with CSS calculations."
 );
 error!(
     calc_nested_parens,
@@ -122,7 +125,8 @@ test!(
     "a {\n  color: element(#{1 + 2});\n}\n",
     "a {\n  color: element(3);\n}\n"
 );
-// // inside element() is parsed as a silent comment, leaving unmatched parens
+// dart-sass 1.97.3 verified: `//` inside the special function consumes the rest of the line as a
+// silent comment, swallowing the closing paren; this is now a parse error, not a retained comment.
 error!(
     element_retains_silent_comment,
     "a {\n  color: element(//);\n}\n", "Error: expected \")\"."
@@ -167,6 +171,7 @@ test!(
     "a {\n  color: expression(#{1 + 2});\n}\n",
     "a {\n  color: expression(3);\n}\n"
 );
+// dart-sass 1.97.3 verified: same mechanism as element_retains_silent_comment above — now a parse error.
 error!(
     expression_retains_silent_comment,
     "a {\n  color: expression(//);\n}\n", "Error: expected \")\"."
@@ -211,6 +216,7 @@ test!(
     "a {\n  color: progid:(#{1 + 2});\n}\n",
     "a {\n  color: progid:(3);\n}\n"
 );
+// dart-sass 1.97.3 verified: same mechanism as element_retains_silent_comment above — now a parse error.
 error!(
     progid_retains_silent_comment,
     "a {\n  color: progid:(//);\n}\n", "Error: expected \")\"."
@@ -299,7 +305,10 @@ test!(
     "a {\n  color: calc((var(--a)) + 1rem);\n}\n",
     "a {\n  color: calc((var(--a)) + 1rem);\n}\n"
 );
-// dart-sass preserves parens around function calls in calc; grass removes them
+// dart-sass 1.97.3 verified: parens around a function call whose argument looks like a custom
+// property (`--a`) are retained, not stripped — same conservative-preservation behavior as the
+// retains_parens_around_var_in_calc test above. grass already matches; the test's name/expectation
+// predates this and is stale.
 test!(
     removes_superfluous_parens_around_function_call_in_calc,
     "a {\n  color: calc((foo(--a)) + 1rem);\n}\n",
@@ -310,7 +319,8 @@ test!(
     "a {\n  color: calc(calc(1px + 1rem) * calc(2px - 2in));\n}\n",
     "a {\n  color: calc((1px + 1rem) * -190px);\n}\n"
 );
-// dart-sass passes through escaped close paren in calc
+// dart-sass 1.97.3 verified: an escaped close-paren inside calc() is now accepted as literal text,
+// not an error — grass already matches.
 test!(
     escaped_close_paren_inside_calc,
     "a {\n  color: calc(\\));\n}\n",

@@ -3,6 +3,8 @@ use crate::{builtin::builtin_imports::*, serializer::inspect_number};
 
 use super::ParsedChannels;
 
+pub(crate) use super::function_string;
+
 /// Try to parse a string part from a "channel/alpha" split as a value.
 /// Handles "none", plain numbers (0.4), percentages (40%), and special
 /// CSS functions (var(), calc(), env(), attr(), min(), max(), clamp()).
@@ -57,21 +59,6 @@ fn parse_number_with_unit(s: &str) -> Option<(&str, Unit)> {
     None
 }
 
-pub(crate) fn function_string(
-    name: &'static str,
-    args: &[Value],
-    visitor: &mut Visitor,
-    span: Span,
-) -> SassResult<String> {
-    let args = args
-        .iter()
-        .map(|arg| arg.to_css_string(span, visitor.options.is_compressed()))
-        .collect::<SassResult<Vec<_>>>()?
-        .join(", ");
-
-    Ok(format!("{}({})", name, args))
-}
-
 fn inner_rgb_2_arg(
     name: &'static str,
     mut args: ArgumentResult,
@@ -92,13 +79,14 @@ fn inner_rgb_2_arg(
     } else if alpha.is_var() {
         match &color {
             Value::Color(color) => {
+                let rgb = color.to_rgb_channels_raw();
                 return Ok(Value::String(
                     format!(
                         "{}({}, {}, {}, {})",
                         name,
-                        color.red().to_string(is_compressed),
-                        color.green().to_string(is_compressed),
-                        color.blue().to_string(is_compressed),
+                        Number(rgb[0]).to_string(is_compressed),
+                        Number(rgb[1]).to_string(is_compressed),
+                        Number(rgb[2]).to_string(is_compressed),
                         alpha.to_css_string(args.span(), is_compressed)?
                     )
                     .into(),
@@ -114,14 +102,15 @@ fn inner_rgb_2_arg(
         }
     } else if alpha.is_special_function() {
         let color = color.assert_color_with_name("color", args.span())?;
+        let rgb = color.to_rgb_channels_raw();
 
         return Ok(Value::String(
             format!(
                 "{}({}, {}, {}, {})",
                 name,
-                color.red().to_string(is_compressed),
-                color.green().to_string(is_compressed),
-                color.blue().to_string(is_compressed),
+                Number(rgb[0]).to_string(is_compressed),
+                Number(rgb[1]).to_string(is_compressed),
+                Number(rgb[2]).to_string(is_compressed),
                 alpha.to_css_string(args.span(), is_compressed)?
             )
             .into(),
@@ -344,11 +333,7 @@ pub(crate) fn parse_channels(
             return Ok(ParsedChannels::String(fn_string));
         } else {
             let argument = arg_names[list.len()];
-            return Err((
-                format!("Missing element ${argument}.", argument = argument),
-                span,
-            )
-                .into());
+            return Err((format!("Missing element ${argument}."), span).into());
         }
     }
 
@@ -437,10 +422,10 @@ fn inner_rgb(
                     }
                     let args = ArgumentResult {
                         positional: list,
-                        named: BTreeMap::new(),
+                        named: SmallOrderedMap::default(),
                         separator: ListSeparator::Comma,
                         span,
-                        touched: BTreeSet::new(),
+                        touched: FxHashSet::default(),
                     };
 
                     inner_rgb_3_arg(name, args, visitor)
@@ -474,6 +459,33 @@ pub(crate) fn red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             .into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "red", "rgb"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber::new_unitless(color.red())))
+}
+
+/// Global `red()`: same as [`red`], but warns without the `color.` prefix,
+/// matching dart-sass's global-only wrapper.
+fn global_red(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.red() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        )
+            .into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "red", "rgb"))
+    })?;
+
     Ok(Value::Dimension(SassNumber::new_unitless(color.red())))
 }
 
@@ -489,6 +501,30 @@ pub(crate) fn green(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             args.span(),
         ).into());
     }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "green", "rgb"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber::new_unitless(color.green())))
+}
+
+fn global_green(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.green() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "green", "rgb"))
+    })?;
 
     Ok(Value::Dimension(SassNumber::new_unitless(color.green())))
 }
@@ -507,6 +543,31 @@ pub(crate) fn blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
             .into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "blue", "rgb"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber::new_unitless(color.blue())))
+}
+
+fn global_blue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.blue() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        )
+            .into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "blue", "rgb"))
+    })?;
+
     Ok(Value::Dimension(SassNumber::new_unitless(color.blue())))
 }
 
@@ -522,13 +583,42 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
         .get_err(1, "color2")?
         .assert_color_with_name("color2", span)?;
 
-    let weight = match args.default_arg(
+    // dart-sass's default is `50%` (not unitless), so an omitted `$weight`
+    // never trips the legacy `_checkPercent` warning below.
+    let weight_arg = args.default_arg(
         2,
         "weight",
-        Value::Dimension(SassNumber::new_unitless(50.0)),
-    ) {
+        Value::Dimension(SassNumber {
+            num: Number(50.0),
+            unit: Unit::Percent,
+            as_slash: None,
+        }),
+    );
+
+    // Parse $method parameter
+    let method = args.get(3, "method");
+
+    let method_value = match method {
+        None => None,
+        Some(v) => match v.node {
+            Value::Null => None,
+            other => Some(other),
+        },
+    };
+
+    let weight = match weight_arg {
         Value::Dimension(mut num) => {
             num.assert_bounds("weight", 0.0, 100.0, span)?;
+            // dart-sass's `_checkPercent(weight, "weight")`: only applies to the
+            // legacy (no `$method`) mix path — the `$method` path uses
+            // `valueInRangeWithUnit` instead and never warns here.
+            if method_value.is_none() && num.unit != Unit::Percent {
+                let value_display = inspect_number(&num, visitor.options, span)?;
+                let unit = num.unit.clone();
+                visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                    Ok(function_percent_message("weight", &value_display, &unit))
+                })?;
+            }
             num.num /= Number(100.0);
             num.num
         }
@@ -542,17 +632,6 @@ pub(crate) fn mix(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             )
                 .into())
         }
-    };
-
-    // Parse $method parameter
-    let method = args.get(3, "method");
-
-    let method_value = match method {
-        None => None,
-        Some(v) => match v.node {
-            Value::Null => None,
-            other => Some(other),
-        },
     };
 
     match method_value {
@@ -709,10 +788,23 @@ fn parse_interpolation_method(
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    // rgb/rgba are plain-CSS-compatible constructors; never warn.
     f.insert("rgb", Builtin::new(rgb));
     f.insert("rgba", Builtin::new(rgba));
-    f.insert("red", Builtin::new(red));
-    f.insert("green", Builtin::new(green));
-    f.insert("blue", Builtin::new(blue));
-    f.insert("mix", Builtin::new(mix));
+    f.insert(
+        "red",
+        Builtin::new(global_red).with_deprecated_global("color", "red"),
+    );
+    f.insert(
+        "green",
+        Builtin::new(global_green).with_deprecated_global("color", "green"),
+    );
+    f.insert(
+        "blue",
+        Builtin::new(global_blue).with_deprecated_global("color", "blue"),
+    );
+    f.insert(
+        "mix",
+        Builtin::new(mix).with_deprecated_global("color", "mix"),
+    );
 }

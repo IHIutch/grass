@@ -1,7 +1,7 @@
 {
   "name": "ihiutch-grass",
   "description": "A Sass compiler written purely in Rust. Native speed with WASM fallback.",
-  "version": "0.14.1",
+  "version": "0.14.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -21,6 +21,11 @@
     "grass.*.node"
   ],
   "type": "module",
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/browser.mjs && node test/workers.mjs && node test/functions.mjs && node test/node-package-importer.mjs && node test/forced-wasm.mjs && node test/persistent-instance.mjs && node test/pack-exports.mjs",
+    "check-types": "npx -y -p typescript tsc --noEmit -p test/types",
+    "perf": "node test/performance.mjs"
+  },
   "exports": {
     ".": {
       "node": {

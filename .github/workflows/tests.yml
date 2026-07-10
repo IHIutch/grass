@@ -10,27 +10,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.88.0
         with:
-          toolchain: stable
+          toolchain: "1.88.0"
 
       - name: version info
         run: rustc --version; cargo --version;
 
       - name: Run all tests
-        run: cargo test --features=macro
+        # N-API symbols resolve at runtime for the cdylib, so a Linux test executable cannot link grass_napi.
+        # Its real coverage is the napi job's `node test.mjs`; Rust unit tests still run in local macOS cargo test.
+        run: cargo test --features=macro --workspace --exclude grass_napi
 
   fmt:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.88.0
         with:
-          toolchain: stable
+          toolchain: "1.88.0"
 
       - run: |
           rustup component add rustfmt
@@ -40,11 +42,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.88.0
         with:
-          toolchain: stable
+          toolchain: "1.88.0"
 
       - run: |
           rustup component add clippy
@@ -54,11 +56,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
         with:
-          toolchain: stable
+          toolchain: "1.97.0" # pinned stable — bump deliberately
 
       - name: Build
         run: cargo build
@@ -76,30 +78,109 @@ jobs:
           ./target/debug/grass bootstrap/scss/bootstrap.scss > grass-output.css
           ./dart-sass/sass bootstrap/scss/bootstrap.scss > dart-sass-output.css
 
-          DIFF_LINES=$(diff -u grass-output.css dart-sass-output.css | grep "^[+-]" | grep -v "^[+-][+-][+-]" | wc -l)
-          TOTAL_LINES=$(wc -l < dart-sass-output.css)
-
-          if [ "$DIFF_LINES" -eq 0 ]; then
-              echo "No differences found"
-          elif [ "$DIFF_LINES" -lt 200 ]; then
-              echo "Minor differences found ($DIFF_LINES changed lines out of $TOTAL_LINES — likely color rounding)"
-              diff -u grass-output.css dart-sass-output.css | head -40
-          else
-              echo "Significant differences found ($DIFF_LINES changed lines)"
+          if [[ $(diff -u grass-output.css dart-sass-output.css) ]]; then
+              echo "Differences found"
               diff -u grass-output.css dart-sass-output.css
               exit 1
+          else
+              echo "No differences found"
           fi
 
-  sass-spec:
-    continue-on-error: true
+  napi:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          toolchain: stable
+          node-version: 20
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
+        with:
+          toolchain: "1.97.0" # pinned stable — bump deliberately
+
+      - name: Install dependencies
+        working-directory: crates/napi
+        run: npm ci
+
+      - name: Build native module (debug)
+        working-directory: crates/napi
+        run: npm run build-debug
+
+      - name: Test native module
+        working-directory: crates/napi
+        run: node test.mjs
+
+  # package-wasm (below) runs the pkg-publish suite on every PR against a
+  # dev-profile `wasm-pack build` (no LTO/wasm-opt), which stays within the
+  # "cheap in PR CI" bar. The release-profile smoke test (LTO + wasm-opt -O4,
+  # all native bindings present) still runs separately in release_napi.yml's
+  # "Smoke test package before publish" step, right before publish.
+  package-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
+        with:
+          toolchain: "1.97.0" # pinned stable — bump deliberately
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install wasm-pack
+        run: |
+          version=0.15.0
+          archive="wasm-pack-v${version}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${version}/$archive"
+          # SHA-256 digest from the rustwasm/wasm-pack v0.15.0 GitHub release asset.
+          echo "c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a  $archive" | sha256sum -c -
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.cargo/bin"
+          install -m 0755 "$RUNNER_TEMP/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build WASM (dev profile)
+        run: |
+          cd crates/lib
+          wasm-pack build --dev --target web --out-name grass --no-default-features --features wasm-exports,random
+
+      - name: Copy WASM artifacts to pkg-publish
+        run: |
+          cp crates/lib/pkg/grass.js crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass.d.ts crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass_bg.wasm crates/lib/pkg-publish/
+          cp crates/lib/pkg/grass_bg.wasm.d.ts crates/lib/pkg-publish/
+
+      - name: Test package (WASM fallback, forced-wasm, persistent-instance, pack-exports)
+        run: |
+          cd crates/lib/pkg-publish
+          npm test
+
+      - name: Measure package WASM performance (informational)
+        run: |
+          cd crates/lib/pkg-publish
+          npm run perf
+
+  sass-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
+        with:
+          toolchain: "1.97.0" # pinned stable — bump deliberately
 
       - name: Build binary
         run: cargo build --release
@@ -107,12 +188,12 @@ jobs:
       - name: Get sass-spec
         run: git submodule init && git submodule update
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: '20'
 
       - name: Install sass-spec dependencies
-        run: cd sass-spec && npm install
+        run: cd sass-spec && npm ci
 
-      - name: Run sass-spec
-        run: cd sass-spec && npm run sass-spec -- -c '../target/release/grass' --impl grass
+      - name: Run sass-spec and enforce baseline
+        run: python3 ci/check-sass-spec.py

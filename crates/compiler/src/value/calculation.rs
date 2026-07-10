@@ -96,12 +96,6 @@ impl CalculationName {
     pub(crate) fn in_min_or_max(self) -> bool {
         self == CalculationName::Min || self == CalculationName::Max
     }
-
-    /// Whether this calculation function can be overridden by a user-defined function
-    #[allow(dead_code)]
-    pub(crate) fn is_overridable(self) -> bool {
-        !matches!(self, CalculationName::Calc | CalculationName::Clamp)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1087,7 +1081,7 @@ impl SassCalculation {
         // })
     }
 
-    fn simplify(arg: CalculationArg) -> CalculationArg {
+    pub(crate) fn simplify(arg: CalculationArg) -> CalculationArg {
         match arg {
             CalculationArg::Number(..)
             | CalculationArg::Operation { .. }
@@ -1102,7 +1096,7 @@ impl SassCalculation {
                         CalculationArg::String(ref s) | CalculationArg::Interpolation(ref s)
                             if Self::needs_calc_parens(s) =>
                         {
-                            CalculationArg::String(format!("({})", s))
+                            CalculationArg::String(format!("({s})"))
                         }
                         other => other,
                     }
@@ -1127,8 +1121,8 @@ impl SassCalculation {
             CalculationArg::Calculation(mut calc) if calc.name == CalculationName::Calc => {
                 let inner = calc.args.remove(0);
                 match inner {
-                    CalculationArg::String(s) => CalculationArg::String(format!("({})", s)),
-                    CalculationArg::Interpolation(s) => CalculationArg::String(format!("({})", s)),
+                    CalculationArg::String(s) => CalculationArg::String(format!("({s})")),
+                    CalculationArg::Interpolation(s) => CalculationArg::String(format!("({s})")),
                     other => other,
                 }
             }

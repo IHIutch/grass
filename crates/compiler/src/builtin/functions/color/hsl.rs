@@ -1,43 +1,17 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::color::space::ColorSpace;
-use crate::{builtin::builtin_imports::*, serializer::serialize_number, value::SassNumber};
+use crate::{
+    builtin::builtin_imports::*,
+    serializer::{inspect_number, serialize_number},
+    value::SassNumber,
+};
 
 use super::{
     angle_value,
     css_color4::construct_color,
+    parse_space_arg,
     rgb::{function_string, parse_channels, percentage_or_unitless},
     ParsedChannels,
 };
-
-/// Parse an optional $space argument from the argument list.
-fn parse_space_arg(
-    args: &mut ArgumentResult,
-    pos: usize,
-    span: Span,
-) -> SassResult<Option<ColorSpace>> {
-    match args.get(pos, "space") {
-        Some(space_val) => match &space_val.node {
-            Value::String(s, QuoteKind::Quoted) => Err((
-                format!("$space: Expected {} to be an unquoted string.", s),
-                span,
-            )
-                .into()),
-            Value::String(s, QuoteKind::None) => {
-                let space = ColorSpace::from_name(s)
-                    .ok_or_else(|| (format!("$space: Unknown color space \"{}\".", s), span))?;
-                Ok(Some(space))
-            }
-            Value::Null => Ok(None),
-            v => Err((
-                format!("$space: {} is not a string.", v.inspect(span)?),
-                span,
-            )
-                .into()),
-        },
-        None => Ok(None),
-    }
-}
 
 fn hsl_3_args(
     name: &'static str,
@@ -76,9 +50,32 @@ fn hsl_3_args(
         ));
     }
 
-    let hue = angle_value(hue, "hue", span)?;
+    let hue = angle_value(hue, "hue", span, visitor)?;
+
     let saturation = saturation.assert_number_with_name("saturation", span)?;
+    if saturation.unit != Unit::Percent {
+        // dart-sass's `_checkPercent(channel1, 'saturation')` in `_colorFromChannels`.
+        let value_display = inspect_number(&saturation, visitor.options, span)?;
+        let unit = saturation.unit.clone();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_percent_message(
+                "saturation",
+                &value_display,
+                &unit,
+            ))
+        })?;
+    }
+
     let lightness = lightness.assert_number_with_name("lightness", span)?;
+    if lightness.unit != Unit::Percent {
+        // dart-sass's `_checkPercent(channel2, 'lightness')` in `_colorFromChannels`.
+        let value_display = inspect_number(&lightness, visitor.options, span)?;
+        let unit = lightness.unit.clone();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_percent_message("lightness", &value_display, &unit))
+        })?;
+    }
+
     let alpha = percentage_or_unitless(
         &alpha.assert_number_with_name("alpha", span)?,
         1.0,
@@ -89,8 +86,8 @@ fn hsl_3_args(
 
     Ok(Value::Color(Rc::new(Color::from_hsla_fn(
         Number(hue.rem_euclid(360.0)),
-        saturation.num / Number(100.0),
-        lightness.num / Number(100.0),
+        saturation.num,
+        lightness.num,
         Number(alpha),
     ))))
 }
@@ -125,10 +122,10 @@ fn inner_hsl(
                 }
                 let args = ArgumentResult {
                     positional: list,
-                    named: BTreeMap::new(),
+                    named: SmallOrderedMap::default(),
                     separator: ListSeparator::Comma,
                     span: args.span(),
-                    touched: BTreeSet::new(),
+                    touched: FxHashSet::default(),
                 };
 
                 hsl_3_args(name, args, visitor)
@@ -173,6 +170,35 @@ pub(crate) fn hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
             .into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "hue", "hsl"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber {
+        num: color.hue(),
+        unit: Unit::Deg,
+        as_slash: None,
+    }))
+}
+
+fn global_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.hue() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        )
+            .into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "hue", "hsl"))
+    })?;
+
     Ok(Value::Dimension(SassNumber {
         num: color.hue(),
         unit: Unit::Deg,
@@ -192,6 +218,34 @@ pub(crate) fn saturation(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
             args.span(),
         ).into());
     }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "saturation", "hsl"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber {
+        num: color.saturation(),
+        unit: Unit::Percent,
+        as_slash: None,
+    }))
+}
+
+fn global_saturation(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.saturation() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "saturation", "hsl"))
+    })?;
 
     Ok(Value::Dimension(SassNumber {
         num: color.saturation(),
@@ -213,6 +267,34 @@ pub(crate) fn lightness(mut args: ArgumentResult, visitor: &mut Visitor) -> Sass
         ).into());
     }
 
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(false, "lightness", "hsl"))
+    })?;
+
+    Ok(Value::Dimension(SassNumber {
+        num: color.lightness(),
+        unit: Unit::Percent,
+        as_slash: None,
+    }))
+}
+
+fn global_lightness(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let color = args
+        .get_err(0, "color")?
+        .assert_color_with_name("color", args.span())?;
+
+    if !color.color_space().is_legacy() {
+        return Err((
+            "color.lightness() is only supported for legacy colors. Please use color.channel() instead.",
+            args.span(),
+        ).into());
+    }
+
+    visitor.emit_deprecation(Deprecation::ColorFunctions, args.span(), || {
+        Ok(color_channel_getter_message(true, "lightness", "hsl"))
+    })?;
+
     Ok(Value::Dimension(SassNumber {
         num: color.lightness(),
         unit: Unit::Percent,
@@ -233,55 +315,93 @@ pub(crate) fn adjust_hue(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
         ).into());
     }
 
-    let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span())?;
+    let degrees = angle_value(args.get_err(1, "degrees")?, "degrees", args.span(), visitor)?;
+
+    let span = args.span();
+    let suggested_value = SassNumber {
+        num: degrees,
+        unit: Unit::Deg,
+        as_slash: None,
+    };
+    let suggestion_text = serialize_number(&suggested_value, visitor.options, span)?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "adjust-hue() is deprecated. Suggestion:\n\ncolor.adjust($color, $hue: \
+             {suggestion_text})\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.adjust_hue(degrees))))
 }
 
 fn lighten(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "lighten() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
 
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
 
-    amount.num /= Number(100.0);
+    let suggestion = suggest_scale_and_adjust(
+        color.lightness(),
+        amount.num,
+        LegacyChannel::Lightness,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "lighten() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.lighten(amount.num))))
 }
 
 fn darken(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "darken() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
 
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
 
-    amount.num /= Number(100.0);
+    let suggestion = suggest_scale_and_adjust(
+        color.lightness(),
+        -amount.num,
+        LegacyChannel::Lightness,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "darken() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.darken(amount.num))))
 }
@@ -311,48 +431,76 @@ fn saturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value
         ));
     }
 
-    let mut amount = args
+    visitor.emit_deprecation(Deprecation::GlobalBuiltin, args.span(), || {
+        Ok(global_builtin_message("color", "adjust"))
+    })?;
+
+    let span = args.span();
+    let amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
-
-    amount.num /= Number(100.0);
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
 
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "saturate() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
+
+    let suggestion = suggest_scale_and_adjust(
+        color.saturation(),
+        amount.num,
+        LegacyChannel::Saturation,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "saturate() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.saturate(amount.num))))
 }
 
 fn desaturate(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
+    let span = args.span();
     let color = args
         .get_err(0, "color")?
-        .assert_color_with_name("color", args.span())?;
+        .assert_color_with_name("color", span)?;
 
     if !color.color_space().is_legacy() {
         return Err((
             "desaturate() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
-            args.span(),
+            span,
         ).into());
     }
 
-    let mut amount = args
+    let amount = args
         .get_err(1, "amount")?
-        .assert_number_with_name("amount", args.span())?;
+        .assert_number_with_name("amount", span)?;
 
-    amount.assert_bounds("amount", 0.0, 100.0, args.span())?;
+    amount.assert_bounds("amount", 0.0, 100.0, span)?;
 
-    amount.num /= Number(100.0);
+    let suggestion = suggest_scale_and_adjust(
+        color.saturation(),
+        -amount.num,
+        LegacyChannel::Saturation,
+        span,
+        visitor.options,
+    )?;
+    visitor.emit_deprecation(Deprecation::ColorFunctions, span, || {
+        Ok(format!(
+            "desaturate() is deprecated. {suggestion}\n\nMore info: https://sass-lang.com/d/color-functions"
+        ))
+    })?;
 
     Ok(Value::Color(Rc::new(color.desaturate(amount.num))))
 }
@@ -394,6 +542,11 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
             QuoteKind::None,
         ));
     }
+    if !matches!(val, Value::Dimension(..)) {
+        visitor.emit_deprecation(Deprecation::GlobalBuiltin, span, || {
+            Ok(global_builtin_message("color", "grayscale"))
+        })?;
+    }
     // Re-wrap and delegate to the main implementation
     let new_args = ArgumentResult {
         positional: vec![val],
@@ -403,6 +556,36 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         touched: args.touched,
     };
     grayscale(new_args, visitor)
+}
+
+/// Module-level `color.grayscale()`: like the global form, passing a number
+/// still passes through as a plain CSS `grayscale(...)` string, but the
+/// module form additionally warns `color-module-compat`.
+pub(crate) fn module_grayscale(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let span = args.span();
+    let peek = args
+        .named
+        .get(&Identifier::from("color"))
+        .or_else(|| args.positional.first());
+    let arg0_text = match peek {
+        Some(Value::Dimension(SassNumber { num, unit, .. })) => {
+            Some(format!("{}{}", num.inspect(), unit))
+        }
+        _ => None,
+    };
+
+    let result = grayscale(args, visitor)?;
+
+    if let (Some(arg0_text), Value::String(ref s, QuoteKind::None)) = (&arg0_text, &result) {
+        visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+            Ok(format!(
+                "Passing a number ({arg0_text}) to color.grayscale() is deprecated.\n\n\
+                 Recommendation: {s}"
+            ))
+        })?;
+    }
+
+    Ok(result)
 }
 
 pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -464,9 +647,68 @@ pub(crate) fn complement(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
     }
 }
 
+/// Global `invert()`: warns unless the `$color` argument is a plain number
+/// or special function (`var()`/`calc()`), matching dart-sass's global-only
+/// `invert` wrapper. `color.invert()` (the module form) uses `module_invert`
+/// instead, which warns `color-module-compat` in that same case.
+fn global_invert(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let peek = args
+        .named
+        .get(&Identifier::from("color"))
+        .or_else(|| args.positional.first());
+
+    let skip_warn = match peek {
+        Some(Value::Dimension(..)) => true,
+        Some(v) => v.is_special_function(),
+        None => false,
+    };
+
+    if !skip_warn {
+        visitor.emit_deprecation(Deprecation::GlobalBuiltin, args.span(), || {
+            Ok(global_builtin_message("color", "invert"))
+        })?;
+    }
+
+    invert(args, visitor)
+}
+
+/// Module-level `color.invert()`: like the global form, passing a number
+/// still passes through as a plain CSS `invert(...)` string, but the module
+/// form additionally warns `color-module-compat` — dart-sass expects calls
+/// through the explicit `color.` namespace to always pass an actual color.
+pub(crate) fn module_invert(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    let span = args.span();
+    let peek = args
+        .named
+        .get(&Identifier::from("color"))
+        .or_else(|| args.positional.first());
+
+    let arg0_text = match peek {
+        Some(Value::Dimension(SassNumber { num, unit, .. })) => {
+            Some(format!("{}{}", num.inspect(), unit))
+        }
+        _ => None,
+    };
+
+    let result = invert(args, visitor)?;
+
+    if let (Some(arg0_text), Value::String(ref s, QuoteKind::None)) = (&arg0_text, &result) {
+        visitor.emit_deprecation(Deprecation::ColorModuleCompat, span, || {
+            Ok(format!(
+                "Passing a number ({arg0_text}) to color.invert() is deprecated.\n\n\
+                 Recommendation: {s}"
+            ))
+        })?;
+    }
+
+    Ok(result)
+}
+
 pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(3)?;
     let span = args.span();
+
+    let target_space = parse_space_arg(&mut args, 2, span)?;
 
     let weight = args
         .get(1, "weight")
@@ -475,13 +717,21 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 
             weight.assert_bounds("weight", 0.0, 100.0, span)?;
 
+            // dart-sass's `_checkPercent(weightNumber, "weight")`: only applies
+            // to the legacy (no `$space`) invert path.
+            if target_space.is_none() && weight.unit != Unit::Percent {
+                let value_display = inspect_number(&weight, visitor.options, span)?;
+                let unit = weight.unit.clone();
+                visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+                    Ok(function_percent_message("weight", &value_display, &unit))
+                })?;
+            }
+
             weight.num /= Number(100.0);
 
             Ok(weight.num)
         })
         .transpose()?;
-
-    let target_space = parse_space_arg(&mut args, 2, span)?;
 
     match args.get_err(0, "color")? {
         Value::Color(c) => {
@@ -587,17 +837,45 @@ pub(crate) fn invert(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
+    // hsl/hsla are plain-CSS-compatible constructors; never warn.
     f.insert("hsl", Builtin::new(hsl));
     f.insert("hsla", Builtin::new(hsla));
-    f.insert("hue", Builtin::new(hue));
-    f.insert("saturation", Builtin::new(saturation));
-    f.insert("adjust-hue", Builtin::new(adjust_hue));
-    f.insert("lightness", Builtin::new(lightness));
-    f.insert("lighten", Builtin::new(lighten));
-    f.insert("darken", Builtin::new(darken));
+    f.insert(
+        "hue",
+        Builtin::new(global_hue).with_deprecated_global("color", "hue"),
+    );
+    f.insert(
+        "saturation",
+        Builtin::new(global_saturation).with_deprecated_global("color", "saturation"),
+    );
+    f.insert(
+        "adjust-hue",
+        Builtin::new(adjust_hue).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "lightness",
+        Builtin::new(global_lightness).with_deprecated_global("color", "lightness"),
+    );
+    f.insert(
+        "lighten",
+        Builtin::new(lighten).with_deprecated_global("color", "adjust"),
+    );
+    f.insert(
+        "darken",
+        Builtin::new(darken).with_deprecated_global("color", "adjust"),
+    );
+    // saturate/grayscale/invert warn conditionally on argument shape; the
+    // warning is emitted inline in their own function bodies above, not
+    // generically here (avoids a double warning).
     f.insert("saturate", Builtin::new(saturate));
-    f.insert("desaturate", Builtin::new(desaturate));
+    f.insert(
+        "desaturate",
+        Builtin::new(desaturate).with_deprecated_global("color", "adjust"),
+    );
     f.insert("grayscale", Builtin::new(global_grayscale));
-    f.insert("complement", Builtin::new(complement));
-    f.insert("invert", Builtin::new(invert));
+    f.insert(
+        "complement",
+        Builtin::new(complement).with_deprecated_global("color", "complement"),
+    );
+    f.insert("invert", Builtin::new(global_invert));
 }

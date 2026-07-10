@@ -1,7 +1,11 @@
 # grass
 
 This crate aims to provide a high level interface for compiling [Sass](https://sass-lang.com/documentation/) into
-plain CSS. It offers a very limited API, currently exposing only 2 functions.
+plain CSS. Its public API centers on four compilation entry points — `from_string`, `from_path`, and the
+source-map-returning `from_string_with_source_map`/`from_path_with_source_map` — configured through a builder-style
+[`Options`](https://docs.rs/grass/latest/grass/struct.Options.html) (output style, load paths, a pluggable `Fs`/`Logger`,
+input syntax, and fine-grained deprecation control), along with supporting types such as `Deprecation`,
+`Error`/`ErrorKind`/`Result`, `InputSyntax`, `OutputStyle`, and `SourceMapData`.
 
 In addition to a library, this crate also includes a binary that is intended to act as an invisible
 replacement to the Sass commandline executable.
@@ -39,6 +43,17 @@ All known missing features and bugs are tracked in [#19](https://github.com/conn
 
 (enabled by default): enable the builtin functions [`random([$limit])`](https://sass-lang.com/documentation/modules/math/#random) and [`unique-id()`](https://sass-lang.com/documentation/modules/string/#unique-id)
 
+### stacker
+
+(enabled by default): grow the stack on demand at recursive parsing chokepoints instead of
+relying on a small fixed depth limit. Not supported on `wasm32`; WASM builds (which disable
+default features) fall back to a lower fixed recursion limit.
+
+### wasm-exports
+
+(disabled by default): expose JavaScript-friendly WebAssembly bindings (`from_string_js`,
+`compile_js`, `compile_file_js`) via `wasm-bindgen`.
+
 ### macro
 
 (disabled by default): enable the macro `grass::include!` for compiling Sass to
@@ -48,6 +63,106 @@ CSS at compile time
 
 (disabled by default): currently only used by `grass::include!` to enable 
 [proc_macro::tracked_path](https://github.com/rust-lang/rust/issues/99515)
+
+## Source Maps
+
+`grass` can produce [Source Map v3](https://sourcemaps.info/spec.html) mappings alongside its CSS
+output, covering declarations, selectors, and comments.
+
+From the CLI, source maps are written by default whenever compiling to an output file (`-o`/positional
+output argument); they're skipped when writing to stdout unless requested. Flags:
+
+- `--no-source-map` — disable source map generation
+- `--source-map-urls=<relative|absolute>` — how the map links back to source files (default `relative`)
+- `--embed-sources` — embed the original source text in the map's `sourcesContent`
+- `--embed-source-map` — inline the map as a `data:` URL in the CSS's `sourceMappingURL` comment, instead of writing a sibling `.css.map` file
+
+From the library, call `Options::default().source_map(true)` and use
+`from_string_with_source_map`/`from_path_with_source_map` in place of `from_string`/`from_path`; both
+return `(String, Option<SourceMapData>)`, where `SourceMapData::to_json(file, embed_sources)` renders
+the standard JSON map.
+
+The napi binding (`ihiutch-grass-napi`) and the WASM/npm package (`ihiutch-grass`) expose the same
+capability through `CompileOptions.sourceMap`/`sourceMapIncludeSources`, populating
+`CompileResult.sourceMap` when requested — mirroring the Sass JS API's `sourceMap`/`sourceMapIncludeSources` options.
+
+## Deprecation Control
+
+`grass` tracks the same set of dart-sass deprecations (18 IDs, e.g. `slash-div`, `import`,
+`color-functions`, `if-function`) and lets you silence, fatalize, or opt into them early.
+
+From the CLI:
+
+- `--silence-deprecation <id>` — don't warn for the given deprecation(s); repeatable and/or comma-separated
+- `--fatal-deprecation <id|version>` — treat the given deprecation(s) as hard errors; also accepts a
+  dart-sass version (e.g. `1.95.0`) to fatalize every deprecation introduced at or before it
+- `--future-deprecation <id>` — opt in early to a deprecation that isn't yet on by default
+
+From the library, `Options` exposes `silence_deprecation`, `fatal_deprecation`, and
+`future_deprecation`, each taking one `Deprecation` value and chainable per call.
+
+The napi binding mirrors this with `CompileOptions.silenceDeprecations`/`fatalDeprecations`/`futureDeprecations`
+(string IDs); `fatalDeprecations` additionally accepts `{major, minor, patch}` version objects for the
+same range-fatalization behavior as the CLI's version form.
+
+## Watch Mode
+
+`-w`/`--watch` compiles a single `INPUT` → `OUTPUT` file pair once, then keeps recompiling
+whenever the Sass source changes, until stopped with Ctrl-C. It requires a real input path and a
+real output file — it's rejected alongside `--stdin` or when printing to stdout.
+
+- After every compile, dependency tracking watches the directory of each file the compile actually
+  loaded (via `@use`/`@forward`/`@import`, including variable/mixin/function-only partials that
+  never emit CSS), plus every `-I`/`--load-path` directory recursively as a fallback for files that
+  might start mattering later. This is still directory-based rather than a precise per-file diff, so
+  editing an unrelated `.scss`/`.sass` file that happens to sit in the same directory as a real
+  dependency also triggers a recompile — but unrelated directories no longer do. A failed compile
+  falls back to watching the entry file's directory recursively until a compile succeeds again.
+- `--poll` switches to a polling backend (checking for changes on an interval) instead of native
+  filesystem events — useful on filesystems/environments where native watching doesn't fire (e.g.
+  some network mounts or containers). Only valid together with `--watch`.
+- A failed compile during watch mode prints the error to stderr and updates the output file per
+  `--error-css`/`--no-error-css` below, then keeps watching instead of exiting.
+
+## Error CSS
+
+When compiling to an output file (`-o`/positional output argument), a failed compile writes a
+synthesized "error CSS" stylesheet to that file by default — a `body::before { content: ... }` rule
+that renders the error message when the stylesheet is loaded in a browser, matching `dart-sass`'s
+behavior byte-for-byte. Pass `--no-error-css` to delete the output file instead of writing error CSS
+on a failed compile. When printing to stdout, a failed compile never writes anything, regardless of
+this flag.
+
+## Custom Builtin Functions
+
+Rust functions can be registered as Sass builtins via `Options::add_custom_fn` and `Builtin`,
+re-exported from `grass` behind its default-enabled `custom-builtin-fns` feature:
+
+```rust
+use grass::{
+    sass_value::{ArgumentResult, SassNumber, Value},
+    Builtin, Options, Result as SassResult, Visitor,
+};
+
+// An example function that looks up the length of an array or map and adds 2 to it
+fn length(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+
+    let len = args.get_err(0, "list")?.as_list().len();
+
+    Ok(Value::Dimension(SassNumber::new_unitless(len + 2)))
+}
+
+fn main() {
+    let options = Options::default().add_custom_fn("length", Builtin::new(length));
+    let css = grass::from_string("a { color: length([a, b]); }".to_owned(), &options).unwrap();
+
+    assert_eq!(css, "a {\n  color: 4;\n}\n");
+}
+```
+
+The same types are also available directly from the lower-level `grass_compiler` crate (the crate
+that `grass` itself is built on), which is useful if you depend on it directly instead of `grass`.
 
 ## Testing
 
@@ -71,17 +186,20 @@ npm run sass-spec -- --impl=dart-sass --command '../target/release/grass'
 
 The spec runner does not work on Windows.
 
-Using a modified version of the spec runner that ignores warnings and error spans (but does include error messages), `grass` achieves the following results:
+Using an internal runner (`run-sass-specs.py`, checked out with the repo) that skips warning-only
+fixtures and, for tests expecting an error, checks only that compilation fails rather than diffing
+exact message/span text, `grass` achieves the following results against `dart-sass` `1.97.3`:
 
 ```
-2023-07-09
-PASSING: 6230
-FAILING: 545
-TOTAL: 6905
+2026-07-07
+PASSING: 13762
+FAILING: 39
+TOTAL: 13801 (99.7%)
 ```
 
-The majority of the failing tests are purely aesthetic, relating to whitespace
-around comments in expanded mode or error messages.
+The remaining failures are largely outdated spec fixtures (verified against `dart-sass` directly,
+where `grass`'s actual output matches) plus a small number of tracked edge cases spread across
+`@media` query nesting/merging, `@use`/`@forward` ordering, and out-of-gamut color-space conversions.
 
 ## Versioning
 
@@ -89,3 +207,7 @@ The minimum supported rust version (MSRV) of `grass` is `1.80.0`. An increase to
 versions of `grass` are not guaranteed to work on versions prior to this.
 
 `grass` currently targets `dart-sass` version `1.97.3`. An increase to this number will correspond to either a minor or bugfix version bump, depending on the changes.
+
+`grass` (crates.io), the native Node.js binding (`ihiutch-grass-napi` on npm), and the WASM/native npm
+package (`ihiutch-grass` on npm) are versioned independently of one another — a release of one does
+not imply a matching version bump in the others.

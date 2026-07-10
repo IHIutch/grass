@@ -3,29 +3,39 @@ use crate::builtin::builtin_imports::*;
 pub(crate) fn length(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
 
-    let len = args.get_err(0, "list")?.as_list().len();
+    let len = args.get_err(0, "list")?.list_len();
 
     Ok(Value::Dimension(SassNumber::new_unitless(len)))
 }
 
 pub(crate) fn nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
-    let mut list = args.get_err(0, "list")?.as_list();
+    let list = args.get_err(0, "list")?;
     let index = args
         .get_err(1, "n")?
         .assert_number_with_name("n", args.span())?;
+
+    if index.unit != Unit::None {
+        let unit = index.unit.clone();
+        let span = args.span();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_units_message("n", &unit))
+        })?;
+    }
 
     if index.num.is_zero() {
         return Err(("$n: List index may not be 0.", args.span()).into());
     }
 
-    if index.num.abs() > Number::from(list.len()) {
+    let len = list.list_len();
+
+    if index.num.abs() > Number::from(len) {
         return Err((
             format!(
                 "$n: Invalid index {}{} for a list with {} elements.",
                 index.num.inspect(),
                 index.unit,
-                list.len()
+                len
             ),
             args.span(),
         )
@@ -34,12 +44,29 @@ pub(crate) fn nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
 
     let index_int = index.assert_int_with_name("n", args.span())?;
 
-    Ok(list.remove(if index.num.is_positive() {
+    let idx = if index.num.is_positive() {
         debug_assert!(index_int > 0);
         index_int as usize - 1
     } else {
-        list.len() - index_int.unsigned_abs() as usize
-    }))
+        len - index_int.unsigned_abs() as usize
+    };
+
+    Ok(match list {
+        Value::List(v, ..) => v[idx].clone(),
+        Value::Map(m) => {
+            let (k, v) = m
+                .iter()
+                .nth(idx)
+                .expect("idx validated against list_len above");
+            Value::List(
+                Rc::new(vec![k.node.clone(), v.clone()]),
+                ListSeparator::Space,
+                Brackets::None,
+            )
+        }
+        Value::ArgList(v) => v.elems[idx].clone(),
+        v => v,
+    })
 }
 
 pub(crate) fn list_separator(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -65,6 +92,14 @@ pub(crate) fn set_nth(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
     let index = args
         .get_err(1, "n")?
         .assert_number_with_name("n", args.span())?;
+
+    if index.unit != Unit::None {
+        let unit = index.unit.clone();
+        let span = args.span();
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(function_units_message("n", &unit))
+        })?;
+    }
 
     if index.num.is_zero() {
         return Err(("$n: List index may not be 0.", args.span()).into());
@@ -252,13 +287,32 @@ pub(crate) fn is_bracketed(mut args: ArgumentResult, visitor: &mut Visitor) -> S
 
 pub(crate) fn index(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
-    let list = args.get_err(0, "list")?.as_list();
+    let list = args.get_err(0, "list")?;
     let value = args.get_err(1, "value")?;
-    let index = match list.into_iter().position(|v| v == value) {
-        Some(v) => v + 1,
-        None => return Ok(Value::Null),
+
+    let found = match &list {
+        Value::List(v, ..) => v.iter().position(|item| item == &value),
+        Value::Map(m) => m.iter().position(|(k, v)| {
+            Value::List(
+                Rc::new(vec![k.node.clone(), v.clone()]),
+                ListSeparator::Space,
+                Brackets::None,
+            ) == value
+        }),
+        Value::ArgList(v) => v.elems.iter().position(|item| item == &value),
+        v => {
+            if v == &value {
+                Some(0)
+            } else {
+                None
+            }
+        }
     };
-    Ok(Value::Dimension(SassNumber::new_unitless(index)))
+
+    match found {
+        Some(idx) => Ok(Value::Dimension(SassNumber::new_unitless(idx + 1))),
+        None => Ok(Value::Null),
+    }
 }
 
 pub(crate) fn zip(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
@@ -293,13 +347,40 @@ pub(crate) fn zip(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("length", Builtin::new(length));
-    f.insert("nth", Builtin::new(nth));
-    f.insert("list-separator", Builtin::new(list_separator));
-    f.insert("set-nth", Builtin::new(set_nth));
-    f.insert("append", Builtin::new(append));
-    f.insert("join", Builtin::new(join));
-    f.insert("is-bracketed", Builtin::new(is_bracketed));
-    f.insert("index", Builtin::new(index));
-    f.insert("zip", Builtin::new(zip));
+    f.insert(
+        "length",
+        Builtin::new(length).with_deprecated_global("list", "length"),
+    );
+    f.insert(
+        "nth",
+        Builtin::new(nth).with_deprecated_global("list", "nth"),
+    );
+    f.insert(
+        "list-separator",
+        Builtin::new(list_separator).with_deprecated_global("list", "separator"),
+    );
+    f.insert(
+        "set-nth",
+        Builtin::new(set_nth).with_deprecated_global("list", "set-nth"),
+    );
+    f.insert(
+        "append",
+        Builtin::new(append).with_deprecated_global("list", "append"),
+    );
+    f.insert(
+        "join",
+        Builtin::new(join).with_deprecated_global("list", "join"),
+    );
+    f.insert(
+        "is-bracketed",
+        Builtin::new(is_bracketed).with_deprecated_global("list", "is-bracketed"),
+    );
+    f.insert(
+        "index",
+        Builtin::new(index).with_deprecated_global("list", "index"),
+    );
+    f.insert(
+        "zip",
+        Builtin::new(zip).with_deprecated_global("list", "zip"),
+    );
 }

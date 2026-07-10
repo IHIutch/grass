@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use codemap::Span;
 
 use crate::{common::unvendor, error::SassResult, lexer::Lexer, parse::BaseParser, Token};
@@ -112,11 +114,18 @@ impl SelectorParser {
     }
 
     fn eat_whitespace(&mut self) -> DevouredWhitespace {
-        let text = self.raw_text(Self::whitespace);
+        let start = self.toks().cursor();
+        let _ = Self::whitespace(self);
 
-        if text.contains('\n') {
-            DevouredWhitespace::Newline
-        } else if !text.is_empty() {
+        let mut saw_any = false;
+        for c in self.toks().raw_chars(start) {
+            if c == '\n' {
+                return DevouredWhitespace::Newline;
+            }
+            saw_any = true;
+        }
+
+        if saw_any {
             DevouredWhitespace::Whitespace
         } else {
             DevouredWhitespace::None
@@ -134,7 +143,7 @@ impl SelectorParser {
         loop {
             let start = self.toks().cursor();
             self.whitespace()?;
-            let ws_had_newline = self.toks().raw_text(start).contains('\n');
+            let ws_had_newline = self.toks().raw_chars(start).any(|c| c == '\n');
 
             // todo: can we do while let Some(..) = self.toks.peek() ?
             match self.toks.peek() {
@@ -163,9 +172,9 @@ impl SelectorParser {
                 | Some(Token { kind: '&', .. })
                 | Some(Token { kind: '*', .. })
                 | Some(Token { kind: '|', .. }) => {
-                    components.push(ComplexSelectorComponent::Compound(
+                    components.push(ComplexSelectorComponent::Compound(Rc::new(
                         self.parse_compound_selector()?,
-                    ));
+                    )));
                     if !self.plain_css {
                         if let Some(Token { kind: '&', .. }) = self.toks.peek() {
                             return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());
@@ -177,9 +186,9 @@ impl SelectorParser {
                         self.trailing_newline = ws_had_newline;
                         break;
                     }
-                    components.push(ComplexSelectorComponent::Compound(
+                    components.push(ComplexSelectorComponent::Compound(Rc::new(
                         self.parse_compound_selector()?,
-                    ));
+                    )));
                     if !self.plain_css {
                         if let Some(Token { kind: '&', .. }) = self.toks.peek() {
                             return Err(("\"&\" may only used at the beginning of a compound selector.", self.span).into());

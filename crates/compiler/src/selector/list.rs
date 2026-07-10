@@ -60,7 +60,7 @@ impl fmt::Display for SelectorList {
                     f.write_char(' ')?;
                 }
             }
-            write!(f, "{}", complex)?;
+            write!(f, "{complex}")?;
         }
         Ok(())
     }
@@ -82,6 +82,12 @@ impl SelectorList {
         self.components
             .iter()
             .any(ComplexSelector::contains_parent_selector)
+    }
+
+    pub fn contains_parent_selector_with_suffix(&self) -> bool {
+        self.components
+            .iter()
+            .any(ComplexSelector::contains_parent_selector_with_suffix)
     }
 
     pub const fn new(span: Span) -> Self {
@@ -180,11 +186,14 @@ impl SelectorList {
                 if !self.contains_parent_selector() {
                     return Ok(self);
                 }
-                return Err((
-                    "Top-level selectors may not contain the parent selector \"&\".",
-                    self.span,
-                )
-                    .into());
+                if self.contains_parent_selector_with_suffix() {
+                    return Err((
+                        "A top-level selector may not contain a parent selector with a suffix.",
+                        self.span,
+                    )
+                        .into());
+                }
+                return Ok(self);
             }
         };
 

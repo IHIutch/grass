@@ -1,6 +1,6 @@
-use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+use std::{cell::Cell, rc::Rc};
 
-use crate::common::{Identifier, ListSeparator};
+use crate::common::{Identifier, ListSeparator, SmallOrderedMap};
 
 use super::Value;
 
@@ -9,15 +9,16 @@ pub struct ArgList {
     pub elems: Vec<Value>,
     were_keywords_accessed: Rc<Cell<bool>>,
     // todo: special wrapper around this field to avoid having to make it private?
-    keywords: BTreeMap<Identifier, Value>,
+    keywords: SmallOrderedMap<Identifier, Value>,
     pub separator: ListSeparator,
 }
 
 impl PartialEq for ArgList {
     fn eq(&self, other: &Self) -> bool {
-        self.elems == other.elems
-            && self.keywords == other.keywords
-            && self.separator == other.separator
+        // Keywords are intentionally excluded: dart-sass's `SassArgumentList` doesn't
+        // override `==`, so it inherits `SassList`'s equality, which only compares
+        // contents/separator/brackets and never looks at keywords.
+        self.elems == other.elems && self.separator == other.separator
     }
 }
 
@@ -27,7 +28,7 @@ impl ArgList {
     pub fn new(
         elems: Vec<Value>,
         were_keywords_accessed: Rc<Cell<bool>>,
-        keywords: BTreeMap<Identifier, Value>,
+        keywords: SmallOrderedMap<Identifier, Value>,
         separator: ListSeparator,
     ) -> Self {
         debug_assert!(
@@ -55,12 +56,12 @@ impl ArgList {
         !self.is_empty() && (self.elems.iter().all(Value::is_blank))
     }
 
-    pub fn keywords(&self) -> &BTreeMap<Identifier, Value> {
+    pub fn keywords(&self) -> &SmallOrderedMap<Identifier, Value> {
         (*self.were_keywords_accessed).set(true);
         &self.keywords
     }
 
-    pub fn into_keywords(self) -> BTreeMap<Identifier, Value> {
+    pub fn into_keywords(self) -> SmallOrderedMap<Identifier, Value> {
         (*self.were_keywords_accessed).set(true);
         self.keywords
     }

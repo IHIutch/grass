@@ -1,10 +1,10 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{cell::Cell, path::Path};
 
 use codemap::{Span, Spanned};
 
 use crate::{
-    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind, error::SassResult,
-    lexer::Lexer, ContextFlags, Options, Token,
+    ast::*, builtin::DISALLOWED_PLAIN_CSS_FUNCTION_NAMES, common::QuoteKind,
+    deprecation::Deprecation, error::SassResult, lexer::Lexer, ContextFlags, Options, Token,
 };
 
 use super::{value::ValueParser, BaseParser, StylesheetParser};
@@ -16,6 +16,8 @@ pub(crate) struct CssParser<'a> {
     pub flags: ContextFlags,
     pub options: &'a Options<'a>,
     pub arena: &'a bumpalo::Bump,
+    pub recursion_depth: Cell<usize>,
+    pub parse_time_warnings: Vec<(Deprecation, Span, String)>,
 }
 
 impl<'a> BaseParser for CssParser<'a> {
@@ -88,6 +90,14 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
         self.arena
     }
 
+    fn recursion_depth(&self) -> &Cell<usize> {
+        &self.recursion_depth
+    }
+
+    fn parse_time_warnings_mut(&mut self) -> &mut Vec<(Deprecation, Span, String)> {
+        &mut self.parse_time_warnings
+    }
+
     const IDENTIFIER_LIKE: Option<fn(&mut Self) -> SassResult<Spanned<AstExpr<'a>>>> =
         Some(Self::parse_identifier_like);
 
@@ -127,8 +137,8 @@ impl<'a> StylesheetParser<'a> for CssParser<'a> {
             }
             Some("import") => self.parse_css_import_rule(start),
             Some("media") => self.parse_media_rule(start),
-            Some("-moz-document") => self._parse_moz_document_rule(name),
-            Some("supports") => self.parse_supports_rule(),
+            Some("-moz-document") => self.unknown_at_rule(name, start),
+            Some("supports") => self.parse_supports_rule(start),
             _ => self.unknown_at_rule(name, start),
         }
     }
@@ -149,6 +159,8 @@ impl<'a> CssParser<'a> {
             flags: ContextFlags::empty(),
             options,
             arena,
+            recursion_depth: Cell::new(0),
+            parse_time_warnings: Vec::new(),
         }
     }
 
@@ -161,19 +173,22 @@ impl<'a> CssParser<'a> {
         } else {
             let string = self.parse_interpolated_string()?;
             AstExpr::String(
-                StringExpr(string.node.as_interpolation(true, None), QuoteKind::None),
+                StringExpr(
+                    string.node.as_interpolation(true, None, self.arena()),
+                    QuoteKind::None,
+                ),
                 string.span,
             )
             .span(string.span)
         };
 
         self.whitespace()?;
-        let modifiers = self.try_import_modifiers()?;
+        let modifiers = self.try_import_modifiers()?.map(|m| m.finish(self.arena()));
         self.expect_statement_separator(Some("@import rule"))?;
 
         Ok(AstStmt::ImportRule(AstImportRule {
             imports: vec![AstImport::Plain(AstPlainCssImport {
-                url: Interpolation::new_with_expr(url),
+                url: InterpolationBuilder::new_with_expr(url).finish(self.arena()),
                 modifiers,
                 span: self.toks.span_from(url_start),
             })],
@@ -194,7 +209,9 @@ impl<'a> CssParser<'a> {
             }
         }
 
-        if let Some(special_fn) = ValueParser::try_parse_special_function(self, &lower, start)? {
+        if let Some(special_fn) =
+            ValueParser::try_parse_special_function(self, &lower, plain, start)?
+        {
             return Ok(special_fn);
         }
 
@@ -202,7 +219,11 @@ impl<'a> CssParser<'a> {
 
         if !self.scan_char('(') {
             let span = self.toks.span_from(start);
-            return Ok(AstExpr::String(StringExpr(identifier, QuoteKind::None), span).span(span));
+            return Ok(AstExpr::String(
+                StringExpr(identifier.finish(self.arena()), QuoteKind::None),
+                span,
+            )
+            .span(span));
         }
 
         let allow_empty_second_arg = lower == "var";
@@ -216,7 +237,10 @@ impl<'a> CssParser<'a> {
                 let arg_start = self.toks.cursor();
                 if allow_empty_second_arg && arguments.len() == 1 && self.toks.next_char_is(')') {
                     arguments.push(AstExpr::String(
-                        StringExpr(Interpolation::new_plain(String::new()), QuoteKind::None),
+                        StringExpr(
+                            InterpolationBuilder::new_plain(String::new()).finish(self.arena()),
+                            QuoteKind::None,
+                        ),
                         self.toks.span_from(arg_start),
                     ));
                     break;
@@ -239,10 +263,10 @@ impl<'a> CssParser<'a> {
 
         Ok(
             AstExpr::InterpolatedFunction(self.arena.alloc(InterpolatedFunction {
-                name: identifier,
+                name: identifier.finish(self.arena()),
                 arguments: ArgumentInvocation {
-                    positional: arguments,
-                    named: BTreeMap::new(),
+                    positional: self.arena.alloc_slice_fill_iter(arguments),
+                    named: &[],
                     rest: None,
                     keyword_rest: None,
                     span: self.toks.span_from(before_args),

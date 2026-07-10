@@ -4,6 +4,8 @@ authors = ["Automatically generated"]
 edition = "2021"
 name = "grass-fuzz"
 publish = false
+# MSRV: ar_archive_writer 0.5.2 (via grass's psm/stacker tree) requires Rust 1.88.
+rust-version = "1.88"
 version = "0.0.0"
 
 [package.metadata]
@@ -13,7 +15,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.3"
 
 [dependencies.grass]
-path = ".."
+path = "../crates/lib"
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -23,4 +25,22 @@ members = ["."]
 doc = false
 name = "from_string_parsing"
 path = "fuzz_targets/from_string_parsing.rs"
+test = false
+
+[[bin]]
+doc = false
+name = "from_string_css"
+path = "fuzz_targets/from_string_css.rs"
+test = false
+
+[[bin]]
+doc = false
+name = "from_string_sass"
+path = "fuzz_targets/from_string_sass.rs"
+test = false
+
+[[bin]]
+doc = false
+name = "import_resolution_virtual_fs"
+path = "fuzz_targets/import_resolution_virtual_fs.rs"
 test = false

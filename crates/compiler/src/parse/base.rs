@@ -140,14 +140,29 @@ pub(crate) trait BaseParser {
         unit: bool,
     ) -> SassResult<String> {
         let mut text = String::new();
+        self.parse_identifier_into(&mut text, normalize, unit)?;
+        Ok(text)
+    }
 
+    /// Like `parse_identifier`, but appends into a caller-supplied buffer
+    /// instead of allocating and returning a new `String`. Use this at hot
+    /// call sites that would otherwise immediately copy the returned String
+    /// into another buffer and discard it.
+    fn parse_identifier_into(
+        &mut self,
+        text: &mut String,
+        // default=false
+        normalize: bool,
+        // default=false
+        unit: bool,
+    ) -> SassResult<()> {
         if self.scan_char('-') {
             text.push('-');
 
             if self.scan_char('-') {
                 text.push('-');
-                self.parse_identifier_body(&mut text, normalize, unit)?;
-                return Ok(text);
+                self.parse_identifier_body(text, normalize, unit)?;
+                return Ok(());
             }
         }
 
@@ -168,9 +183,9 @@ pub(crate) trait BaseParser {
             }
         }
 
-        self.parse_identifier_body(&mut text, normalize, unit)?;
+        self.parse_identifier_body(text, normalize, unit)?;
 
-        Ok(text)
+        Ok(())
     }
 
     fn parse_identifier_body(
@@ -261,7 +276,7 @@ pub(crate) trait BaseParser {
             buf.push(' ');
             Ok(buf)
         } else {
-            Ok(format!("\\{}", c))
+            Ok(format!("\\{c}"))
         }
     }
 
@@ -272,7 +287,7 @@ pub(crate) trait BaseParser {
                 Ok(())
             }
             Some(..) | None => {
-                Err((format!("expected \"{}\".", c), self.toks().current_span()).into())
+                Err((format!("expected \"{c}\"."), self.toks().current_span()).into())
             }
         }
     }
@@ -283,7 +298,7 @@ pub(crate) trait BaseParser {
                 self.toks_mut().next();
                 Ok(())
             }
-            Some(..) | None => Err((format!("expected {}.", msg), self.toks().prev_span()).into()),
+            Some(..) | None => Err((format!("expected {msg}."), self.toks().prev_span()).into()),
         }
     }
 
@@ -327,11 +342,7 @@ pub(crate) trait BaseParser {
         }
 
         if !found_matching_quote {
-            return Err((
-                format!("Expected {quote}.", quote = quote),
-                self.toks().current_span(),
-            )
-                .into());
+            return Err((format!("Expected {quote}."), self.toks().current_span()).into());
         }
 
         Ok(buffer)
@@ -391,12 +402,12 @@ pub(crate) trait BaseParser {
                     wrote_newline = false;
                 }
                 '"' | '\'' => {
-                    buffer.push_str(&self.fallible_raw_text(Self::parse_string)?);
+                    self.fallible_append_raw_text(&mut buffer, Self::parse_string)?;
                     wrote_newline = false;
                 }
                 '/' => {
                     if matches!(self.toks().peek_n(1), Some(Token { kind: '*', .. })) {
-                        buffer.push_str(&self.fallible_raw_text(Self::skip_loud_comment)?);
+                        self.fallible_append_raw_text(&mut buffer, Self::skip_loud_comment)?;
                     } else {
                         buffer.push('/');
                         self.toks_mut().next();
@@ -476,7 +487,7 @@ pub(crate) trait BaseParser {
                 }
                 c => {
                     if self.looking_at_identifier() {
-                        buffer.push_str(&self.parse_identifier(false, false)?);
+                        self.parse_identifier_into(&mut buffer, false, false)?;
                     } else {
                         self.toks_mut().next();
                         buffer.push(c);
@@ -565,19 +576,26 @@ pub(crate) trait BaseParser {
         Ok(None)
     }
 
-    fn raw_text<T>(&mut self, func: impl Fn(&mut Self) -> T) -> String {
+    /// Appends the raw source text consumed by `func` into a caller-supplied
+    /// buffer instead of allocating and returning a new `String`. Use this
+    /// at hot call sites that would otherwise immediately copy a throwaway
+    /// `String` into another buffer and discard it.
+    fn append_raw_text<T>(&mut self, buf: &mut String, func: impl Fn(&mut Self) -> T) {
         let start = self.toks().cursor();
         func(self);
-        self.toks().raw_text(start)
+        buf.extend(self.toks().raw_chars(start));
     }
 
-    fn fallible_raw_text<T>(
+    /// Like `append_raw_text`, but for a fallible `func`.
+    fn fallible_append_raw_text<T>(
         &mut self,
+        buf: &mut String,
         func: impl Fn(&mut Self) -> SassResult<T>,
-    ) -> SassResult<String> {
+    ) -> SassResult<()> {
         let start = self.toks().cursor();
         func(self)?;
-        Ok(self.toks().raw_text(start))
+        buf.extend(self.toks().raw_chars(start));
+        Ok(())
     }
 
     /// Peeks to see if the `ident` is at the current position. If it is,
@@ -643,7 +661,7 @@ pub(crate) trait BaseParser {
             return Ok(());
         }
 
-        Err((format!("Expected \"{}\".", c), self.toks().current_span()).into())
+        Err((format!("Expected \"{c}\"."), self.toks().current_span()).into())
     }
 
     fn looking_at_identifier_body(&mut self) -> bool {
@@ -661,7 +679,7 @@ pub(crate) trait BaseParser {
         for c in ident.chars() {
             if !self.scan_ident_char(c, case_sensitive)? {
                 return Err((
-                    format!("Expected \"{}\".", ident),
+                    format!("Expected \"{ident}\"."),
                     self.toks_mut().span_from(start),
                 )
                     .into());
@@ -673,7 +691,7 @@ pub(crate) trait BaseParser {
         }
 
         Err((
-            format!("Expected \"{}\".", ident),
+            format!("Expected \"{ident}\"."),
             self.toks_mut().span_from(start),
         )
             .into())

@@ -1,4 +1,7 @@
-use std::fmt::{self, Write};
+use std::{
+    fmt::{self, Write},
+    rc::Rc,
+};
 
 use codemap::Span;
 
@@ -21,13 +24,13 @@ impl fmt::Display for CompoundSelector {
         let mut did_write = false;
         for simple in &self.components {
             if did_write {
-                write!(f, "{}", simple)?;
+                write!(f, "{simple}")?;
             } else {
                 let s = simple.to_string();
                 if !s.is_empty() {
                     did_write = true;
                 }
-                write!(f, "{}", s)?;
+                write!(f, "{s}")?;
             }
         }
 
@@ -82,7 +85,7 @@ impl CompoundSelector {
     pub fn is_super_selector(
         &self,
         other: &Self,
-        parents: &Option<Vec<ComplexSelectorComponent>>,
+        parents: Option<&[ComplexSelectorComponent]>,
     ) -> bool {
         // Pseudo-elements effectively change the target of a compound selector.
         // If either has a pseudo-element, they both must have the same one,
@@ -107,7 +110,7 @@ impl CompoundSelector {
                         let pe2_compound = CompoundSelector {
                             components: vec![pe2.clone()],
                         };
-                        if !pseudo.is_super_selector(&pe2_compound, parents.clone()) {
+                        if !pseudo.is_super_selector(&pe2_compound, parents) {
                             return false;
                         }
                     }
@@ -141,7 +144,7 @@ impl CompoundSelector {
                 },
             ) = simple1
             {
-                if !pseudo.is_super_selector(other, parents.clone()) {
+                if !pseudo.is_super_selector(other, parents) {
                     return false;
                 }
             } else if !simple1.is_super_selector_of_compound(other) {
@@ -222,9 +225,11 @@ impl CompoundSelector {
             }
         } else {
             return Ok(Some(vec![ComplexSelector::new(
-                vec![ComplexSelectorComponent::Compound(CompoundSelector {
-                    components: resolved_members,
-                })],
+                vec![ComplexSelectorComponent::Compound(Rc::new(
+                    CompoundSelector {
+                        components: resolved_members,
+                    },
+                ))],
                 false,
             )]));
         }
@@ -241,13 +246,13 @@ impl CompoundSelector {
                         c.clone()
                     } else {
                         return Err((
-                            format!("Parent \"{}\" is incompatible with this selector.", complex),
+                            format!("Parent \"{complex}\" is incompatible with this selector."),
                             span,
                         )
                             .into());
                     };
 
-                    let mut components = last.components;
+                    let mut components = Rc::unwrap_or_clone(last).components;
 
                     if let Some(SimpleSelector::Parent(Some(suffix))) = self.components.first() {
                         let mut end = components.pop().unwrap();
@@ -262,7 +267,7 @@ impl CompoundSelector {
                     complex.components.pop();
 
                     let mut components = complex.components;
-                    components.push(ComplexSelectorComponent::Compound(last));
+                    components.push(ComplexSelectorComponent::Compound(Rc::new(last)));
 
                     Ok(ComplexSelector::new(components, complex.line_break))
                 })
@@ -274,12 +279,12 @@ impl CompoundSelector {
     /// both `compound1` and `compound2`.
     ///
     /// If no such selector can be produced, returns `None`.
-    pub fn unify(self, other: Self) -> Option<Self> {
-        let mut result = self.components;
+    pub fn unify(&self, other: &Self) -> Option<Self> {
+        let mut result = self.components.clone();
         let mut pseudo_result: Vec<SimpleSelector> = Vec::new();
         let mut pseudo_element_found = false;
 
-        for simple in other.components {
+        for simple in other.components.iter().cloned() {
             if pseudo_element_found && matches!(simple, SimpleSelector::Pseudo(..)) {
                 // Once we've seen a pseudo-element, subsequent pseudo selectors
                 // go into a separate list to preserve their position after the
@@ -331,7 +336,7 @@ impl CompoundSelector {
 fn compound_components_is_superselector(
     compound1: &[SimpleSelector],
     compound2: &[SimpleSelector],
-    parents: &Option<Vec<ComplexSelectorComponent>>,
+    parents: Option<&[ComplexSelectorComponent]>,
 ) -> bool {
     if compound1.is_empty() {
         return true;

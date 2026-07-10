@@ -161,13 +161,13 @@ pub(crate) fn map_remove(mut args: ArgumentResult, visitor: &mut Visitor) -> Sas
 
     // Accept $key as a named argument (dart-sass compatibility)
     let mut extra_keys: Vec<Spanned<Value>> = Vec::new();
-    if let Some(key_val) = args.named.remove(&Identifier::from("key")) {
+    if let Some(key_val) = args.named.shift_remove(&Identifier::from("key")) {
         extra_keys.push(Spanned {
             node: key_val,
             span,
         });
     }
-    if let Some(keys_val) = args.named.remove(&Identifier::from("keys")) {
+    if let Some(keys_val) = args.named.shift_remove(&Identifier::from("keys")) {
         extra_keys.push(Spanned {
             node: keys_val,
             span,
@@ -241,10 +241,28 @@ pub(crate) fn map_set(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRe
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("map-get", Builtin::new(map_get));
-    f.insert("map-has-key", Builtin::new(map_has_key));
-    f.insert("map-keys", Builtin::new(map_keys));
-    f.insert("map-values", Builtin::new(map_values));
-    f.insert("map-merge", Builtin::new(map_merge));
-    f.insert("map-remove", Builtin::new(map_remove));
+    f.insert(
+        "map-get",
+        Builtin::new(map_get).with_deprecated_global("map", "get"),
+    );
+    f.insert(
+        "map-has-key",
+        Builtin::new(map_has_key).with_deprecated_global("map", "has-key"),
+    );
+    f.insert(
+        "map-keys",
+        Builtin::new(map_keys).with_deprecated_global("map", "keys"),
+    );
+    f.insert(
+        "map-values",
+        Builtin::new(map_values).with_deprecated_global("map", "values"),
+    );
+    f.insert(
+        "map-merge",
+        Builtin::new(map_merge).with_deprecated_global("map", "merge"),
+    );
+    f.insert(
+        "map-remove",
+        Builtin::new(map_remove).with_deprecated_global("map", "remove"),
+    );
 }

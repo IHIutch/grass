@@ -1,4 +1,4 @@
-use crate::{builtin::builtin_imports::*, evaluate::div};
+use crate::{builtin::builtin_imports::*, evaluate::div, serializer::serialize_number};
 
 pub(crate) fn percentage(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(1)?;
@@ -70,6 +70,43 @@ pub(crate) fn abs(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
     Ok(Value::Dimension(num))
 }
 
+/// Global `abs()` — unlike the other global math functions, this warns
+/// `abs-percent` instead of `global-builtin` when the argument has a `%`
+/// unit (dart-sass intends to eventually pass percentages through to a CSS
+/// `abs()` function rather than resolving them at compile time). Only
+/// non-percentage calls fall through to the ordinary global-builtin warning.
+/// `math.abs()` (the module form) always uses the plain `abs` above and
+/// never warns either way.
+fn global_abs(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+    args.max_args(1)?;
+    let span = args.span();
+    let number = args
+        .get_err(0, "number")?
+        .assert_number_with_name("number", span)?;
+
+    if number.unit == Unit::Percent {
+        let number_text = serialize_number(&number, visitor.options, span)?;
+        visitor.emit_deprecation(Deprecation::AbsPercent, span, || {
+            Ok(format!(
+                "Passing percentage units to the global abs() function is deprecated.\nIn the \
+                 future, this will emit a CSS abs() function to be resolved by the \
+                 browser.\nTo preserve current behavior: math.abs({number_text})\nTo emit a CSS \
+                 abs() now: abs(#{{{number_text}}})\nMore info: \
+                 https://sass-lang.com/d/abs-percent"
+            ))
+        })?;
+    } else {
+        visitor.emit_deprecation(Deprecation::GlobalBuiltin, span, || {
+            Ok(global_builtin_message("math", "abs"))
+        })?;
+    }
+
+    let mut num = number;
+    num.num = num.num.abs();
+
+    Ok(Value::Dimension(num))
+}
+
 pub(crate) fn comparable(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
     args.max_args(2)?;
     let unit1 = args
@@ -98,6 +135,21 @@ pub(crate) fn random(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     }
 
     let limit = limit.assert_number_with_name("limit", args.span())?;
+
+    if limit.unit != Unit::None {
+        let span = args.span();
+        let unit = limit.unit.clone();
+        let limit_text = serialize_number(&limit, visitor.options, span)?;
+        visitor.emit_deprecation(Deprecation::FunctionUnits, span, || {
+            Ok(format!(
+                "math.random() will no longer ignore $limit units ({limit_text}) in a future \
+                 release.\n\nRecommendation: math.random(math.div($limit, 1{unit})) * \
+                 1{unit}\n\nTo preserve current behavior: math.random(math.div($limit, \
+                 1{unit}))\n\nMore info: https://sass-lang.com/d/function-units"
+            ))
+        })?;
+    }
+
     let limit_int = limit.assert_int_with_name("limit", args.span())?;
     let limit = limit.num;
 
@@ -119,7 +171,33 @@ pub(crate) fn random(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
     )))
 }
 
-pub(crate) fn min(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+/// Compares `lhs` to `rhs` the same way `evaluate::cmp` compares two
+/// `Value::Dimension`s, without constructing either as a `Value`. Mirrors
+/// the ordering (and the exact "Incompatible units" error text/argument
+/// order) of `Value::cmp`'s `Dimension` arm, where `lhs` plays the role of
+/// `self` and `rhs` plays the role of `other`.
+fn cmp_dimension(
+    lhs: (&Number, &Unit),
+    rhs: (&Number, &Unit),
+    span: Span,
+) -> SassResult<Option<Ordering>> {
+    let (num, unit) = lhs;
+    let (num2, unit2) = rhs;
+
+    if !unit.comparable(unit2) {
+        return Err((format!("Incompatible units {unit2} and {unit}."), span).into());
+    }
+
+    Ok(
+        if unit == unit2 || unit == &Unit::None || unit2 == &Unit::None {
+            num.partial_cmp(num2)
+        } else {
+            num.partial_cmp(&num2.convert(unit2, unit))
+        },
+    )
+}
+
+pub(crate) fn min(args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
     args.min_args(1)?;
     let span = args.span();
     let mut nums = args
@@ -142,19 +220,10 @@ pub(crate) fn min(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     };
 
     for (num, unit) in nums {
-        let lhs = Value::Dimension(SassNumber {
-            num,
-            unit: unit.clone(),
-            as_slash: None,
-        });
-        let rhs = Value::Dimension(SassNumber {
-            num: (min.0),
-            unit: min.1.clone(),
-            as_slash: None,
-        });
-
-        if crate::evaluate::cmp(&lhs, &rhs, visitor.options, span, BinaryOp::LessThan)?.is_truthy()
-        {
+        if matches!(
+            cmp_dimension((&num, &unit), (&min.0, &min.1), span)?,
+            Some(Ordering::Less)
+        ) {
             min = (num, unit);
         }
     }
@@ -165,7 +234,7 @@ pub(crate) fn min(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     }))
 }
 
-pub(crate) fn max(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Value> {
+pub(crate) fn max(args: ArgumentResult, _visitor: &mut Visitor) -> SassResult<Value> {
     args.min_args(1)?;
     let span = args.span();
     let mut nums = args
@@ -188,20 +257,10 @@ pub(crate) fn max(args: ArgumentResult, visitor: &mut Visitor) -> SassResult<Val
     };
 
     for (num, unit) in nums {
-        let lhs = Value::Dimension(SassNumber {
-            num,
-            unit: unit.clone(),
-            as_slash: None,
-        });
-        let rhs = Value::Dimension(SassNumber {
-            num: (max.0),
-            unit: max.1.clone(),
-            as_slash: None,
-        });
-
-        if crate::evaluate::cmp(&lhs, &rhs, visitor.options, span, BinaryOp::GreaterThan)?
-            .is_truthy()
-        {
+        if matches!(
+            cmp_dimension((&num, &unit), (&max.0, &max.1), span)?,
+            Some(Ordering::Greater)
+        ) {
             max = (num, unit);
         }
     }
@@ -222,14 +281,40 @@ pub(crate) fn divide(mut args: ArgumentResult, visitor: &mut Visitor) -> SassRes
 }
 
 pub(crate) fn declare(f: &mut GlobalFunctionMap) {
-    f.insert("percentage", Builtin::new(percentage));
-    f.insert("round", Builtin::new(round));
-    f.insert("ceil", Builtin::new(ceil));
-    f.insert("floor", Builtin::new(floor));
-    f.insert("abs", Builtin::new(abs));
-    f.insert("min", Builtin::new(min));
-    f.insert("max", Builtin::new(max));
-    f.insert("comparable", Builtin::new(comparable));
+    f.insert(
+        "percentage",
+        Builtin::new(percentage).with_deprecated_global("math", "percentage"),
+    );
+    f.insert(
+        "round",
+        Builtin::new(round).with_deprecated_global("math", "round"),
+    );
+    f.insert(
+        "ceil",
+        Builtin::new(ceil).with_deprecated_global("math", "ceil"),
+    );
+    f.insert(
+        "floor",
+        Builtin::new(floor).with_deprecated_global("math", "floor"),
+    );
+    // abs warns conditionally (abs-percent vs global-builtin), emitted
+    // inline in global_abs above, not generically here.
+    f.insert("abs", Builtin::new(global_abs));
+    f.insert(
+        "min",
+        Builtin::new(min).with_deprecated_global("math", "min"),
+    );
+    f.insert(
+        "max",
+        Builtin::new(max).with_deprecated_global("math", "max"),
+    );
+    f.insert(
+        "comparable",
+        Builtin::new(comparable).with_deprecated_global("math", "compatible"),
+    );
     #[cfg(feature = "random")]
-    f.insert("random", Builtin::new(random));
+    f.insert(
+        "random",
+        Builtin::new(random).with_deprecated_global("math", "random"),
+    );
 }
