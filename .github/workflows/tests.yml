@@ -20,7 +20,9 @@ jobs:
         run: rustc --version; cargo --version;
 
       - name: Run all tests
-        run: cargo test --features=macro
+        # N-API symbols resolve at runtime for the cdylib, so a Linux test executable cannot link grass_napi.
+        # Its real coverage is the napi job's `node test.mjs`; Rust unit tests still run in local macOS cargo test.
+        run: cargo test --features=macro --workspace --exclude grass_napi
 
   fmt:
     runs-on: ubuntu-latest
