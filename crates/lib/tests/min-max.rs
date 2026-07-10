@@ -165,7 +165,7 @@ error!(
 );
 error!(
     min_contains_special_fn_calc_space_separated_list,
-    "a {\n  color: min(calc(1  2));\n}\n", r#"Error: expected "+", "-", "*", "/", or ")"."#
+    "a {\n  color: min(calc(1  2));\n}\n", "Error: Missing math operator."
 );
 test!(
     min_contains_special_fn_var,
@@ -184,7 +184,7 @@ test!(
 );
 error!(
     min_contains_calc_contains_multiline_comment,
-    "a {\n  color: min(calc(1 /**/ 2));\n}\n", r#"Error: expected "+", "-", "*", "/", or ")"."#
+    "a {\n  color: min(calc(1 /**/ 2));\n}\n", "Error: Missing math operator."
 );
 test!(
     min_contains_calc_contains_multiline_comment_with_interpolation,
@@ -268,5 +268,5 @@ error!(
 error!(
     min_calc_parens_no_args,
     "a {\n  color: min(calc());\n}\n",
-    "Error: Expected number, variable, function, or calculation."
+    "Error: Missing argument."
 );

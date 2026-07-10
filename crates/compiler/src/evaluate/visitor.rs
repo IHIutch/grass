@@ -5159,8 +5159,13 @@ impl<'a> Visitor<'a> {
                     }
                 }
             }
-            AstExpr::List(..) => {
-                return Err(("This expression can't be used in a calculation.", span).into())
+            AstExpr::List(list) => {
+                let message = if list.elems.is_empty() {
+                    "This expression can't be used in a calculation."
+                } else {
+                    "Missing math operator."
+                };
+                return Err((message, span).into())
             }
             v => unreachable!("{:?}", v),
         })
