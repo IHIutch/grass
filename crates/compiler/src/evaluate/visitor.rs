@@ -2411,6 +2411,16 @@ impl<'a> Visitor<'a> {
             vec![path, partial]
         }
 
+        // Build candidates for an explicit non-CSS extension. Unlike the
+        // general path candidates above, partials take priority within each
+        // group so conflicts are reported in Sass's order.
+        fn explicit_extension_candidates(path: PathBuf) -> Vec<PathBuf> {
+            let dirname = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+            let basename = path.file_name().unwrap_or_else(|| OsStr::new(".."));
+            let partial = dirname.join(format!("_{}", basename.to_str().unwrap()));
+            vec![partial, path]
+        }
+
         // Build non-css candidates for conflict detection.
         // Order: partial first within each extension, sass before scss.
         // Returns (import_candidates, regular_candidates) — import candidates
@@ -2588,10 +2598,28 @@ impl<'a> Visitor<'a> {
             || path_buf.extension() == Some(OsStr::new("css"))
         {
             let extension = path_buf.extension().unwrap();
+            if extension == OsStr::new("scss") || extension == OsStr::new("sass") {
+                if for_import {
+                    let import_candidates = explicit_extension_candidates(
+                        path_buf.with_extension(format!("import.{}", extension.to_str().unwrap())),
+                    );
+                    if let Some(found) = check_conflicts(&import_candidates, context_dir, span)? {
+                        return Ok(Some(ImportSource::Path(found)));
+                    }
+                }
+
+                let regular_candidates = explicit_extension_candidates(path_buf.clone());
+                if let Some(found) = check_conflicts(&regular_candidates, context_dir, span)? {
+                    return Ok(Some(ImportSource::Path(found)));
+                }
+
+                return Ok(None);
+            }
+
             let mut candidates = Vec::new();
             if for_import {
                 candidates.extend(path_candidates(
-                    path_buf.with_extension(format!(".import{}", extension.to_str().unwrap())),
+                    path_buf.with_extension(format!("import.{}", extension.to_str().unwrap())),
                 ));
             }
             candidates.extend(path_candidates(path_buf));
