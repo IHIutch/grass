@@ -44,3 +44,9 @@ doc = false
 name = "import_resolution_virtual_fs"
 path = "fuzz_targets/import_resolution_virtual_fs.rs"
 test = false
+
+[[bin]]
+doc = false
+name = "leak_probe"
+path = "src/bin/leak_probe.rs"
+test = false
