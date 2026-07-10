@@ -22,6 +22,9 @@ You might have to use nightly:
 cargo +nightly fuzz run <target>
 ```
 
+For import-resolution leak triage, run `~/.cargo/bin/cargo run --release --manifest-path fuzz/Cargo.toml --bin leak_probe`.
+It reports net live bytes after a 100-iteration warmup and 10,000 measured compiles.
+
 
 
 ## More info about fuzzing
