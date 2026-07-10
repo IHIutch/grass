@@ -67,7 +67,7 @@ The capability contract is:
 | --- | --- | --- | --- | --- |
 | `compileString` / `style` / `quiet` / `loadPaths` | Supported | Supported | Supported | Supported |
 | `compile()` from a path | Supported | Supported | Supported with `options.fs` | Unsupported by this entrypoint |
-| `compileAsync` / `compileStringAsync` | Supported | Supported | Supported | Supported |
+| `compileAsync` / `compileStringAsync` | Supported | Supported | Supported | `compileStringAsync` supported; `compileAsync` unavailable |
 | Source maps (`sourceMap`, `sourceMapIncludeSources`) | Supported | Supported | Supported | Supported |
 | JS `functions`, `importers`, `url`, and `importer` options | Supported | Unsupported; throws a native-binding error | Unsupported; omitted from types | Unsupported; omitted from types |
 
