@@ -126,9 +126,10 @@ error!(
 error!(toplevel_hash, "#", "Error: expected \"{\".");
 error!(toplevel_closing_brace, "}", "Error: unmatched \"}\".");
 error!(toplevel_at, "@", "Error: Expected identifier.");
+test!(toplevel_ampersand, "& {a: b}", "& {\n  a: b;\n}\n");
 error!(
-    toplevel_ampersand,
-    "& {}", "Error: Top-level selectors may not contain the parent selector \"&\"."
+    toplevel_ampersand_suffix,
+    "&b {}", "Error: A top-level selector may not contain a parent selector with a suffix."
 );
 // note: dart-sass gives error "Expected escape sequence."
 error!(toplevel_backslash, "\\", "Error: Expected expression.");

@@ -435,6 +435,22 @@ impl ComplexSelector {
             }
         })
     }
+
+    pub fn contains_parent_selector_with_suffix(&self) -> bool {
+        self.components.iter().any(|c| {
+            if let ComplexSelectorComponent::Compound(compound) = c {
+                compound.components.iter().any(|simple| match simple {
+                    SimpleSelector::Parent(Some(_)) => true,
+                    SimpleSelector::Pseudo(Pseudo {
+                        selector: Some(sel), ..
+                    }) => sel.contains_parent_selector_with_suffix(),
+                    _ => false,
+                })
+            } else {
+                false
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Copy, Hash)]
