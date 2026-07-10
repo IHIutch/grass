@@ -1,51 +1,137 @@
-# grass
+# ihiutch-grass
 
-This crate aims to provide a high level interface for compiling [Sass](https://sass-lang.com/documentation/) into
-plain CSS.
+`ihiutch-grass` compiles Sass/SCSS to plain CSS. It is a high-level interface
+to `grass`, with native Node performance and a WebAssembly fallback for
+portable runtimes. Its output aims for complete feature parity with the
+`dart-sass` reference implementation; differences in output other than error
+messages and error spans are bugs.
 
-In addition to a library, this crate also includes a binary that is intended to act as an invisible
-replacement to the Sass commandline executable.
+## Quickstart
 
-This crate aims to achieve complete feature parity with the `dart-sass` reference
-implementation. A deviation from the `dart-sass` implementation can be considered
-a bug except for in the case of error messages and error spans.
+### Node
 
-[Documentation](https://docs.rs/grass/)  
-[crates.io](https://crates.io/crates/grass)
+The package is ESM. `compileString` is useful for source held in memory, while
+`compile` reads a Sass file through Node's filesystem. The async variants have
+the same options and result shape:
 
-## Status
+```js
+import {
+  compile,
+  compileString,
+  compileAsync,
+  compileStringAsync,
+} from "ihiutch-grass";
 
-`grass` has reached a stage where one can be quite confident in its output. For the average user there should not be perceptible differences from `dart-sass`.
+const fromString = compileString("a { color: red; }");
+console.log(fromString.css);
 
-Every commit of `grass` is tested against bootstrap v5.0.2, and every release is tested against the last 2,500 commits of bootstrap's `main` branch.
+// These file examples assume styles.scss exists in the current directory.
+const fromFile = compile("styles.scss");
+const fromStringAsync = await compileStringAsync("a { color: blue; }");
+const fromFileAsync = await compileAsync("styles.scss");
 
-That said, there are a number of known missing features and bugs. The rough edges of `grass` largely include `@forward` and more complex uses of `@use`. We support basic usage of these rules, but more advanced features such as `@import`ing modules containing `@forward` with prefixes may not behave as expected.
+console.log(fromFile.css, fromStringAsync.css, fromFileAsync.css);
+```
 
-All known missing features and bugs are tracked in [#19](https://github.com/connorskees/grass/issues/19).
+Custom functions and importers are available on the Node-native entrypoint.
+Return the value classes exported by this package from custom functions:
 
-`grass` is not a drop-in replacement for `libsass` and does not intend to be. If you are upgrading to `grass` from `libsass`, you may have to make modifications to your stylesheets, though these changes should not differ from those you would have to make if upgrading to `dart-sass`.
+```js
+import { compileString, SassNumber } from "ihiutch-grass";
 
-## Performance
+const result = compileString("a { width: double(5px); }", {
+  functions: {
+    "double($n)": ([n]) => new SassNumber(n.value * 2, n.numeratorUnits[0]),
+  },
+});
 
-`grass` is benchmarked against `dart-sass` and `sassc` (`libsass`) [here](https://github.com/connorskees/sass-perf). In general, `grass` appears to be ~2x faster than `dart-sass` and ~1.7x faster than `sassc`.
+console.log(result.css);
+// a {
+//   width: 10px;
+// }
+```
 
-### WASM package measurements
+An importer can provide Sass modules without putting them on disk:
 
-The package's WASM performance is measured separately from correctness. Run
-`npm run perf` after the generated WASM files have been copied into this
-directory. The command forces the package's WASM path, warms each workload,
-then reports per-sample wall time, output size, RSS, heap usage, Node version,
-Rust/wasm-pack versions when available, and the WASM artifact hash. It covers
-both a representative string compile and a file compile with imports.
+```js
+import { compileString } from "ihiutch-grass";
 
-The banked USWDS release-profile measurement is approximately **300 ms** and
-**1.5x native** after filesystem-boundary batching. Treat a result as a
-regression only when it uses the same USWDS fixture, host class, Node version,
-Rust/wasm-pack toolchain, and WASM build profile: flag a median above 375 ms
-(25% over the ~300 ms banked baseline), or a same-run WASM/native ratio above
-1.875x. Cross-machine, dev-vs-release, and browser-vs-Node comparisons are
-not regression verdicts. The benchmark is informational and is never part of
-`npm test`.
+const result = compileString(
+  '@use "virtual:colors" as colors; a { color: colors.$primary; }',
+  {
+    importers: [
+      {
+        canonicalize(url) {
+          return url === "virtual:colors" ? "virtual:colors" : null;
+        },
+        load(canonicalUrl) {
+          return canonicalUrl === "virtual:colors"
+            ? { contents: "$primary: rebeccapurple;", syntax: "scss" }
+            : null;
+        },
+      },
+    ],
+  },
+);
+
+console.log(result.css);
+```
+
+Set `sourceMap: true` to receive a source-map object rather than a JSON
+string. `sourceMapIncludeSources: true` additionally embeds the source text:
+
+```js
+import { compileString } from "ihiutch-grass";
+
+const { sourceMap } = compileString("a { color: red; }", {
+  sourceMap: true,
+  sourceMapIncludeSources: true,
+});
+
+console.log(sourceMap.version); // 3
+console.log(sourceMap.sourcesContent);
+```
+
+### Browser and bundlers
+
+The browser entrypoint is WASM-only. Initialize it once before compiling; with
+no argument it fetches the adjacent `grass_bg.wasm` asset:
+
+```js
+import { init, compileString } from "ihiutch-grass";
+
+await init();
+const result = compileString("a { color: red; }");
+const style = document.createElement("style");
+style.textContent = result.css;
+document.head.append(style);
+```
+
+`compileString` has no filesystem. To compile a path, provide the browser
+entrypoint's `options.fs` callbacks. JavaScript functions and importers are
+available only through the Node-native entrypoint.
+
+### Cloudflare Workers
+
+Workers require a statically imported, pre-compiled WASM module. Initialize it
+once at startup, then compile Sass in a request handler:
+
+```js
+import { init, compileString } from 'ihiutch-grass/workers';
+import wasmModule from 'ihiutch-grass/grass_bg.wasm';
+
+// Call once at startup
+init(wasmModule);
+
+export default {
+  async fetch(request) {
+    const result = compileString('a { color: red; }');
+    return new Response(result.css, {
+      headers: { 'Content-Type': 'text/css' },
+    });
+  },
+};
+```
 
 ## Supported runtimes and package contract
 
@@ -85,10 +171,9 @@ file URL in `loadedUrls`.
 
 Source maps are omitted unless `sourceMap: true`; when enabled they are
 returned as a source-map object (version 3), not a JSON string. The
-`sourceMapIncludeSources` option adds `sourcesContent`. These semantics are
-the same across the Node WASM, browser, and Workers WASM surfaces. Async
-methods preserve the same result and source-map shape as their synchronous
-counterparts.
+`sourceMapIncludeSources` option adds `sourcesContent`. These semantics are the
+same across the Node WASM, browser, and Workers WASM surfaces. Async methods
+preserve the same result and source-map shape as their synchronous counterparts.
 
 The package-wasm CI job builds the dev WASM artifact and runs the full package
 correctness suite on pull requests, including Node-WASM, browser, Workers,
@@ -97,27 +182,93 @@ run as an informational follow-up and does not gate correctness. The release
 workflow repeats the package suite against the release-profile artifact and
 all native bindings before publishing.
 
-## Cargo Features
+## Options and limitations
 
-### commandline
+- `functions` and `importers` work on the four Node-native compile functions.
+  `url` and `importer` are available on the two `compileString` functions.
+  These options require the native binding; on the Node WASM fallback they
+  throw a clear native-binding error instead of being silently ignored.
+- `SassNumber`, `SassString`, and `SassList` are exported by the Node entrypoint
+  for custom-function return values. They are `undefined` when the Node
+  entrypoint is using the WASM fallback, where custom functions and importers
+  are unsupported.
+- Node-native async compile functions require synchronous custom-function and
+  importer callbacks. Promise-returning callbacks are not awaited and produce
+  a clear error; use a synchronous callback instead. Browser and Workers APIs
+  are WASM-only and do not accept JavaScript functions or importers.
+- Source maps are objects with `version: 3`; `sourceMapIncludeSources` adds a
+  `sourcesContent` array.
+
+## Status
+
+`grass` has reached a stage where one can be quite confident in its output. For
+the average user there should not be perceptible differences from `dart-sass`.
+
+Every commit of `grass` is tested against bootstrap v5.0.2, and every release
+is tested against the last 2,500 commits of bootstrap's `main` branch.
+
+That said, there are a number of known missing features and bugs. The rough
+edges of `grass` largely include `@forward` and more complex uses of `@use`.
+We support basic usage of these rules, but more advanced features such as
+`@import`ing modules containing `@forward` with prefixes may not behave as
+expected.
+
+All known missing features and bugs are tracked in
+[#19](https://github.com/connorskees/grass/issues/19).
+
+`grass` is not a drop-in replacement for `libsass` and does not intend to be.
+If you are upgrading to `grass` from `libsass`, you may have to make
+modifications to your stylesheets, though these changes should not differ from
+those you would have to make if upgrading to `dart-sass`.
+
+## Performance
+
+`grass` is benchmarked against `dart-sass` and `sassc` (`libsass`) [here](https://github.com/connorskees/sass-perf). In general, `grass` appears to be ~2x faster than `dart-sass` and ~1.7x faster than `sassc`.
+
+### WASM package measurements
+
+The package's WASM performance is measured separately from correctness. Run
+`npm run perf` after the generated WASM files have been copied into this
+directory. The command forces the package's WASM path, warms each workload,
+then reports per-sample wall time, output size, RSS, heap usage, Node version,
+Rust/wasm-pack versions when available, and the WASM artifact hash. It covers
+both a representative string compile and a file compile with imports.
+
+The banked USWDS release-profile measurement is approximately **300 ms** and
+**1.5x native** after filesystem-boundary batching. Treat a result as a
+regression only when it uses the same USWDS fixture, host class, Node version,
+Rust/wasm-pack toolchain, and WASM build profile: flag a median above 375 ms
+(25% over the ~300 ms banked baseline), or a same-run WASM/native ratio above
+1.875x. Cross-machine, dev-vs-release, and browser-vs-Node comparisons are
+not regression verdicts. The benchmark is informational and is never part of
+`npm test`.
+
+## Developing (Rust crate)
+
+This README also serves the Rust crate. The npm package is documented above;
+the crate-specific material is retained here for contributors.
+
+### Cargo Features
+
+#### commandline
 
 (enabled by default): build a binary using clap
 
-### random
+#### random
 
 (enabled by default): enable the builtin functions [`random([$limit])`](https://sass-lang.com/documentation/modules/math/#random) and [`unique-id()`](https://sass-lang.com/documentation/modules/string/#unique-id)
 
-### macro
+#### macro
 
 (disabled by default): enable the macro `grass::include!` for compiling Sass to
 CSS at compile time
 
-### nightly
+#### nightly
 
 (disabled by default): currently only used by `grass::include!` to enable
 [proc_macro::tracked_path](https://github.com/rust-lang/rust/issues/99515)
 
-## Testing
+### Testing
 
 As much as possible this library attempts to follow the same [philosophy for testing as
 `rust-analyzer`](https://internals.rust-lang.org/t/experience-report-contributing-to-rust-lang-rust/12012/17).
@@ -144,4 +295,7 @@ The spec runner does not work on Windows.
 The minimum supported rust version (MSRV) of `grass` is `1.80.0`. An increase to the MSRV will correspond with a minor version bump. The current MSRV is not a hard minimum, but future bugfix
 versions of `grass` are not guaranteed to work on versions prior to this.
 
-`grass` currently targets `dart-sass` version `1.97.3`. An increase to this number will correspond to either a minor or bugfix version bump, depending on the changes.
+`grass` currently targets `dart-sass` version `1.97.3`. An increase to this number will correspond to either a minor or bugfix version, depending on the changes.
+
+For Rust crate documentation, see [docs.rs](https://docs.rs/grass/) and
+[crates.io](https://crates.io/crates/grass).
