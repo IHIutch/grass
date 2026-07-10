@@ -22,7 +22,7 @@
   ],
   "type": "module",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/browser.mjs && node test/workers.mjs && node test/functions.mjs && node test/forced-wasm.mjs && node test/persistent-instance.mjs && node test/pack-exports.mjs",
+    "test": "node test/smoke.mjs && node test/browser.mjs && node test/workers.mjs && node test/functions.mjs && node test/node-package-importer.mjs && node test/forced-wasm.mjs && node test/persistent-instance.mjs && node test/pack-exports.mjs",
     "check-types": "npx -y -p typescript tsc --noEmit -p test/types",
     "perf": "node test/performance.mjs"
   },
