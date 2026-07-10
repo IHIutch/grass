@@ -54,6 +54,19 @@ at a different checkout. Before starting work on a feature or bug, search
 `sass-spec/spec/` for related tests — grass aims to pass anything dart-sass
 does, so this surfaces expected behavior and edge cases up front.
 
+For the checked-in failure baseline, build the release binary and run:
+
+```bash
+cargo build --release
+python3 ci/check-sass-spec.py
+```
+
+For a quick smoke test of the release binary:
+
+```bash
+echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
+```
+
 ## dart-sass Parity Conventions
 
 - **Never change a test's expected output based on reasoning alone.** Verify
@@ -94,6 +107,16 @@ echo "<new_median_ms>" > prototype/.perf-baseline
 
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
 `prototype/bench.sh`.
+
+## Package and N-API Checks
+
+When changing the native Node.js addon or npm package, run the relevant local
+checks:
+
+```bash
+(cd crates/napi && npm run build-debug && node test.mjs)
+(cd crates/lib/pkg-publish && npm test)
+```
 
 ## Profile-Guided Optimization / Releases
 

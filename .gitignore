@@ -26,6 +26,9 @@ dhat*
 .idea
 .vscode
 
+# local agent settings
+.claude/
+
 # automation tools
 *.py
 *.sh
