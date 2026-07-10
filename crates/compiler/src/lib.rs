@@ -279,6 +279,24 @@ pub fn from_path_with_source_map<P: AsRef<Path>>(
     Ok((css, map))
 }
 
+/// Compile CSS from a path and return the files loaded during compilation
+/// without collecting source-map mappings.
+///
+/// This is the dependency-only path used by `--watch`. Set
+/// [`Options::dependency_tracking`] to `true` before calling this function;
+/// the returned list is empty otherwise. Unlike
+/// [`from_path_with_source_map`], this path never enables serializer mapping
+/// state unless [`Options::source_map`] is also set.
+#[inline]
+pub fn from_path_with_loaded_files<P: AsRef<Path>>(
+    p: P,
+    options: &Options,
+) -> Result<(String, Vec<std::path::PathBuf>)> {
+    let input = String::from_utf8(options.fs.read(p.as_ref())?)?;
+    let (css, _mappings, _sources, _sources_content, loaded_files) = compile_impl(input, p, options)?;
+    Ok((css, loaded_files))
+}
+
 #[allow(clippy::type_complexity)]
 fn compile_impl<P: AsRef<Path>>(
     input: String,
@@ -329,11 +347,12 @@ fn compile_impl<P: AsRef<Path>>(
         Err(e) => return Err(raw_to_parse_error(&map, *e, options.unicode_error_messages)),
     }
     // Gathered before `finish()` (which consumes `visitor`) and gated on
-    // `options.source_map` to stay zero-cost for the default compile path,
-    // matching the serializer's own mapping-collection gate. Independent of
-    // whether any of these files contributed an emitted CSS mapping — see
+    // Keep dependency tracking independent from source-map mapping state:
+    // watch mode needs the complete visitor load graph, while the serializer
+    // must remain on its normal no-mapping path. Independent of whether any
+    // of these files contributed an emitted CSS mapping — see
     // `Visitor::loaded_files`.
-    let loaded_files = if options.source_map {
+    let loaded_files = if options.source_map || options.dependency_tracking {
         let mut files = visitor.loaded_files();
         let entry_path = options
             .fs

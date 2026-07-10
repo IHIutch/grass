@@ -69,3 +69,27 @@ fn first_mapping_matches_hand_computed_dart_sass_output() {
         "expected mappings \"AAAA;EACE\" (verified against dart-sass 1.97.3), got: {map}"
     );
 }
+
+#[test]
+fn dependency_tracking_collects_variable_only_imports_without_mappings() {
+    let root = tempfile::tempdir().unwrap();
+    let entry = root.path().join("in.scss");
+    let partial = root.path().join("_vars.scss");
+    std::fs::write(&partial, "$value: 1;\n").unwrap();
+    std::fs::write(&entry, "@use \"vars\";\na { b: vars.$value; }\n").unwrap();
+
+    let options = grass::Options::default()
+        .load_path(root.path())
+        .dependency_tracking(true);
+    let (css, loaded_files) = grass::from_path_with_loaded_files(&entry, &options)
+        .expect("dependency-only compilation should succeed");
+    let plain = grass::from_path(&entry, &grass::Options::default().load_path(root.path()))
+        .expect("plain compilation should succeed");
+
+    assert_eq!(css, plain);
+    assert!(loaded_files.iter().any(|path| path.ends_with("_vars.scss")));
+
+    let (_, map) = grass::from_path_with_source_map(&entry, &options)
+        .expect("source-map wrapper should still compile");
+    assert!(map.is_none(), "dependency tracking must not enable mappings");
+}

@@ -34,6 +34,9 @@ pub struct Options<'a> {
     pub(crate) fatal_deprecations: FxHashSet<Deprecation>,
     pub(crate) future_deprecations: FxHashSet<Deprecation>,
     pub(crate) source_map: bool,
+    /// Collect the files loaded during compilation without enabling source-map
+    /// mapping state in the serializer. Used by watch mode's dependency set.
+    pub(crate) dependency_tracking: bool,
 }
 
 impl Default for Options<'_> {
@@ -54,6 +57,7 @@ impl Default for Options<'_> {
             fatal_deprecations: FxHashSet::default(),
             future_deprecations: FxHashSet::default(),
             source_map: false,
+            dependency_tracking: false,
         }
     }
 }
@@ -284,6 +288,16 @@ impl<'a> Options<'a> {
     #[inline]
     pub const fn source_map(mut self, source_map: bool) -> Self {
         self.source_map = source_map;
+        self
+    }
+
+    /// Enable collection of files loaded during compilation without enabling
+    /// source-map generation. This is intended for watch-mode dependency
+    /// tracking and does not affect CSS output.
+    #[must_use]
+    #[inline]
+    pub const fn dependency_tracking(mut self, dependency_tracking: bool) -> Self {
+        self.dependency_tracking = dependency_tracking;
         self
     }
 
