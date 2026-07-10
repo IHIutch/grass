@@ -2477,11 +2477,23 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                             parser.parse_argument_invocation(false, false)
                         {
                             Ok(invocation) => {
+                                let empty_list_argument = invocation.positional.iter().any(|expr| {
+                                    let mut expr = expr;
+                                    loop {
+                                        match expr {
+                                            AstExpr::List(list) => break list.elems.is_empty(),
+                                            AstExpr::Paren(inner) => expr = inner,
+                                            _ => break false,
+                                        }
+                                    }
+                                });
                                 let calculation_error = if invocation.positional.is_empty()
                                     && invocation.named.is_empty()
                                     && invocation.rest.is_none()
                                     && invocation.keyword_rest.is_none()
                                 {
+                                    None
+                                } else if empty_list_argument {
                                     None
                                 } else {
                                     Some(e.raw())
