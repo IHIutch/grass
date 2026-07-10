@@ -70,7 +70,7 @@ jobs:
 
       - name: Upload core fuzz artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-core-${{ github.run_id }}
           path: |
@@ -139,8 +139,10 @@ jobs:
             status=$?
             set -e
             completed=0
-            [[ "$status" -eq 0 ]] && completed=64
-            crash_count="$(find "$artifacts" -maxdepth 1 -type f -name 'crash-*' | wc -l | tr -d ' ')"
+            if [[ "$status" -eq 0 ]]; then
+              completed=64
+            fi
+            crash_count="$(find "fuzz/artifacts/$target" -maxdepth 1 -type f -name 'crash-*' | wc -l | tr -d ' ')"
             printf '%s status=%s cases=64 artifacts=fuzz/artifacts/%s\n' \
               "$target" "$status" "$target" | tee -a fuzz/artifacts/runtime-summary.txt
             printf '%s completed=%s expected_errors=0 crash_artifacts=%s\n' \
@@ -168,7 +170,7 @@ jobs:
 
       - name: Upload runtime fuzz artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-runtime-${{ github.run_id }}
           path: fuzz/artifacts
