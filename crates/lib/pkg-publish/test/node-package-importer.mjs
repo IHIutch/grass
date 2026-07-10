@@ -1,5 +1,5 @@
 import assert from "assert";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
@@ -26,8 +26,20 @@ function referenceCss(entry) {
   return result.stdout;
 }
 
-const root = mkdtempSync(join(tmpdir(), "grass-node-package-importer-"));
-try {
+const hasNative = process.env.GRASS_FORCE_WASM !== "1" &&
+  readdirSync(new URL("..", import.meta.url)).some((file) => file.endsWith(".node"));
+
+if (!hasNative) {
+  assert.throws(
+    () => grass.compileString("a { color: red; }", {
+      importers: [new grass.NodePackageImporter(process.cwd())],
+    }),
+    /native binding/,
+  );
+  console.log("node-package-importer wasm-fallback ok");
+} else {
+  const root = mkdtempSync(join(tmpdir(), "grass-node-package-importer-"));
+  try {
   const exportsEntry = join(root, "exports-entry.scss");
   writeFileSync(exportsEntry, '@use "pkg:theme" as theme; a { color: theme.$color; }\n');
   writePackage(root, "theme", {
@@ -161,6 +173,7 @@ try {
   assert.equal(importer.findFileUrl("pkg:theme/unknown"), null);
 
   console.log("node package importer ok");
-} finally {
-  rmSync(root, { recursive: true, force: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
