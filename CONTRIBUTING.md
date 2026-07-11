@@ -108,6 +108,36 @@ echo "<new_median_ms>" > prototype/.perf-baseline
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
 `prototype/bench.sh`.
 
+## Profiling
+
+Use profiling to rank performance candidates before changing code; use
+`prototype/perf-check.sh` for acceptance, and always run the performance gate
+for a change that affects the compiler. The profiling harness uses the same
+USWDS fixture and compile invocation as the performance check:
+
+```bash
+PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./prototype/profile.sh cpu
+PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./prototype/profile.sh heap
+```
+
+The `cpu` mode records a samply profile and opens its local profile UI. Install
+samply once with:
+
+```bash
+~/.cargo/bin/cargo install samply
+```
+
+The `heap` mode records dhat allocation call sites and can be loaded at
+<https://nnethercote.github.io/dh_view/dh_view.html>. Dhat runs are roughly
+10–40× slower than a normal compile, so use only relative allocation counts
+when comparing runs. The existing `fuzz/src/bin/leak_probe.rs` reports
+teardown allocation deltas; dhat complements it with call-site attribution.
+
+Follow the measurement rules from the performance gate: compare a same-moment
+control, use both workloads, and never compare absolute milliseconds across
+separate sessions. Profiling ranks where to investigate; `perf-check.sh`
+remains the authoritative acceptance check.
+
 ## Package and N-API Checks
 
 When changing the native Node.js addon or npm package, run the relevant local

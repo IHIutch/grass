@@ -1,6 +1,10 @@
-#[cfg(feature = "mimalloc")]
+#[cfg(all(feature = "mimalloc", not(feature = "dhat-heap")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 mod error_css;
 mod watch;
@@ -640,6 +644,9 @@ pub(crate) fn write_compile_result(
 }
 
 fn main() -> std::io::Result<()> {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let matches = cli().get_matches();
 
     let load_paths = matches
