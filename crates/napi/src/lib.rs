@@ -183,10 +183,7 @@ fn source_map_result(
     map: Option<SourceMapData>,
     include_sources: bool,
 ) -> Option<serde_json::Value> {
-    map.map(|m| {
-        serde_json::from_str(&m.to_json(None, include_sources))
-            .expect("grass-generated source map JSON must always be valid")
-    })
+    map.map(|m| m.to_json_value(None, include_sources))
 }
 
 // `AssertUnwindSafe`/`UnwindSafe` bounds below are sound: these closures only
@@ -523,7 +520,7 @@ impl Task for CompileStringTask {
             Some(list) if !list.is_empty() => importers::register_importers_async(opts, list),
             _ => opts,
         };
-        let source = self.source.clone();
+        let source = std::mem::take(&mut self.source);
         let url = self.url.take();
         catch(std::panic::AssertUnwindSafe(|| {
             match url.as_deref() {

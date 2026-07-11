@@ -1612,61 +1612,59 @@ impl<'a> Serializer<'a> {
         let mut has_single_quote = false;
         let mut has_double_quote = false;
 
-        let mut buffer = Vec::new();
-
-        if force_double_quote {
-            buffer.push(b'"');
-        }
+        let start = self.buffer.len();
+        self.buffer.push(b'"');
         let mut chars = string.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
                 '\'' => {
                     if force_double_quote {
-                        buffer.push(b'\'');
+                        self.buffer.push(b'\'');
                     } else if has_double_quote {
+                        self.buffer.truncate(start);
                         self.visit_quoted_string(true, string);
                         return;
                     } else {
                         has_single_quote = true;
-                        buffer.push(b'\'');
+                        self.buffer.push(b'\'');
                     }
                 }
                 '"' => {
                     if force_double_quote {
-                        buffer.push(b'\\');
-                        buffer.push(b'"');
+                        self.buffer.push(b'\\');
+                        self.buffer.push(b'"');
                     } else if has_single_quote {
+                        self.buffer.truncate(start);
                         self.visit_quoted_string(true, string);
                         return;
                     } else {
                         has_double_quote = true;
-                        buffer.push(b'"');
+                        self.buffer.push(b'"');
                     }
                 }
                 '\x00'..='\x08' | '\x0A'..='\x1F' | '\x7F' => {
-                    write_hex_escape(&mut buffer, c as u32, chars.peek().copied());
+                    write_hex_escape(&mut self.buffer, c as u32, chars.peek().copied());
                 }
                 '\\' => {
-                    buffer.push(b'\\');
-                    buffer.push(b'\\');
+                    self.buffer.push(b'\\');
+                    self.buffer.push(b'\\');
                 }
                 _ if is_private_use(c) => {
-                    write_hex_escape(&mut buffer, c as u32, chars.peek().copied());
+                    write_hex_escape(&mut self.buffer, c as u32, chars.peek().copied());
                 }
                 _ => {
                     let mut buf = [0u8; 4];
-                    buffer.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                    self.buffer
+                        .extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
                 }
             }
         }
 
         if force_double_quote {
-            buffer.push(b'"');
-            self.buffer.extend_from_slice(&buffer);
+            self.buffer.push(b'"');
         } else {
             let quote = if has_double_quote { b'\'' } else { b'"' };
-            self.buffer.push(quote);
-            self.buffer.extend_from_slice(&buffer);
+            self.buffer[start] = quote;
             self.buffer.push(quote);
         }
     }
@@ -1773,6 +1771,10 @@ impl<'a> Serializer<'a> {
     /// Re-indent continuation lines in the buffer starting from `start` position.
     /// Matches dart-sass `_writeReindentedValue` / `_writeWithIndent` algorithm.
     fn reindent_buffer_from(&mut self, start: usize, name_col: usize) {
+        if !self.buffer[start..].contains(&b'\n') {
+            return;
+        }
+
         let value_bytes = self.buffer[start..].to_vec();
         let value_str = String::from_utf8_lossy(&value_bytes);
 
@@ -1969,7 +1971,7 @@ impl<'a> Serializer<'a> {
 
     /// Get the source line number for a span position
     fn source_line(&self, pos: codemap::Pos) -> usize {
-        self.map.map_or(0, |m| m.look_up_pos(pos).position.line)
+        self.map.map_or(0, |m| m.find_file(pos).find_line(pos))
     }
 
     /// Plan 013 design-spike prototype: record a mapping from the current
@@ -2418,15 +2420,12 @@ impl<'a> Serializer<'a> {
                 if let Some(span) = keyframes_rule_set.selector_span {
                     self.record_mapping(span.low());
                 }
-                // todo: i bet we can do something like write_with_separator to avoid extra allocation
-                let selector = keyframes_rule_set
-                    .selector
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                self.buffer.extend_from_slice(selector.as_bytes());
+                for (i, selector) in keyframes_rule_set.selector.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.extend_from_slice(b", ");
+                    }
+                    write!(&mut self.buffer, "{selector}")?;
+                }
 
                 self.write_children(keyframes_rule_set.body, None)?;
             }

@@ -1,4 +1,8 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -29,8 +33,8 @@ pub struct AstPlainCssImport<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstSassImport {
-    pub url: String,
+pub struct AstSassImport<'a> {
+    pub url: &'a str,
     pub span: Span,
 }
 
@@ -270,13 +274,13 @@ impl Default for AtRootQuery {
 
 #[derive(Debug, Clone)]
 pub struct AstImportRule<'a> {
-    pub imports: Vec<AstImport<'a>>,
+    pub imports: &'a [AstImport<'a>],
 }
 
 #[derive(Debug, Clone)]
 pub enum AstImport<'a> {
     Plain(AstPlainCssImport<'a>),
-    Sass(AstSassImport),
+    Sass(AstSassImport<'a>),
 }
 
 impl<'a> AstImport<'a> {
@@ -287,8 +291,8 @@ impl<'a> AstImport<'a> {
 
 #[derive(Debug, Clone)]
 pub struct AstUseRule<'a> {
-    pub url: PathBuf,
-    pub namespace: Option<String>,
+    pub url: &'a Path,
+    pub namespace: Option<&'a str>,
     pub configuration: &'a [ConfiguredVariable<'a>],
     pub span: Span,
 }
@@ -323,7 +327,7 @@ impl Configuration {
         // configuration variable is used by removing it even when the underlying
         // map is wrapped.
         if let Some(prefix) = &forward.prefix {
-            new_values = Rc::new(UnprefixedMapView(new_values, prefix.clone()));
+            new_values = Rc::new(UnprefixedMapView::new(new_values, prefix.clone()));
         }
 
         if let Some(shown_variables) = &forward.shown_variables {
@@ -427,7 +431,7 @@ impl ConfiguredValue {
 
 #[derive(Debug, Clone)]
 pub struct AstForwardRule<'a> {
-    pub url: PathBuf,
+    pub url: &'a Path,
     pub shown_mixins_and_functions: Option<FxHashSet<Identifier>>,
     pub shown_variables: Option<FxHashSet<Identifier>>,
     pub hidden_mixins_and_functions: Option<FxHashSet<Identifier>>,
@@ -439,7 +443,7 @@ pub struct AstForwardRule<'a> {
 
 impl<'a> AstForwardRule<'a> {
     pub fn new(
-        url: PathBuf,
+        url: &'a Path,
         prefix: Option<String>,
         configuration: &'a [ConfiguredVariable<'a>],
         span: Span,
@@ -457,7 +461,7 @@ impl<'a> AstForwardRule<'a> {
     }
 
     pub fn show(
-        url: PathBuf,
+        url: &'a Path,
         shown_mixins_and_functions: FxHashSet<Identifier>,
         shown_variables: FxHashSet<Identifier>,
         prefix: Option<String>,
@@ -477,7 +481,7 @@ impl<'a> AstForwardRule<'a> {
     }
 
     pub fn hide(
-        url: PathBuf,
+        url: &'a Path,
         hidden_mixins_and_functions: FxHashSet<Identifier>,
         hidden_variables: FxHashSet<Identifier>,
         prefix: Option<String>,

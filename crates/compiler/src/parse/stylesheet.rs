@@ -322,13 +322,21 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     // todo: rename
-    fn __parse(&mut self) -> SassResult<StyleSheet<'a>> {
+    //
+    // `canonical_url`, when provided, is the caller's already-computed
+    // canonical form of `self.path()` (e.g. the evaluator's cached
+    // `canonicalize` of an import it just resolved), used as the parsed
+    // stylesheet's `url` without re-deriving it through a second
+    // `fs.canonicalize` walk.
+    fn __parse(&mut self, canonical_url: Option<PathBuf>) -> SassResult<StyleSheet<'a>> {
         let mut style_sheet = StyleSheet::new(
             self.is_plain_css(),
-            self.options()
-                .fs
-                .canonicalize(self.path())
-                .unwrap_or_else(|_| self.path().to_path_buf()),
+            canonical_url.unwrap_or_else(|| {
+                self.options()
+                    .fs
+                    .canonicalize(self.path())
+                    .unwrap_or_else(|_| self.path().to_path_buf())
+            }),
         );
 
         // Allow a byte-order mark at the beginning of the document.
@@ -1168,6 +1176,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     span,
                 }));
             } else {
+                let url = self.arena().alloc_str(&url);
                 return Ok(AstImport::Sass(AstSassImport { url, span }));
             }
         }
@@ -1187,6 +1196,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 span,
             }))
         } else {
+            let url = self.arena().alloc_str(&url);
             Ok(AstImport::Sass(AstSassImport { url, span }))
         }
     }
@@ -1224,7 +1234,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
 
         self.expect_statement_separator(Some("@import rule"))?;
 
-        Ok(AstStmt::ImportRule(AstImportRule { imports }))
+        Ok(AstStmt::ImportRule(AstImportRule {
+            imports: self.arena().alloc_slice_fill_iter(imports),
+        }))
     }
 
     fn parse_public_identifier(&mut self) -> SassResult<String> {
@@ -1832,7 +1844,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     fn parse_forward_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         self.set_consume_newlines(true);
         self.whitespace()?;
-        let url = PathBuf::from(self.parse_url_string()?);
+        let url = self.parse_url_string()?;
+        let url = Path::new(self.arena().alloc_str(&url));
         self.set_consume_newlines(false);
         self.whitespace()?;
 
@@ -1949,14 +1962,15 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         url: &Path,
         _start: usize,
         url_span: Span,
-    ) -> SassResult<Option<String>> {
+    ) -> SassResult<Option<&'a str>> {
         if self.scan_identifier("as", false)? {
             self.set_consume_newlines(true);
             self.whitespace()?;
             let result = if self.scan_char('*') {
                 None
             } else {
-                Some(self.parse_identifier(false, false)?)
+                let namespace = self.parse_identifier(false, false)?;
+                Some(&*self.arena().alloc_str(&namespace))
             };
             self.set_consume_newlines(false);
             return Ok(result);
@@ -1971,7 +1985,8 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let start = if base_name.starts_with('_') { 1 } else { 0 };
         let end = dot.unwrap_or(base_name.len());
         let namespace = if url.to_string_lossy().starts_with("sass:") {
-            return Ok(Some(url.to_string_lossy().into_owned()));
+            let namespace = url.to_string_lossy();
+            return Ok(Some(self.arena().alloc_str(&namespace)));
         } else {
             &base_name[start..end]
         };
@@ -1990,7 +2005,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         };
 
         match (identifier, toks.peek().is_none()) {
-            (Ok(i), true) => Ok(Some(i)),
+            (Ok(i), true) => Ok(Some(self.arena().alloc_str(&i))),
             _ => {
                 Err((
                     format!(
@@ -2093,7 +2108,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.set_consume_newlines(false);
         self.whitespace()?;
 
-        let path = PathBuf::from(url);
+        let path = Path::new(self.arena().alloc_str(&url));
 
         let namespace = self.use_namespace(path.as_ref(), start, url_span)?;
         self.set_consume_newlines(false);

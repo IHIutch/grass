@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     ffi::OsStr,
     fmt,
+    hash::{Hash, Hasher},
     iter::FromIterator,
     mem,
     path::{Path, PathBuf},
@@ -10,7 +11,7 @@ use std::{
 };
 
 use codemap::{CodeMap, Span, Spanned};
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 
 /// IndexSet using FxHash instead of SipHash for faster hashing.
 type FxIndexSet<V> = indexmap::IndexSet<V, FxBuildHasher>;
@@ -236,6 +237,8 @@ enum ImportKey {
     Url(String),
 }
 
+type ImportPathCacheEntry = (PathBuf, PathBuf, bool, SassResult<Option<ImportSource>>);
+
 /// Evaluation context of the current execution
 #[derive(Debug)]
 pub struct Visitor<'a> {
@@ -317,15 +320,13 @@ pub struct Visitor<'a> {
     pub(crate) arena: &'a bumpalo::Bump,
     // todo: remove
     empty_span: Span,
-    import_cache: FxHashMap<ImportKey, StyleSheet<'static>>,
-    /// As a simple heuristic, we don't cache the results of an import unless it
-    /// has been seen in the past. In the majority of cases, files are imported
-    /// at most once.
-    files_seen: FxHashSet<PathBuf>,
-    /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
-    /// flag). Avoids redundant importer calls and filesystem probing for the same import path
-    /// from the same context without conflating files that share a directory.
-    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<ImportSource>>>,
+    import_cache: FxHashMap<ImportKey, Rc<StyleSheet<'static>>>,
+    /// Memoized immutable builtin modules for this compilation.
+    builtin_module_cache: FxHashMap<&'static str, Module>,
+    /// Cache for resolved import paths, bucketed by a hash of (containing URL, requested path,
+    /// for_import flag). Each bucket retains the full tuple for collision verification, so the
+    /// hit path avoids allocating either PathBuf.
+    import_path_cache: FxHashMap<u64, Vec<ImportPathCacheEntry>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
     /// Cache of directory listings, used to batch existence probes for many
@@ -411,7 +412,7 @@ impl<'a> Visitor<'a> {
             map,
             arena,
             import_cache: FxHashMap::default(),
-            files_seen: FxHashSet::default(),
+            builtin_module_cache: FxHashMap::default(),
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
             dir_listing_cache: RefCell::new(FxHashMap::default()),
@@ -465,6 +466,7 @@ impl<'a> Visitor<'a> {
             Some(listing) => listing
                 .probe_is_file(name)
                 .unwrap_or_else(|| self.options.fs.is_file(path)),
+            None if self.dir_known_absent(dir) => false,
             None => self.options.fs.is_file(path),
         }
     }
@@ -479,7 +481,30 @@ impl<'a> Visitor<'a> {
             Some(listing) => listing
                 .probe_is_dir(name)
                 .unwrap_or_else(|| self.options.fs.is_dir(path)),
+            None if self.dir_known_absent(dir) => false,
             None => self.options.fs.is_dir(path),
+        }
+    }
+
+    /// Whether `dir` is *provably* absent from already-cached directory
+    /// listings alone: some ancestor's listing shows `dir`'s next path
+    /// component doesn't exist in any case variant (the same
+    /// definite-absence standard as `DirListing::probe_is_dir`), which makes
+    /// every path below it absent too. Used when `dir_listing(dir)` returned
+    /// `None`, so candidate probes into directories that don't exist (the
+    /// common relative-resolution miss before load-path fallback) don't each
+    /// pay a filesystem check. Returns `false` whenever absence can't be
+    /// proven (unlistable-but-existing directories, symlinks, case-variant
+    /// matches) — callers must then fall back to a direct filesystem check,
+    /// exactly preserving prior behavior for those cases.
+    fn dir_known_absent(&self, dir: &Path) -> bool {
+        let (parent, name) = match (dir.parent(), dir.file_name()) {
+            (Some(parent), Some(name)) => (parent, name),
+            _ => return false,
+        };
+        match self.dir_listing(parent) {
+            Some(listing) => listing.probe_is_dir(name) == Some(false),
+            None => self.dir_known_absent(parent),
         }
     }
 
@@ -494,8 +519,7 @@ impl<'a> Visitor<'a> {
         let old_import_path = mem::replace(&mut self.current_import_path, style_sheet.url.clone());
 
         for (deprecation, span, message) in &style_sheet.parse_time_warnings {
-            let message = message.clone();
-            self.emit_deprecation(*deprecation, *span, || Ok(message))?;
+            self.emit_deprecation(*deprecation, *span, || Ok(message.clone()))?;
         }
 
         for stmt in style_sheet.body {
@@ -586,7 +610,7 @@ impl<'a> Visitor<'a> {
                     }
 
                     // DIAG(#278/#279 causal probe): `SassFunction::UserDefined`/
-                    // `Mixin::UserDefined` closures embed a full `Environment`
+                    // `Mixin::UserDefined` closures share an `Rc<Environment>`
                     // captured via `Environment::new_closure()` at declaration
                     // time. `new_closure()` element-wise `Rc::clone`s
                     // `global_modules` into a brand-new, private `Vec` (unlike
@@ -604,13 +628,34 @@ impl<'a> Visitor<'a> {
                         }
                         for value in map.borrow_mut().values_mut() {
                             if let SassFunction::UserDefined(udf) = value {
-                                stack.append(&mut udf.env.global_modules);
-                                stack.extend(udf.env.forwarded_modules.borrow().iter().cloned());
-                                stack.extend(udf.env.modules.borrow().0.values().cloned());
-                                stack.extend(udf.env.imported_modules.borrow().iter().cloned());
-                                if let Some(nested) = &udf.env.nested_forwarded_modules {
-                                    for inner in nested.borrow().iter() {
-                                        stack.extend(inner.borrow().iter().cloned());
+                                if let Some(closure_env) = Rc::get_mut(&mut udf.env) {
+                                    stack.append(&mut closure_env.global_modules);
+                                    stack.extend(
+                                        closure_env.forwarded_modules.borrow().iter().cloned(),
+                                    );
+                                    stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                    stack.extend(
+                                        closure_env.imported_modules.borrow().iter().cloned(),
+                                    );
+                                    if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
+                                    }
+                                } else {
+                                    // A Value can retain a second reference to this environment.
+                                    // Shared environments cannot be drained or cleared here without
+                                    // mutating that other owner, so retain the old behavior: push
+                                    // cloned module refs and leave the shared fields untouched.
+                                    stack.extend(udf.env.global_modules.iter().cloned());
+                                    stack
+                                        .extend(udf.env.forwarded_modules.borrow().iter().cloned());
+                                    stack.extend(udf.env.modules.borrow().0.values().cloned());
+                                    stack.extend(udf.env.imported_modules.borrow().iter().cloned());
+                                    if let Some(nested) = &udf.env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
                                     }
                                 }
                             }
@@ -623,14 +668,35 @@ impl<'a> Visitor<'a> {
                         }
                         for value in map.borrow_mut().values_mut() {
                             if let Mixin::UserDefined(_, closure_env, _) = value {
-                                stack.append(&mut closure_env.global_modules);
-                                stack
-                                    .extend(closure_env.forwarded_modules.borrow().iter().cloned());
-                                stack.extend(closure_env.modules.borrow().0.values().cloned());
-                                stack.extend(closure_env.imported_modules.borrow().iter().cloned());
-                                if let Some(nested) = &closure_env.nested_forwarded_modules {
-                                    for inner in nested.borrow().iter() {
-                                        stack.extend(inner.borrow().iter().cloned());
+                                if let Some(closure_env) = Rc::get_mut(closure_env) {
+                                    stack.append(&mut closure_env.global_modules);
+                                    stack.extend(
+                                        closure_env.forwarded_modules.borrow().iter().cloned(),
+                                    );
+                                    stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                    stack.extend(
+                                        closure_env.imported_modules.borrow().iter().cloned(),
+                                    );
+                                    if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
+                                    }
+                                } else {
+                                    // See the function case above: clone refs from a shared
+                                    // environment and do not mutate or clear its fields.
+                                    stack.extend(closure_env.global_modules.iter().cloned());
+                                    stack.extend(
+                                        closure_env.forwarded_modules.borrow().iter().cloned(),
+                                    );
+                                    stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                    stack.extend(
+                                        closure_env.imported_modules.borrow().iter().cloned(),
+                                    );
+                                    if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
                                     }
                                 }
                             }
@@ -652,11 +718,9 @@ impl<'a> Visitor<'a> {
     }
 
     /// The full set of files loaded during this compile via `@use`/
-    /// `@forward` (`self.modules`) and `@import` (`self.import_cache` plus
-    /// `self.files_seen`, which catches a file's *first* `@import` --
-    /// `import_cache` itself is only populated starting from a file's
-    /// *second* import, see `import_like_node`) -- independent of whether
-    /// any of those files contributed an emitted CSS mapping. Unlike
+    /// `@forward` (`self.modules`) and `@import` (`self.import_cache`) --
+    /// independent of whether any of those files contributed an emitted CSS
+    /// mapping. Unlike
     /// `SourceMapData::sources`, this includes `@use`d partials containing
     /// only variables/mixins/functions, which never produce a mapping.
     /// Deduplicated and sorted for a deterministic return order (none of
@@ -670,7 +734,6 @@ impl<'a> Visitor<'a> {
             ImportKey::Path(p) => Some(p.clone()),
             ImportKey::Url(_) => None,
         }));
-        files.extend(self.files_seen.iter().cloned());
         let mut files: Vec<PathBuf> = files.into_iter().collect();
         files.sort_unstable();
         files
@@ -1329,7 +1392,7 @@ impl<'a> Visitor<'a> {
                 self.add_forward_configuration(Rc::clone(&adjusted_config), &forward_rule)?;
 
             self.load_module(
-                forward_rule.url.as_path(),
+                forward_rule.url,
                 Some(Rc::clone(&new_configuration)),
                 false,
                 forward_rule.span,
@@ -1379,9 +1442,9 @@ impl<'a> Visitor<'a> {
             Self::assert_configuration_is_empty(&new_configuration, false)?;
         } else {
             self.configuration = adjusted_config;
-            let url = forward_rule.url.clone();
+            let url = forward_rule.url;
             self.load_module(
-                url.as_path(),
+                url,
                 None,
                 false,
                 forward_rule.span,
@@ -1628,7 +1691,7 @@ impl<'a> Visitor<'a> {
 
     fn execute(
         &mut self,
-        stylesheet: StyleSheet<'static>,
+        stylesheet: Rc<StyleSheet<'static>>,
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
     ) -> SassResult<Rc<RefCell<Module>>> {
@@ -1861,7 +1924,7 @@ impl<'a> Visitor<'a> {
     /// extends to the cloned selectors, and emits the result.
     pub(crate) fn load_css_inner(
         &mut self,
-        stylesheet: StyleSheet<'static>,
+        stylesheet: Rc<StyleSheet<'static>>,
         configuration: Option<Rc<RefCell<Configuration>>>,
     ) -> SassResult<()> {
         let canonical_url = self.canonicalize(&stylesheet.url);
@@ -1883,7 +1946,7 @@ impl<'a> Visitor<'a> {
 
         let root_children_before = self.css_tree.child_count(CssTree::ROOT);
 
-        let module = self.execute(stylesheet, configuration.clone(), true)?;
+        let module = self.execute(Rc::clone(&stylesheet), configuration.clone(), true)?;
 
         self.active_modules.remove(&canonical_url);
 
@@ -2177,20 +2240,20 @@ impl<'a> Visitor<'a> {
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
         span: Span,
-        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, StyleSheet<'static>) -> SassResult<()>,
+        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, Rc<StyleSheet<'static>>) -> SassResult<()>,
     ) -> SassResult<()> {
-        let builtin = match url.to_string_lossy().as_ref() {
-            "sass:color" => Some(declare_module_color()),
-            "sass:list" => Some(declare_module_list()),
-            "sass:map" => Some(declare_module_map()),
-            "sass:math" => Some(declare_module_math()),
-            "sass:meta" => Some(declare_module_meta()),
-            "sass:selector" => Some(declare_module_selector()),
-            "sass:string" => Some(declare_module_string()),
+        let builtin_name = match url.to_string_lossy().as_ref() {
+            "sass:color" => Some("sass:color"),
+            "sass:list" => Some("sass:list"),
+            "sass:map" => Some("sass:map"),
+            "sass:math" => Some("sass:math"),
+            "sass:meta" => Some("sass:meta"),
+            "sass:selector" => Some("sass:selector"),
+            "sass:string" => Some("sass:string"),
             _ => None,
         };
 
-        if let Some(builtin) = builtin {
+        if let Some(builtin_name) = builtin_name {
             if let Some(ref configuration) = configuration {
                 if !(**configuration).borrow().is_implicit() {
                     let msg = if names_in_errors {
@@ -2206,10 +2269,25 @@ impl<'a> Visitor<'a> {
                 }
             }
 
+            let builtin = self
+                .builtin_module_cache
+                .entry(builtin_name)
+                .or_insert_with(|| match builtin_name {
+                    "sass:color" => declare_module_color(),
+                    "sass:list" => declare_module_list(),
+                    "sass:map" => declare_module_map(),
+                    "sass:math" => declare_module_math(),
+                    "sass:meta" => declare_module_meta(),
+                    "sass:selector" => declare_module_selector(),
+                    "sass:string" => declare_module_string(),
+                    _ => unreachable!("builtin name was validated above"),
+                })
+                .clone();
+
             callback(
                 self,
                 Rc::new(RefCell::new(builtin)),
-                StyleSheet::new(false, url.to_path_buf()),
+                Rc::new(StyleSheet::new(false, url.to_path_buf())),
             )?;
             return Ok(());
         }
@@ -2231,7 +2309,7 @@ impl<'a> Visitor<'a> {
         self.combined_import_section
             .append(&mut self.pending_import_items);
 
-        let module = self.execute(stylesheet.clone(), configuration, names_in_errors)?;
+        let module = self.execute(Rc::clone(&stylesheet), configuration, names_in_errors)?;
 
         self.active_modules.remove(&canonical_url);
 
@@ -2266,7 +2344,7 @@ impl<'a> Visitor<'a> {
             .map(|s| Identifier::from(s.trim_start_matches("sass:")));
 
         self.load_module(
-            &use_rule.url,
+            use_rule.url,
             Some(Rc::clone(&configuration)),
             false,
             span,
@@ -2314,9 +2392,11 @@ impl<'a> Visitor<'a> {
         for import in import_rule.imports {
             match import {
                 AstImport::Sass(dynamic_import) => {
-                    self.visit_dynamic_import_rule(&dynamic_import)?;
+                    self.visit_dynamic_import_rule(dynamic_import)?;
                 }
-                AstImport::Plain(static_import) => self.visit_static_import_rule(static_import)?,
+                AstImport::Plain(static_import) => {
+                    self.visit_static_import_rule(static_import.clone())?
+                }
             }
         }
 
@@ -2358,18 +2438,32 @@ impl<'a> Visitor<'a> {
         span: Span,
     ) -> SassResult<Option<ImportSource>> {
         // Cache key must include the full containing URL because a custom importer can resolve
-        // the same requested path differently from two files in the same directory.
-        let cache_key = (
-            self.current_import_path.clone(),
-            path.to_path_buf(),
-            for_import,
-        );
-        if let Some(result) = self.import_path_cache.get(&cache_key) {
-            return result.clone();
+        // the same requested path differently from two files in the same directory. Hashing the
+        // borrowed inputs keeps the hit path allocation-free; the full tuple in each bucket
+        // verifies hash collisions without changing those semantics.
+        let mut hasher = FxHasher::default();
+        self.current_import_path.hash(&mut hasher);
+        path.hash(&mut hasher);
+        for_import.hash(&mut hasher);
+        let cache_hash = hasher.finish();
+        if let Some(entries) = self.import_path_cache.get(&cache_hash) {
+            for (cached_containing_url, cached_path, cached_for_import, result) in entries {
+                if cached_containing_url == &self.current_import_path
+                    && cached_path == path
+                    && *cached_for_import == for_import
+                {
+                    return result.clone();
+                }
+            }
         }
 
         let result = self.find_import_uncached(path, for_import, span);
-        self.import_path_cache.insert(cache_key, result.clone());
+        self.import_path_cache.entry(cache_hash).or_default().push((
+            self.current_import_path.clone(),
+            path.to_path_buf(),
+            for_import,
+            result.clone(),
+        ));
         result
     }
 
@@ -2676,13 +2770,24 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
+    /// Parses `path`, whose canonical form the caller has already computed
+    /// (`import_like_node` canonicalizes every resolved import for its cache
+    /// key), so the parser doesn't re-derive it with a second
+    /// `fs.canonicalize` walk.
     fn parse_file(
         &mut self,
         lexer: Lexer,
         path: &Path,
+        canonical_url: PathBuf,
         empty_span: Span,
     ) -> SassResult<StyleSheet<'static>> {
-        self.parse_file_with_syntax(lexer, path, empty_span, InputSyntax::for_path(path))
+        self.parse_file_with_syntax(
+            lexer,
+            path,
+            canonical_url,
+            empty_span,
+            InputSyntax::for_path(path),
+        )
     }
 
     /// Like `parse_file`, but takes an explicit `syntax` instead of
@@ -2693,19 +2798,18 @@ impl<'a> Visitor<'a> {
         &mut self,
         lexer: Lexer,
         path: &Path,
+        canonical_url: PathBuf,
         empty_span: Span,
         syntax: InputSyntax,
     ) -> SassResult<StyleSheet<'static>> {
+        let canonical_url = Some(canonical_url);
         let result = match syntax {
-            InputSyntax::Scss => {
-                ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
-            }
-            InputSyntax::Sass => {
-                SassParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
-            }
-            InputSyntax::Css => {
-                CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
-            }
+            InputSyntax::Scss => ScssParser::new(lexer, self.options, empty_span, path, self.arena)
+                .__parse(canonical_url),
+            InputSyntax::Sass => SassParser::new(lexer, self.options, empty_span, path, self.arena)
+                .__parse(canonical_url),
+            InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path, self.arena)
+                .__parse(canonical_url),
         }?;
         // Safety: the arena lives for the entire compilation (stored in Visitor).
         // INVARIANT: the erased-'static StyleSheet must not outlive the Visitor's arena.
@@ -2849,12 +2953,12 @@ impl<'a> Visitor<'a> {
         url: &str,
         for_import: bool,
         span: Span,
-    ) -> SassResult<StyleSheet<'static>> {
+    ) -> SassResult<Rc<StyleSheet<'static>>> {
         match self.find_import(url.as_ref(), for_import, span)? {
             Some(ImportSource::Path(name)) => {
                 let name = self.canonicalize(&name);
                 if let Some(style_sheet) = self.import_cache.get(&ImportKey::Path(name.clone())) {
-                    return Ok(style_sheet.clone());
+                    return Ok(Rc::clone(style_sheet));
                 }
 
                 let file = self.map.add_file(
@@ -2865,18 +2969,18 @@ impl<'a> Visitor<'a> {
                 let old_is_use_allowed = self.flags.is_use_allowed();
                 self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-                let style_sheet =
-                    self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
+                let style_sheet = Rc::new(self.parse_file(
+                    Lexer::new_from_file(&file),
+                    &name,
+                    name.clone(),
+                    file.span.subspan(0, 0),
+                )?);
 
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
 
-                if self.files_seen.contains(&name) {
-                    self.import_cache
-                        .insert(ImportKey::Path(name), style_sheet.clone());
-                } else {
-                    self.files_seen.insert(name);
-                }
+                self.import_cache
+                    .insert(ImportKey::Path(name), Rc::clone(&style_sheet));
 
                 Ok(style_sheet)
             }
@@ -2887,7 +2991,7 @@ impl<'a> Visitor<'a> {
             }) => {
                 let key = ImportKey::Url(canonical_url.clone());
                 if let Some(style_sheet) = self.import_cache.get(&key) {
-                    return Ok(style_sheet.clone());
+                    return Ok(Rc::clone(style_sheet));
                 }
 
                 // Synthetic, non-filesystem path used only as the parsed
@@ -2901,24 +3005,22 @@ impl<'a> Visitor<'a> {
                 let old_is_use_allowed = self.flags.is_use_allowed();
                 self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-                let style_sheet = self.parse_file_with_syntax(
+                let style_sheet = Rc::new(self.parse_file_with_syntax(
                     Lexer::new_from_file(&file),
                     &synthetic_path,
+                    synthetic_path.clone(),
                     file.span.subspan(0, 0),
                     syntax,
-                )?;
+                )?);
 
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
 
-                // Unlike `Path` imports (lazily cached only from a file's
-                // *second* import, see `files_seen` above), `Resolved`
-                // imports are always cached on first sight: the same
-                // canonical URL resolving to the same module is a
-                // correctness requirement (design doc §1.2, "same
-                // canonical URL -> same cached module"), not just a perf
-                // heuristic.
-                self.import_cache.insert(key, style_sheet.clone());
+                // Both Path and Resolved imports are cached on first sight:
+                // the same canonical URL resolving to the same module is a
+                // correctness requirement (design doc §1.2, "same canonical
+                // URL -> same cached module"), as well as a performance win.
+                self.import_cache.insert(key, Rc::clone(&style_sheet));
 
                 Ok(style_sheet)
             }
@@ -2932,13 +3034,13 @@ impl<'a> Visitor<'a> {
         // default=false
         for_import: bool,
         span: Span,
-    ) -> SassResult<StyleSheet<'static>> {
+    ) -> SassResult<Rc<StyleSheet<'static>>> {
         // todo: import cache
         self.import_like_node(url, for_import, span)
     }
 
     fn visit_dynamic_import_rule(&mut self, dynamic_import: &AstSassImport) -> SassResult<()> {
-        let stylesheet = self.load_style_sheet(&dynamic_import.url, true, dynamic_import.span)?;
+        let stylesheet = self.load_style_sheet(dynamic_import.url, true, dynamic_import.span)?;
 
         let url = stylesheet.url.clone();
 
@@ -3042,11 +3144,11 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
-            #[allow(mutable_borrow_reservation_conflict)]
+            let content = Rc::clone(content);
             self.run_user_defined_callable(
                 MaybeEvaledArguments::Invocation(&content_rule.args),
-                Rc::clone(content),
-                &content.env.clone(),
+                Rc::clone(&content),
+                &content.env,
                 span,
                 |content, visitor| {
                     let old_in_mixin = visitor.flags.in_mixin();
@@ -3301,7 +3403,7 @@ impl<'a> Visitor<'a> {
         let func = SassFunction::UserDefined(UserDefinedFunction {
             function: Rc::new(fn_decl),
             name,
-            env: self.env.new_closure(),
+            env: Rc::new(self.env.new_closure()),
         });
 
         self.env.insert_fn(func);
@@ -4172,7 +4274,7 @@ impl<'a> Visitor<'a> {
         let defining_path = self.current_import_path.clone();
         self.env.insert_mixin(
             mixin.name,
-            Mixin::UserDefined(mixin, self.env.new_closure(), defining_path),
+            Mixin::UserDefined(mixin, Rc::new(self.env.new_closure()), defining_path),
         );
     }
 

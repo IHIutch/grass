@@ -153,12 +153,14 @@ pub fn parse_stylesheet<P: AsRef<Path>>(
     let path_ref = file_name.as_ref();
     let stylesheet = match input_syntax {
         InputSyntax::Scss => {
-            ScssParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
+            ScssParser::new(lexer, options, empty_span, path_ref, &arena).__parse(None)
         }
         InputSyntax::Sass => {
-            SassParser::new(lexer, options, empty_span, path_ref, &arena).__parse()
+            SassParser::new(lexer, options, empty_span, path_ref, &arena).__parse(None)
         }
-        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse(),
+        InputSyntax::Css => {
+            CssParser::new(lexer, options, empty_span, path_ref, &arena).__parse(None)
+        }
     };
 
     // Safety: We leak the arena so that the returned StyleSheet's references remain valid.
@@ -335,9 +337,13 @@ fn compile_impl<P: AsRef<Path>>(
         .unwrap_or_else(|| InputSyntax::for_path(path));
 
     let stylesheet = match input_syntax {
-        InputSyntax::Scss => ScssParser::new(lexer, options, empty_span, path, &arena).__parse(),
-        InputSyntax::Sass => SassParser::new(lexer, options, empty_span, path, &arena).__parse(),
-        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(),
+        InputSyntax::Scss => {
+            ScssParser::new(lexer, options, empty_span, path, &arena).__parse(None)
+        }
+        InputSyntax::Sass => {
+            SassParser::new(lexer, options, empty_span, path, &arena).__parse(None)
+        }
+        InputSyntax::Css => CssParser::new(lexer, options, empty_span, path, &arena).__parse(None),
     };
 
     // Safety: the arena lives on the stack for the entire compilation.

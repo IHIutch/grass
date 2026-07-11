@@ -108,6 +108,62 @@ echo "<new_median_ms>" > prototype/.perf-baseline
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
 `prototype/bench.sh`.
 
+## Profiling
+
+Use profiling to rank performance candidates before changing code; use
+`prototype/perf-check.sh` for acceptance, and always run the performance gate
+for a change that affects the compiler. The profiling harness uses the same
+USWDS fixture and compile invocation as the performance check:
+
+```bash
+PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./prototype/profile.sh cpu
+PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./prototype/profile.sh heap
+```
+
+The `cpu` mode records a samply profile and opens its local profile UI. Install
+samply once with:
+
+```bash
+~/.cargo/bin/cargo install samply
+```
+
+The `heap` mode records dhat allocation call sites and can be loaded at
+<https://nnethercote.github.io/dh_view/dh_view.html>. Dhat runs are roughly
+10–40× slower than a normal compile, so use only relative allocation counts
+when comparing runs. The existing `fuzz/src/bin/leak_probe.rs` reports
+teardown allocation deltas; dhat complements it with call-site attribution.
+
+Follow the measurement rules from the performance gate: compare a same-moment
+control, use both workloads, and never compare absolute milliseconds across
+separate sessions. Profiling ranks where to investigate; `perf-check.sh`
+remains the authoritative acceptance check.
+
+### PGO reference numbers (2026-07-11)
+
+The shipped CLI is PGO-built (`build-pgo.sh`, `v*` tags), while all tracked
+perf numbers come from plain `--release` builds. Measured at `428608e2`
+(quiet machine, interleaved hyperfine, USWDS trained):
+
+- Wall time: PGO 1.15× faster on USWDS (196 → 171 ms mean), 1.10× on
+  Bootstrap (60.3 → 54.8 ms). Output is byte-identical on both workloads.
+- Instructions retired (median of 3 interleaved `/usr/bin/time -l` runs):
+  USWDS 1,904M → 1,676M (−12.0%), Bootstrap 597M → 518M (−13.1%).
+- The CPU profile ranking materially changes under PGO: `eval_args`,
+  `Scopes::get_var`, and the lexer disappear from the top symbols (inlined
+  into callers), and `visit_expr_ref` / `run_function_callable_with_maybe_evaled`
+  roughly double their self-sample share. Allocator (`mi_free` +
+  `mi_malloc_aligned`, ~11% combined) and fs syscalls (`__getattrlist`,
+  `__open`, `write`) take a relatively larger share of what remains.
+
+Rule of thumb: deep-optimization decisions (what to target next) should
+consult PGO profiles — that's the binary users run, and PGO already
+restructures leaf-level inlining. Acceptance gates and `.perf-baseline`
+stay on plain release builds for comparability with history. To profile a
+PGO build, run `build-pgo.sh` with `CARGO_PROFILE_RELEASE_STRIP=none` (the
+release profile strips symbols otherwise) and point `samply record` at the
+resulting binary directly — `profile.sh cpu` rebuilds a plain binary and
+would overwrite it.
+
 ## Package and N-API Checks
 
 When changing the native Node.js addon or npm package, run the relevant local

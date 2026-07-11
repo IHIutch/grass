@@ -231,7 +231,12 @@ impl Unit {
 
 impl From<String> for Unit {
     fn from(unit: String) -> Self {
-        match unit.to_ascii_lowercase().as_str() {
+        let normalized = unit
+            .bytes()
+            .any(|byte| byte.is_ascii_uppercase())
+            .then(|| unit.to_ascii_lowercase());
+
+        match normalized.as_deref().unwrap_or(unit.as_str()) {
             "px" => Unit::Px,
             "mm" => Unit::Mm,
             "in" => Unit::In,

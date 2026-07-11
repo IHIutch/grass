@@ -50,6 +50,7 @@ include_sass = { path = "../include_sass", version = "0.13.4", optional = true }
 clap = { version = "4.3.10", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 notify = { version = "8", optional = true }
+dhat = { version = "0.3", optional = true }
 
 [features]
 # todo: no commandline by default
@@ -72,6 +73,7 @@ stacker = ["grass_compiler/stacker"]
 # Option: include the proc macro `include_sass!`
 macro = ["include_sass"]
 nightly = ["include_sass/nightly"]
+dhat-heap = ["dep:dhat"]
 
 [dev-dependencies]
 tempfile = "3.3.0"

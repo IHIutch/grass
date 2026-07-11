@@ -13,9 +13,7 @@ pub(crate) trait MapView: fmt::Debug {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    fn contains_key(&self, k: Identifier) -> bool {
-        self.get(k).is_some()
-    }
+    fn contains_key(&self, k: Identifier) -> bool;
     // todo: wildly ineffecient to return vec here, because of the arbitrary nesting of Self
     fn keys(&self) -> Vec<Identifier>;
     fn iter(&self) -> Vec<(Identifier, Self::Value)>;
@@ -60,13 +58,55 @@ impl<T> Clone for BaseMapView<T> {
 pub(crate) struct UnprefixedMapView<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone>(
     pub T,
     pub String,
+    Rc<PrefixNameCache>,
 );
 
 #[derive(Debug, Clone)]
 pub(crate) struct PrefixedMapView<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone>(
     pub T,
     pub String,
+    Rc<PrefixNameCache>,
 );
+
+#[derive(Debug, Default)]
+struct PrefixNameCache {
+    prefixed: RefCell<FxHashMap<Identifier, Identifier>>,
+    unprefixed: RefCell<FxHashMap<Identifier, Option<Identifier>>>,
+}
+
+impl PrefixNameCache {
+    fn prefixed(&self, prefix: &str, name: Identifier) -> Identifier {
+        if let Some(&mapped) = self.prefixed.borrow().get(&name) {
+            return mapped;
+        }
+
+        let mapped = Identifier::from(format!("{prefix}{name}"));
+        self.prefixed.borrow_mut().insert(name, mapped);
+        mapped
+    }
+
+    fn unprefixed(&self, prefix: &str, name: Identifier) -> Option<Identifier> {
+        if let Some(&mapped) = self.unprefixed.borrow().get(&name) {
+            return mapped;
+        }
+
+        let mapped = name.as_str().strip_prefix(prefix).map(Identifier::from);
+        self.unprefixed.borrow_mut().insert(name, mapped);
+        mapped
+    }
+}
+
+impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> UnprefixedMapView<V, T> {
+    pub fn new(map: T, prefix: String) -> Self {
+        Self(map, prefix, Rc::new(PrefixNameCache::default()))
+    }
+}
+
+impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> PrefixedMapView<V, T> {
+    pub fn new(map: T, prefix: String) -> Self {
+        Self(map, prefix, Rc::new(PrefixNameCache::default()))
+    }
+}
 
 impl<T: fmt::Debug + Clone> MapView for BaseMapView<T> {
     type Value = T;
@@ -106,18 +146,15 @@ impl<T: fmt::Debug + Clone> MapView for BaseMapView<T> {
 impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for UnprefixedMapView<V, T> {
     type Value = V;
     fn get(&self, name: Identifier) -> Option<Self::Value> {
-        let name = Identifier::from(format!("{}{}", self.1, name));
-        self.0.get(name)
+        self.0.get(self.2.prefixed(&self.1, name))
     }
 
     fn remove(&self, name: Identifier) -> Option<Self::Value> {
-        let name = Identifier::from(format!("{}{}", self.1, name));
-        self.0.remove(name)
+        self.0.remove(self.2.prefixed(&self.1, name))
     }
 
     fn insert(&self, name: Identifier, value: Self::Value) -> Option<Self::Value> {
-        let name = Identifier::from(format!("{}{}", self.1, name));
-        self.0.insert(name, value)
+        self.0.insert(self.2.prefixed(&self.1, name), value)
     }
 
     fn len(&self) -> usize {
@@ -125,16 +162,14 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for Unprefixe
     }
 
     fn contains_key(&self, name: Identifier) -> bool {
-        let name = Identifier::from(format!("{}{}", self.1, name));
-        self.0.contains_key(name)
+        self.0.contains_key(self.2.prefixed(&self.1, name))
     }
 
     fn keys(&self) -> Vec<Identifier> {
         self.0
             .keys()
             .into_iter()
-            .filter(|key| key.as_str().starts_with(&self.1))
-            .map(|key| Identifier::from(key.as_str().strip_prefix(&self.1).unwrap()))
+            .filter_map(|key| self.2.unprefixed(&self.1, key))
             .collect()
     }
 
@@ -146,33 +181,21 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for Unprefixe
 impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for PrefixedMapView<V, T> {
     type Value = V;
     fn get(&self, name: Identifier) -> Option<Self::Value> {
-        if !name.as_str().starts_with(&self.1) {
-            return None;
-        }
-
-        let name = Identifier::from(name.as_str().strip_prefix(&self.1).unwrap());
-
-        self.0.get(name)
+        self.2
+            .unprefixed(&self.1, name)
+            .and_then(|name| self.0.get(name))
     }
 
     fn remove(&self, name: Identifier) -> Option<Self::Value> {
-        if !name.as_str().starts_with(&self.1) {
-            return None;
-        }
-
-        let name = Identifier::from(name.as_str().strip_prefix(&self.1).unwrap());
-
-        self.0.remove(name)
+        self.2
+            .unprefixed(&self.1, name)
+            .and_then(|name| self.0.remove(name))
     }
 
     fn insert(&self, name: Identifier, value: Self::Value) -> Option<Self::Value> {
-        if !name.as_str().starts_with(&self.1) {
-            return None;
-        }
-
-        let name = Identifier::from(name.as_str().strip_prefix(&self.1).unwrap());
-
-        self.0.insert(name, value)
+        self.2
+            .unprefixed(&self.1, name)
+            .and_then(|name| self.0.insert(name, value))
     }
 
     fn len(&self) -> usize {
@@ -180,20 +203,16 @@ impl<V: fmt::Debug + Clone, T: MapView<Value = V> + Clone> MapView for PrefixedM
     }
 
     fn contains_key(&self, name: Identifier) -> bool {
-        if !name.as_str().starts_with(&self.1) {
-            return false;
-        }
-
-        let name = Identifier::from(name.as_str().strip_prefix(&self.1).unwrap());
-
-        self.0.contains_key(name)
+        self.2
+            .unprefixed(&self.1, name)
+            .is_some_and(|name| self.0.contains_key(name))
     }
 
     fn keys(&self) -> Vec<Identifier> {
         self.0
             .keys()
             .into_iter()
-            .map(|key| Identifier::from(format!("{}{}", self.1, key)))
+            .map(|key| self.2.prefixed(&self.1, key))
             .collect()
     }
 

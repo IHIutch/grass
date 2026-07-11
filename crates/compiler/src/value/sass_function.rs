@@ -31,7 +31,7 @@ pub enum SassFunction {
 pub struct UserDefinedFunction {
     pub(crate) function: Rc<AstFunctionDecl<'static>>,
     pub name: Identifier,
-    pub(crate) env: Environment,
+    pub(crate) env: Rc<Environment>,
 }
 
 impl PartialEq for UserDefinedFunction {

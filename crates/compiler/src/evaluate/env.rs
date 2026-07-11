@@ -759,29 +759,29 @@ fn collect_inner(module: &Rc<RefCell<Module>>, result: &mut ForwardedMemberSourc
                 collect_inner(&inner, &mut inner_result);
 
                 // Apply this forward's prefix and filter by visibility
+                let mut prefixed_names = prefix.as_ref().map(|_| FxHashMap::default());
+                let mut apply_prefix = |inner_name| match &prefix {
+                    Some(p) => *prefixed_names
+                        .as_mut()
+                        .unwrap()
+                        .entry(inner_name)
+                        .or_insert_with(|| Identifier::from(format!("{p}{inner_name}"))),
+                    None => inner_name,
+                };
                 for (inner_name, source) in inner_result.variables {
-                    let outer_name = match &prefix {
-                        Some(p) => Identifier::from(format!("{p}{inner_name}")),
-                        None => inner_name,
-                    };
+                    let outer_name = apply_prefix(inner_name);
                     if visible_var_keys.contains(&outer_name) {
                         result.variables.entry(outer_name).or_insert(source);
                     }
                 }
                 for (inner_name, source) in inner_result.functions {
-                    let outer_name = match &prefix {
-                        Some(p) => Identifier::from(format!("{p}{inner_name}")),
-                        None => inner_name,
-                    };
+                    let outer_name = apply_prefix(inner_name);
                     if visible_fn_keys.contains(&outer_name) {
                         result.functions.entry(outer_name).or_insert(source);
                     }
                 }
                 for (inner_name, source) in inner_result.mixins {
-                    let outer_name = match &prefix {
-                        Some(p) => Identifier::from(format!("{p}{inner_name}")),
-                        None => inner_name,
-                    };
+                    let outer_name = apply_prefix(inner_name);
                     if visible_mixin_keys.contains(&outer_name) {
                         result.mixins.entry(outer_name).or_insert(source);
                     }

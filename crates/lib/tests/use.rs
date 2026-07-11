@@ -108,6 +108,38 @@ fn use_user_defined_same_directory() {
 }
 
 #[test]
+fn use_module_with_function_reference_tears_down() {
+    let input = r#"@use "function_reference_lib";"#;
+    tempfile!(
+        "_function_reference_lib.scss",
+        r#"@use "sass:meta";
+@function foo() { @return 1; }
+$ref: meta.get-function(foo);
+a { value: 1; }"#
+    );
+    assert_eq!(
+        "a {\n  value: 1;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
+}
+
+#[test]
+fn use_module_with_mixin_reference_tears_down() {
+    let input = r#"@use "mixin_reference_lib";"#;
+    tempfile!(
+        "_mixin_reference_lib.scss",
+        r#"@use "sass:meta";
+@mixin foo() { }
+$ref: meta.get-mixin(foo);
+a { value: 1; }"#
+    );
+    assert_eq!(
+        "a {\n  value: 1;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
+}
+
+#[test]
 fn private_variable_begins_with_underscore() {
     let mut fs = TestFs::new();
 
