@@ -327,7 +327,7 @@ impl Configuration {
         // configuration variable is used by removing it even when the underlying
         // map is wrapped.
         if let Some(prefix) = &forward.prefix {
-            new_values = Rc::new(UnprefixedMapView(new_values, prefix.clone()));
+            new_values = Rc::new(UnprefixedMapView::new(new_values, prefix.clone()));
         }
 
         if let Some(shown_variables) = &forward.shown_variables {

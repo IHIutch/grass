@@ -160,7 +160,7 @@ impl ForwardedModule {
         }
 
         if let Some(prefix) = prefix {
-            map = Rc::new(PrefixedMapView(map, prefix.to_owned()));
+            map = Rc::new(PrefixedMapView::new(map, prefix.to_owned()));
         }
 
         // Apply show/hide after prefix, since show/hide names are in prefixed form
