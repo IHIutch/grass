@@ -30,10 +30,16 @@ pub(crate) struct Scopes {
     mixins: Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>>,
     functions: Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>,
     pub last_variable_index: Option<(Identifier, usize)>,
-    /// Pool of reusable scope HashMaps to avoid allocation churn
-    var_pool: Vec<Rc<RefCell<FxHashMap<Identifier, Value>>>>,
-    mixin_pool: Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>>,
-    fn_pool: Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>,
+    /// Shared by all closure scopes for one compilation. It contains only empty
+    /// maps, so it cannot form an environment -> pool -> environment cycle.
+    pool: Rc<RefCell<ScopePool>>,
+}
+
+#[derive(Debug, Default)]
+struct ScopePool {
+    variables: Vec<Rc<RefCell<FxHashMap<Identifier, Value>>>>,
+    mixins: Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>>,
+    functions: Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>,
 }
 
 impl Scopes {
@@ -44,9 +50,7 @@ impl Scopes {
             mixins: vec![Rc::new(RefCell::new(new_scope_map()))],
             functions: vec![Rc::new(RefCell::new(new_scope_map()))],
             last_variable_index: None,
-            var_pool: Vec::new(),
-            mixin_pool: Vec::new(),
-            fn_pool: Vec::new(),
+            pool: Rc::new(RefCell::new(ScopePool::default())),
         }
     }
 
@@ -57,10 +61,7 @@ impl Scopes {
             mixins: self.mixins.iter().map(Rc::clone).collect(),
             functions: self.functions.iter().map(Rc::clone).collect(),
             last_variable_index: self.last_variable_index,
-            // Closures get their own empty pools
-            var_pool: Vec::new(),
-            mixin_pool: Vec::new(),
-            fn_pool: Vec::new(),
+            pool: Rc::clone(&self.pool),
         }
     }
 
@@ -103,18 +104,20 @@ impl Scopes {
 
     pub fn enter_new_scope(&mut self) {
         debug_assert_eq!(self.len(), self.variables.len());
-        let var = self
-            .var_pool
+        let mut pool = self.pool.borrow_mut();
+        let var = pool
+            .variables
             .pop()
             .unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
-        let mixin = self
-            .mixin_pool
+        let mixin = pool
+            .mixins
             .pop()
             .unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
-        let func = self
-            .fn_pool
+        let func = pool
+            .functions
             .pop()
             .unwrap_or_else(|| Rc::new(RefCell::new(new_scope_map())));
+        drop(pool);
         self.variables.push(var);
         self.mixins.push(mixin);
         self.functions.push(func);
@@ -123,30 +126,32 @@ impl Scopes {
     pub fn exit_scope(&mut self) {
         debug_assert_eq!(self.len(), self.variables.len());
 
+        let mut pool = self.pool.borrow_mut();
         if let Some(scope) = self.variables.pop() {
             if Rc::strong_count(&scope) == 1 {
                 scope.borrow_mut().clear();
-                if self.var_pool.len() < Self::MAX_POOL_SIZE {
-                    self.var_pool.push(scope);
+                if pool.variables.len() < Self::MAX_POOL_SIZE {
+                    pool.variables.push(scope);
                 }
             }
         }
         if let Some(scope) = self.mixins.pop() {
             if Rc::strong_count(&scope) == 1 {
                 scope.borrow_mut().clear();
-                if self.mixin_pool.len() < Self::MAX_POOL_SIZE {
-                    self.mixin_pool.push(scope);
+                if pool.mixins.len() < Self::MAX_POOL_SIZE {
+                    pool.mixins.push(scope);
                 }
             }
         }
         if let Some(scope) = self.functions.pop() {
             if Rc::strong_count(&scope) == 1 {
                 scope.borrow_mut().clear();
-                if self.fn_pool.len() < Self::MAX_POOL_SIZE {
-                    self.fn_pool.push(scope);
+                if pool.functions.len() < Self::MAX_POOL_SIZE {
+                    pool.functions.push(scope);
                 }
             }
         }
+        drop(pool);
 
         self.last_variable_index = None;
     }
