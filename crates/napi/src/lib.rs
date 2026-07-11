@@ -127,8 +127,9 @@ pub struct CompileOptions {
     /// relaxation beyond the real API — or `null`/`undefined` to decline;
     /// the compiler then applies normal partial/extension/index-file
     /// resolution on top, exactly like a load path) or a full `Importer`
-    /// (`{canonicalize(url, context), load(canonicalUrl)}`, arbitrary
-    /// non-`file:` schemes: `canonicalize` returns a canonical URL string or
+    /// (`{canonicalize(url, context), load(canonicalUrl),
+    /// nonCanonicalScheme?: string | string[]}`, arbitrary non-`file:`
+    /// schemes: `canonicalize` returns a canonical URL string or
     /// `null`/`undefined` to decline; if a URL, `load` is called with it and
     /// must return `{contents, syntax: 'scss'|'sass'|'css'}` or
     /// `null`/`undefined`).
@@ -143,7 +144,7 @@ pub struct CompileOptions {
     /// `async`/returns a `Promise` is not supported and produces a clear
     /// compile error rather than being awaited.
     #[napi(
-        ts_type = "Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }>"
+        ts_type = "Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined, nonCanonicalScheme?: string | string[] }>"
     )]
     pub importers: Option<Vec<importers::ImporterRef>>,
     /// Entrypoint canonical URL for `compileString`/`compileStringAsync`, per
@@ -160,7 +161,7 @@ pub struct CompileOptions {
     /// (`FileImporter` or full `Importer`), registered ahead of `importers`.
     /// Ignored by the path entry points.
     #[napi(
-        ts_type = "{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }"
+        ts_type = "{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined, nonCanonicalScheme?: string | string[] }"
     )]
     pub importer: Option<importers::ImporterRef>,
 }

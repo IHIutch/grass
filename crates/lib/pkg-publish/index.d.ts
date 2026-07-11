@@ -79,6 +79,7 @@ export type FileImporter = {
 export type Importer = {
   canonicalize(url: string, context: CanonicalizeContext): string | null | undefined;
   load(canonicalUrl: string): { contents: string; syntax: "scss" | "sass" | "css" } | null | undefined;
+  nonCanonicalScheme?: string | string[];
 };
 
 export interface Options {

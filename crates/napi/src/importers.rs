@@ -99,8 +99,96 @@ fn string_err_to_sass(msg: String, span: Span) -> Box<grass_compiler::Error> {
 fn build_context(env: Env, from_import: bool, containing_url: Option<&str>) -> Result<JsUnknown> {
     let mut ctx = env.create_object()?;
     ctx.set_named_property("fromImport", from_import)?;
+    // `compileString` without StringOptions.url uses the compiler's synthetic
+    // `stdin` path internally, but Sass exposes no containing URL at that
+    // entrypoint.
+    let containing_url = containing_url.filter(|url| *url != "stdin");
     ctx.set_named_property("containingUrl", containing_url.map(str::to_owned))?;
     Ok(ctx.into_unknown())
+}
+
+/// Parses the full Importer's `nonCanonicalScheme` hint. Dart Sass accepts a
+/// single string or an array of strings (and treats null/undefined as absent),
+/// then validates each scheme as a non-empty, lowercase URL scheme token.
+fn parse_non_canonical_schemes(obj: &JsObject) -> Result<Vec<String>> {
+    if !obj
+        .has_named_property("nonCanonicalScheme")
+        .unwrap_or(false)
+    {
+        return Ok(Vec::new());
+    }
+
+    let value: JsUnknown = obj.get_named_property("nonCanonicalScheme")?;
+    let ty = value.get_type()?;
+    if matches!(ty, ValueType::Null | ValueType::Undefined) {
+        return Ok(Vec::new());
+    }
+
+    let values = if ty == ValueType::String {
+        vec![coerce_to_owned_string(value).map_err(Error::from_reason)?]
+    } else if ty == ValueType::Object && value.is_array()? {
+        let array = value.coerce_to_object()?;
+        let length = array.get_array_length()?;
+        let mut values = Vec::with_capacity(length as usize);
+        for index in 0..length {
+            let item: JsUnknown = array.get_element(index)?;
+            if item.get_type()? != ValueType::String {
+                return Err(Error::from_reason(format!(
+                    "nonCanonicalScheme must be a string or list of strings, got array element at index {index}"
+                )));
+            }
+            values.push(coerce_to_owned_string(item).map_err(Error::from_reason)?);
+        }
+        values
+    } else {
+        let rendered = coerce_to_owned_string(value).unwrap_or_else(|_| format!("{ty:?}"));
+        return Err(Error::from_reason(format!(
+            "nonCanonicalScheme must be a string or list of strings, was {rendered:?}"
+        )));
+    };
+
+    for scheme in &values {
+        if scheme.is_empty()
+            || !scheme
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "+-.".contains(c))
+        {
+            return Err(Error::from_reason(format!(
+                "{scheme:?} isn't a valid URL scheme (for example \"file\")."
+            )));
+        }
+    }
+
+    Ok(values)
+}
+
+/// Sass only supplies a containing URL for a schemed load when that scheme is
+/// declared non-canonical. Unschemed relative loads always retain the
+/// containing URL. The compiler already provides the URL needed here; this is
+/// deliberately bridge policy rather than a compiler Importer-trait change.
+fn containing_url_for_import<'a>(
+    non_canonical_schemes: &[String],
+    url: &str,
+    containing_url: Option<&'a str>,
+) -> Option<&'a str> {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return containing_url;
+    };
+
+    if !non_canonical_schemes
+        .iter()
+        .any(|scheme| scheme == parsed.scheme())
+    {
+        None
+    } else {
+        containing_url
+    }
+}
+
+fn non_canonical_scheme_error(importer_kind: &str, url: &str, canonical_url: &str) -> String {
+    format!(
+        "Importer Instance of '{importer_kind}' canonicalized {url} to {canonical_url}, which uses a scheme declared as non-canonical."
+    )
 }
 
 /// Interprets `findFileUrl`'s return value (shared between the sync and
@@ -322,6 +410,7 @@ pub struct FullImporterRef {
     env: Env,
     canonicalize_ref: Ref<()>,
     load_ref: Ref<()>,
+    non_canonical_schemes: Vec<String>,
 }
 
 impl std::fmt::Debug for FullImporterRef {
@@ -339,12 +428,14 @@ impl FullImporterRef {
     fn from_object(env: Env, obj: &JsObject) -> Result<Self> {
         let canonicalize: JsFunction = obj.get_named_property("canonicalize")?;
         let load: JsFunction = obj.get_named_property("load")?;
+        let non_canonical_schemes = parse_non_canonical_schemes(obj)?;
         let canonicalize_ref = env.create_reference(canonicalize)?;
         let load_ref = env.create_reference(load)?;
         Ok(FullImporterRef {
             env,
             canonicalize_ref,
             load_ref,
+            non_canonical_schemes,
         })
     }
 }
@@ -373,7 +464,9 @@ impl Importer for FullImporterRef {
             .create_string(url)
             .map_err(|e| napi_err_to_sass(&e, span))?
             .into_unknown();
-        let ctx = build_context(env, from_import, containing_url)
+        let context_containing_url =
+            containing_url_for_import(&self.non_canonical_schemes, url, containing_url);
+        let ctx = build_context(env, from_import, context_containing_url)
             .map_err(|e| napi_err_to_sass(&e, span))?;
 
         let canonical_url = match canonicalize_fn.call(None, &[url_js, ctx]) {
@@ -384,6 +477,19 @@ impl Importer for FullImporterRef {
             },
             Err(e) => return Err(napi_err_to_sass(&e, span)),
         };
+
+        if let Ok(parsed) = url::Url::parse(&canonical_url) {
+            if self
+                .non_canonical_schemes
+                .iter()
+                .any(|scheme| scheme == parsed.scheme())
+            {
+                return Err(string_err_to_sass(
+                    non_canonical_scheme_error("JSToDartImporter", url, &canonical_url),
+                    span,
+                ));
+            }
+        }
 
         let load_fn = env
             .get_reference_value::<JsFunction>(&self.load_ref)
@@ -638,6 +744,7 @@ type LoadCallArgs = (
 pub struct AsyncFullImporterRef {
     canonicalize_tsfn: ThreadsafeFunction<CanonicalizeCallArgs, ErrorStrategy::Fatal>,
     load_tsfn: ThreadsafeFunction<LoadCallArgs, ErrorStrategy::Fatal>,
+    non_canonical_schemes: Vec<String>,
 }
 
 impl std::fmt::Debug for AsyncFullImporterRef {
@@ -655,12 +762,14 @@ impl AsyncFullImporterRef {
         containing_url: Option<&str>,
         span: Span,
     ) -> SassResult<ImportResolution> {
+        let context_containing_url =
+            containing_url_for_import(&self.non_canonical_schemes, url, containing_url);
         let (tx, rx) = mpsc::channel();
         let status = self.canonicalize_tsfn.call(
             (
                 url.to_owned(),
                 from_import,
-                containing_url.map(str::to_owned),
+                context_containing_url.map(str::to_owned),
                 tx,
             ),
             ThreadsafeFunctionCallMode::Blocking,
@@ -683,6 +792,19 @@ impl AsyncFullImporterRef {
                 ))
             }
         };
+
+        if let Ok(parsed) = url::Url::parse(&canonical_url) {
+            if self
+                .non_canonical_schemes
+                .iter()
+                .any(|scheme| scheme == parsed.scheme())
+            {
+                return Err(string_err_to_sass(
+                    non_canonical_scheme_error("JSToDartAsyncImporter", url, &canonical_url),
+                    span,
+                ));
+            }
+        }
 
         let (tx2, rx2) = mpsc::channel();
         let status2 = self.load_tsfn.call(
@@ -798,6 +920,7 @@ impl FullImporterRef {
         Ok(AsyncFullImporterRef {
             canonicalize_tsfn,
             load_tsfn,
+            non_canonical_schemes: shared.non_canonical_schemes.clone(),
         })
     }
 }
