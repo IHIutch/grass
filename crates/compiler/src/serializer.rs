@@ -2420,15 +2420,12 @@ impl<'a> Serializer<'a> {
                 if let Some(span) = keyframes_rule_set.selector_span {
                     self.record_mapping(span.low());
                 }
-                // todo: i bet we can do something like write_with_separator to avoid extra allocation
-                let selector = keyframes_rule_set
-                    .selector
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                self.buffer.extend_from_slice(selector.as_bytes());
+                for (i, selector) in keyframes_rule_set.selector.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.extend_from_slice(b", ");
+                    }
+                    write!(&mut self.buffer, "{selector}")?;
+                }
 
                 self.write_children(keyframes_rule_set.body, None)?;
             }
