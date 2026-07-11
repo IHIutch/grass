@@ -318,6 +318,8 @@ pub struct Visitor<'a> {
     // todo: remove
     empty_span: Span,
     import_cache: FxHashMap<ImportKey, Rc<StyleSheet<'static>>>,
+    /// Memoized immutable builtin modules for this compilation.
+    builtin_module_cache: FxHashMap<&'static str, Module>,
     /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
     /// flag). Avoids redundant importer calls and filesystem probing for the same import path
     /// from the same context without conflating files that share a directory.
@@ -407,6 +409,7 @@ impl<'a> Visitor<'a> {
             map,
             arena,
             import_cache: FxHashMap::default(),
+            builtin_module_cache: FxHashMap::default(),
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
             dir_listing_cache: RefCell::new(FxHashMap::default()),
@@ -2217,18 +2220,18 @@ impl<'a> Visitor<'a> {
             Rc<StyleSheet<'static>>,
         ) -> SassResult<()>,
     ) -> SassResult<()> {
-        let builtin = match url.to_string_lossy().as_ref() {
-            "sass:color" => Some(declare_module_color()),
-            "sass:list" => Some(declare_module_list()),
-            "sass:map" => Some(declare_module_map()),
-            "sass:math" => Some(declare_module_math()),
-            "sass:meta" => Some(declare_module_meta()),
-            "sass:selector" => Some(declare_module_selector()),
-            "sass:string" => Some(declare_module_string()),
+        let builtin_name = match url.to_string_lossy().as_ref() {
+            "sass:color" => Some("sass:color"),
+            "sass:list" => Some("sass:list"),
+            "sass:map" => Some("sass:map"),
+            "sass:math" => Some("sass:math"),
+            "sass:meta" => Some("sass:meta"),
+            "sass:selector" => Some("sass:selector"),
+            "sass:string" => Some("sass:string"),
             _ => None,
         };
 
-        if let Some(builtin) = builtin {
+        if let Some(builtin_name) = builtin_name {
             if let Some(ref configuration) = configuration {
                 if !(**configuration).borrow().is_implicit() {
                     let msg = if names_in_errors {
@@ -2243,6 +2246,21 @@ impl<'a> Visitor<'a> {
                     return Err((msg, (**configuration).borrow().span.unwrap()).into());
                 }
             }
+
+            let builtin = self
+                .builtin_module_cache
+                .entry(builtin_name)
+                .or_insert_with(|| match builtin_name {
+                    "sass:color" => declare_module_color(),
+                    "sass:list" => declare_module_list(),
+                    "sass:map" => declare_module_map(),
+                    "sass:math" => declare_module_math(),
+                    "sass:meta" => declare_module_meta(),
+                    "sass:selector" => declare_module_selector(),
+                    "sass:string" => declare_module_string(),
+                    _ => unreachable!("builtin name was validated above"),
+                })
+                .clone();
 
             callback(
                 self,
