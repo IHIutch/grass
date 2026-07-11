@@ -1612,61 +1612,59 @@ impl<'a> Serializer<'a> {
         let mut has_single_quote = false;
         let mut has_double_quote = false;
 
-        let mut buffer = Vec::new();
-
-        if force_double_quote {
-            buffer.push(b'"');
-        }
+        let start = self.buffer.len();
+        self.buffer.push(b'"');
         let mut chars = string.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
                 '\'' => {
                     if force_double_quote {
-                        buffer.push(b'\'');
+                        self.buffer.push(b'\'');
                     } else if has_double_quote {
+                        self.buffer.truncate(start);
                         self.visit_quoted_string(true, string);
                         return;
                     } else {
                         has_single_quote = true;
-                        buffer.push(b'\'');
+                        self.buffer.push(b'\'');
                     }
                 }
                 '"' => {
                     if force_double_quote {
-                        buffer.push(b'\\');
-                        buffer.push(b'"');
+                        self.buffer.push(b'\\');
+                        self.buffer.push(b'"');
                     } else if has_single_quote {
+                        self.buffer.truncate(start);
                         self.visit_quoted_string(true, string);
                         return;
                     } else {
                         has_double_quote = true;
-                        buffer.push(b'"');
+                        self.buffer.push(b'"');
                     }
                 }
                 '\x00'..='\x08' | '\x0A'..='\x1F' | '\x7F' => {
-                    write_hex_escape(&mut buffer, c as u32, chars.peek().copied());
+                    write_hex_escape(&mut self.buffer, c as u32, chars.peek().copied());
                 }
                 '\\' => {
-                    buffer.push(b'\\');
-                    buffer.push(b'\\');
+                    self.buffer.push(b'\\');
+                    self.buffer.push(b'\\');
                 }
                 _ if is_private_use(c) => {
-                    write_hex_escape(&mut buffer, c as u32, chars.peek().copied());
+                    write_hex_escape(&mut self.buffer, c as u32, chars.peek().copied());
                 }
                 _ => {
                     let mut buf = [0u8; 4];
-                    buffer.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                    self.buffer
+                        .extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
                 }
             }
         }
 
         if force_double_quote {
-            buffer.push(b'"');
-            self.buffer.extend_from_slice(&buffer);
+            self.buffer.push(b'"');
         } else {
             let quote = if has_double_quote { b'\'' } else { b'"' };
-            self.buffer.push(quote);
-            self.buffer.extend_from_slice(&buffer);
+            self.buffer[start] = quote;
             self.buffer.push(quote);
         }
     }
