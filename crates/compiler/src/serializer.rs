@@ -1969,7 +1969,7 @@ impl<'a> Serializer<'a> {
 
     /// Get the source line number for a span position
     fn source_line(&self, pos: codemap::Pos) -> usize {
-        self.map.map_or(0, |m| m.look_up_pos(pos).position.line)
+        self.map.map_or(0, |m| m.find_file(pos).find_line(pos))
     }
 
     /// Plan 013 design-spike prototype: record a mapping from the current
