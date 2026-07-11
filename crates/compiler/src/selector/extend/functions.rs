@@ -319,6 +319,10 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
     list_two: &[T],
     select: Option<&dyn Fn(&T, &T) -> Option<T>>,
 ) -> Vec<T> {
+    if list_one.is_empty() || list_two.is_empty() {
+        return Vec::new();
+    }
+
     let default_select = |element_one: &T, element_two: &T| -> Option<T> {
         if element_one == element_two {
             Some(element_one.clone())
@@ -331,46 +335,74 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
         None => &default_select,
     };
 
-    let mut lengths = vec![vec![0; list_two.len() + 1]; list_one.len() + 1];
+    let lengths_width = list_two.len() + 1;
+    let mut lengths = vec![0; (list_one.len() + 1) * lengths_width];
 
-    let mut selections: Vec<Vec<Option<T>>> = vec![vec![None; list_two.len()]; list_one.len()];
+    let mut selections: Vec<Option<T>> = vec![None; list_one.len() * list_two.len()];
 
     for i in 0..list_one.len() {
         for (j, list_two_item) in list_two.iter().enumerate() {
             let selection = select(&list_one[i], list_two_item);
-            lengths[i + 1][j + 1] = if selection.is_none() {
-                std::cmp::max(lengths[i + 1][j], lengths[i][j + 1])
+            lengths[(i + 1) * lengths_width + j + 1] = if selection.is_none() {
+                std::cmp::max(
+                    lengths[(i + 1) * lengths_width + j],
+                    lengths[i * lengths_width + j + 1],
+                )
             } else {
-                lengths[i][j] + 1
+                lengths[i * lengths_width + j] + 1
             };
-            selections[i][j] = selection;
+            selections[i * list_two.len() + j] = selection;
         }
     }
 
     fn backtrack<T: Clone>(
         i: isize,
         j: isize,
-        lengths: &[Vec<i32>],
-        selections: &[Vec<Option<T>>],
+        lengths: &[i32],
+        selections: &[Option<T>],
+        lengths_width: usize,
+        selections_width: usize,
     ) -> Vec<T> {
         if i == -1 || j == -1 {
             return Vec::new();
         }
 
         if let Some(Some(selection)) = selections
-            .get(i as usize)
-            .and_then(|row| row.get(j as usize))
+            .get(i as usize * selections_width + j as usize)
             .map(Option::as_ref)
         {
-            let mut tmp = backtrack(i - 1, j - 1, lengths, selections);
+            let mut tmp = backtrack(
+                i - 1,
+                j - 1,
+                lengths,
+                selections,
+                lengths_width,
+                selections_width,
+            );
             tmp.push(selection.clone());
             return tmp;
         }
 
-        if lengths[(i + 1) as usize][j as usize] > lengths[i as usize][(j + 1) as usize] {
-            backtrack(i, j - 1, lengths, selections)
+        if lengths[(i + 1) as usize * lengths_width + j as usize]
+            > lengths[i as usize * lengths_width + (j + 1) as usize]
+        {
+            backtrack(
+                i,
+                j - 1,
+                lengths,
+                selections,
+                lengths_width,
+                selections_width,
+            )
         } else {
-            backtrack(i - 1, j, lengths, selections)
+            backtrack(
+                i - 1,
+                j,
+                lengths,
+                selections,
+                lengths_width,
+                selections_width,
+            )
         }
     }
     backtrack(
@@ -378,6 +410,8 @@ fn longest_common_subsequence<T: PartialEq + Clone>(
         (list_two.len() as isize).saturating_sub(1),
         &lengths,
         &selections,
+        lengths_width,
+        list_two.len(),
     )
 }
 
