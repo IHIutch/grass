@@ -317,7 +317,7 @@ pub struct Visitor<'a> {
     pub(crate) arena: &'a bumpalo::Bump,
     // todo: remove
     empty_span: Span,
-    import_cache: FxHashMap<ImportKey, StyleSheet<'static>>,
+    import_cache: FxHashMap<ImportKey, Rc<StyleSheet<'static>>>,
     /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
     /// flag). Avoids redundant importer calls and filesystem probing for the same import path
     /// from the same context without conflating files that share a directory.
@@ -1662,7 +1662,7 @@ impl<'a> Visitor<'a> {
 
     fn execute(
         &mut self,
-        stylesheet: StyleSheet<'static>,
+        stylesheet: Rc<StyleSheet<'static>>,
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
     ) -> SassResult<Rc<RefCell<Module>>> {
@@ -1895,7 +1895,7 @@ impl<'a> Visitor<'a> {
     /// extends to the cloned selectors, and emits the result.
     pub(crate) fn load_css_inner(
         &mut self,
-        stylesheet: StyleSheet<'static>,
+        stylesheet: Rc<StyleSheet<'static>>,
         configuration: Option<Rc<RefCell<Configuration>>>,
     ) -> SassResult<()> {
         let canonical_url = self.canonicalize(&stylesheet.url);
@@ -1917,7 +1917,7 @@ impl<'a> Visitor<'a> {
 
         let root_children_before = self.css_tree.child_count(CssTree::ROOT);
 
-        let module = self.execute(stylesheet, configuration.clone(), true)?;
+        let module = self.execute(Rc::clone(&stylesheet), configuration.clone(), true)?;
 
         self.active_modules.remove(&canonical_url);
 
@@ -2211,7 +2211,11 @@ impl<'a> Visitor<'a> {
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
         span: Span,
-        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, StyleSheet<'static>) -> SassResult<()>,
+        callback: impl Fn(
+            &mut Self,
+            Rc<RefCell<Module>>,
+            Rc<StyleSheet<'static>>,
+        ) -> SassResult<()>,
     ) -> SassResult<()> {
         let builtin = match url.to_string_lossy().as_ref() {
             "sass:color" => Some(declare_module_color()),
@@ -2243,7 +2247,7 @@ impl<'a> Visitor<'a> {
             callback(
                 self,
                 Rc::new(RefCell::new(builtin)),
-                StyleSheet::new(false, url.to_path_buf()),
+                Rc::new(StyleSheet::new(false, url.to_path_buf())),
             )?;
             return Ok(());
         }
@@ -2265,7 +2269,7 @@ impl<'a> Visitor<'a> {
         self.combined_import_section
             .append(&mut self.pending_import_items);
 
-        let module = self.execute(stylesheet.clone(), configuration, names_in_errors)?;
+        let module = self.execute(Rc::clone(&stylesheet), configuration, names_in_errors)?;
 
         self.active_modules.remove(&canonical_url);
 
@@ -2885,12 +2889,12 @@ impl<'a> Visitor<'a> {
         url: &str,
         for_import: bool,
         span: Span,
-    ) -> SassResult<StyleSheet<'static>> {
+    ) -> SassResult<Rc<StyleSheet<'static>>> {
         match self.find_import(url.as_ref(), for_import, span)? {
             Some(ImportSource::Path(name)) => {
                 let name = self.canonicalize(&name);
                 if let Some(style_sheet) = self.import_cache.get(&ImportKey::Path(name.clone())) {
-                    return Ok(style_sheet.clone());
+                    return Ok(Rc::clone(style_sheet));
                 }
 
                 let file = self.map.add_file(
@@ -2901,14 +2905,15 @@ impl<'a> Visitor<'a> {
                 let old_is_use_allowed = self.flags.is_use_allowed();
                 self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-                let style_sheet =
-                    self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?;
+                let style_sheet = Rc::new(
+                    self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?,
+                );
 
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
 
                 self.import_cache
-                    .insert(ImportKey::Path(name), style_sheet.clone());
+                    .insert(ImportKey::Path(name), Rc::clone(&style_sheet));
 
                 Ok(style_sheet)
             }
@@ -2919,7 +2924,7 @@ impl<'a> Visitor<'a> {
             }) => {
                 let key = ImportKey::Url(canonical_url.clone());
                 if let Some(style_sheet) = self.import_cache.get(&key) {
-                    return Ok(style_sheet.clone());
+                    return Ok(Rc::clone(style_sheet));
                 }
 
                 // Synthetic, non-filesystem path used only as the parsed
@@ -2933,12 +2938,12 @@ impl<'a> Visitor<'a> {
                 let old_is_use_allowed = self.flags.is_use_allowed();
                 self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-                let style_sheet = self.parse_file_with_syntax(
+                let style_sheet = Rc::new(self.parse_file_with_syntax(
                     Lexer::new_from_file(&file),
                     &synthetic_path,
                     file.span.subspan(0, 0),
                     syntax,
-                )?;
+                )?);
 
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
@@ -2947,7 +2952,7 @@ impl<'a> Visitor<'a> {
                 // the same canonical URL resolving to the same module is a
                 // correctness requirement (design doc §1.2, "same canonical
                 // URL -> same cached module"), as well as a performance win.
-                self.import_cache.insert(key, style_sheet.clone());
+                self.import_cache.insert(key, Rc::clone(&style_sheet));
 
                 Ok(style_sheet)
             }
@@ -2961,7 +2966,7 @@ impl<'a> Visitor<'a> {
         // default=false
         for_import: bool,
         span: Span,
-    ) -> SassResult<StyleSheet<'static>> {
+    ) -> SassResult<Rc<StyleSheet<'static>>> {
         // todo: import cache
         self.import_like_node(url, for_import, span)
     }
