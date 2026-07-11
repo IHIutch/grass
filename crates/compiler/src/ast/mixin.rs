@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use crate::{
     ast::ArgumentResult,
@@ -20,7 +21,7 @@ pub(crate) use crate::ast::AstMixin as UserDefinedMixin;
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Mixin {
-    UserDefined(UserDefinedMixin<'static>, Environment, PathBuf),
+    UserDefined(UserDefinedMixin<'static>, Rc<Environment>, PathBuf),
     Builtin(BuiltinMixin),
     /// A builtin mixin that accepts a `@content` block
     BuiltinWithContent(BuiltinMixin),

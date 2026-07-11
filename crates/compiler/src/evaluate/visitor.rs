@@ -586,7 +586,7 @@ impl<'a> Visitor<'a> {
                     }
 
                     // DIAG(#278/#279 causal probe): `SassFunction::UserDefined`/
-                    // `Mixin::UserDefined` closures embed a full `Environment`
+                    // `Mixin::UserDefined` closures share an `Rc<Environment>`
                     // captured via `Environment::new_closure()` at declaration
                     // time. `new_closure()` element-wise `Rc::clone`s
                     // `global_modules` into a brand-new, private `Vec` (unlike
@@ -604,11 +604,14 @@ impl<'a> Visitor<'a> {
                         }
                         for value in map.borrow_mut().values_mut() {
                             if let SassFunction::UserDefined(udf) = value {
-                                stack.append(&mut udf.env.global_modules);
-                                stack.extend(udf.env.forwarded_modules.borrow().iter().cloned());
-                                stack.extend(udf.env.modules.borrow().0.values().cloned());
-                                stack.extend(udf.env.imported_modules.borrow().iter().cloned());
-                                if let Some(nested) = &udf.env.nested_forwarded_modules {
+                                let closure_env = Rc::get_mut(&mut udf.env)
+                                    .expect("captured function environment shared during teardown");
+                                stack.append(&mut closure_env.global_modules);
+                                stack
+                                    .extend(closure_env.forwarded_modules.borrow().iter().cloned());
+                                stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                stack.extend(closure_env.imported_modules.borrow().iter().cloned());
+                                if let Some(nested) = &closure_env.nested_forwarded_modules {
                                     for inner in nested.borrow().iter() {
                                         stack.extend(inner.borrow().iter().cloned());
                                     }
@@ -623,6 +626,8 @@ impl<'a> Visitor<'a> {
                         }
                         for value in map.borrow_mut().values_mut() {
                             if let Mixin::UserDefined(_, closure_env, _) = value {
+                                let closure_env = Rc::get_mut(closure_env)
+                                    .expect("captured mixin environment shared during teardown");
                                 stack.append(&mut closure_env.global_modules);
                                 stack
                                     .extend(closure_env.forwarded_modules.borrow().iter().cloned());
@@ -3303,7 +3308,7 @@ impl<'a> Visitor<'a> {
         let func = SassFunction::UserDefined(UserDefinedFunction {
             function: Rc::new(fn_decl),
             name,
-            env: self.env.new_closure(),
+            env: Rc::new(self.env.new_closure()),
         });
 
         self.env.insert_fn(func);
@@ -4174,7 +4179,7 @@ impl<'a> Visitor<'a> {
         let defining_path = self.current_import_path.clone();
         self.env.insert_mixin(
             mixin.name,
-            Mixin::UserDefined(mixin, self.env.new_closure(), defining_path),
+            Mixin::UserDefined(mixin, Rc::new(self.env.new_closure()), defining_path),
         );
     }
 
