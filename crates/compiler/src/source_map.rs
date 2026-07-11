@@ -155,6 +155,7 @@ impl SourceMapData {
         out
     }
 
+    #[cfg(feature = "json-value")]
     /// Build a Source Map v3 JSON value without serializing to an intermediate
     /// string. The field selection matches [`Self::to_json`].
     #[must_use]
@@ -405,6 +406,7 @@ mod tests {
         assert!(embedded.contains("\"sourcesContent\":[\"a { b: c; }\"]"));
     }
 
+    #[cfg(feature = "json-value")]
     #[test]
     fn to_json_value_matches_json_serialization() {
         let data = SourceMapData::new(

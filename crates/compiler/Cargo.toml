@@ -39,7 +39,7 @@ lasso = "0.7"
 rustc-hash = "2"
 compact_str = "0.8"
 ryu = "1"
-serde_json = "1"
+serde_json = { version = "1", optional = true }
 bumpalo = { version = "3", features = ["collections"] }
 stacker = { version = "0.1", optional = true }
 
@@ -57,3 +57,4 @@ custom-builtin-fns = []
 # forced off there (see crates/lib/Cargo.toml, which depends on this crate
 # with default-features = false).
 stacker = ["dep:stacker"]
+json-value = ["dep:serde_json"]
