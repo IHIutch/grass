@@ -13,9 +13,7 @@ pub(crate) trait MapView: fmt::Debug {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    fn contains_key(&self, k: Identifier) -> bool {
-        self.get(k).is_some()
-    }
+    fn contains_key(&self, k: Identifier) -> bool;
     // todo: wildly ineffecient to return vec here, because of the arbitrary nesting of Self
     fn keys(&self) -> Vec<Identifier>;
     fn iter(&self) -> Vec<(Identifier, Self::Value)>;
