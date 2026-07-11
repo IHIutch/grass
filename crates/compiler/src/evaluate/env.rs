@@ -404,7 +404,51 @@ impl Environment {
         }
     }
 
+    /// The hot maps-off entry point: monomorphized with `RECORD = false`,
+    /// so the span-recording blocks (and the dead `None` argument) compile
+    /// out and codegen matches the pre-source-map-provenance version.
     pub fn insert_var(
+        &mut self,
+        name: Spanned<Identifier>,
+        namespace: Option<Spanned<Identifier>>,
+        value: Value,
+        is_global: bool,
+        in_semi_global_scope: bool,
+    ) -> SassResult<()> {
+        self.insert_var_impl::<false>(
+            name,
+            namespace,
+            value,
+            is_global,
+            in_semi_global_scope,
+            None,
+        )
+    }
+
+    /// Source-maps-on variant that additionally records `decl_span` as the
+    /// variable's declaration-value span, in whichever destination the
+    /// insert resolves to.
+    pub fn insert_var_recording_span(
+        &mut self,
+        name: Spanned<Identifier>,
+        namespace: Option<Spanned<Identifier>>,
+        value: Value,
+        is_global: bool,
+        in_semi_global_scope: bool,
+        decl_span: Option<Span>,
+    ) -> SassResult<()> {
+        self.insert_var_impl::<true>(
+            name,
+            namespace,
+            value,
+            is_global,
+            in_semi_global_scope,
+            decl_span,
+        )
+    }
+
+    #[inline(always)]
+    fn insert_var_impl<const RECORD: bool>(
         &mut self,
         name: Spanned<Identifier>,
         namespace: Option<Spanned<Identifier>>,
@@ -417,8 +461,10 @@ impl Environment {
             let mut modules = (*self.modules).borrow_mut();
             let module = modules.get_mut(namespace.node, namespace.span)?;
             (*module).borrow_mut().update_var(name, value)?;
-            if let Some(span) = decl_span {
-                (*module).borrow_mut().update_var_span(name.node, span);
+            if RECORD {
+                if let Some(span) = decl_span {
+                    (*module).borrow_mut().update_var_span(name.node, span);
+                }
             }
             return Ok(());
         }
@@ -438,18 +484,22 @@ impl Environment {
 
                 if let Some(module_with_name) = module_with_name {
                     module_with_name.borrow_mut().update_var(name, value)?;
-                    if let Some(span) = decl_span {
-                        module_with_name
-                            .borrow_mut()
-                            .update_var_span(name.node, span);
+                    if RECORD {
+                        if let Some(span) = decl_span {
+                            module_with_name
+                                .borrow_mut()
+                                .update_var_span(name.node, span);
+                        }
                     }
                     return Ok(());
                 }
             }
 
             self.scopes.insert_var(0, name.node, value);
-            if let Some(span) = decl_span {
-                self.scopes.insert_var_span(0, name.node, span);
+            if RECORD {
+                if let Some(span) = decl_span {
+                    self.scopes.insert_var_span(0, name.node, span);
+                }
             }
             return Ok(());
         }
@@ -465,8 +515,10 @@ impl Environment {
                     for module in modules.borrow().iter().rev() {
                         if module.borrow().var_exists(name.node) {
                             module.borrow_mut().update_var(name, value)?;
-                            if let Some(span) = decl_span {
-                                module.borrow_mut().update_var_span(name.node, span);
+                            if RECORD {
+                                if let Some(span) = decl_span {
+                                    module.borrow_mut().update_var_span(name.node, span);
+                                }
                             }
                             return Ok(());
                         }
@@ -484,8 +536,10 @@ impl Environment {
         self.scopes.last_variable_index = Some((name.node, index));
 
         self.scopes.insert_var(index, name.node, value);
-        if let Some(span) = decl_span {
-            self.scopes.insert_var_span(index, name.node, span);
+        if RECORD {
+            if let Some(span) = decl_span {
+                self.scopes.insert_var_span(index, name.node, span);
+            }
         }
 
         Ok(())

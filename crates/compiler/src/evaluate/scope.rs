@@ -44,7 +44,7 @@ pub(crate) struct Scopes {
     /// same sharing via `new_closure`). These maps never enter the
     /// `ScopePool`; they hold only `Copy` spans, so dropping them cannot
     /// re-enter the pool.
-    variable_spans: Option<Vec<Rc<RefCell<FxHashMap<Identifier, Span>>>>>,
+    variable_spans: Option<Box<Vec<Rc<RefCell<FxHashMap<Identifier, Span>>>>>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -75,12 +75,12 @@ impl Scopes {
     /// before any spans are recorded; scopes entered afterwards stay in sync.
     pub fn enable_span_tracking(&mut self) {
         if self.variable_spans.is_none() {
-            self.variable_spans = Some(
+            self.variable_spans = Some(Box::new(
                 self.variables
                     .iter()
                     .map(|_| Rc::new(RefCell::new(new_scope_map())))
                     .collect(),
-            );
+            ));
         }
     }
 
@@ -105,7 +105,7 @@ impl Scopes {
             variable_spans: self
                 .variable_spans
                 .as_ref()
-                .map(|spans| spans.iter().map(Rc::clone).collect()),
+                .map(|spans| Box::new(spans.iter().map(Rc::clone).collect())),
         }
     }
 

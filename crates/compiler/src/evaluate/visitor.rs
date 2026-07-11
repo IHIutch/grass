@@ -1229,14 +1229,13 @@ impl<'a> Visitor<'a> {
                     let var_override = var_override.unwrap();
                     // dart stores the configured expression's node, so the
                     // provenance segment points into the `with (...)` clause.
-                    let decl_span = var_override.assignment_span;
-                    self.env.insert_var(
+                    self.env.insert_var_recording_span(
                         name,
                         None,
                         var_override.value,
                         true,
                         self.flags.in_semi_global_scope(),
-                        decl_span,
+                        var_override.assignment_span,
                     )?;
                     return Ok(None);
                 }
@@ -1254,18 +1253,27 @@ impl<'a> Visitor<'a> {
         let value = self.visit_expr_ref(&decl.value.node)?;
         let value = self.without_slash(value, || decl.span)?;
 
-        // Must be computed before the insert: a self-referencing
-        // `$v: $v ...` chain-collapse has to see the OLD stored span.
-        let decl_span = self.provenance_span(&decl.value.node, decl.value.span);
-
-        self.env.insert_var(
-            name,
-            decl.namespace,
-            value,
-            decl.is_global,
-            self.flags.in_semi_global_scope(),
-            decl_span,
-        )?;
+        if self.options.source_map {
+            // Computed before the insert: a self-referencing `$v: $v ...`
+            // chain-collapse has to see the OLD stored span.
+            let decl_span = self.provenance_span(&decl.value.node, decl.value.span);
+            self.env.insert_var_recording_span(
+                name,
+                decl.namespace,
+                value,
+                decl.is_global,
+                self.flags.in_semi_global_scope(),
+                decl_span,
+            )?;
+        } else {
+            self.env.insert_var(
+                name,
+                decl.namespace,
+                value,
+                decl.is_global,
+                self.flags.in_semi_global_scope(),
+            )?;
+        }
 
         Ok(None)
     }
@@ -1277,6 +1285,7 @@ impl<'a> Visitor<'a> {
     /// verified against dart 1.101.0), otherwise the expression's own span.
     /// `None` whenever source maps are off — the maps-off cost is this one
     /// branch.
+    #[inline]
     fn provenance_span(&self, expr: &AstExpr<'static>, expr_span: Span) -> Option<Span> {
         if !self.options.source_map {
             return None;
@@ -1393,10 +1402,14 @@ impl<'a> Visitor<'a> {
                 // same-line dedup in `record_mapping` is what keeps literal/
                 // arithmetic values invisible. Only a bare `$var` value pulls
                 // in the variable's stored declaration span.
-                let value_span_for_map = style
-                    .value
-                    .as_ref()
-                    .and_then(|s| self.provenance_span(&s.node, s.span));
+                let value_span_for_map = if self.options.source_map {
+                    style
+                        .value
+                        .as_ref()
+                        .and_then(|s| self.provenance_span(&s.node, s.span))
+                } else {
+                    None
+                };
                 self.add_child_to_current_parent(CssStmt::Style(Style {
                     property: InternedString::get_or_intern(&name),
                     value: Box::new(value),
