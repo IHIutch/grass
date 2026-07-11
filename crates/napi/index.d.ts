@@ -123,8 +123,9 @@ export interface CompileOptions {
    * relaxation beyond the real API — or `null`/`undefined` to decline;
    * the compiler then applies normal partial/extension/index-file
    * resolution on top, exactly like a load path) or a full `Importer`
-   * (`{canonicalize(url, context), load(canonicalUrl)}`, arbitrary
-   * non-`file:` schemes: `canonicalize` returns a canonical URL string or
+   * (`{canonicalize(url, context), load(canonicalUrl),
+   * nonCanonicalScheme?: string | string[]}`, arbitrary non-`file:`
+   * schemes: `canonicalize` returns a canonical URL string or
    * `null`/`undefined` to decline; if a URL, `load` is called with it and
    * must return `{contents, syntax: 'scss'|'sass'|'css'}` or
    * `null`/`undefined`).
@@ -139,7 +140,7 @@ export interface CompileOptions {
    * `async`/returns a `Promise` is not supported and produces a clear
    * compile error rather than being awaited.
    */
-  importers?: Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }>
+  importers?: Array<{ findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined, nonCanonicalScheme?: string | string[] }>
   /**
    * Entrypoint canonical URL for `compileString`/`compileStringAsync`, per
    * the Sass JS API's `StringOptions.url`. Seeds the base for the source
@@ -157,7 +158,7 @@ export interface CompileOptions {
    * (`FileImporter` or full `Importer`), registered ahead of `importers`.
    * Ignored by the path entry points.
    */
-  importer?: { findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined }
+  importer?: { findFileUrl(url: string, context: CanonicalizeContext): string | null | undefined } | { canonicalize(url: string, context: CanonicalizeContext): string | null | undefined, load(canonicalUrl: string): { contents: string, syntax: 'scss' | 'sass' | 'css' } | null | undefined, nonCanonicalScheme?: string | string[] }
 }
 export interface CompileResult {
   css: string
