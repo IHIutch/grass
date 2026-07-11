@@ -14,6 +14,20 @@ lto = true
 codegen-units = 1
 strip = "symbols"
 
+# Correctness-gate builds: optimized enough to run 5000+ spec compiles quickly,
+# but without fat LTO / codegen-units=1 build cost.
+[profile.ci-spec]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = 0
+
+[profile.dev]
+debug = "line-tables-only"   # readable backtraces, far less DWARF
+
+[profile.dev.package."*"]
+debug = false                # no debuginfo for dependencies
+
 [profile.small]
 inherits = 'release'
 opt-level = 'z'

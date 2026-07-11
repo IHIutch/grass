@@ -16,6 +16,8 @@ jobs:
         with:
           toolchain: "1.88.0"
 
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
       - name: version info
         run: rustc --version; cargo --version;
 
@@ -33,6 +35,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.88.0
         with:
           toolchain: "1.88.0"
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - run: |
           rustup component add rustfmt
@@ -61,6 +65,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
         with:
           toolchain: "1.97.0" # pinned stable — bump deliberately
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build
         run: cargo build
@@ -101,6 +107,8 @@ jobs:
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
         with:
           toolchain: "1.97.0" # pinned stable — bump deliberately
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install dependencies
         working-directory: crates/napi
@@ -182,18 +190,15 @@ jobs:
         with:
           toolchain: "1.97.0" # pinned stable — bump deliberately
 
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
       - name: Build binary
-        run: cargo build --release
+        run: cargo build --profile ci-spec
 
       - name: Get sass-spec
         run: git submodule init && git submodule update
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Install sass-spec dependencies
-        run: cd sass-spec && npm ci
-
       - name: Run sass-spec and enforce baseline
+        env:
+          GRASS_BINARY: target/ci-spec/grass
         run: python3 ci/check-sass-spec.py

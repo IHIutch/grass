@@ -20,7 +20,7 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent)
-GRASS = os.path.join(PROJECT_ROOT, "target/release/grass")
+GRASS = os.environ.get("GRASS_BINARY", os.path.join(PROJECT_ROOT, "target/release/grass"))
 SPEC_DIR = os.path.join(PROJECT_ROOT, "sass-spec/spec")
 
 

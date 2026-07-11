@@ -25,8 +25,10 @@ jobs:
         with:
           toolchain: nightly
 
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
       - name: Install cargo-fuzz in the runner
-        run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+        run: command -v cargo-fuzz && cargo-fuzz --version | grep -q 0.13.2 || cargo +nightly install cargo-fuzz --version 0.13.2 --locked
 
       - name: Run bounded fuzz targets
         shell: bash
