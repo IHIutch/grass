@@ -140,10 +140,11 @@ impl Scopes {
     pub fn exit_scope(&mut self) {
         debug_assert_eq!(self.len(), self.variables.len());
 
-        let mut pool = self.pool.borrow_mut();
+        // The pool borrow must never span content drops: cascading Environment drops can re-enter this pool.
         if let Some(scope) = self.variables.pop() {
             if Rc::strong_count(&scope) == 1 {
                 scope.borrow_mut().clear();
+                let mut pool = self.pool.borrow_mut();
                 if pool.variables.len() < Self::MAX_POOL_SIZE {
                     pool.variables.push(scope);
                 }
@@ -152,6 +153,7 @@ impl Scopes {
         if let Some(scope) = self.mixins.pop() {
             if Rc::strong_count(&scope) == 1 {
                 scope.borrow_mut().clear();
+                let mut pool = self.pool.borrow_mut();
                 if pool.mixins.len() < Self::MAX_POOL_SIZE {
                     pool.mixins.push(scope);
                 }
@@ -160,12 +162,12 @@ impl Scopes {
         if let Some(scope) = self.functions.pop() {
             if Rc::strong_count(&scope) == 1 {
                 scope.borrow_mut().clear();
+                let mut pool = self.pool.borrow_mut();
                 if pool.functions.len() < Self::MAX_POOL_SIZE {
                     pool.functions.push(scope);
                 }
             }
         }
-        drop(pool);
 
         self.last_variable_index = None;
     }
@@ -193,19 +195,20 @@ impl Scopes {
 
 impl Drop for Scopes {
     fn drop(&mut self) {
-        let mut pool = self.pool.borrow_mut();
-
+        // Clear content before borrowing the pool: cascading Environment drops can re-enter this pool.
         self.variables.clear();
+        self.mixins.clear();
+        self.functions.clear();
+
+        let mut pool = self.pool.borrow_mut();
         if pool.variable_vecs.len() < Self::MAX_POOL_SIZE {
             pool.variable_vecs.push(mem::take(&mut self.variables));
         }
 
-        self.mixins.clear();
         if pool.mixin_vecs.len() < Self::MAX_POOL_SIZE {
             pool.mixin_vecs.push(mem::take(&mut self.mixins));
         }
 
-        self.functions.clear();
         if pool.function_vecs.len() < Self::MAX_POOL_SIZE {
             pool.function_vecs.push(mem::take(&mut self.functions));
         }
