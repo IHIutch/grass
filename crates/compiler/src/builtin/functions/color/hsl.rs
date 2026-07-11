@@ -1,5 +1,3 @@
-use std::mem;
-
 use crate::color::space::ColorSpace;
 use crate::{
     builtin::builtin_imports::*,
@@ -124,7 +122,6 @@ fn inner_hsl(
                 }
                 let args = ArgumentResult {
                     positional: list,
-                    positional_pool: None,
                     named: SmallOrderedMap::default(),
                     separator: ListSeparator::Comma,
                     span: args.span(),
@@ -553,11 +550,10 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
     // Re-wrap and delegate to the main implementation
     let new_args = ArgumentResult {
         positional: vec![val],
-        positional_pool: None,
-        named: mem::take(&mut args.named),
+        named: args.named,
         separator: args.separator,
         span,
-        touched: mem::take(&mut args.touched),
+        touched: args.touched,
     };
     grayscale(new_args, visitor)
 }

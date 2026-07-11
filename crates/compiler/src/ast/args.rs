@@ -1,4 +1,4 @@
-use std::{cell::RefCell, iter::Iterator, mem, rc::Rc};
+use std::{iter::Iterator, mem};
 
 use codemap::{Span, Spanned};
 use rustc_hash::FxHashSet;
@@ -162,26 +162,11 @@ pub(crate) enum MaybeEvaledArguments<'b, 'a> {
 #[derive(Debug, Clone)]
 pub struct ArgumentResult {
     pub(crate) positional: Vec<Value>,
-    pub(crate) positional_pool: Option<Rc<RefCell<Vec<Vec<Value>>>>>,
     pub(crate) named: SmallOrderedMap<Identifier, Value>,
     pub(crate) separator: ListSeparator,
     pub(crate) span: Span,
     // todo: hack
     pub(crate) touched: FxHashSet<usize>,
-}
-
-impl Drop for ArgumentResult {
-    fn drop(&mut self) {
-        let Some(pool) = self.positional_pool.take() else {
-            return;
-        };
-
-        self.positional.clear();
-        let mut pool = pool.borrow_mut();
-        if pool.len() < 32 {
-            pool.push(mem::take(&mut self.positional));
-        }
-    }
 }
 
 impl ArgumentResult {
@@ -306,14 +291,17 @@ impl ArgumentResult {
         Ok(())
     }
 
-    pub(crate) fn get_variadic(mut self) -> SassResult<Vec<Spanned<Value>>> {
+    pub(crate) fn get_variadic(self) -> SassResult<Vec<Spanned<Value>>> {
         if let Some((name, _)) = self.named.iter().next() {
             return Err((format!("No argument named ${name}."), self.span).into());
         }
 
-        let span = self.span;
-        let positional = mem::take(&mut self.positional);
-        let touched = mem::take(&mut self.touched);
+        let Self {
+            positional,
+            span,
+            touched,
+            ..
+        } = self;
 
         // todo: complete hack, we shouldn't have the `touched` set
         let args = positional

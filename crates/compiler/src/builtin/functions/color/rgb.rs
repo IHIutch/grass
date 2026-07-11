@@ -422,7 +422,6 @@ fn inner_rgb(
                     }
                     let args = ArgumentResult {
                         positional: list,
-                        positional_pool: None,
                         named: SmallOrderedMap::default(),
                         separator: ListSeparator::Comma,
                         span,
