@@ -3044,11 +3044,11 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Option<Value>> {
         let span = content_rule.args.span;
         if let Some(content) = &self.env.content {
-            #[allow(mutable_borrow_reservation_conflict)]
+            let content = Rc::clone(content);
             self.run_user_defined_callable(
                 MaybeEvaledArguments::Invocation(&content_rule.args),
-                Rc::clone(content),
-                &content.env.clone(),
+                Rc::clone(&content),
+                &content.env,
                 span,
                 |content, visitor| {
                     let old_in_mixin = visitor.flags.in_mixin();
