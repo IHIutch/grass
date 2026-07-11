@@ -118,7 +118,9 @@ pub struct AstWhile<'a> {
 pub struct AstVariableDecl<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
-    pub value: AstExpr<'a>,
+    /// Spanned so source maps can record the declaration-value span for the
+    /// `b: $var` provenance segment (dart's env-stored expression node).
+    pub value: Spanned<AstExpr<'a>>,
     pub is_guarded: bool,
     pub is_global: bool,
     pub span: Span,
@@ -411,13 +413,19 @@ impl Configuration {
 pub struct ConfiguredValue {
     pub value: Value,
     pub configuration_span: Option<Span>,
+    /// Span of the configured expression itself (dart's `assignmentNode`),
+    /// stored as the variable's declaration span for source maps — distinct
+    /// from `configuration_span`, which spans the whole `$var: value` entry
+    /// for error reporting. Always `None` when source maps are off.
+    pub assignment_span: Option<Span>,
 }
 
 impl ConfiguredValue {
-    pub fn explicit(value: Value, configuration_span: Span) -> Self {
+    pub fn explicit(value: Value, configuration_span: Span, assignment_span: Option<Span>) -> Self {
         Self {
             value,
             configuration_span: Some(configuration_span),
+            assignment_span,
         }
     }
 
@@ -425,6 +433,7 @@ impl ConfiguredValue {
         Self {
             value,
             configuration_span: None,
+            assignment_span: None,
         }
     }
 }

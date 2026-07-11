@@ -404,6 +404,9 @@ impl Environment {
         }
     }
 
+    /// The hot maps-off entry point: monomorphized with `RECORD = false`,
+    /// so the span-recording blocks (and the dead `None` argument) compile
+    /// out and codegen matches the pre-source-map-provenance version.
     pub fn insert_var(
         &mut self,
         name: Spanned<Identifier>,
@@ -412,10 +415,57 @@ impl Environment {
         is_global: bool,
         in_semi_global_scope: bool,
     ) -> SassResult<()> {
+        self.insert_var_impl::<false>(
+            name,
+            namespace,
+            value,
+            is_global,
+            in_semi_global_scope,
+            None,
+        )
+    }
+
+    /// Source-maps-on variant that additionally records `decl_span` as the
+    /// variable's declaration-value span, in whichever destination the
+    /// insert resolves to.
+    pub fn insert_var_recording_span(
+        &mut self,
+        name: Spanned<Identifier>,
+        namespace: Option<Spanned<Identifier>>,
+        value: Value,
+        is_global: bool,
+        in_semi_global_scope: bool,
+        decl_span: Option<Span>,
+    ) -> SassResult<()> {
+        self.insert_var_impl::<true>(
+            name,
+            namespace,
+            value,
+            is_global,
+            in_semi_global_scope,
+            decl_span,
+        )
+    }
+
+    #[inline(always)]
+    fn insert_var_impl<const RECORD: bool>(
+        &mut self,
+        name: Spanned<Identifier>,
+        namespace: Option<Spanned<Identifier>>,
+        value: Value,
+        is_global: bool,
+        in_semi_global_scope: bool,
+        decl_span: Option<Span>,
+    ) -> SassResult<()> {
         if let Some(namespace) = namespace {
             let mut modules = (*self.modules).borrow_mut();
             let module = modules.get_mut(namespace.node, namespace.span)?;
             (*module).borrow_mut().update_var(name, value)?;
+            if RECORD {
+                if let Some(span) = decl_span {
+                    (*module).borrow_mut().update_var_span(name.node, span);
+                }
+            }
             return Ok(());
         }
 
@@ -434,11 +484,23 @@ impl Environment {
 
                 if let Some(module_with_name) = module_with_name {
                     module_with_name.borrow_mut().update_var(name, value)?;
+                    if RECORD {
+                        if let Some(span) = decl_span {
+                            module_with_name
+                                .borrow_mut()
+                                .update_var_span(name.node, span);
+                        }
+                    }
                     return Ok(());
                 }
             }
 
             self.scopes.insert_var(0, name.node, value);
+            if RECORD {
+                if let Some(span) = decl_span {
+                    self.scopes.insert_var_span(0, name.node, span);
+                }
+            }
             return Ok(());
         }
 
@@ -453,6 +515,11 @@ impl Environment {
                     for module in modules.borrow().iter().rev() {
                         if module.borrow().var_exists(name.node) {
                             module.borrow_mut().update_var(name, value)?;
+                            if RECORD {
+                                if let Some(span) = decl_span {
+                                    module.borrow_mut().update_var_span(name.node, span);
+                                }
+                            }
                             return Ok(());
                         }
                     }
@@ -469,8 +536,66 @@ impl Environment {
         self.scopes.last_variable_index = Some((name.node, index));
 
         self.scopes.insert_var(index, name.node, value);
+        if RECORD {
+            if let Some(span) = decl_span {
+                self.scopes.insert_var_span(index, name.node, span);
+            }
+        }
 
         Ok(())
+    }
+
+    /// The recorded declaration-value span for the variable `get_var` would
+    /// resolve for `name`/`namespace` — dart-sass's
+    /// `Environment.getVariableNode`, used only when source maps are on.
+    /// Resolution order mirrors `get_var` (namespaced module, then scopes,
+    /// then global modules in `from_one_module` order); `None` means either
+    /// the variable resolves somewhere no span was recorded (builtins,
+    /// pre-declared globals) or span tracking is disabled.
+    pub fn get_var_span(
+        &self,
+        name: Spanned<Identifier>,
+        namespace: Option<Spanned<Identifier>>,
+    ) -> Option<Span> {
+        if let Some(namespace) = namespace {
+            let modules = (*self.modules).borrow();
+            let module = modules.get(namespace.node, namespace.span).ok()?;
+            return (*module).borrow().get_var_span(name.node);
+        }
+
+        if let Some(span) = self.scopes.get_var_span_entry(name.node) {
+            return span;
+        }
+
+        // Mirrors `from_one_module`'s search order for `get_var`'s
+        // global-module fallback. The ambiguity error isn't re-checked here:
+        // the value lookup for this same variable already succeeded.
+        if let Some(nested_forwarded_modules) = &self.nested_forwarded_modules {
+            for modules in nested_forwarded_modules.borrow().iter().rev() {
+                for module in modules.borrow().iter().rev() {
+                    let m = (**module).borrow();
+                    if m.var_exists(name.node) {
+                        return m.get_var_span(name.node);
+                    }
+                }
+            }
+        }
+
+        for module in self.imported_modules.borrow().iter() {
+            let m = (**module).borrow();
+            if m.var_exists(name.node) {
+                return m.get_var_span(name.node);
+            }
+        }
+
+        for module in self.global_modules.iter() {
+            let m = (**module).borrow();
+            if m.var_exists(name.node) {
+                return m.get_var_span(name.node);
+            }
+        }
+
+        None
     }
 
     pub fn at_root(&self) -> bool {

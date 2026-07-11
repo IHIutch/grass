@@ -65,7 +65,9 @@ fn load_css(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
                 })?;
             }
 
-            values.insert(name, ConfiguredValue::explicit(value, args.span()));
+            // `meta.load-css` configuration comes from a runtime map, so
+            // there is no per-value expression span to store for source maps.
+            values.insert(name, ConfiguredValue::explicit(value, args.span(), None));
         }
 
         Some(Rc::new(RefCell::new(Configuration::explicit(

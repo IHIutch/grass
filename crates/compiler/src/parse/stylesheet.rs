@@ -3284,7 +3284,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         self.whitespace()?;
         self.set_consume_newlines(was_consuming_newlines);
 
-        let value = self.parse_expression(None, None, None)?.node;
+        let value = self.parse_expression(None, None, None)?;
 
         let mut is_guarded = false;
         let mut is_global = false;

@@ -368,6 +368,11 @@ impl<'a> Visitor<'a> {
         let mut flags = ContextFlags::empty();
         flags.set(ContextFlags::IN_SEMI_GLOBAL_SCOPE, true);
 
+        let mut env = Environment::new();
+        if options.source_map {
+            env.scopes.enable_span_tracking();
+        }
+
         let extender = ExtensionStore::new(empty_span);
 
         let current_import_path = path.to_path_buf();
@@ -382,7 +387,7 @@ impl<'a> Visitor<'a> {
             deprecation_messages_emitted: FxHashSet::default(),
             media_queries: None,
             media_query_sources: None,
-            env: Environment::new(),
+            env,
             extender,
             upstream_modules: Vec::new(),
             module_css_indices: FxHashMap::default(),
@@ -1221,12 +1226,16 @@ impl<'a> Visitor<'a> {
                         ..
                     }) | None
                 ) {
-                    self.env.insert_var(
+                    let var_override = var_override.unwrap();
+                    // dart stores the configured expression's node, so the
+                    // provenance segment points into the `with (...)` clause.
+                    self.env.insert_var_recording_span(
                         name,
                         None,
-                        var_override.unwrap().value,
+                        var_override.value,
                         true,
                         self.flags.in_semi_global_scope(),
+                        var_override.assignment_span,
                     )?;
                     return Ok(None);
                 }
@@ -1241,18 +1250,54 @@ impl<'a> Visitor<'a> {
 
         self.maybe_warn_new_global(decl.name, decl.namespace, decl.is_global, decl.span)?;
 
-        let value = self.visit_expr_ref(&decl.value)?;
+        let value = self.visit_expr_ref(&decl.value.node)?;
         let value = self.without_slash(value, || decl.span)?;
 
-        self.env.insert_var(
-            name,
-            decl.namespace,
-            value,
-            decl.is_global,
-            self.flags.in_semi_global_scope(),
-        )?;
+        if self.options.source_map {
+            // Computed before the insert: a self-referencing `$v: $v ...`
+            // chain-collapse has to see the OLD stored span.
+            let decl_span = self.provenance_span(&decl.value.node, decl.value.span);
+            self.env.insert_var_recording_span(
+                name,
+                decl.namespace,
+                value,
+                decl.is_global,
+                self.flags.in_semi_global_scope(),
+                decl_span,
+            )?;
+        } else {
+            self.env.insert_var(
+                name,
+                decl.namespace,
+                value,
+                decl.is_global,
+                self.flags.in_semi_global_scope(),
+            )?;
+        }
 
         Ok(None)
+    }
+
+    /// The span dart-sass would store as this expression's "node" when
+    /// binding a variable (`Environment.setVariable(..., expressionNode)`):
+    /// for a bare variable reference, the referenced variable's own stored
+    /// declaration span (collapsing chains like `$w: $v` at assignment time,
+    /// verified against dart 1.101.0), otherwise the expression's own span.
+    /// `None` whenever source maps are off — the maps-off cost is this one
+    /// branch.
+    #[inline]
+    fn provenance_span(&self, expr: &AstExpr<'static>, expr_span: Span) -> Option<Span> {
+        if !self.options.source_map {
+            return None;
+        }
+
+        Some(match expr {
+            AstExpr::Variable { name, namespace } => self
+                .env
+                .get_var_span(*name, *namespace)
+                .unwrap_or(expr_span),
+            _ => expr_span,
+        })
     }
 
     /// Reference-based loud comment visitor.
@@ -1353,11 +1398,24 @@ impl<'a> Visitor<'a> {
             .transpose()?
         {
             if !value.is_blank() || value.is_empty_list() || is_custom_property {
+                // dart maps every declaration value (`valueSpanForMap`); the
+                // same-line dedup in `record_mapping` is what keeps literal/
+                // arithmetic values invisible. Only a bare `$var` value pulls
+                // in the variable's stored declaration span.
+                let value_span_for_map = if self.options.source_map {
+                    style
+                        .value
+                        .as_ref()
+                        .and_then(|s| self.provenance_span(&s.node, s.span))
+                } else {
+                    None
+                };
                 self.add_child_to_current_parent(CssStmt::Style(Style {
                     property: InternedString::get_or_intern(&name),
                     value: Box::new(value),
                     declared_as_custom_property: is_custom_property,
                     property_span: style.span,
+                    value_span_for_map,
                 }));
             }
         }
@@ -1492,9 +1550,10 @@ impl<'a> Visitor<'a> {
             let value = self.visit_expr_ref(&variable.expr.node)?;
             let value = self.without_slash(value, || variable.expr.span)?;
 
+            let assignment_span = self.provenance_span(&variable.expr.node, variable.expr.span);
             new_values.insert(
                 variable.name.node,
-                ConfiguredValue::explicit(value, variable.expr.span),
+                ConfiguredValue::explicit(value, variable.expr.span, assignment_span),
             );
         }
 
@@ -1766,6 +1825,9 @@ impl<'a> Visitor<'a> {
         }
 
         let mut env = Environment::new();
+        if self.options.source_map {
+            env.scopes.enable_span_tracking();
+        }
 
         // Pre-declare global variable slots for any `!global` declarations found
         // during parsing. This ensures the module exposes the same members
@@ -2327,9 +2389,14 @@ impl<'a> Visitor<'a> {
             for var in use_rule.configuration {
                 let value = self.visit_expr_ref(&var.expr.node)?;
                 let value = self.without_slash(value, || var.expr.span)?;
+                let assignment_span = self.provenance_span(&var.expr.node, var.expr.span);
                 values.insert(
                     var.name.node,
-                    ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span)),
+                    ConfiguredValue::explicit(
+                        value,
+                        var.name.span.merge(var.expr.span),
+                        assignment_span,
+                    ),
                 );
             }
 
@@ -4281,8 +4348,18 @@ impl<'a> Visitor<'a> {
     fn visit_each_stmt(&mut self, each_stmt: &AstEach<'static>) -> SassResult<Option<Value>> {
         let list = self.visit_expr_ref(&each_stmt.list)?.as_list();
 
+        // dart binds each loop variable with the list expression as its
+        // node, so `b: $i` maps back to the `@each` list (p12 probe).
+        let each_span = self.provenance_span(&each_stmt.list, each_stmt.list_span);
+
         // todo: not setting semi_global: true maybe means we can't assign to global scope when declared as global
         self.env.scope_enter();
+
+        if let Some(span) = each_span {
+            for &var in &each_stmt.variables {
+                self.env.scopes_mut().insert_var_last_span(var, span);
+            }
+        }
 
         let mut result = None;
 
@@ -4320,6 +4397,10 @@ impl<'a> Visitor<'a> {
     fn visit_for_stmt(&mut self, for_stmt: AstFor<'static>) -> SassResult<Option<Value>> {
         let from_span = for_stmt.from.span;
         let to_span = for_stmt.to.span;
+        // dart binds the loop variable with the `from` expression as its
+        // node (p14 probe: `b: $i` maps to the `1` after "from"). Computed
+        // here because the eval below consumes `from.node`.
+        let for_provenance = self.provenance_span(&for_stmt.from.node, from_span);
         let from_number = self
             .visit_expr(for_stmt.from.node)?
             .assert_number(from_span)?;
@@ -4360,6 +4441,12 @@ impl<'a> Visitor<'a> {
 
         // todo: self.with_scopes
         self.env.scope_enter();
+
+        if let Some(span) = for_provenance {
+            self.env
+                .scopes_mut()
+                .insert_var_last_span(for_stmt.variable.node, span);
+        }
 
         let mut result = None;
 
