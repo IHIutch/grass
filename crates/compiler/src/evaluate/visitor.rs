@@ -344,6 +344,10 @@ pub struct Visitor<'a> {
     /// recompiles), but the parsed declaration must not outlive the arena
     /// it borrows from.
     dynamic_signature_cache: FxHashMap<Arc<str>, Rc<ArgumentDeclaration<'static>>>,
+    /// Recycled positional argument buffers. Buffers are cleared by
+    /// `ArgumentResult::drop` before they return here, preserving Value drop
+    /// timing while avoiding repeated Vec allocations on callable paths.
+    argument_buffer_pool: Rc<RefCell<Vec<Vec<Value>>>>,
     /// Nesting depth of user-defined function/mixin/content-block invocations.
     /// Guards against stack overflow from unbounded recursion (e.g. a
     /// function that calls itself with no terminating `@if`); see
@@ -417,6 +421,7 @@ impl<'a> Visitor<'a> {
             canonicalize_cache: FxHashMap::default(),
             dir_listing_cache: RefCell::new(FxHashMap::default()),
             dynamic_signature_cache: FxHashMap::default(),
+            argument_buffer_pool: Rc::new(RefCell::new(Vec::new())),
             recursion_depth: 0,
             style_rule_recursion_depth: 0,
         }
@@ -2940,6 +2945,7 @@ impl<'a> Visitor<'a> {
 
             Ok(ArgumentResult {
                 positional: bound,
+                positional_pool: Some(Rc::clone(&visitor.argument_buffer_pool)),
                 named: SmallOrderedMap::default(),
                 separator: evaluated.separator,
                 span: evaluated.span,
@@ -4590,12 +4596,25 @@ impl<'a> Visitor<'a> {
         }
     }
 
+    fn take_argument_buffer(&mut self, capacity: usize) -> Vec<Value> {
+        let mut buffer = self
+            .argument_buffer_pool
+            .borrow_mut()
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(capacity));
+        if buffer.capacity() < capacity {
+            buffer.reserve(capacity - buffer.capacity());
+        }
+        buffer
+    }
+
     fn eval_args(
         &mut self,
         arguments: &ArgumentInvocation<'static>,
         span: Span,
     ) -> SassResult<ArgumentResult> {
-        let mut positional = Vec::with_capacity(arguments.positional.len());
+        let mut positional = self.take_argument_buffer(arguments.positional.len());
+        let positional_pool = Rc::clone(&self.argument_buffer_pool);
 
         for expr in arguments.positional {
             let val = self.visit_expr_ref(expr)?;
@@ -4615,6 +4634,7 @@ impl<'a> Visitor<'a> {
         if arguments.rest.is_none() {
             return Ok(ArgumentResult {
                 positional,
+                positional_pool: Some(Rc::clone(&positional_pool)),
                 named,
                 separator: ListSeparator::Undecided,
                 span,
@@ -4659,6 +4679,7 @@ impl<'a> Visitor<'a> {
         if arguments.keyword_rest.is_none() {
             return Ok(ArgumentResult {
                 positional,
+                positional_pool: Some(Rc::clone(&positional_pool)),
                 named,
                 separator,
                 span: arguments.span,
@@ -4676,6 +4697,7 @@ impl<'a> Visitor<'a> {
 
                 Ok(ArgumentResult {
                     positional,
+                    positional_pool: Some(Rc::clone(&positional_pool)),
                     named,
                     separator,
                     span: arguments.span,
@@ -4801,7 +4823,7 @@ impl<'a> Visitor<'a> {
 
                 let were_keywords_accessed = if let Some(rest_arg) = func.arguments().rest {
                     let rest = if !evaluated.positional.is_empty() {
-                        evaluated.positional
+                        mem::take(&mut evaluated.positional)
                     } else {
                         Vec::new()
                     };
@@ -4940,10 +4962,10 @@ impl<'a> Visitor<'a> {
                         }
                         result
                     }
-                    MaybeEvaledArguments::Evaled(args) => {
+                    MaybeEvaledArguments::Evaled(mut args) => {
                         has_named = !args.named.is_empty();
 
-                        args.positional
+                        mem::take(&mut args.positional)
                             .into_iter()
                             .map(|arg| arg.to_css_string(span, self.options.is_compressed()))
                             .collect::<SassResult<Vec<_>>>()?

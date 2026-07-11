@@ -130,6 +130,7 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                 }
                 let args = ArgumentResult {
                     positional: list,
+                    positional_pool: None,
                     named: SmallOrderedMap::default(),
                     separator: ListSeparator::Comma,
                     span,
