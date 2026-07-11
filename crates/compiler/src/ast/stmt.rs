@@ -118,7 +118,9 @@ pub struct AstWhile<'a> {
 pub struct AstVariableDecl<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
-    pub value: AstExpr<'a>,
+    /// Spanned so source maps can record the declaration-value span for the
+    /// `b: $var` provenance segment (dart's env-stored expression node).
+    pub value: Spanned<AstExpr<'a>>,
     pub is_guarded: bool,
     pub is_global: bool,
     pub span: Span,

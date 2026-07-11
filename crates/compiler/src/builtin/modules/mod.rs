@@ -405,6 +405,87 @@ impl Module {
         scope.mixins.get(name)
     }
 
+    /// The recorded declaration-value span for a variable visible through
+    /// this module — dart-sass's `Module.variableNodes` lookup, used only
+    /// for source maps. Resolution mirrors `get_var`: for `Environment`
+    /// modules local public members win over forwarded ones (the local map
+    /// is last in `new_env_with_upstream`'s `MergedMapView`, and later maps
+    /// shadow earlier ones); `Forwarded`/`Shadowed` check visibility through
+    /// their filtered view, then recurse with the prefix stripped. Builtin
+    /// variables have no declaration site, matching dart (whose builtin
+    /// modules have no `variableNodes`).
+    pub fn get_var_span(&self, name: Identifier) -> Option<Span> {
+        match self {
+            Self::Builtin { .. } => None,
+            Self::Environment { env, .. } => {
+                if name.is_public() && (*env.global_vars()).borrow().contains_key(&name) {
+                    return env.scopes.get_var_span_entry(name).flatten();
+                }
+
+                let forwarded = env.forwarded_modules.borrow();
+                for module in forwarded.iter().rev() {
+                    let m = (*module).borrow();
+                    if m.var_exists(name) {
+                        return m.get_var_span(name);
+                    }
+                }
+
+                None
+            }
+            Self::Forwarded(fwd) => {
+                if !self.scope_ref().variables.contains_key(name) {
+                    return None;
+                }
+
+                let inner_name = match &fwd.forward_rule.prefix {
+                    Some(prefix) => Identifier::from(name.as_str().strip_prefix(prefix.as_str())?),
+                    None => name,
+                };
+
+                fwd.inner.borrow().get_var_span(inner_name)
+            }
+            Self::Shadowed(shd) => {
+                if !self.scope_ref().variables.contains_key(name) {
+                    return None;
+                }
+
+                shd.inner.borrow().get_var_span(name)
+            }
+        }
+    }
+
+    /// Record the declaration-value span for a variable just written via
+    /// [`Self::update_var`] (source maps only). Mirrors `update_var`'s
+    /// destination choice; callers invoke it only after `update_var`
+    /// succeeded. No-op when the owning environment isn't span-tracking.
+    pub fn update_var_span(&mut self, name: Identifier, span: Span) {
+        match self {
+            Self::Builtin { .. } => {}
+            Self::Environment { env, .. } => {
+                for module in env.forwarded_modules.borrow().iter() {
+                    if module.borrow().var_exists(name) {
+                        module.borrow_mut().update_var_span(name, span);
+                        return;
+                    }
+                }
+
+                env.scopes.insert_var_span(0, name, span);
+            }
+            Self::Forwarded(fwd) => {
+                let inner_name = match &fwd.forward_rule.prefix {
+                    Some(prefix) => match name.as_str().strip_prefix(prefix.as_str()) {
+                        Some(stripped) => Identifier::from(stripped),
+                        None => return,
+                    },
+                    None => name,
+                };
+
+                fwd.inner.borrow_mut().update_var_span(inner_name, span);
+            }
+            Self::Shadowed(shd) => shd.inner.borrow_mut().update_var_span(name, span),
+        }
+    }
+
     pub fn update_var(&mut self, name: Spanned<Identifier>, value: Value) -> SassResult<()> {
         // For Environment modules, check forwarded modules first.
         // When a midstream module shadows an upstream variable (via @forward),
