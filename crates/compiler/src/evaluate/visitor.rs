@@ -318,10 +318,6 @@ pub struct Visitor<'a> {
     // todo: remove
     empty_span: Span,
     import_cache: FxHashMap<ImportKey, StyleSheet<'static>>,
-    /// As a simple heuristic, we don't cache the results of an import unless it
-    /// has been seen in the past. In the majority of cases, files are imported
-    /// at most once.
-    files_seen: FxHashSet<PathBuf>,
     /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
     /// flag). Avoids redundant importer calls and filesystem probing for the same import path
     /// from the same context without conflating files that share a directory.
@@ -411,7 +407,6 @@ impl<'a> Visitor<'a> {
             map,
             arena,
             import_cache: FxHashMap::default(),
-            files_seen: FxHashSet::default(),
             import_path_cache: FxHashMap::default(),
             canonicalize_cache: FxHashMap::default(),
             dir_listing_cache: RefCell::new(FxHashMap::default()),
@@ -694,11 +689,9 @@ impl<'a> Visitor<'a> {
     }
 
     /// The full set of files loaded during this compile via `@use`/
-    /// `@forward` (`self.modules`) and `@import` (`self.import_cache` plus
-    /// `self.files_seen`, which catches a file's *first* `@import` --
-    /// `import_cache` itself is only populated starting from a file's
-    /// *second* import, see `import_like_node`) -- independent of whether
-    /// any of those files contributed an emitted CSS mapping. Unlike
+    /// `@forward` (`self.modules`) and `@import` (`self.import_cache`) --
+    /// independent of whether any of those files contributed an emitted CSS
+    /// mapping. Unlike
     /// `SourceMapData::sources`, this includes `@use`d partials containing
     /// only variables/mixins/functions, which never produce a mapping.
     /// Deduplicated and sorted for a deterministic return order (none of
@@ -712,7 +705,6 @@ impl<'a> Visitor<'a> {
             ImportKey::Path(p) => Some(p.clone()),
             ImportKey::Url(_) => None,
         }));
-        files.extend(self.files_seen.iter().cloned());
         let mut files: Vec<PathBuf> = files.into_iter().collect();
         files.sort_unstable();
         files
@@ -2915,12 +2907,8 @@ impl<'a> Visitor<'a> {
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
 
-                if self.files_seen.contains(&name) {
-                    self.import_cache
-                        .insert(ImportKey::Path(name), style_sheet.clone());
-                } else {
-                    self.files_seen.insert(name);
-                }
+                self.import_cache
+                    .insert(ImportKey::Path(name), style_sheet.clone());
 
                 Ok(style_sheet)
             }
@@ -2955,13 +2943,10 @@ impl<'a> Visitor<'a> {
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
 
-                // Unlike `Path` imports (lazily cached only from a file's
-                // *second* import, see `files_seen` above), `Resolved`
-                // imports are always cached on first sight: the same
-                // canonical URL resolving to the same module is a
-                // correctness requirement (design doc §1.2, "same
-                // canonical URL -> same cached module"), not just a perf
-                // heuristic.
+                // Both Path and Resolved imports are cached on first sight:
+                // the same canonical URL resolving to the same module is a
+                // correctness requirement (design doc §1.2, "same canonical
+                // URL -> same cached module"), as well as a performance win.
                 self.import_cache.insert(key, style_sheet.clone());
 
                 Ok(style_sheet)
