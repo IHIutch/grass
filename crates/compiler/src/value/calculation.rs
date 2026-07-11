@@ -230,22 +230,22 @@ impl SassCalculation {
         let value = value.map(Self::simplify);
         let max = max.map(Self::simplify);
 
-        match (min.clone(), value.clone(), max.clone()) {
+        match (&min, &value, &max) {
             (
                 CalculationArg::Number(min),
                 Some(CalculationArg::Number(value)),
                 Some(CalculationArg::Number(max)),
             ) => {
-                if min.is_comparable_to(&value) && min.is_comparable_to(&max) {
+                if min.is_comparable_to(value) && min.is_comparable_to(max) {
                     if value.num <= min.num.convert(min.unit(), value.unit()) {
-                        return Ok(Value::Dimension(min));
+                        return Ok(Value::Dimension(min.clone()));
                     }
 
                     if value.num >= max.num.convert(max.unit(), value.unit()) {
-                        return Ok(Value::Dimension(max));
+                        return Ok(Value::Dimension(max.clone()));
                     }
 
-                    return Ok(Value::Dimension(value));
+                    return Ok(Value::Dimension(value.clone()));
                 }
             }
             _ => {}
