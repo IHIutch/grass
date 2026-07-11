@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     ffi::OsStr,
     fmt,
+    hash::{Hash, Hasher},
     iter::FromIterator,
     mem,
     path::{Path, PathBuf},
@@ -10,7 +11,7 @@ use std::{
 };
 
 use codemap::{CodeMap, Span, Spanned};
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 
 /// IndexSet using FxHash instead of SipHash for faster hashing.
 type FxIndexSet<V> = indexmap::IndexSet<V, FxBuildHasher>;
@@ -320,10 +321,11 @@ pub struct Visitor<'a> {
     import_cache: FxHashMap<ImportKey, Rc<StyleSheet<'static>>>,
     /// Memoized immutable builtin modules for this compilation.
     builtin_module_cache: FxHashMap<&'static str, Module>,
-    /// Cache for resolved import paths, keyed by (containing URL, requested path, for_import
-    /// flag). Avoids redundant importer calls and filesystem probing for the same import path
-    /// from the same context without conflating files that share a directory.
-    import_path_cache: FxHashMap<(PathBuf, PathBuf, bool), SassResult<Option<ImportSource>>>,
+    /// Cache for resolved import paths, bucketed by a hash of (containing URL, requested path,
+    /// for_import flag). Each bucket retains the full tuple for collision verification, so the
+    /// hit path avoids allocating either PathBuf.
+    import_path_cache:
+        FxHashMap<u64, Vec<(PathBuf, PathBuf, bool, SassResult<Option<ImportSource>>)>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
     /// Cache of directory listings, used to batch existence probes for many
@@ -2214,11 +2216,7 @@ impl<'a> Visitor<'a> {
         configuration: Option<Rc<RefCell<Configuration>>>,
         names_in_errors: bool,
         span: Span,
-        callback: impl Fn(
-            &mut Self,
-            Rc<RefCell<Module>>,
-            Rc<StyleSheet<'static>>,
-        ) -> SassResult<()>,
+        callback: impl Fn(&mut Self, Rc<RefCell<Module>>, Rc<StyleSheet<'static>>) -> SassResult<()>,
     ) -> SassResult<()> {
         let builtin_name = match url.to_string_lossy().as_ref() {
             "sass:color" => Some("sass:color"),
@@ -2416,18 +2414,32 @@ impl<'a> Visitor<'a> {
         span: Span,
     ) -> SassResult<Option<ImportSource>> {
         // Cache key must include the full containing URL because a custom importer can resolve
-        // the same requested path differently from two files in the same directory.
-        let cache_key = (
-            self.current_import_path.clone(),
-            path.to_path_buf(),
-            for_import,
-        );
-        if let Some(result) = self.import_path_cache.get(&cache_key) {
-            return result.clone();
+        // the same requested path differently from two files in the same directory. Hashing the
+        // borrowed inputs keeps the hit path allocation-free; the full tuple in each bucket
+        // verifies hash collisions without changing those semantics.
+        let mut hasher = FxHasher::default();
+        self.current_import_path.hash(&mut hasher);
+        path.hash(&mut hasher);
+        for_import.hash(&mut hasher);
+        let cache_hash = hasher.finish();
+        if let Some(entries) = self.import_path_cache.get(&cache_hash) {
+            for (cached_containing_url, cached_path, cached_for_import, result) in entries {
+                if cached_containing_url == &self.current_import_path
+                    && cached_path == path
+                    && *cached_for_import == for_import
+                {
+                    return result.clone();
+                }
+            }
         }
 
         let result = self.find_import_uncached(path, for_import, span);
-        self.import_path_cache.insert(cache_key, result.clone());
+        self.import_path_cache.entry(cache_hash).or_default().push((
+            self.current_import_path.clone(),
+            path.to_path_buf(),
+            for_import,
+            result.clone(),
+        ));
         result
     }
 
@@ -2923,9 +2935,11 @@ impl<'a> Visitor<'a> {
                 let old_is_use_allowed = self.flags.is_use_allowed();
                 self.flags.set(ContextFlags::IS_USE_ALLOWED, true);
 
-                let style_sheet = Rc::new(
-                    self.parse_file(Lexer::new_from_file(&file), &name, file.span.subspan(0, 0))?,
-                );
+                let style_sheet = Rc::new(self.parse_file(
+                    Lexer::new_from_file(&file),
+                    &name,
+                    file.span.subspan(0, 0),
+                )?);
 
                 self.flags
                     .set(ContextFlags::IS_USE_ALLOWED, old_is_use_allowed);
