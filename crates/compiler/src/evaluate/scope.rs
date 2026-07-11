@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use std::rc::Rc;
+use std::{cell::RefCell, mem};
 
 use rustc_hash::FxHashMap;
 
@@ -35,11 +35,15 @@ pub(crate) struct Scopes {
     pool: Rc<RefCell<ScopePool>>,
 }
 
+#[allow(clippy::type_complexity)]
 #[derive(Debug, Default)]
 struct ScopePool {
     variables: Vec<Rc<RefCell<FxHashMap<Identifier, Value>>>>,
     mixins: Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>>,
     functions: Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>,
+    variable_vecs: Vec<Vec<Rc<RefCell<FxHashMap<Identifier, Value>>>>>,
+    mixin_vecs: Vec<Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>>>,
+    function_vecs: Vec<Vec<Rc<RefCell<FxHashMap<Identifier, SassFunction>>>>>,
 }
 
 impl Scopes {
@@ -56,10 +60,20 @@ impl Scopes {
 
     pub fn new_closure(&self) -> Self {
         debug_assert_eq!(self.len(), self.variables.len());
+
+        let mut pool = self.pool.borrow_mut();
+        let mut variables = pool.variable_vecs.pop().unwrap_or_default();
+        let mut mixins = pool.mixin_vecs.pop().unwrap_or_default();
+        let mut functions = pool.function_vecs.pop().unwrap_or_default();
+        variables.extend(self.variables.iter().map(Rc::clone));
+        mixins.extend(self.mixins.iter().map(Rc::clone));
+        functions.extend(self.functions.iter().map(Rc::clone));
+        drop(pool);
+
         Self {
-            variables: self.variables.iter().map(Rc::clone).collect(),
-            mixins: self.mixins.iter().map(Rc::clone).collect(),
-            functions: self.functions.iter().map(Rc::clone).collect(),
+            variables,
+            mixins,
+            functions,
             last_variable_index: self.last_variable_index,
             pool: Rc::clone(&self.pool),
         }
@@ -174,6 +188,27 @@ impl Scopes {
     /// Direct access to mixin Vec for env.rs forward/import operations
     pub fn mixins_mut(&mut self) -> &mut Vec<Rc<RefCell<FxHashMap<Identifier, Mixin>>>> {
         &mut self.mixins
+    }
+}
+
+impl Drop for Scopes {
+    fn drop(&mut self) {
+        let mut pool = self.pool.borrow_mut();
+
+        self.variables.clear();
+        if pool.variable_vecs.len() < Self::MAX_POOL_SIZE {
+            pool.variable_vecs.push(mem::take(&mut self.variables));
+        }
+
+        self.mixins.clear();
+        if pool.mixin_vecs.len() < Self::MAX_POOL_SIZE {
+            pool.mixin_vecs.push(mem::take(&mut self.mixins));
+        }
+
+        self.functions.clear();
+        if pool.function_vecs.len() < Self::MAX_POOL_SIZE {
+            pool.function_vecs.push(mem::take(&mut self.functions));
+        }
     }
 }
 
