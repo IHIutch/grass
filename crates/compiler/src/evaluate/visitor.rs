@@ -604,16 +604,34 @@ impl<'a> Visitor<'a> {
                         }
                         for value in map.borrow_mut().values_mut() {
                             if let SassFunction::UserDefined(udf) = value {
-                                let closure_env = Rc::get_mut(&mut udf.env)
-                                    .expect("captured function environment shared during teardown");
-                                stack.append(&mut closure_env.global_modules);
-                                stack
-                                    .extend(closure_env.forwarded_modules.borrow().iter().cloned());
-                                stack.extend(closure_env.modules.borrow().0.values().cloned());
-                                stack.extend(closure_env.imported_modules.borrow().iter().cloned());
-                                if let Some(nested) = &closure_env.nested_forwarded_modules {
-                                    for inner in nested.borrow().iter() {
-                                        stack.extend(inner.borrow().iter().cloned());
+                                if let Some(closure_env) = Rc::get_mut(&mut udf.env) {
+                                    stack.append(&mut closure_env.global_modules);
+                                    stack.extend(
+                                        closure_env.forwarded_modules.borrow().iter().cloned(),
+                                    );
+                                    stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                    stack.extend(
+                                        closure_env.imported_modules.borrow().iter().cloned(),
+                                    );
+                                    if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
+                                    }
+                                } else {
+                                    // A Value can retain a second reference to this environment.
+                                    // Shared environments cannot be drained or cleared here without
+                                    // mutating that other owner, so retain the old behavior: push
+                                    // cloned module refs and leave the shared fields untouched.
+                                    stack.extend(udf.env.global_modules.iter().cloned());
+                                    stack
+                                        .extend(udf.env.forwarded_modules.borrow().iter().cloned());
+                                    stack.extend(udf.env.modules.borrow().0.values().cloned());
+                                    stack.extend(udf.env.imported_modules.borrow().iter().cloned());
+                                    if let Some(nested) = &udf.env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
                                     }
                                 }
                             }
@@ -626,16 +644,35 @@ impl<'a> Visitor<'a> {
                         }
                         for value in map.borrow_mut().values_mut() {
                             if let Mixin::UserDefined(_, closure_env, _) = value {
-                                let closure_env = Rc::get_mut(closure_env)
-                                    .expect("captured mixin environment shared during teardown");
-                                stack.append(&mut closure_env.global_modules);
-                                stack
-                                    .extend(closure_env.forwarded_modules.borrow().iter().cloned());
-                                stack.extend(closure_env.modules.borrow().0.values().cloned());
-                                stack.extend(closure_env.imported_modules.borrow().iter().cloned());
-                                if let Some(nested) = &closure_env.nested_forwarded_modules {
-                                    for inner in nested.borrow().iter() {
-                                        stack.extend(inner.borrow().iter().cloned());
+                                if let Some(closure_env) = Rc::get_mut(closure_env) {
+                                    stack.append(&mut closure_env.global_modules);
+                                    stack.extend(
+                                        closure_env.forwarded_modules.borrow().iter().cloned(),
+                                    );
+                                    stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                    stack.extend(
+                                        closure_env.imported_modules.borrow().iter().cloned(),
+                                    );
+                                    if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
+                                    }
+                                } else {
+                                    // See the function case above: clone refs from a shared
+                                    // environment and do not mutate or clear its fields.
+                                    stack.extend(closure_env.global_modules.iter().cloned());
+                                    stack.extend(
+                                        closure_env.forwarded_modules.borrow().iter().cloned(),
+                                    );
+                                    stack.extend(closure_env.modules.borrow().0.values().cloned());
+                                    stack.extend(
+                                        closure_env.imported_modules.borrow().iter().cloned(),
+                                    );
+                                    if let Some(nested) = &closure_env.nested_forwarded_modules {
+                                        for inner in nested.borrow().iter() {
+                                            stack.extend(inner.borrow().iter().cloned());
+                                        }
                                     }
                                 }
                             }
