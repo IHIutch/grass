@@ -523,7 +523,7 @@ impl Task for CompileStringTask {
             Some(list) if !list.is_empty() => importers::register_importers_async(opts, list),
             _ => opts,
         };
-        let source = self.source.clone();
+        let source = std::mem::take(&mut self.source);
         let url = self.url.take();
         catch(std::panic::AssertUnwindSafe(|| {
             match url.as_deref() {
