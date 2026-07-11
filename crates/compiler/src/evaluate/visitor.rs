@@ -1229,11 +1229,7 @@ impl<'a> Visitor<'a> {
                     let var_override = var_override.unwrap();
                     // dart stores the configured expression's node, so the
                     // provenance segment points into the `with (...)` clause.
-                    let decl_span = if self.options.source_map {
-                        var_override.configuration_span
-                    } else {
-                        None
-                    };
+                    let decl_span = var_override.assignment_span;
                     self.env.insert_var(
                         name,
                         None,
@@ -1393,11 +1389,20 @@ impl<'a> Visitor<'a> {
             .transpose()?
         {
             if !value.is_blank() || value.is_empty_list() || is_custom_property {
+                // dart maps every declaration value (`valueSpanForMap`); the
+                // same-line dedup in `record_mapping` is what keeps literal/
+                // arithmetic values invisible. Only a bare `$var` value pulls
+                // in the variable's stored declaration span.
+                let value_span_for_map = style
+                    .value
+                    .as_ref()
+                    .and_then(|s| self.provenance_span(&s.node, s.span));
                 self.add_child_to_current_parent(CssStmt::Style(Style {
                     property: InternedString::get_or_intern(&name),
                     value: Box::new(value),
                     declared_as_custom_property: is_custom_property,
                     property_span: style.span,
+                    value_span_for_map,
                 }));
             }
         }
@@ -1532,9 +1537,10 @@ impl<'a> Visitor<'a> {
             let value = self.visit_expr_ref(&variable.expr.node)?;
             let value = self.without_slash(value, || variable.expr.span)?;
 
+            let assignment_span = self.provenance_span(&variable.expr.node, variable.expr.span);
             new_values.insert(
                 variable.name.node,
-                ConfiguredValue::explicit(value, variable.expr.span),
+                ConfiguredValue::explicit(value, variable.expr.span, assignment_span),
             );
         }
 
@@ -2370,9 +2376,10 @@ impl<'a> Visitor<'a> {
             for var in use_rule.configuration {
                 let value = self.visit_expr_ref(&var.expr.node)?;
                 let value = self.without_slash(value, || var.expr.span)?;
+                let assignment_span = self.provenance_span(&var.expr.node, var.expr.span);
                 values.insert(
                     var.name.node,
-                    ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span)),
+                    ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span), assignment_span),
                 );
             }
 

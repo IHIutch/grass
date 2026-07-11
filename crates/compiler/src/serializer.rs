@@ -1752,6 +1752,15 @@ impl<'a> Serializer<'a> {
             self.buffer.push(b' ');
         }
 
+        // dart maps every declaration value (its `valueSpanForMap`, added
+        // right before the value is written); `record_mapping`'s same-line
+        // dedup drops it again unless the mapped span (a bare `$var`'s
+        // declaration site, or a value on its own line) is on a different
+        // source line than the property mapping above.
+        if let Some(span) = style.value_span_for_map {
+            self.record_mapping(span.low());
+        }
+
         if style.declared_as_custom_property {
             let start = self.buffer.len();
             self.in_custom_property = true;
@@ -2026,6 +2035,19 @@ impl<'a> Serializer<'a> {
         state.scan_pos = self.buffer.len();
 
         let loc = map.look_up_pos(src_pos);
+
+        // dart-sass's `SourceMapBuffer._addEntry` drops any entry whose
+        // source line AND generated line both match the previous entry's
+        // ("browsers don't care about the columns of entries") — lines only,
+        // no file comparison, matching dart exactly. This is what makes the
+        // per-declaration value mapping above invisible for same-line
+        // literal/arithmetic values.
+        if let Some(last) = state.mappings.last() {
+            if last.dst_line == state.dst_line && last.src_line == loc.position.line {
+                return;
+            }
+        }
+
         let src_file_idx = match state
             .sources
             .iter()
