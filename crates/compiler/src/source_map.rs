@@ -154,6 +154,49 @@ impl SourceMapData {
         out.push('}');
         out
     }
+
+    #[cfg(feature = "json-value")]
+    /// Build a Source Map v3 JSON value without serializing to an intermediate
+    /// string. The field selection matches [`Self::to_json`].
+    #[must_use]
+    pub fn to_json_value(&self, file: Option<&str>, embed_sources: bool) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        map.insert("version".to_owned(), serde_json::Value::from(3));
+        map.insert("sourceRoot".to_owned(), serde_json::Value::from(""));
+        map.insert(
+            "sources".to_owned(),
+            serde_json::Value::Array(
+                self.sources
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::from)
+                    .collect(),
+            ),
+        );
+        map.insert("names".to_owned(), serde_json::Value::Array(Vec::new()));
+        map.insert(
+            "mappings".to_owned(),
+            serde_json::Value::from(self.encoded_mappings.clone()),
+        );
+
+        if let Some(file) = file {
+            map.insert("file".to_owned(), serde_json::Value::from(file));
+        }
+
+        if embed_sources {
+            map.insert(
+                "sourcesContent".to_owned(),
+                serde_json::Value::Array(
+                    self.sources_content
+                        .iter()
+                        .map(|content| serde_json::Value::from(content.source().to_owned()))
+                        .collect(),
+                ),
+            );
+        }
+
+        serde_json::Value::Object(map)
+    }
 }
 
 /// Percent-encode `input` the way JavaScript's `encodeURI` does (verified
@@ -361,5 +404,19 @@ mod tests {
         assert!(!data.to_json(None, false).contains("sourcesContent"));
         let embedded = data.to_json(None, true);
         assert!(embedded.contains("\"sourcesContent\":[\"a { b: c; }\"]"));
+    }
+
+    #[cfg(feature = "json-value")]
+    #[test]
+    fn to_json_value_matches_json_serialization() {
+        let data = SourceMapData::new(
+            &[],
+            vec!["in.scss".to_owned()],
+            vec![test_file("in.scss", "a { b: c; }")],
+            vec![],
+        );
+        let serialized: serde_json::Value =
+            serde_json::from_str(&data.to_json(None, true)).unwrap();
+        assert_eq!(data.to_json_value(None, true), serialized);
     }
 }

@@ -12,7 +12,7 @@ rust-version = "1.88"
 crate-type = ["cdylib"]
 
 [dependencies]
-grass_compiler = { path = "../compiler", default-features = false, features = ["random", "custom-builtin-fns"] }
+grass_compiler = { path = "../compiler", default-features = false, features = ["random", "custom-builtin-fns", "json-value"] }
 napi = { version = "2", features = ["napi4", "serde-json"] }
 napi-derive = "2"
 mimalloc = { version = "0.1", default-features = false }
