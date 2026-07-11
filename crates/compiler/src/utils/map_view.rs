@@ -80,7 +80,7 @@ impl PrefixNameCache {
             return mapped;
         }
 
-        let mapped = Identifier::from(format!("{}{}", prefix, name));
+        let mapped = Identifier::from(format!("{prefix}{name}"));
         self.prefixed.borrow_mut().insert(name, mapped);
         mapped
     }
