@@ -466,6 +466,7 @@ impl<'a> Visitor<'a> {
             Some(listing) => listing
                 .probe_is_file(name)
                 .unwrap_or_else(|| self.options.fs.is_file(path)),
+            None if self.dir_known_absent(dir) => false,
             None => self.options.fs.is_file(path),
         }
     }
@@ -480,7 +481,30 @@ impl<'a> Visitor<'a> {
             Some(listing) => listing
                 .probe_is_dir(name)
                 .unwrap_or_else(|| self.options.fs.is_dir(path)),
+            None if self.dir_known_absent(dir) => false,
             None => self.options.fs.is_dir(path),
+        }
+    }
+
+    /// Whether `dir` is *provably* absent from already-cached directory
+    /// listings alone: some ancestor's listing shows `dir`'s next path
+    /// component doesn't exist in any case variant (the same
+    /// definite-absence standard as `DirListing::probe_is_dir`), which makes
+    /// every path below it absent too. Used when `dir_listing(dir)` returned
+    /// `None`, so candidate probes into directories that don't exist (the
+    /// common relative-resolution miss before load-path fallback) don't each
+    /// pay a filesystem check. Returns `false` whenever absence can't be
+    /// proven (unlistable-but-existing directories, symlinks, case-variant
+    /// matches) — callers must then fall back to a direct filesystem check,
+    /// exactly preserving prior behavior for those cases.
+    fn dir_known_absent(&self, dir: &Path) -> bool {
+        let (parent, name) = match (dir.parent(), dir.file_name()) {
+            (Some(parent), Some(name)) => (parent, name),
+            _ => return false,
+        };
+        match self.dir_listing(parent) {
+            Some(listing) => listing.probe_is_dir(name) == Some(false),
+            None => self.dir_known_absent(parent),
         }
     }
 
@@ -2746,13 +2770,24 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
+    /// Parses `path`, whose canonical form the caller has already computed
+    /// (`import_like_node` canonicalizes every resolved import for its cache
+    /// key), so the parser doesn't re-derive it with a second
+    /// `fs.canonicalize` walk.
     fn parse_file(
         &mut self,
         lexer: Lexer,
         path: &Path,
+        canonical_url: PathBuf,
         empty_span: Span,
     ) -> SassResult<StyleSheet<'static>> {
-        self.parse_file_with_syntax(lexer, path, empty_span, InputSyntax::for_path(path))
+        self.parse_file_with_syntax(
+            lexer,
+            path,
+            canonical_url,
+            empty_span,
+            InputSyntax::for_path(path),
+        )
     }
 
     /// Like `parse_file`, but takes an explicit `syntax` instead of
@@ -2763,19 +2798,18 @@ impl<'a> Visitor<'a> {
         &mut self,
         lexer: Lexer,
         path: &Path,
+        canonical_url: PathBuf,
         empty_span: Span,
         syntax: InputSyntax,
     ) -> SassResult<StyleSheet<'static>> {
+        let canonical_url = Some(canonical_url);
         let result = match syntax {
-            InputSyntax::Scss => {
-                ScssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
-            }
-            InputSyntax::Sass => {
-                SassParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
-            }
-            InputSyntax::Css => {
-                CssParser::new(lexer, self.options, empty_span, path, self.arena).__parse()
-            }
+            InputSyntax::Scss => ScssParser::new(lexer, self.options, empty_span, path, self.arena)
+                .__parse(canonical_url),
+            InputSyntax::Sass => SassParser::new(lexer, self.options, empty_span, path, self.arena)
+                .__parse(canonical_url),
+            InputSyntax::Css => CssParser::new(lexer, self.options, empty_span, path, self.arena)
+                .__parse(canonical_url),
         }?;
         // Safety: the arena lives for the entire compilation (stored in Visitor).
         // INVARIANT: the erased-'static StyleSheet must not outlive the Visitor's arena.
@@ -2938,6 +2972,7 @@ impl<'a> Visitor<'a> {
                 let style_sheet = Rc::new(self.parse_file(
                     Lexer::new_from_file(&file),
                     &name,
+                    name.clone(),
                     file.span.subspan(0, 0),
                 )?);
 
@@ -2973,6 +3008,7 @@ impl<'a> Visitor<'a> {
                 let style_sheet = Rc::new(self.parse_file_with_syntax(
                     Lexer::new_from_file(&file),
                     &synthetic_path,
+                    synthetic_path.clone(),
                     file.span.subspan(0, 0),
                     syntax,
                 )?);

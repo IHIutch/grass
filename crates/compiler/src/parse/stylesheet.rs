@@ -2,7 +2,7 @@ use std::{
     cell::Cell,
     ffi::OsString,
     mem,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -322,13 +322,21 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
     }
 
     // todo: rename
-    fn __parse(&mut self) -> SassResult<StyleSheet<'a>> {
+    //
+    // `canonical_url`, when provided, is the caller's already-computed
+    // canonical form of `self.path()` (e.g. the evaluator's cached
+    // `canonicalize` of an import it just resolved), used as the parsed
+    // stylesheet's `url` without re-deriving it through a second
+    // `fs.canonicalize` walk.
+    fn __parse(&mut self, canonical_url: Option<PathBuf>) -> SassResult<StyleSheet<'a>> {
         let mut style_sheet = StyleSheet::new(
             self.is_plain_css(),
-            self.options()
-                .fs
-                .canonicalize(self.path())
-                .unwrap_or_else(|_| self.path().to_path_buf()),
+            canonical_url.unwrap_or_else(|| {
+                self.options()
+                    .fs
+                    .canonicalize(self.path())
+                    .unwrap_or_else(|_| self.path().to_path_buf())
+            }),
         );
 
         // Allow a byte-order mark at the beginning of the document.
