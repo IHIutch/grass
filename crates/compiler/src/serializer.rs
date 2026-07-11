@@ -1771,6 +1771,10 @@ impl<'a> Serializer<'a> {
     /// Re-indent continuation lines in the buffer starting from `start` position.
     /// Matches dart-sass `_writeReindentedValue` / `_writeWithIndent` algorithm.
     fn reindent_buffer_from(&mut self, start: usize, name_col: usize) {
+        if !self.buffer[start..].contains(&b'\n') {
+            return;
+        }
+
         let value_bytes = self.buffer[start..].to_vec();
         let value_str = String::from_utf8_lossy(&value_bytes);
 
