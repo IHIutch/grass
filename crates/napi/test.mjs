@@ -107,6 +107,15 @@ assert.throws(() =>
   assert.equal(r.sourceMap.sources.length, 1);
   assert(r.sourceMap.sources[0].startsWith("data:;charset=utf-8,"));
   assert.equal(r.sourceMap.sourcesContent, undefined);
+  // Pinned from `npx sass@1.101.0`'s compileString(sourceMap) result for
+  // the same input: no CLI-only `file` or embedded-content keys.
+  assert.deepEqual(Object.keys(r.sourceMap).sort(), [
+    "mappings",
+    "names",
+    "sourceRoot",
+    "sources",
+    "version",
+  ]);
 }
 
 // sourceMapIncludeSources adds sourcesContent.
@@ -122,6 +131,37 @@ assert.throws(() =>
 {
   const r = await binding.compileStringAsync("a {\n  b: c;\n}\n", { sourceMap: true });
   assert.equal(r.sourceMap.mappings, "AAAA;EACE");
+}
+
+// A two-file source map is pinned end-to-end, including source ordering and
+// embedded source contents.
+{
+  const source = '@import "dep";\na { color: blue; }';
+  const r = binding.compileString(source, {
+    url: "my://entry.scss",
+    sourceMap: true,
+    sourceMapIncludeSources: true,
+    importer: {
+      canonicalize(url) {
+        return url === "dep" ? "my://dep.scss" : null;
+      },
+      load(canonicalUrl) {
+        assert.equal(canonicalUrl, "my://dep.scss");
+        return { contents: ".dep { color: red; }", syntax: "scss" };
+      },
+    },
+  });
+  assert.deepEqual(r.sourceMap, {
+    version: 3,
+    sourceRoot: "",
+    sources: ["my://dep.scss", "my://entry.scss"],
+    names: [],
+    mappings: "AAAA;EAAO;;;ACCP;EAAI",
+    sourcesContent: [
+      ".dep { color: red; }",
+      '@import "dep";\na { color: blue; }',
+    ],
+  });
 }
 
 // compile() against a real file on disk.

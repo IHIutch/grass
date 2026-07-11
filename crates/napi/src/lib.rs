@@ -183,10 +183,7 @@ fn source_map_result(
     map: Option<SourceMapData>,
     include_sources: bool,
 ) -> Option<serde_json::Value> {
-    map.map(|m| {
-        serde_json::from_str(&m.to_json(None, include_sources))
-            .expect("grass-generated source map JSON must always be valid")
-    })
+    map.map(|m| m.to_json_value(None, include_sources))
 }
 
 // `AssertUnwindSafe`/`UnwindSafe` bounds below are sound: these closures only

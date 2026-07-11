@@ -338,6 +338,7 @@ dependencies = [
  "rand",
  "rustc-hash",
  "ryu",
+ "serde_json",
  "stacker",
  "wasm-bindgen",
 ]
