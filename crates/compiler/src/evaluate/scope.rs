@@ -4,7 +4,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 fn new_scope_map<K, V>() -> FxHashMap<K, V> {
-    FxHashMap::with_capacity_and_hasher(4, Default::default())
+    FxHashMap::default()
 }
 
 use codemap::Spanned;
@@ -39,6 +39,7 @@ pub(crate) struct Scopes {
 impl Scopes {
     pub fn new() -> Self {
         Self {
+            // Globals stay lazy too; their three allocations are negligible, and this keeps one map-construction policy.
             variables: vec![Rc::new(RefCell::new(new_scope_map()))],
             mixins: vec![Rc::new(RefCell::new(new_scope_map()))],
             functions: vec![Rc::new(RefCell::new(new_scope_map()))],
