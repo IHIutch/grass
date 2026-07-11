@@ -237,6 +237,8 @@ enum ImportKey {
     Url(String),
 }
 
+type ImportPathCacheEntry = (PathBuf, PathBuf, bool, SassResult<Option<ImportSource>>);
+
 /// Evaluation context of the current execution
 #[derive(Debug)]
 pub struct Visitor<'a> {
@@ -324,8 +326,7 @@ pub struct Visitor<'a> {
     /// Cache for resolved import paths, bucketed by a hash of (containing URL, requested path,
     /// for_import flag). Each bucket retains the full tuple for collision verification, so the
     /// hit path avoids allocating either PathBuf.
-    import_path_cache:
-        FxHashMap<u64, Vec<(PathBuf, PathBuf, bool, SassResult<Option<ImportSource>>)>>,
+    import_path_cache: FxHashMap<u64, Vec<ImportPathCacheEntry>>,
     /// Cache for canonicalized paths to avoid repeated syscalls.
     canonicalize_cache: FxHashMap<PathBuf, PathBuf>,
     /// Cache of directory listings, used to batch existence probes for many
