@@ -2379,7 +2379,11 @@ impl<'a> Visitor<'a> {
                 let assignment_span = self.provenance_span(&var.expr.node, var.expr.span);
                 values.insert(
                     var.name.node,
-                    ConfiguredValue::explicit(value, var.name.span.merge(var.expr.span), assignment_span),
+                    ConfiguredValue::explicit(
+                        value,
+                        var.name.span.merge(var.expr.span),
+                        assignment_span,
+                    ),
                 );
             }
 

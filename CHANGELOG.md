@@ -18,6 +18,9 @@ called out explicitly where relevant.
 - emit UTF-16 code-unit columns in mappings, matching dart-sass/JS source map conventions
 - map `@media`, `@font-face`, `@keyframes`, and `@import` at-rules, in addition to declarations,
   selectors, and comments
+- map declaration values to their provenance (a bare `$var` value points at the variable's
+  declaration site, including through `@use`d modules — which also puts no-CSS-output modules in
+  `sources`), with dart-sass's same-line mapping dedup
 
 ## Deprecation warnings
 

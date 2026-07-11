@@ -421,11 +421,7 @@ pub struct ConfiguredValue {
 }
 
 impl ConfiguredValue {
-    pub fn explicit(
-        value: Value,
-        configuration_span: Span,
-        assignment_span: Option<Span>,
-    ) -> Self {
+    pub fn explicit(value: Value, configuration_span: Span, assignment_span: Option<Span>) -> Self {
         Self {
             value,
             configuration_span: Some(configuration_span),

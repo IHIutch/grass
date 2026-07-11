@@ -439,7 +439,9 @@ impl Environment {
                 if let Some(module_with_name) = module_with_name {
                     module_with_name.borrow_mut().update_var(name, value)?;
                     if let Some(span) = decl_span {
-                        module_with_name.borrow_mut().update_var_span(name.node, span);
+                        module_with_name
+                            .borrow_mut()
+                            .update_var_span(name.node, span);
                     }
                     return Ok(());
                 }
