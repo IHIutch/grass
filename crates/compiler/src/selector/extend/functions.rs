@@ -6,6 +6,12 @@ use super::super::{
     Combinator, ComplexSelector, ComplexSelectorComponent, CompoundSelector, Pseudo, SimpleSelector,
 };
 
+thread_local! {
+    static PARENT_SUPERSELECTOR_BASE: Rc<CompoundSelector> = Rc::new(CompoundSelector {
+        components: vec![SimpleSelector::Placeholder(String::new())],
+    });
+}
+
 /// Returns the contents of a `SelectorList` that matches only elements that are
 /// matched by both `complex_one` and `complex_two`.
 ///
@@ -775,16 +781,15 @@ fn complex_is_parent_superselector(
     if complex_one.len() > complex_two.len() {
         return false;
     }
-    let base = Rc::new(CompoundSelector {
-        components: vec![SimpleSelector::Placeholder(String::new())],
-    });
-    let mut one = complex_one.to_vec();
-    let mut two = complex_two.to_vec();
-    one.push(ComplexSelectorComponent::Compound(base.clone()));
-    two.push(ComplexSelectorComponent::Compound(base));
+    PARENT_SUPERSELECTOR_BASE.with(|base| {
+        let mut one = complex_one.to_vec();
+        let mut two = complex_two.to_vec();
+        one.push(ComplexSelectorComponent::Compound(base.clone()));
+        two.push(ComplexSelectorComponent::Compound(base.clone()));
 
-    ComplexSelector::new_transient(one, false)
-        .is_super_selector(&ComplexSelector::new_transient(two, false))
+        ComplexSelector::new_transient(one, false)
+            .is_super_selector(&ComplexSelector::new_transient(two, false))
+    })
 }
 
 /// Returns a list of all possible paths through the given lists.
