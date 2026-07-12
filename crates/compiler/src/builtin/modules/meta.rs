@@ -235,6 +235,10 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
         }
     };
     args.remove_positional(0);
+    // dart maps arguments forwarded through `meta.apply` to the `@include`
+    // rule itself, not to the apply call's argument expressions (verified vs
+    // sass 1.101.0).
+    args.degrade_spans_to_callable_node();
 
     let has_content = visitor.env.content.is_some();
 
@@ -267,6 +271,7 @@ fn apply(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult<()> {
                 MaybeEvaledArguments::Evaled(args),
                 mixin_def,
                 &env,
+                span,
                 span,
                 |mixin, visitor| {
                     visitor.with_content(content, |visitor| {

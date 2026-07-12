@@ -126,6 +126,7 @@ fn inner_hsl(
                     separator: ListSeparator::Comma,
                     span: args.span(),
                     touched: FxHashSet::default(),
+                    spans: None,
                 };
 
                 hsl_3_args(name, args, visitor)
@@ -554,6 +555,7 @@ fn global_grayscale(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResu
         separator: args.separator,
         span,
         touched: args.touched,
+        spans: None,
     };
     grayscale(new_args, visitor)
 }
