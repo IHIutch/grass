@@ -767,6 +767,173 @@ await probeConcurrency(16);
   assert.equal(res.css, "a {\n  b: purple;\n}\n");
 }
 
+// `nonCanonicalScheme` is a full-Importer hint: a declared scheme may not be
+// returned by canonicalize, while an undeclared scheme remains valid.
+// These messages and the context assertions are mirrored from the
+// sass@1.101.0 runtime probes (sync and async).
+{
+  const badOpts = {
+    importers: [
+      {
+        nonCanonicalScheme: "u",
+        canonicalize: () => "u:dep",
+        load: () => ({ contents: "a { b: c; }", syntax: "scss" }),
+      },
+    ],
+  };
+  assert.throws(
+    () => binding.compileString('@use "entry";', badOpts),
+    /Importer Instance of 'JSToDartImporter' canonicalized entry to u:dep, which uses a scheme declared as non-canonical\./,
+  );
+
+  const allowed = binding.compileString('@use "entry";', {
+    importers: [
+      {
+        nonCanonicalScheme: "u",
+        canonicalize: () => "x:dep",
+        load: () => ({ contents: "a { b: c; }", syntax: "scss" }),
+      },
+    ],
+  });
+  assert.equal(allowed.css, "a {\n  b: c;\n}\n");
+}
+
+// Sass passes containingUrl for unschemed relative loads, and for schemed
+// loads only when the scheme is declared non-canonical. Both string and array
+// hint forms are equivalent.
+for (const hint of ["u", ["u"]]) {
+  for (const [kind, nestedUrl, expectedWithHint, expectedWithoutHint] of [
+    ["schemed", "u:dep", "db:root", null],
+    ["unschemed", "dep", "db:root", "db:root"],
+  ]) {
+    for (const useHint of [false, true]) {
+      const seen = [];
+      const options = {
+        importers: [
+          {
+            ...(useHint ? { nonCanonicalScheme: hint } : {}),
+            canonicalize(url, context) {
+              seen.push({ url, containingUrl: context.containingUrl });
+              if (url === "entry") return "db:root";
+              if (url === nestedUrl) return "db:dep";
+              return null;
+            },
+            load(canonicalUrl) {
+              if (canonicalUrl === "db:root") {
+                return { contents: `@use "${nestedUrl}" as dep;`, syntax: "scss" };
+              }
+              return { contents: "a { b: c; }", syntax: "scss" };
+            },
+          },
+        ],
+      };
+      const result = binding.compileString('@use "entry" as root;', options);
+      assert.equal(result.css, "a {\n  b: c;\n}\n");
+      assert.deepEqual(seen, [
+        { url: "entry", containingUrl: null },
+        {
+          url: nestedUrl,
+          containingUrl: useHint ? expectedWithHint : expectedWithoutHint,
+        },
+      ]);
+    }
+  }
+}
+
+// Invalid scheme strings are rejected during option validation without a
+// Sass source span; lowercase letters, digits, `+`, `-`, and `.` are valid.
+for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
+  assert.throws(
+    () => binding.compileString("a { b: c; }", {
+      importers: [{ nonCanonicalScheme: invalid, canonicalize: () => null, load: () => null }],
+    }),
+    new RegExp(`${JSON.stringify(invalid).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} isn't a valid URL scheme`),
+  );
+}
+for (const valid of ["u0", "u+", "u-", "u.", "u0.a+b-"]) {
+  assert.doesNotThrow(() => binding.compileString("a { b: c; }", {
+    importers: [{ nonCanonicalScheme: valid, canonicalize: () => null, load: () => null }],
+  }));
+}
+assert.throws(() => binding.compileString("a { b: c; }", {
+  importers: [{ nonCanonicalScheme: 1, canonicalize: () => null, load: () => null }],
+}), /nonCanonicalScheme must be a string or list of strings/);
+assert.throws(() => binding.compileString("a { b: c; }", {
+  importers: [{ nonCanonicalScheme: ["u", "U"], canonicalize: () => null, load: () => null }],
+}), /"U" isn't a valid URL scheme/);
+assert.doesNotThrow(() => binding.compileString("a { b: c; }", {
+  importers: [{ nonCanonicalScheme: [], canonicalize: () => null, load: () => null }],
+}));
+
+// ASYNC: the same canonicalize-return validation, allowed scheme, context
+// matrix, string/array forms, and option validation apply to compileStringAsync.
+{
+  await assert.rejects(
+    withTimeout(binding.compileStringAsync('@use "entry";', {
+      importers: [{
+        nonCanonicalScheme: "u",
+        canonicalize: () => "u:dep",
+        load: () => ({ contents: "a { b: c; }", syntax: "scss" }),
+      }],
+    }), 10000, "async nonCanonicalScheme violation"),
+    /Importer Instance of 'JSToDartAsyncImporter' canonicalized entry to u:dep, which uses a scheme declared as non-canonical\./,
+  );
+
+  const allowed = await withTimeout(binding.compileStringAsync('@use "entry";', {
+    importers: [{
+      nonCanonicalScheme: "u",
+      canonicalize: () => "x:dep",
+      load: () => ({ contents: "a { b: c; }", syntax: "scss" }),
+    }],
+  }), 10000, "async allowed nonCanonicalScheme");
+  assert.equal(allowed.css, "a {\n  b: c;\n}\n");
+}
+
+for (const hint of ["u", ["u"]]) {
+  for (const [kind, nestedUrl, expectedWithHint, expectedWithoutHint] of [
+    ["schemed", "u:dep", "db:root", null],
+    ["unschemed", "dep", "db:root", "db:root"],
+  ]) {
+    for (const useHint of [false, true]) {
+      const seen = [];
+      const result = await withTimeout(binding.compileStringAsync('@use "entry" as root;', {
+        importers: [{
+          ...(useHint ? { nonCanonicalScheme: hint } : {}),
+          canonicalize(url, context) {
+            seen.push({ url, containingUrl: context.containingUrl });
+            if (url === "entry") return "db:root";
+            if (url === nestedUrl) return "db:dep";
+            return null;
+          },
+          load(canonicalUrl) {
+            if (canonicalUrl === "db:root") {
+              return { contents: `@use "${nestedUrl}" as dep;`, syntax: "scss" };
+            }
+            return { contents: "a { b: c; }", syntax: "scss" };
+          },
+        }],
+      }), 10000, `async nonCanonicalScheme ${kind}`);
+      assert.equal(result.css, "a {\n  b: c;\n}\n");
+      assert.deepEqual(seen, [
+        { url: "entry", containingUrl: null },
+        {
+          url: nestedUrl,
+          containingUrl: useHint ? expectedWithHint : expectedWithoutHint,
+        },
+      ]);
+    }
+  }
+}
+
+for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
+  assert.throws(
+    () => binding.compileStringAsync("a { b: c; }", {
+      importers: [{ nonCanonicalScheme: invalid, canonicalize: () => null, load: () => null }],
+    }),
+    new RegExp(`${JSON.stringify(invalid).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} isn't a valid URL scheme`),
+  );
+}
+
 // ASYNC: a throwing canonicalize/load surfaces as a clean rejection, never a
 // process abort (the risk napi's call_with_return_value would otherwise hit).
 {

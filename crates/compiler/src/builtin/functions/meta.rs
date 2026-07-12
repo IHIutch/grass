@@ -13,14 +13,17 @@ pub(crate) fn if_arguments<'a>(arena: &'a bumpalo::Bump) -> ArgumentDeclaration<
             Argument {
                 name: Identifier::from("condition"),
                 default: None,
+                default_span: None,
             },
             Argument {
                 name: Identifier::from("if-true"),
                 default: None,
+                default_span: None,
             },
             Argument {
                 name: Identifier::from("if-false"),
                 default: None,
+                default_span: None,
             },
         ]),
         rest: None,
@@ -424,6 +427,10 @@ pub(crate) fn call(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResul
     };
 
     args.remove_positional(0);
+    // dart maps arguments forwarded through `call()` to the `call(...)`
+    // expression itself, not to its argument expressions (verified vs
+    // sass 1.101.0).
+    args.degrade_spans_to_callable_node();
 
     visitor.run_function_callable_with_maybe_evaled(func, MaybeEvaledArguments::Evaled(args), span)
 }

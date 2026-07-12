@@ -7,7 +7,7 @@ fn new_scope_map<K, V>() -> FxHashMap<K, V> {
     FxHashMap::default()
 }
 
-use codemap::Spanned;
+use codemap::{Span, Spanned};
 
 use crate::{
     ast::Mixin,
@@ -33,6 +33,18 @@ pub(crate) struct Scopes {
     /// Shared by all closure scopes for one compilation. It contains only empty
     /// maps, so it cannot form an environment -> pool -> environment cycle.
     pool: Rc<RefCell<ScopePool>>,
+    /// Per-scope spans of each variable's declaration-value expression —
+    /// grass's equivalent of dart-sass's `Environment.variableNodes`, used
+    /// for the source-map second segment on `b: $var` declarations.
+    ///
+    /// `None` unless source maps are enabled (`enable_span_tracking`), so the
+    /// maps-off cost is a single never-taken branch at the few maintenance
+    /// sites; `get_var` and `insert_var` themselves are untouched. When
+    /// `Some`, the outer Vec stays in lockstep with `variables` (same length,
+    /// same sharing via `new_closure`). These maps never enter the
+    /// `ScopePool`; they hold only `Copy` spans, so dropping them cannot
+    /// re-enter the pool.
+    variable_spans: Option<Box<Vec<Rc<RefCell<FxHashMap<Identifier, Span>>>>>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -55,6 +67,20 @@ impl Scopes {
             functions: vec![Rc::new(RefCell::new(new_scope_map()))],
             last_variable_index: None,
             pool: Rc::new(RefCell::new(ScopePool::default())),
+            variable_spans: None,
+        }
+    }
+
+    /// Turn on declaration-span tracking (source maps only). Must be called
+    /// before any spans are recorded; scopes entered afterwards stay in sync.
+    pub fn enable_span_tracking(&mut self) {
+        if self.variable_spans.is_none() {
+            self.variable_spans = Some(Box::new(
+                self.variables
+                    .iter()
+                    .map(|_| Rc::new(RefCell::new(new_scope_map())))
+                    .collect(),
+            ));
         }
     }
 
@@ -76,6 +102,10 @@ impl Scopes {
             functions,
             last_variable_index: self.last_variable_index,
             pool: Rc::clone(&self.pool),
+            variable_spans: self
+                .variable_spans
+                .as_ref()
+                .map(|spans| Box::new(spans.iter().map(Rc::clone).collect())),
         }
     }
 
@@ -135,6 +165,9 @@ impl Scopes {
         self.variables.push(var);
         self.mixins.push(mixin);
         self.functions.push(func);
+        if let Some(spans) = &mut self.variable_spans {
+            spans.push(Rc::new(RefCell::new(new_scope_map())));
+        }
     }
 
     pub fn exit_scope(&mut self) {
@@ -167,6 +200,10 @@ impl Scopes {
                     pool.functions.push(scope);
                 }
             }
+        }
+
+        if let Some(spans) = &mut self.variable_spans {
+            spans.pop();
         }
 
         self.last_variable_index = None;
@@ -253,6 +290,40 @@ impl Scopes {
         }
 
         Err(("Undefined variable.", name.span).into())
+    }
+
+    /// Record the declaration-value span for a variable inserted at scope
+    /// `idx`. No-op unless span tracking is enabled (source maps on).
+    pub fn insert_var_span(&mut self, idx: usize, name: Identifier, span: Span) {
+        if let Some(spans) = &self.variable_spans {
+            spans[idx].borrow_mut().insert(name, span);
+        }
+    }
+
+    /// Record the declaration-value span for a variable inserted via
+    /// [`Self::insert_var_last`]. No-op unless span tracking is enabled.
+    pub fn insert_var_last_span(&mut self, name: Identifier, span: Span) {
+        if let Some(spans) = &self.variable_spans {
+            spans.last().unwrap().borrow_mut().insert(name, span);
+        }
+    }
+
+    /// Look up the recorded declaration-value span for `name`, resolving in
+    /// the same scope where a `get_var` for `name` would resolve.
+    ///
+    /// The outer `Option` is whether the variable exists in these scopes at
+    /// all (so callers can fall through to global modules exactly when
+    /// `get_var` would); the inner one is whether a span was recorded for it
+    /// (e.g. `Value::Null` pre-declarations never record one).
+    pub fn get_var_span_entry(&self, name: Identifier) -> Option<Option<Span>> {
+        let spans = self.variable_spans.as_ref()?;
+        for (idx, scope) in self.variables.iter().enumerate().rev() {
+            if scope.borrow().contains_key(&name) {
+                return Some(spans[idx].borrow().get(&name).copied());
+            }
+        }
+
+        None
     }
 
     pub fn var_exists(&self, name: Identifier) -> bool {

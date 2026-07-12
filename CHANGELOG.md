@@ -18,6 +18,13 @@ called out explicitly where relevant.
 - emit UTF-16 code-unit columns in mappings, matching dart-sass/JS source map conventions
 - map `@media`, `@font-face`, `@keyframes`, and `@import` at-rules, in addition to declarations,
   selectors, and comments
+- map declaration values to their provenance (a bare `$var` value points at the variable's
+  declaration site, including through `@use`d modules — which also puts no-CSS-output modules in
+  `sources`), with dart-sass's same-line mapping dedup
+- extend value provenance to argument bindings — a parameter used inside a mixin, function, or
+  `@content` block maps to the call-site argument expression, its default expression, or (for
+  rest arglists and `meta.apply`/`call()` forwarding) the invocation node, completing provenance
+  for every variable-binding form
 
 ## Deprecation warnings
 

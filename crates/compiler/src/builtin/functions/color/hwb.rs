@@ -134,6 +134,7 @@ pub(crate) fn hwb(mut args: ArgumentResult, visitor: &mut Visitor) -> SassResult
                     separator: ListSeparator::Comma,
                     span,
                     touched: FxHashSet::default(),
+                    spans: None,
                 };
 
                 hwb_inner(args, visitor)

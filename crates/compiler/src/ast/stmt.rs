@@ -118,7 +118,9 @@ pub struct AstWhile<'a> {
 pub struct AstVariableDecl<'a> {
     pub namespace: Option<Spanned<Identifier>>,
     pub name: Identifier,
-    pub value: AstExpr<'a>,
+    /// Spanned so source maps can record the declaration-value span for the
+    /// `b: $var` provenance segment (dart's env-stored expression node).
+    pub value: Spanned<AstExpr<'a>>,
     pub is_guarded: bool,
     pub is_global: bool,
     pub span: Span,
@@ -177,6 +179,9 @@ pub struct AstMixin<'a> {
 #[derive(Debug, Clone)]
 pub struct AstContentRule<'a> {
     pub args: ArgumentInvocation<'a>,
+    /// Span of the whole `@content` rule (dart binds a rest parameter of the
+    /// content block, and any argument without its own node, to this span).
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +197,10 @@ pub struct AstInclude<'a> {
     pub args: ArgumentInvocation<'a>,
     pub content: Option<AstContentBlock<'a>>,
     pub span: Span,
+    /// Span of the whole `@include` rule starting at the `@` (dart binds a
+    /// mixin's rest parameter, and any argument without its own node, to the
+    /// `IncludeRule` node — only the start position reaches the source map).
+    pub rule_span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -411,13 +420,19 @@ impl Configuration {
 pub struct ConfiguredValue {
     pub value: Value,
     pub configuration_span: Option<Span>,
+    /// Span of the configured expression itself (dart's `assignmentNode`),
+    /// stored as the variable's declaration span for source maps — distinct
+    /// from `configuration_span`, which spans the whole `$var: value` entry
+    /// for error reporting. Always `None` when source maps are off.
+    pub assignment_span: Option<Span>,
 }
 
 impl ConfiguredValue {
-    pub fn explicit(value: Value, configuration_span: Span) -> Self {
+    pub fn explicit(value: Value, configuration_span: Span, assignment_span: Option<Span>) -> Self {
         Self {
             value,
             configuration_span: Some(configuration_span),
+            assignment_span,
         }
     }
 
@@ -425,6 +440,7 @@ impl ConfiguredValue {
         Self {
             value,
             configuration_span: None,
+            assignment_span: None,
         }
     }
 }

@@ -797,3 +797,657 @@ fn import_passthrough_maps_to_url_token() {
     let map = std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap();
     assert!(map.contains("\"mappings\":\"AAAQ\""), "got: {map}");
 }
+
+// ---- Declaration value provenance (todo #225 / Plan 113) ----
+//
+// dart-sass emits a SECOND mapping segment for every declaration value
+// (`valueSpanForMap` in its serializer): for a bare `$var` value it points
+// at the variable's stored declaration-value span (the environment keeps
+// each variable's assigned expression node), for anything else at the value
+// expression's own span. `SourceMapBuffer._addEntry`'s same-line dedup
+// (drop an entry whose source line AND generated line both equal the
+// previous entry's) is what keeps same-line literal/arithmetic values
+// invisible. Ground truth for every test below: `npx sass@1.101.0 in.scss
+// out.css` on the same fixture, mappings compared byte-for-byte (decoded
+// positions transcribed into each test's comment).
+//
+// Argument bindings (mixin/function/@content parameters) are covered by the
+// "Argument-binding provenance" section at the bottom of this file (todo
+// #341 / Plan 115) — dart stores a node per bound argument, and grass
+// mirrors that via `ArgumentSpans` on the evaluated arguments.
+
+/// Runs the CLI on `files` (written into one tempdir), compiling
+/// `main.scss` -> `out.css`, and returns the raw `.map` JSON.
+fn compile_to_map(files: &[(&str, &str)], extra_args: &[&str]) -> String {
+    let tmp = tempfile::tempdir().unwrap();
+    for (name, contents) in files {
+        std::fs::write(tmp.path().join(name), contents).unwrap();
+    }
+
+    let mut args: Vec<&str> = extra_args.to_vec();
+    args.push("main.scss");
+    args.push("out.css");
+
+    let output = grass_cmd()
+        .current_dir(tmp.path())
+        .args(&args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    std::fs::read_to_string(tmp.path().join("out.css.map")).unwrap()
+}
+
+// `$v: c;\na {\n  b: $v;\n}` -> "AACA;EACE,GAFE": the anchor fixture. The
+// second segment maps generated 1:5 (after `b: `) to source 0:4 -- the `c`
+// in `$v: c;`, i.e. the declaration VALUE's span, not the `$v` name.
+#[test]
+fn bare_variable_value_maps_to_declaration_site() {
+    let map = compile_to_map(&[("main.scss", "$v: c;\na {\n  b: $v;\n}\n")], &[]);
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// Literal / arithmetic / function-call values emit no visible second
+// segment: their value span is on the same source line as the property, so
+// the same-line dedup drops it (mappings identical to pre-provenance).
+#[test]
+fn same_line_literal_values_emit_no_second_segment() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "$v: c;\na {\n  b: c;\n  d: 1px + 2px;\n  e: min(1px, 2px);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE;EACA;EACA\""),
+        "got: {map}"
+    );
+}
+
+// A NON-variable value on its own source line does get a second segment
+// (`a {\n  b:\n    c;\n}` -> value segment at source 2:4): dart maps every
+// declaration value; the dedup only hides the same-line ones.
+#[test]
+fn value_on_own_line_gets_second_segment() {
+    let map = compile_to_map(&[("main.scss", "a {\n  b:\n    c;\n}\n")], &[]);
+    assert!(
+        map.contains("\"mappings\":\"AAAA;EACE,GACE\""),
+        "got: {map}"
+    );
+}
+
+// Reassignment: the LAST assignment's value span wins (dart stores the
+// node at assignment time). `$v: c;\n$v: d;` -> segment points at the `d`.
+#[test]
+fn reassigned_variable_maps_to_last_assignment() {
+    let map = compile_to_map(&[("main.scss", "$v: c;\n$v: d;\na {\n  b: $v;\n}\n")], &[]);
+    assert!(
+        map.contains("\"mappings\":\"AAEA;EACE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// `!default` on an already-set variable keeps the FIRST declaration's span
+// (the guarded assignment never runs, so the stored node is untouched).
+#[test]
+fn guarded_reassignment_keeps_first_declaration_span() {
+    let map = compile_to_map(
+        &[("main.scss", "$v: c;\n$v: d !default;\na {\n  b: $v;\n}\n")],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAEA;EACE,GAHE\""),
+        "got: {map}"
+    );
+}
+
+// `!default` on an unset variable stores its own value span like a plain
+// declaration.
+#[test]
+fn guarded_first_declaration_stores_own_span() {
+    let map = compile_to_map(&[("main.scss", "$v: d !default;\na {\n  b: $v;\n}\n")], &[]);
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// Nested scopes: a local shadow wins -- the segment points at the inner
+// `$v: d;` (source 2:6), not the global declaration.
+#[test]
+fn shadowing_local_variable_maps_to_inner_declaration() {
+    let map = compile_to_map(
+        &[("main.scss", "$v: c;\na {\n  $v: d;\n  b: $v;\n}\n")],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EAEE,GADI\""),
+        "got: {map}"
+    );
+}
+
+// Variable chains collapse at assignment time: `$w: $v;` stores $v's
+// already-stored node, so `b: $w` maps all the way back to the original
+// `c` at source 0:4 (verified against dart, which does the same in
+// `setVariable(..., _expressionNode(node.expression))`).
+#[test]
+fn variable_chain_collapses_to_original_declaration() {
+    let map = compile_to_map(
+        &[("main.scss", "$v: c;\na {\n  $w: $v;\n  b: $w;\n}\n")],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EAEE,GAHE\""),
+        "got: {map}"
+    );
+}
+
+// Multi-file `@use`: the provenance segment reaches into the used module
+// (`_vars.scss` 0:4) -- and this is the ONLY way a no-CSS-output module
+// enters the `sources` array at all, fixing that divergence too.
+#[test]
+fn use_module_variable_maps_into_module_and_adds_source() {
+    let map = compile_to_map(
+        &[
+            ("main.scss", "@use \"vars\";\na {\n  b: vars.$v;\n}\n"),
+            ("_vars.scss", "$v: c;\n"),
+        ],
+        &[],
+    );
+    assert!(
+        map.contains("\"sources\":[\"main.scss\",\"_vars.scss\"]"),
+        "got: {map}"
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE,GCFE\""),
+        "got: {map}"
+    );
+}
+
+// `@use ... as *` resolves through global modules the same way.
+#[test]
+fn use_as_star_variable_maps_into_module() {
+    let map = compile_to_map(
+        &[
+            ("main.scss", "@use \"vars\" as *;\na {\n  b: $v;\n}\n"),
+            ("_vars.scss", "$v: c;\n"),
+        ],
+        &[],
+    );
+    assert!(
+        map.contains("\"sources\":[\"main.scss\",\"_vars.scss\"]"),
+        "got: {map}"
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE,GCFE\""),
+        "got: {map}"
+    );
+}
+
+// Namespaced reassignment (`vars.$v: q;`) updates the stored span through
+// the module, so the segment points at the `q` in the consumer file.
+#[test]
+fn namespaced_reassignment_updates_module_span() {
+    let map = compile_to_map(
+        &[
+            (
+                "main.scss",
+                "@use \"vars\";\nvars.$v: q;\na {\n  b: vars.$v;\n}\n",
+            ),
+            ("_vars.scss", "$v: c;\n"),
+        ],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAEA;EACE,GAFO\""),
+        "got: {map}"
+    );
+}
+
+// `@use ... with ($v: x)` stores the configured expression's span (the `x`
+// inside the with-clause, source 0:21), like dart's ConfiguredValue
+// assignmentNode -- distinct from the error-reporting configuration span.
+#[test]
+fn configured_variable_maps_to_with_clause_expression() {
+    let map = compile_to_map(
+        &[
+            (
+                "main.scss",
+                "@use \"cfg\" with ($v: x);\na {\n  b: cfg.$v;\n}\n",
+            ),
+            ("_cfg.scss", "$v: c !default;\n"),
+        ],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE,GAFmB\""),
+        "got: {map}"
+    );
+}
+
+// Builtin module variables have no declaration site: no second segment
+// (dart's builtin modules have no variableNodes; the fallback span dedups
+// away against the property's own line).
+#[test]
+fn builtin_module_variable_emits_no_second_segment() {
+    let map = compile_to_map(
+        &[("main.scss", "@use \"sass:math\";\na {\n  b: math.$pi;\n}\n")],
+        &[],
+    );
+    assert!(map.contains("\"mappings\":\"AACA;EACE\""), "got: {map}");
+}
+
+// Two uses of the same variable each get their own segment (different
+// generated lines, so the dedup keeps both), both pointing at the same
+// declaration site.
+#[test]
+fn repeated_variable_use_maps_each_declaration() {
+    let map = compile_to_map(
+        &[("main.scss", "$v: c;\na {\n  b: $v;\n  d: $v;\n}\n")],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA;EACE,GAFE;EAGF,GAHE\""),
+        "got: {map}"
+    );
+}
+
+// Same-line declaration and use: `$v: c; a { b: $v; }` on ONE source line.
+// The candidate second segment (source line 0) follows the property entry
+// (also source line 0, same generated line 1) -> dropped by the dedup,
+// exactly like dart.
+#[test]
+fn same_line_declaration_and_use_dedups_second_segment() {
+    let map = compile_to_map(&[("main.scss", "$v: c; a { b: $v; }\n")], &[]);
+    assert!(map.contains("\"mappings\":\"AAAO;EAAI\""), "got: {map}");
+}
+
+// `@each` binds its loop variables with the LIST expression as their node:
+// `b: $i` maps to `c, d` at source 0:12 in both unrolled copies.
+#[test]
+fn each_variable_maps_to_list_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@each $i in c, d {\n  a {\n    b: $i;\n  }\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACE;EACE,GAFQ;;;AACV;EACE,GAFQ\""),
+        "got: {map}"
+    );
+}
+
+// `@for` binds its loop variable with the FROM expression as its node:
+// `b: $i` maps to the `1` after "from" (source 0:13).
+#[test]
+fn for_variable_maps_to_from_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@for $i from 1 through 1 {\n  a {\n    b: $i;\n  }\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACE;EACE,GAFS\""),
+        "got: {map}"
+    );
+}
+
+// Compressed output exercises the dedup GLOBALLY (everything shares
+// generated line 0): entries survive only while their source lines keep
+// changing, byte-identical to dart's compressed map for the same fixture.
+#[test]
+fn compressed_output_dedups_by_line_like_dart() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "$v: c;\na {\n  b: $v;\n  d: e;\n}\nf {\n  g: h;\n}\n",
+        )],
+        &["--style", "compressed"],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AACA,EACE,EAFE,EAGF,IAEF,EACE\""),
+        "got: {map}"
+    );
+}
+
+// ---- Argument-binding provenance (todo #341 / Plan 115) ----
+//
+// dart-sass stores an expression node per bound mixin/function/@content
+// argument (`_ArgumentResults.positionalNodes`/`namedNodes` in _evaluate),
+// so `b: $arg` inside a callable maps to the call-site argument expression,
+// the parameter's default expression, or — for rest arglists and arguments
+// forwarded through `meta.apply`/`call()` — the invocation node itself.
+// Ground truth for every test below: `npx sass@1.101.0 in.scss out.css` on
+// the same fixture (2026-07-11), mappings compared byte-for-byte.
+
+// `@include m(c)` with `b: $arg` inside -> the value segment points at the
+// call-site `c` (source 4:13). This is reference probe p13 from Plan 113.
+#[test]
+fn mixin_positional_arg_maps_to_call_site_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m(c);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGW\""),
+        "got: {map}"
+    );
+}
+
+// Keyword form `@include m($arg: c)` -> the `c` (source 4:19).
+#[test]
+fn mixin_keyword_arg_maps_to_call_site_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m($arg: c);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGiB\""),
+        "got: {map}"
+    );
+}
+
+// Parameter bound to its DEFAULT (`@mixin m($arg: c)` called bare) -> the
+// `c` in the declaration (source 0:15).
+#[test]
+fn mixin_default_used_maps_to_default_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($arg: c) {\n  b: $arg;\n}\na {\n  @include m;\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GADa\""),
+        "got: {map}"
+    );
+}
+
+// Positional + keyword mix: `@include m(q, $arg: c)` -> the `c` (4:22).
+#[test]
+fn mixin_mixed_positional_and_keyword_arg() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($x, $arg: d) {\n  b: $arg;\n}\na {\n  @include m(q, $arg: c);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGoB\""),
+        "got: {map}"
+    );
+}
+
+// An argument that is itself a bare variable chain-collapses at bind time:
+// `@include m($v)` stores $v's own stored node, the `c` in `$v: c` (0:4).
+#[test]
+fn bare_variable_arg_chain_collapses_to_its_declaration() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "$v: c;\n@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m($v);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAIA;EAFE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// A rest arglist binds to the INVOCATION node: `b: $args` maps to the
+// `@include` rule start (4:2), not to any argument expression.
+#[test]
+fn mixin_rest_arg_binds_to_include_rule() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($args...) {\n  b: $args;\n}\na {\n  @include m(c);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGA\""),
+        "got: {map}"
+    );
+}
+
+// Control: an OUTER variable used inside a content block resolves through
+// the closure environment (Plan 113 machinery) -> `$v: c`'s value (0:4).
+#[test]
+fn content_block_outer_variable_maps_to_declaration() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "$v: c;\n@mixin m {\n  @content;\n}\na {\n  @include m {\n    b: $v;\n  }\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAIA;EAEI,GANA\""),
+        "got: {map}"
+    );
+}
+
+// `@content (c)` arguments bind exactly like mixin arguments: `b: $arg`
+// inside the `using ($arg)` block maps to the `c` in `@content (c)` (1:12).
+#[test]
+fn content_block_args_map_to_content_invocation() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m {\n  @content (c);\n}\na {\n  @include m using ($arg) {\n    b: $arg;\n  }\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAEI,GAJQ\""),
+        "got: {map}"
+    );
+}
+
+// A content block's REST parameter binds to the `@content` rule (1:2).
+#[test]
+fn content_rest_arg_binds_to_content_rule() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m {\n  @content (c);\n}\na {\n  @include m using ($args...) {\n    b: $args;\n  }\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAEI,GAJF\""),
+        "got: {map}"
+    );
+}
+
+// FUNCTION arguments get nodes too, observable via a `!global` assignment
+// of the parameter: the chain collapses to the call-site `c` in `f(c)`
+// (4:6).
+#[test]
+fn function_arg_provenance_via_global_assignment() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@function f($arg) {\n  $g: $arg !global;\n  @return null;\n}\n$x: f(c);\na {\n  b: $g;\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAKA;EACE,GAFI\""),
+        "got: {map}"
+    );
+}
+
+// A function's rest arglist binds to the CALL EXPRESSION (`f(c)`, 4:4).
+#[test]
+fn function_rest_arg_binds_to_call_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@function f($args...) {\n  $g: $args !global;\n  @return null;\n}\n$x: f(c);\na {\n  b: $g;\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAKA;EACE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// A default referencing an EARLIER parameter (`$arg: $x`) chain-collapses
+// through the already-bound `$x` to the call-site `c` (4:13) — identical
+// mappings to the plain positional probe.
+#[test]
+fn default_referencing_earlier_param_chain_collapses() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($x, $arg: $x) {\n  b: $arg;\n}\na {\n  @include m(c);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGW\""),
+        "got: {map}"
+    );
+}
+
+// A keyword argument expanded from a rest MAP maps to the rest expression's
+// stored node — `$m: (arg: c)` passed as `$m...` -> the map literal (0:4).
+#[test]
+fn keyword_from_rest_map_maps_to_rest_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "$m: (arg: c);\n@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m($m...);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAIA;EAFE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// A positional argument expanded from a rest LIST likewise maps to the rest
+// expression's stored node — `$l: (c,)` passed as `$l...` -> the list
+// literal (0:4).
+#[test]
+fn positional_from_rest_list_maps_to_rest_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "$l: (c,);\n@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m($l...);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAIA;EAFE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// Arguments forwarded through `meta.apply` lose their per-argument nodes in
+// dart — the binding maps to the `@include` rule itself (4:2), NOT to the
+// apply call's `c`.
+#[test]
+fn meta_apply_args_map_to_include_rule() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@use \"sass:meta\";\n@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include meta.apply(meta.get-mixin(\"m\"), c);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAIA;EAFE,GAGA\""),
+        "got: {map}"
+    );
+}
+
+// Arguments forwarded through `call()` likewise map to the `call(...)`
+// expression (4:4), observable via the `!global` trick.
+#[test]
+fn call_function_args_map_to_call_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@function f($arg) {\n  $g: $arg !global;\n  @return null;\n}\n$g: null;\n$x: call(get-function(\"f\"), c);\na {\n  b: $g;\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAMA;EACE,GAFE\""),
+        "got: {map}"
+    );
+}
+
+// Span-less AST literals still map exactly: a NUMBER default (`$arg: 10px`)
+// -> the `10px` in the declaration (0:15). This is why the parser records
+// `Argument::default_span` — `AstExpr::Number` carries no span of its own.
+#[test]
+fn number_default_maps_to_default_expression() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($arg: 10px) {\n  b: $arg;\n}\na {\n  @include m;\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GADa\""),
+        "got: {map}"
+    );
+}
+
+// ... and a NUMBER call-site argument -> the `10px` at the call site
+// (4:13), via `ArgumentInvocation::positional_spans`.
+#[test]
+fn number_positional_arg_maps_to_call_site() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m(10px);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGW\""),
+        "got: {map}"
+    );
+}
+
+// A LITERAL rest expression at the call site (`(c,)...`) maps to itself
+// (4:13), via `ArgumentInvocation::rest_span`.
+#[test]
+fn literal_rest_at_call_site_maps_to_itself() {
+    let map = compile_to_map(
+        &[(
+            "main.scss",
+            "@mixin m($arg) {\n  b: $arg;\n}\na {\n  @include m((c,)...);\n}\n",
+        )],
+        &[],
+    );
+    assert!(
+        map.contains("\"mappings\":\"AAGA;EAFE,GAGW\""),
+        "got: {map}"
+    );
+}

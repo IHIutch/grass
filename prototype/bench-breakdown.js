@@ -1,11 +1,12 @@
 // Time-breakdown benchmark: where does grass WASM's time actually go, relative
-// to native, napi, and sass-embedded? Instruments the fsCallbacks JS<->WASM
-// boundary (todo #155). No hyperfine (see CLAUDE.md/session notes) -- uses
+// to native, napi, and sass-embedded? The default WASM leg uses the shipped
+// pkg-publish surface; --diagnose-fs opts into the fsCallbacks JS<->WASM
+// boundary diagnostic (todo #155). No hyperfine (see CLAUDE.md/session notes) -- uses
 // plain Node timing loops with warmup + median/min/spread, matching the
 // methodology used for the native-binary numbers (each rep forks a fresh
 // process, same as hyperfine would).
 //
-// Usage: node bench-breakdown.js [uswds|bootstrap|all]
+// Usage: node bench-breakdown.js [uswds|bootstrap|all] [--diagnose-fs]
 import { createRequire } from "module";
 import { performance } from "perf_hooks";
 import { resolve, dirname } from "path";
@@ -23,6 +24,10 @@ const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const napi = require("../crates/napi/grass.darwin-arm64.node");
+// The package surface selects the native binding by default on this host. Set
+// the same switch a real WASM fallback user would use before importing it, so
+// this benchmark exercises pkg-publish/index.js rather than the raw internals.
+process.env.GRASS_FORCE_WASM = "1";
 const grassWasm = await import("../crates/lib/pkg-publish/index.js");
 // Raw wasm-bindgen internals (not the pkg-publish/index.js wrapper) so we can
 // swap in a call-counting fs shim.
@@ -34,6 +39,8 @@ initSync({ module: readFileSync(resolve(__dirname, "../crates/lib/pkg-publish/gr
 
 const GRASS_BIN = resolve(__dirname, "../target/release/grass");
 const NATIVE_OUT = resolve(__dirname, "_bench_native_out.css");
+const SURFACE_LABEL = "grass WASM (pkg-publish surface)";
+const DIAGNOSTIC_LABEL = "fs-boundary diagnostic (shimmed, NOT a surface number)";
 
 const N = 10; // reps per engine, matches the "several runs + median" instruction (no hyperfine)
 
@@ -150,7 +157,7 @@ function benchWorkload(key) {
       `  ${"sass-embedded".padEnd(24)} SKIPPED (not installed -- run \`npm install\` in prototype/ to enable this comparison)`
     );
   }
-  const wasmRes = runN("grass WASM", () =>
+  const wasmRes = runN(SURFACE_LABEL, () =>
     grassWasm.compileString(source, { loadPaths, quiet: true })
   );
   const napiRes = runN("grass napi-rs", () =>
@@ -171,78 +178,90 @@ function benchWorkload(key) {
     execFileSync(GRASS_BIN, nativeArgs, { stdio: "ignore" })
   );
 
-  // 3. Count fs calls in the WASM path for this workload.
-  let fsCallCount = 0;
-  const countingFs = {
-    is_file(path) {
-      fsCallCount++;
-      try {
-        return statSync(path).isFile();
-      } catch {
-        return false;
-      }
-    },
-    is_dir(path) {
-      fsCallCount++;
-      try {
-        return statSync(path).isDirectory();
-      } catch {
-        return false;
-      }
-    },
-    read(path) {
-      fsCallCount++;
-      return Array.from(readFileSync(path));
-    },
-    canonicalize(path) {
-      fsCallCount++;
-      return realpathSync(path);
-    },
-    resolve_first_existing(candidates) {
-      fsCallCount++;
-      for (const p of candidates) {
+  // 3. The old per-call counting shim is deliberately opt-in. It bypasses the
+  // batched directory-listing path used by pkg-publish/index.js and therefore
+  // cannot be reported as a surface timing or overhead number.
+  let diagnosticRes = null;
+  if (diagnoseFs) {
+    let fsCallCount = 0;
+    const countingFs = {
+      is_file(path) {
+        fsCallCount++;
         try {
-          if (statSync(p).isFile()) return p;
-        } catch {}
-      }
-      return null;
-    },
-  };
-  fsCallCount = 0;
-  rawWasmCompile(source, loadPaths, "expanded", true, false, false, countingFs);
-  const totalFsCalls = fsCallCount;
+          return statSync(path).isFile();
+        } catch {
+          return false;
+        }
+      },
+      is_dir(path) {
+        fsCallCount++;
+        try {
+          return statSync(path).isDirectory();
+        } catch {
+          return false;
+        }
+      },
+      read(path) {
+        fsCallCount++;
+        return Array.from(readFileSync(path));
+      },
+      canonicalize(path) {
+        fsCallCount++;
+        return realpathSync(path);
+      },
+      resolve_first_existing(candidates) {
+        fsCallCount++;
+        for (const p of candidates) {
+          try {
+            if (statSync(p).isFile()) return p;
+          } catch {}
+        }
+        return null;
+      },
+    };
+    try {
+      fsCallCount = 0;
+      rawWasmCompile(source, loadPaths, "expanded", true, false, false, countingFs);
+      const totalFsCalls = fsCallCount;
 
-  // 4. Measure fs call overhead in isolation (statSync on nonexistent paths,
-  // representative of the is_file/resolve_first_existing miss-heavy pattern
-  // that dominates import resolution).
-  const testPaths = [];
-  for (let i = 0; i < 100; i++)
-    testPaths.push(resolve(__dirname, `packages/nonexistent_${i}.scss`));
-  const fsStart = performance.now();
-  for (let rep = 0; rep < 100; rep++) {
-    for (const p of testPaths) {
-      try {
-        statSync(p);
-      } catch {}
+      // Measure fs call overhead in isolation (statSync on nonexistent paths,
+      // representative of the is_file/resolve_first_existing miss-heavy pattern
+      // that dominates import resolution).
+      const testPaths = [];
+      for (let i = 0; i < 100; i++)
+        testPaths.push(resolve(__dirname, `packages/nonexistent_${i}.scss`));
+      const fsStart = performance.now();
+      for (let rep = 0; rep < 100; rep++) {
+        for (const p of testPaths) {
+          try {
+            statSync(p);
+          } catch {}
+        }
+      }
+      const fsPerCall = (performance.now() - fsStart) / 10000; // 100*100 calls
+      diagnosticRes = {
+        totalFsCalls,
+        fsPerCall,
+        estFsOverhead: totalFsCalls * fsPerCall,
+      };
+    } catch (error) {
+      console.log(
+        `  ${DIAGNOSTIC_LABEL}: diagnostic leg unsupported for this workload (${String(
+          error?.message || error
+        ).split("\\n")[0]})`
+      );
     }
   }
-  const fsPerCall = (performance.now() - fsStart) / 10000; // 100*100 calls
 
   console.log(`\n--- ${name} Analysis ---\n`);
   console.log(`grass native (CLI, own process):   ${nativeRes.med.toFixed(0)}ms`);
   console.log(`grass napi-rs (in Node process):    ${napiRes.med.toFixed(0)}ms`);
-  console.log(`grass WASM (in Node process):        ${wasmRes.med.toFixed(0)}ms`);
+  console.log(`${SURFACE_LABEL.padEnd(36)} ${wasmRes.med.toFixed(0)}ms`);
   console.log(
     `sass-embedded (Dart VM, IPC):        ${
       sassRes ? `${sassRes.med.toFixed(0)}ms` : "SKIPPED (not installed)"
     }`
   );
-  console.log(``);
-  console.log(`WASM-JS boundary crossings:         ${totalFsCalls} fs calls per compilation`);
-  console.log(`Avg time per fs call (statSync):    ${(fsPerCall * 1000).toFixed(1)}µs`);
-  const estFsOverhead = totalFsCalls * fsPerCall;
-  console.log(`Estimated fs boundary overhead:     ${estFsOverhead.toFixed(1)}ms`);
-  console.log(``);
   const pureCompile = nativeRes.med;
   console.log(`--- Where time goes (grass napi-rs ${napiRes.med.toFixed(0)}ms) ---`);
   const nodeOverhead = napiRes.med - pureCompile;
@@ -256,34 +275,25 @@ function benchWorkload(key) {
       0
     )}ms (${((nodeOverhead / napiRes.med) * 100).toFixed(0)}%)`
   );
-  console.log(``);
-  console.log(`--- Where time goes (grass WASM ${wasmRes.med.toFixed(0)}ms) ---`);
-  const wasmOverhead = wasmRes.med - pureCompile;
-  const wasmExecOverhead = wasmOverhead - estFsOverhead;
-  console.log(
-    `  Pure Sass compilation (native CLI proxy): ~${pureCompile.toFixed(
-      0
-    )}ms (${((pureCompile / wasmRes.med) * 100).toFixed(0)}%)`
-  );
-  console.log(
-    `  WASM-JS fs boundary overhead:             ~${estFsOverhead.toFixed(
-      1
-    )}ms (${((estFsOverhead / wasmRes.med) * 100).toFixed(0)}%)`
-  );
-  console.log(
-    `  WASM execution overhead (residual):       ~${wasmExecOverhead.toFixed(
-      0
-    )}ms (${((wasmExecOverhead / wasmRes.med) * 100).toFixed(0)}%)`
-  );
+  if (diagnosticRes) {
+    const { totalFsCalls, fsPerCall, estFsOverhead } = diagnosticRes;
+    console.log(`\n--- ${DIAGNOSTIC_LABEL} ---\n`);
+    console.log(`${DIAGNOSTIC_LABEL}: ${totalFsCalls} fs calls per compilation`);
+    console.log(`Avg time per fs call (statSync):    ${(fsPerCall * 1000).toFixed(1)}µs`);
+    console.log(`Estimated fs boundary overhead:     ${estFsOverhead.toFixed(1)}ms`);
+    console.log(`These figures describe the shimmed diagnostic leg only; they are NOT surface numbers.`);
+  }
 
   try {
     unlinkSync(benchFile);
   } catch {}
 
-  return { name, nativeRes, napiRes, wasmRes, sassRes, totalFsCalls, estFsOverhead, wasmExecOverhead };
+  return { name, nativeRes, napiRes, wasmRes, sassRes, diagnosticRes };
 }
 
-const which = process.argv[2] || "all";
+const args = process.argv.slice(2);
+const diagnoseFs = args.includes("--diagnose-fs");
+const which = args.find((arg) => !arg.startsWith("--")) || "all";
 const keys = which === "all" ? Object.keys(WORKLOADS) : [which];
 for (const k of keys) {
   if (!WORKLOADS[k]) {

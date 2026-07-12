@@ -77,6 +77,10 @@ const result = compileString(
 console.log(result.css);
 ```
 
+Full importers may set `nonCanonicalScheme` to a lowercase scheme (or array of
+schemes) they promise never to return from `canonicalize`; Sass then supplies
+`containingUrl` for loads using those schemes.
+
 Set `sourceMap: true` to receive a source-map object rather than a JSON
 string. `sourceMapIncludeSources: true` additionally embeds the source text:
 

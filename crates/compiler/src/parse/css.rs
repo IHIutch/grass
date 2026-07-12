@@ -272,6 +272,11 @@ impl<'a> CssParser<'a> {
                     rest: None,
                     keyword_rest: None,
                     span: self.toks.span_from(before_args),
+                    // Plain-CSS invocations never bind Sass variables.
+                    positional_spans: &[],
+                    named_spans: &[],
+                    rest_span: None,
+                    keyword_rest_span: None,
                 },
                 span,
             }))
