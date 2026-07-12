@@ -3011,6 +3011,7 @@ impl<'a> Visitor<'a> {
                 separator: evaluated.separator,
                 span: evaluated.span,
                 touched: FxHashSet::default(),
+                spans: None,
             })
         })
     }
@@ -3217,6 +3218,7 @@ impl<'a> Visitor<'a> {
                 Rc::clone(&content),
                 &content.env,
                 span,
+                content_rule.span,
                 |content, visitor| {
                     let old_in_mixin = visitor.flags.in_mixin();
                     visitor.flags.set(ContextFlags::IN_MIXIN, false);
@@ -4272,13 +4274,21 @@ impl<'a> Visitor<'a> {
                     return Err(("Mixin doesn't accept a content block.", include_stmt.span).into());
                 }
 
-                let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
+                let args = self.eval_args(
+                    &include_stmt.args,
+                    include_stmt.name.span,
+                    include_stmt.rule_span,
+                )?;
                 mixin(args, self)?;
 
                 Ok(None)
             }
             Mixin::BuiltinWithContent(mixin) => {
-                let args = self.eval_args(&include_stmt.args, include_stmt.name.span)?;
+                let args = self.eval_args(
+                    &include_stmt.args,
+                    include_stmt.name.span,
+                    include_stmt.rule_span,
+                )?;
 
                 if let Some(content) = include_stmt.content.clone() {
                     let callable_content = Rc::new(CallableContentBlock {
@@ -4318,6 +4328,7 @@ impl<'a> Visitor<'a> {
                     mixin,
                     &env,
                     include_stmt.name.span,
+                    include_stmt.rule_span,
                     |mixin, visitor| {
                         visitor.with_content(callable_content, |visitor| {
                             for stmt in mixin.body.iter() {
@@ -4670,9 +4681,12 @@ impl<'a> Visitor<'a> {
         &mut self,
         args: MaybeEvaledArguments<'_, 'static>,
         span: Span,
+        callable_node_span: Span,
     ) -> SassResult<ArgumentResult> {
         match args {
-            MaybeEvaledArguments::Invocation(args) => self.eval_args(args, span),
+            MaybeEvaledArguments::Invocation(args) => {
+                self.eval_args(args, span, callable_node_span)
+            }
             MaybeEvaledArguments::Evaled(args) => Ok(args),
         }
     }
@@ -4681,6 +4695,24 @@ impl<'a> Visitor<'a> {
         &mut self,
         arguments: &ArgumentInvocation<'static>,
         span: Span,
+        callable_node_span: Span,
+    ) -> SassResult<ArgumentResult> {
+        // Monomorphized like `Environment::insert_var_impl` (Plan 113): the
+        // `REC = false` instantiation compiles every span-recording block out
+        // of the hottest call path — a runtime `options.source_map` test in
+        // the shared body measurably failed the maps-off instruction gate.
+        if self.options.source_map {
+            self.eval_args_impl::<true>(arguments, span, callable_node_span)
+        } else {
+            self.eval_args_impl::<false>(arguments, span, callable_node_span)
+        }
+    }
+
+    fn eval_args_impl<const REC: bool>(
+        &mut self,
+        arguments: &ArgumentInvocation<'static>,
+        span: Span,
+        callable_node_span: Span,
     ) -> SassResult<ArgumentResult> {
         let mut positional = Vec::with_capacity(arguments.positional.len());
 
@@ -4699,6 +4731,35 @@ impl<'a> Visitor<'a> {
             );
         }
 
+        // Provenance spans (dart's `positionalNodes`/`namedNodes`), computed
+        // after the values like dart does. With `REC = false` this and every
+        // use of `spans` below compile out entirely.
+        let mut spans = if REC {
+            let mut arg_spans = Box::new(ArgumentSpans {
+                positional: Vec::with_capacity(positional.len()),
+                named: FxHashMap::default(),
+                callable_node: callable_node_span,
+            });
+            for (i, expr) in arguments.positional.iter().enumerate() {
+                arg_spans.positional.push(
+                    arguments
+                        .positional_spans
+                        .get(i)
+                        .map(|s| self.provenance_span(expr, *s).unwrap_or(*s)),
+                );
+            }
+            for (i, (key, expr)) in arguments.named.iter().enumerate() {
+                if let Some(s) = arguments.named_spans.get(i) {
+                    arg_spans
+                        .named
+                        .insert(*key, self.provenance_span(expr, *s).unwrap_or(*s));
+                }
+            }
+            Some(arg_spans)
+        } else {
+            None
+        };
+
         if arguments.rest.is_none() {
             return Ok(ArgumentResult {
                 positional,
@@ -4706,21 +4767,48 @@ impl<'a> Visitor<'a> {
                 separator: ListSeparator::Undecided,
                 span,
                 touched: FxHashSet::default(),
+                spans,
             });
         }
 
         let rest_expr = arguments.rest.as_ref().unwrap();
         let rest = self.visit_expr_ref(rest_expr)?;
 
+        // dart's `restNodeForSpan`: every argument expanded from `$rest...`
+        // maps to the rest expression itself (chain-collapsed).
+        let rest_node_span = if REC {
+            spans.as_ref().map(|_| {
+                let s = arguments.rest_span.unwrap_or(arguments.span);
+                self.provenance_span(rest_expr, s).unwrap_or(s)
+            })
+        } else {
+            None
+        };
+
         let mut separator = ListSeparator::Undecided;
 
         match rest {
-            Value::Map(rest) => {
-                self.add_rest_map(&mut named, rest, || Self::expr_span(rest_expr, span))?
-            }
+            Value::Map(rest) => self.add_rest_map(
+                &mut named,
+                rest,
+                || Self::expr_span(rest_expr, span),
+                if REC {
+                    spans
+                        .as_deref_mut()
+                        .zip(rest_node_span)
+                        .map(|(sp, rest_span)| (&mut sp.named, rest_span))
+                } else {
+                    None
+                },
+            )?,
             Value::List(elems, list_separator, _) => {
                 for e in Rc::unwrap_or_clone(elems) {
                     positional.push(self.without_slash(e, || Self::expr_span(rest_expr, span))?);
+                    if REC {
+                        if let Some(sp) = &mut spans {
+                            sp.positional.push(rest_node_span);
+                        }
+                    }
                 }
                 separator = list_separator;
             }
@@ -4731,15 +4819,30 @@ impl<'a> Visitor<'a> {
                         key,
                         self.without_slash(value.clone(), || Self::expr_span(rest_expr, span))?,
                     );
+                    if REC {
+                        if let Some((sp, rest_span)) = spans.as_deref_mut().zip(rest_node_span) {
+                            sp.named.insert(key, rest_span);
+                        }
+                    }
                 }
 
                 for e in arglist.elems {
                     positional.push(self.without_slash(e, || Self::expr_span(rest_expr, span))?);
+                    if REC {
+                        if let Some(sp) = &mut spans {
+                            sp.positional.push(rest_node_span);
+                        }
+                    }
                 }
                 separator = arglist.separator;
             }
             _ => {
                 positional.push(self.without_slash(rest, || Self::expr_span(rest_expr, span))?);
+                if REC {
+                    if let Some(sp) = &mut spans {
+                        sp.positional.push(rest_node_span);
+                    }
+                }
             }
         }
 
@@ -4750,6 +4853,7 @@ impl<'a> Visitor<'a> {
                 separator,
                 span: arguments.span,
                 touched: FxHashSet::default(),
+                spans,
             });
         }
 
@@ -4757,9 +4861,28 @@ impl<'a> Visitor<'a> {
 
         match self.visit_expr_ref(keyword_rest_expr)? {
             Value::Map(keyword_rest) => {
-                self.add_rest_map(&mut named, keyword_rest, || {
-                    Self::expr_span(keyword_rest_expr, span)
-                })?;
+                let keyword_rest_node_span = if REC {
+                    spans.as_ref().map(|_| {
+                        let s = arguments.keyword_rest_span.unwrap_or(arguments.span);
+                        self.provenance_span(keyword_rest_expr, s).unwrap_or(s)
+                    })
+                } else {
+                    None
+                };
+
+                self.add_rest_map(
+                    &mut named,
+                    keyword_rest,
+                    || Self::expr_span(keyword_rest_expr, span),
+                    if REC {
+                        spans
+                            .as_deref_mut()
+                            .zip(keyword_rest_node_span)
+                            .map(|(sp, rest_span)| (&mut sp.named, rest_span))
+                    } else {
+                        None
+                    },
+                )?;
 
                 Ok(ArgumentResult {
                     positional,
@@ -4767,6 +4890,7 @@ impl<'a> Visitor<'a> {
                     separator,
                     span: arguments.span,
                     touched: FxHashSet::default(),
+                    spans,
                 })
             }
             v => Err((
@@ -4785,12 +4909,17 @@ impl<'a> Visitor<'a> {
         named: &mut SmallOrderedMap<Identifier, Value>,
         rest: SassMap,
         span: impl Fn() -> Span,
+        mut span_record: Option<(&mut FxHashMap<Identifier, Span>, Span)>,
     ) -> SassResult<()> {
         for (key, val) in rest {
             match key.node {
                 Value::String(text, ..) => {
                     let val = self.without_slash(val, &span)?;
-                    named.insert(Identifier::from(text.as_str()), val);
+                    let name = Identifier::from(text.as_str());
+                    named.insert(name, val);
+                    if let Some((named_spans, rest_span)) = &mut span_record {
+                        named_spans.insert(name, *rest_span);
+                    }
                 }
                 _ => {
                     return Err((
@@ -4816,6 +4945,7 @@ impl<'a> Visitor<'a> {
         func: F,
         env: &Environment,
         span: Span,
+        callable_node_span: Span,
         run: R,
     ) -> SassResult<V> {
         if self.recursion_depth >= MAX_CALLABLE_RECURSION_DEPTH {
@@ -4823,7 +4953,14 @@ impl<'a> Visitor<'a> {
         }
 
         self.recursion_depth += 1;
-        let result = self.run_user_defined_callable_inner(arguments, func, env, span, run);
+        let result = self.run_user_defined_callable_inner(
+            arguments,
+            func,
+            env,
+            span,
+            callable_node_span,
+            run,
+        );
         self.recursion_depth -= 1;
 
         result
@@ -4839,9 +4976,10 @@ impl<'a> Visitor<'a> {
         func: F,
         env: &Environment,
         span: Span,
+        callable_node_span: Span,
         run: R,
     ) -> SassResult<V> {
-        let mut evaluated = self.eval_maybe_args(arguments, span)?;
+        let mut evaluated = self.eval_maybe_args(arguments, span, callable_node_span)?;
 
         self.with_environment(env.new_closure(), |visitor| {
             visitor.with_scope(false, true, move |visitor| {
@@ -4856,12 +4994,37 @@ impl<'a> Visitor<'a> {
 
                 let positional_len = evaluated.positional.len();
 
+                // Bound-argument provenance (dart records a node per bound
+                // argument). `Some` only when source maps are on, so the
+                // maps-off cost here is one branch per bind loop.
+                let arg_spans = evaluated.spans.take();
+
                 // Drain positional args in forward order (O(n) total vs O(n²) from remove())
-                for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
-                    visitor
-                        .env
-                        .scopes_mut()
-                        .insert_var_last(declared_arguments[i].name, val);
+                match &arg_spans {
+                    None => {
+                        for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
+                            visitor
+                                .env
+                                .scopes_mut()
+                                .insert_var_last(declared_arguments[i].name, val);
+                        }
+                    }
+                    Some(spans) => {
+                        for (i, val) in evaluated.positional.drain(..min_len).enumerate() {
+                            let name = declared_arguments[i].name;
+                            visitor.env.scopes_mut().insert_var_last(name, val);
+                            let arg_span = spans
+                                .positional
+                                .get(i)
+                                .copied()
+                                .flatten()
+                                .unwrap_or(spans.callable_node);
+                            visitor
+                                .env
+                                .scopes_mut()
+                                .insert_var_last_span(name, arg_span);
+                        }
+                    }
                 }
 
                 // todo: better name for var
@@ -4873,15 +5036,41 @@ impl<'a> Visitor<'a> {
 
                 for argument in additional_declared_args {
                     let name = argument.name;
-                    let value = evaluated.named.shift_remove(&argument.name).map_or_else(
-                        || {
+                    let (value, arg_span) = match evaluated.named.shift_remove(&argument.name) {
+                        Some(value) => {
+                            let arg_span = arg_spans.as_ref().map(|spans| {
+                                spans
+                                    .named
+                                    .get(&name)
+                                    .copied()
+                                    .unwrap_or(spans.callable_node)
+                            });
+                            (value, arg_span)
+                        }
+                        None => {
                             let default = argument.default.as_ref().unwrap();
                             let v = visitor.visit_expr_ref(default)?;
-                            visitor.without_slash(v, || Self::expr_span(default, span))
-                        },
-                        SassResult::Ok,
-                    )?;
+                            let value =
+                                visitor.without_slash(v, || Self::expr_span(default, span))?;
+                            // dart maps a defaulted parameter to its default
+                            // expression (chain-collapsed; earlier parameters
+                            // are already bound and consultable here).
+                            let arg_span = arg_spans.as_ref().map(|spans| {
+                                let fallback = argument.default_span.unwrap_or(spans.callable_node);
+                                visitor
+                                    .provenance_span(default, fallback)
+                                    .unwrap_or(fallback)
+                            });
+                            (value, arg_span)
+                        }
+                    };
                     visitor.env.scopes_mut().insert_var_last(name, value);
+                    if let Some(arg_span) = arg_span {
+                        visitor
+                            .env
+                            .scopes_mut()
+                            .insert_var_last_span(name, arg_span);
+                    }
                 }
 
                 let num_named_args = evaluated.named.len();
@@ -4907,6 +5096,14 @@ impl<'a> Visitor<'a> {
                     ));
 
                     visitor.env.scopes_mut().insert_var_last(rest_arg, arg_list);
+                    // dart binds the rest arglist to the invocation node
+                    // (`@include` rule / call expression / `@content` rule).
+                    if let Some(spans) = &arg_spans {
+                        visitor
+                            .env
+                            .scopes_mut()
+                            .insert_var_last_span(rest_arg, spans.callable_node);
+                    }
 
                     Some(were_keywords_accessed)
                 } else {
@@ -4969,7 +5166,7 @@ impl<'a> Visitor<'a> {
     ) -> SassResult<Value> {
         match func {
             SassFunction::Builtin(func, _name) => {
-                let evaluated = self.eval_maybe_args(arguments, span)?;
+                let evaluated = self.eval_maybe_args(arguments, span, span)?;
                 let val = match &func.0 {
                     BuiltinFn::Static(f) => f(evaluated, self)?,
                     BuiltinFn::Dynamic { f, signature } => {
@@ -4980,21 +5177,28 @@ impl<'a> Visitor<'a> {
                 self.without_slash(val, || span)
             }
             SassFunction::UserDefined(UserDefinedFunction { function, env, .. }) => self
-                .run_user_defined_callable(arguments, function, &env, span, |function, visitor| {
-                    let old_in_mixin = visitor.flags.in_mixin();
-                    visitor.flags.set(ContextFlags::IN_MIXIN, false);
-                    for stmt in function.body.iter() {
-                        let result = visitor.visit_stmt_ref(stmt)?;
+                .run_user_defined_callable(
+                    arguments,
+                    function,
+                    &env,
+                    span,
+                    span,
+                    |function, visitor| {
+                        let old_in_mixin = visitor.flags.in_mixin();
+                        visitor.flags.set(ContextFlags::IN_MIXIN, false);
+                        for stmt in function.body.iter() {
+                            let result = visitor.visit_stmt_ref(stmt)?;
 
-                        if let Some(val) = result {
-                            visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
-                            return Ok(val);
+                            if let Some(val) = result {
+                                visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
+                                return Ok(val);
+                            }
                         }
-                    }
-                    visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
+                        visitor.flags.set(ContextFlags::IN_MIXIN, old_in_mixin);
 
-                    Err(("Function finished without @return.", span).into())
-                }),
+                        Err(("Function finished without @return.", span).into())
+                    },
+                ),
             SassFunction::Plain {
                 name,
                 original_name,
@@ -5597,7 +5801,7 @@ impl<'a> Visitor<'a> {
         // evaluation since rest values are already evaluated)
         if if_expr.0.rest.is_some() {
             let span = if_expr.0.span;
-            let mut args = self.eval_args(&if_expr.0, span)?;
+            let mut args = self.eval_args(&if_expr.0, span, span)?;
             args.max_args(3)?;
             let value = if args.get_err(0, "condition")?.is_truthy() {
                 args.get_err(1, "if-true")?

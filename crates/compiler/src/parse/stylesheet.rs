@@ -412,10 +412,15 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             self.whitespace()?;
 
             let mut default_value: Option<AstExpr<'a>> = None;
+            let mut default_span: Option<Span> = None;
 
             if self.scan_char(':') {
                 self.whitespace()?;
-                default_value = Some(self.parse_expression_until_comma(false)?.node);
+                let default = self.parse_expression_until_comma(false)?;
+                if self.options().source_map {
+                    default_span = Some(default.span);
+                }
+                default_value = Some(default.node);
             } else if self.scan_char('.') {
                 self.expect_char('.')?;
                 self.expect_char('.')?;
@@ -429,6 +434,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             arguments.push(Argument {
                 name,
                 default: default_value,
+                default_span,
             });
 
             if !named.insert(name) {
@@ -557,12 +563,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             ArgumentInvocation::empty(self.toks().current_span())
         };
 
+        let span = self.toks_mut().span_from(start);
+
         self.expect_statement_separator(Some("@content rule"))?;
 
         self.flags_mut().set(ContextFlags::FOUND_CONTENT_RULE, true);
 
         Ok(AstStmt::ContentRule(
-            self.arena().alloc(AstContentRule { args }),
+            self.arena().alloc(AstContentRule { args, span }),
         ))
     }
 
@@ -1247,7 +1255,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         Ok(ident)
     }
 
-    fn parse_include_rule(&mut self) -> SassResult<AstStmt<'a>> {
+    fn parse_include_rule(&mut self, start: usize) -> SassResult<AstStmt<'a>> {
         // In indented syntax, allow newline before mixin name
         let was_consuming_newlines = self.is_consuming_newlines();
         self.set_consume_newlines(true);
@@ -1329,6 +1337,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             args,
             content: content_block,
             span: name_span,
+            rule_span: self.toks_mut().span_from(start),
         })))
     }
 
@@ -2180,7 +2189,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             Some("function") => self.parse_function_rule(start),
             Some("if") => self.parse_if_rule(child),
             Some("import") => self.parse_import_rule(start),
-            Some("include") => self.parse_include_rule(),
+            Some("include") => self.parse_include_rule(start),
             Some("media") => self.parse_media_rule(start),
             Some("mixin") => self.parse_mixin_rule(start),
             // todo: support -moz-document
@@ -2218,7 +2227,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
 
                 self.flags_mut().set(ContextFlags::IS_USE_ALLOWED, false);
-                self.parse_include_rule()
+                self.parse_include_rule(start)
             }
             Some(Token { kind: '=', .. }) => {
                 if !self.is_indented() {
@@ -2771,6 +2780,14 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
         let mut positional = Vec::new();
         let mut named = SmallOrderedMap::default();
 
+        // Argument-expression spans feed source-map provenance for bound
+        // parameters; maps-off they are never read, so don't collect them.
+        let track_spans = self.options().source_map;
+        let mut positional_spans = Vec::new();
+        let mut named_spans = Vec::new();
+        let mut rest_span: Option<Span> = None;
+        let mut keyword_rest_span: Option<Span> = None;
+
         let mut rest: Option<AstExpr<'a>> = None;
         let mut keyword_rest: Option<AstExpr<'a>> = None;
         let mut emitted_rest_deprecation = false;
@@ -2804,14 +2821,23 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
 
                 named.insert(name.node, value.node);
+                if track_spans {
+                    named_spans.push(value.span);
+                }
             } else if self.scan_char('.') {
                 self.expect_char('.')?;
                 self.expect_char('.')?;
 
                 if rest.is_none() {
                     rest = Some(expression.node);
+                    if track_spans {
+                        rest_span = Some(expression.span);
+                    }
                 } else {
                     keyword_rest = Some(expression.node);
+                    if track_spans {
+                        keyword_rest_span = Some(expression.span);
+                    }
                     self.whitespace()?;
                     self.scan_char(',');
                     self.whitespace()?;
@@ -2836,6 +2862,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                 }
 
                 positional.push(expression.node);
+                if track_spans {
+                    positional_spans.push(expression.span);
+                }
             }
 
             self.whitespace()?;
@@ -2857,6 +2886,9 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
                     ),
                     self.toks().current_span(),
                 ));
+                if track_spans {
+                    positional_spans.push(self.toks().current_span());
+                }
                 break;
             }
         }
@@ -2870,6 +2902,10 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             rest,
             keyword_rest,
             span: self.toks_mut().span_from(start),
+            positional_spans: self.arena().alloc_slice_fill_iter(positional_spans),
+            named_spans: self.arena().alloc_slice_fill_iter(named_spans),
+            rest_span,
+            keyword_rest_span,
         })
     }
 
@@ -3119,7 +3155,7 @@ pub(crate) trait StylesheetParser<'a>: BaseParser + Sized {
             "error" => self.parse_error_rule(),
             "for" => self.parse_for_rule(Self::parse_declaration_child),
             "if" => self.parse_if_rule(Self::parse_declaration_child),
-            "include" => self.parse_include_rule(),
+            "include" => self.parse_include_rule(start),
             "warn" => self.parse_warn_rule(),
             "while" => self.parse_while_rule(Self::parse_declaration_child),
             _ => self.parse_disallowed_at_rule(start),

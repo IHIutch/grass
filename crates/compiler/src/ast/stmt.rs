@@ -179,6 +179,9 @@ pub struct AstMixin<'a> {
 #[derive(Debug, Clone)]
 pub struct AstContentRule<'a> {
     pub args: ArgumentInvocation<'a>,
+    /// Span of the whole `@content` rule (dart binds a rest parameter of the
+    /// content block, and any argument without its own node, to this span).
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +197,10 @@ pub struct AstInclude<'a> {
     pub args: ArgumentInvocation<'a>,
     pub content: Option<AstContentBlock<'a>>,
     pub span: Span,
+    /// Span of the whole `@include` rule starting at the `@` (dart binds a
+    /// mixin's rest parameter, and any argument without its own node, to the
+    /// `IncludeRule` node — only the start position reaches the source map).
+    pub rule_span: Span,
 }
 
 #[derive(Debug, Clone)]

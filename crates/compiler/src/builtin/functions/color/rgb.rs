@@ -426,6 +426,7 @@ fn inner_rgb(
                         separator: ListSeparator::Comma,
                         span,
                         touched: FxHashSet::default(),
+                        spans: None,
                     };
 
                     inner_rgb_3_arg(name, args, visitor)

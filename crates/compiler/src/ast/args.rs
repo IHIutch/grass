@@ -1,7 +1,7 @@
 use std::{iter::Iterator, mem};
 
 use codemap::{Span, Spanned};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     common::{Identifier, ListSeparator, NamedArgsView, SmallOrderedMap},
@@ -16,6 +16,9 @@ use super::AstExpr;
 pub struct Argument<'a> {
     pub name: Identifier,
     pub default: Option<AstExpr<'a>>,
+    /// Span of `default`, recorded only when source maps are enabled (dart
+    /// maps a parameter bound to its default at the default expression).
+    pub default_span: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +129,14 @@ pub struct ArgumentInvocation<'a> {
     pub(crate) rest: Option<AstExpr<'a>>,
     pub(crate) keyword_rest: Option<AstExpr<'a>>,
     pub(crate) span: Span,
+    /// Spans of the `positional`/`named` argument expressions, recorded only
+    /// when source maps are enabled; empty slices otherwise (and on
+    /// plain-CSS invocations, which never bind Sass variables). When
+    /// non-empty they are parallel to `positional`/`named`.
+    pub(crate) positional_spans: &'a [Span],
+    pub(crate) named_spans: &'a [Span],
+    pub(crate) rest_span: Option<Span>,
+    pub(crate) keyword_rest_span: Option<Span>,
 }
 
 impl<'a> ArgumentInvocation<'a> {
@@ -136,6 +147,10 @@ impl<'a> ArgumentInvocation<'a> {
             rest: None,
             keyword_rest: None,
             span,
+            positional_spans: &[],
+            named_spans: &[],
+            rest_span: None,
+            keyword_rest_span: None,
         }
     }
 }
@@ -155,6 +170,23 @@ pub(crate) enum MaybeEvaledArguments<'b, 'a> {
     Evaled(ArgumentResult),
 }
 
+/// Provenance spans for evaluated arguments — grass's equivalent of
+/// dart-sass's `_ArgumentResults.positionalNodes`/`namedNodes` plus the
+/// `nodeWithSpan` the callable was invoked with. Only constructed when
+/// source maps are enabled; builtins and maps-off compilation carry `None`
+/// in [`ArgumentResult::spans`] and never touch this.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentSpans {
+    /// Parallel to `ArgumentResult::positional` (`None` entries mean "no
+    /// span known"; the binder falls back to `callable_node`).
+    pub positional: Vec<Option<Span>>,
+    pub named: FxHashMap<Identifier, Span>,
+    /// Span of the node the callable was invoked from (`@include` rule,
+    /// function-call expression, or `@content` rule) — dart binds the rest
+    /// arglist and any argument without its own node to this span.
+    pub callable_node: Span,
+}
+
 /// Function arguments that have been evaluated
 ///
 /// Arguments may be passed either positionally or by name. Positional arguments
@@ -167,6 +199,8 @@ pub struct ArgumentResult {
     pub(crate) span: Span,
     // todo: hack
     pub(crate) touched: FxHashSet<usize>,
+    /// `None` unless source maps are enabled (see [`ArgumentSpans`]).
+    pub(crate) spans: Option<Box<ArgumentSpans>>,
 }
 
 impl ArgumentResult {
@@ -277,9 +311,24 @@ impl ArgumentResult {
 
     pub(crate) fn remove_positional(&mut self, position: usize) -> Option<Value> {
         if self.positional.len() > position {
+            if let Some(spans) = &mut self.spans {
+                if spans.positional.len() > position {
+                    spans.positional.remove(position);
+                }
+            }
             Some(self.positional.remove(position))
         } else {
             None
+        }
+    }
+
+    /// Forwarding through `meta.apply`/`call()` loses per-argument nodes in
+    /// dart-sass — bound arguments map to the invocation itself (verified vs
+    /// sass 1.101.0). Drop the per-arg spans and keep only `callable_node`.
+    pub(crate) fn degrade_spans_to_callable_node(&mut self) {
+        if let Some(spans) = &mut self.spans {
+            spans.positional.clear();
+            spans.named.clear();
         }
     }
 
