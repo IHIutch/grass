@@ -4697,6 +4697,23 @@ impl<'a> Visitor<'a> {
         span: Span,
         callable_node_span: Span,
     ) -> SassResult<ArgumentResult> {
+        // Monomorphized like `Environment::insert_var_impl` (Plan 113): the
+        // `REC = false` instantiation compiles every span-recording block out
+        // of the hottest call path — a runtime `options.source_map` test in
+        // the shared body measurably failed the maps-off instruction gate.
+        if self.options.source_map {
+            self.eval_args_impl::<true>(arguments, span, callable_node_span)
+        } else {
+            self.eval_args_impl::<false>(arguments, span, callable_node_span)
+        }
+    }
+
+    fn eval_args_impl<const REC: bool>(
+        &mut self,
+        arguments: &ArgumentInvocation<'static>,
+        span: Span,
+        callable_node_span: Span,
+    ) -> SassResult<ArgumentResult> {
         let mut positional = Vec::with_capacity(arguments.positional.len());
 
         for expr in arguments.positional {
@@ -4715,9 +4732,9 @@ impl<'a> Visitor<'a> {
         }
 
         // Provenance spans (dart's `positionalNodes`/`namedNodes`), computed
-        // after the values like dart does. Maps-off this is one never-taken
-        // branch and a `None` field.
-        let mut spans = if self.options.source_map {
+        // after the values like dart does. With `REC = false` this and every
+        // use of `spans` below compile out entirely.
+        let mut spans = if REC {
             let mut arg_spans = Box::new(ArgumentSpans {
                 positional: Vec::with_capacity(positional.len()),
                 named: FxHashMap::default(),
@@ -4759,10 +4776,14 @@ impl<'a> Visitor<'a> {
 
         // dart's `restNodeForSpan`: every argument expanded from `$rest...`
         // maps to the rest expression itself (chain-collapsed).
-        let rest_node_span = spans.as_ref().map(|_| {
-            let s = arguments.rest_span.unwrap_or(arguments.span);
-            self.provenance_span(rest_expr, s).unwrap_or(s)
-        });
+        let rest_node_span = if REC {
+            spans.as_ref().map(|_| {
+                let s = arguments.rest_span.unwrap_or(arguments.span);
+                self.provenance_span(rest_expr, s).unwrap_or(s)
+            })
+        } else {
+            None
+        };
 
         let mut separator = ListSeparator::Undecided;
 
@@ -4771,16 +4792,22 @@ impl<'a> Visitor<'a> {
                 &mut named,
                 rest,
                 || Self::expr_span(rest_expr, span),
-                spans
-                    .as_deref_mut()
-                    .zip(rest_node_span)
-                    .map(|(sp, rest_span)| (&mut sp.named, rest_span)),
+                if REC {
+                    spans
+                        .as_deref_mut()
+                        .zip(rest_node_span)
+                        .map(|(sp, rest_span)| (&mut sp.named, rest_span))
+                } else {
+                    None
+                },
             )?,
             Value::List(elems, list_separator, _) => {
                 for e in Rc::unwrap_or_clone(elems) {
                     positional.push(self.without_slash(e, || Self::expr_span(rest_expr, span))?);
-                    if let Some(sp) = &mut spans {
-                        sp.positional.push(rest_node_span);
+                    if REC {
+                        if let Some(sp) = &mut spans {
+                            sp.positional.push(rest_node_span);
+                        }
                     }
                 }
                 separator = list_separator;
@@ -4792,23 +4819,29 @@ impl<'a> Visitor<'a> {
                         key,
                         self.without_slash(value.clone(), || Self::expr_span(rest_expr, span))?,
                     );
-                    if let Some((sp, rest_span)) = spans.as_deref_mut().zip(rest_node_span) {
-                        sp.named.insert(key, rest_span);
+                    if REC {
+                        if let Some((sp, rest_span)) = spans.as_deref_mut().zip(rest_node_span) {
+                            sp.named.insert(key, rest_span);
+                        }
                     }
                 }
 
                 for e in arglist.elems {
                     positional.push(self.without_slash(e, || Self::expr_span(rest_expr, span))?);
-                    if let Some(sp) = &mut spans {
-                        sp.positional.push(rest_node_span);
+                    if REC {
+                        if let Some(sp) = &mut spans {
+                            sp.positional.push(rest_node_span);
+                        }
                     }
                 }
                 separator = arglist.separator;
             }
             _ => {
                 positional.push(self.without_slash(rest, || Self::expr_span(rest_expr, span))?);
-                if let Some(sp) = &mut spans {
-                    sp.positional.push(rest_node_span);
+                if REC {
+                    if let Some(sp) = &mut spans {
+                        sp.positional.push(rest_node_span);
+                    }
                 }
             }
         }
@@ -4828,19 +4861,27 @@ impl<'a> Visitor<'a> {
 
         match self.visit_expr_ref(keyword_rest_expr)? {
             Value::Map(keyword_rest) => {
-                let keyword_rest_node_span = spans.as_ref().map(|_| {
-                    let s = arguments.keyword_rest_span.unwrap_or(arguments.span);
-                    self.provenance_span(keyword_rest_expr, s).unwrap_or(s)
-                });
+                let keyword_rest_node_span = if REC {
+                    spans.as_ref().map(|_| {
+                        let s = arguments.keyword_rest_span.unwrap_or(arguments.span);
+                        self.provenance_span(keyword_rest_expr, s).unwrap_or(s)
+                    })
+                } else {
+                    None
+                };
 
                 self.add_rest_map(
                     &mut named,
                     keyword_rest,
                     || Self::expr_span(keyword_rest_expr, span),
-                    spans
-                        .as_deref_mut()
-                        .zip(keyword_rest_node_span)
-                        .map(|(sp, rest_span)| (&mut sp.named, rest_span)),
+                    if REC {
+                        spans
+                            .as_deref_mut()
+                            .zip(keyword_rest_node_span)
+                            .map(|(sp, rest_span)| (&mut sp.named, rest_span))
+                    } else {
+                        None
+                    },
                 )?;
 
                 Ok(ArgumentResult {
