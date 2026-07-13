@@ -6,7 +6,7 @@
 // methodology used for the native-binary numbers (each rep forks a fresh
 // process, same as hyperfine would).
 //
-// Usage: node bench-breakdown.js [uswds|bootstrap|all] [--diagnose-fs]
+// Usage: node cross-engine.mjs --engine <native|napi|wasm|wasm-string|sass-embedded|breakdown> --fixture <uswds|bootstrap>
 import { createRequire } from "module";
 import { performance } from "perf_hooks";
 import { resolve, dirname } from "path";
@@ -18,27 +18,17 @@ import {
   readFileSync,
   statSync,
   realpathSync,
+  existsSync,
 } from "fs";
 
-const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const napi = require("../crates/napi/grass.darwin-arm64.node");
-// The package surface selects the native binding by default on this host. Set
-// the same switch a real WASM fallback user would use before importing it, so
-// this benchmark exercises pkg-publish/index.js rather than the raw internals.
-process.env.GRASS_FORCE_WASM = "1";
-const grassWasm = await import("../crates/lib/pkg-publish/index.js");
-// Raw wasm-bindgen internals (not the pkg-publish/index.js wrapper) so we can
-// swap in a call-counting fs shim.
-import {
-  initSync,
-  compile as rawWasmCompile,
-} from "../crates/lib/pkg-publish/grass.js";
-initSync({ module: readFileSync(resolve(__dirname, "../crates/lib/pkg-publish/grass_bg.wasm")) });
-
-const GRASS_BIN = resolve(__dirname, "../target/release/grass");
-const NATIVE_OUT = resolve(__dirname, "_bench_native_out.css");
+const REPO_ROOT = resolve(__dirname, "../..");
+const FIXTURE_ROOT = process.env.PERF_FIXTURE_DIR || process.env.USWDS_FIXTURE_DIR ||
+  (existsSync(resolve(REPO_ROOT, "bench/fixtures/packages/uswds"))
+    ? resolve(REPO_ROOT, "bench/fixtures")
+    : resolve(REPO_ROOT, "prototype"));
+const GRASS_BIN = resolve(REPO_ROOT, "target/release/grass");
+const NATIVE_OUT = "/tmp/grass-bench-native-out.css";
 const SURFACE_LABEL = "grass WASM (pkg-publish surface)";
 const DIAGNOSTIC_LABEL = "fs-boundary diagnostic (shimmed, NOT a surface number)";
 
@@ -77,16 +67,15 @@ function runN(label, fn) {
 
 const WORKLOADS = {
   uswds: () => {
-    const loadPaths = [resolve(__dirname, "packages")];
-    const entryFile = resolve(__dirname, "packages/uswds/_index-direct.scss");
-    // Read the flattened entry directly (matches bench.sh/bench-wasm.js/
-    // bench-napi.js/bench-sass.js convention) so every engine compiles
+    const loadPaths = [resolve(FIXTURE_ROOT, "packages")];
+    const entryFile = resolve(FIXTURE_ROOT, "packages/uswds/_index-direct.scss");
+    // Read the flattened entry directly so every engine compiles
     // exactly the same content, whether fed as a file path or inline string.
     const source = readFileSync(entryFile, "utf8");
     return { name: "USWDS", loadPaths, entryFile, source };
   },
   bootstrap: () => {
-    const scssDir = resolve(__dirname, "bootstrap-bench/scss");
+    const scssDir = resolve(FIXTURE_ROOT, "bootstrap-bench/scss");
     const entryFile = resolve(scssDir, "bootstrap.scss");
     const loadPaths = [scssDir];
     const source = readFileSync(entryFile, "utf8");
@@ -94,7 +83,13 @@ const WORKLOADS = {
   },
 };
 
-function benchWorkload(key) {
+async function benchWorkload(key, diagnoseFs = false) {
+  const require = createRequire(import.meta.url);
+  const napi = require(resolve(REPO_ROOT, "crates/napi/grass.darwin-arm64.node"));
+  process.env.GRASS_FORCE_WASM = "1";
+  const grassWasm = await import(resolve(REPO_ROOT, "crates/lib/pkg-publish/index.js"));
+  const { initSync, compile: rawWasmCompile } = await import(resolve(REPO_ROOT, "crates/lib/pkg-publish/grass.js"));
+  initSync({ module: readFileSync(resolve(REPO_ROOT, "crates/lib/pkg-publish/grass_bg.wasm")) });
   const { name, loadPaths, entryFile, source } = WORKLOADS[key]();
   console.log(`\n=== ${name} Time Breakdown ===\n`);
 
@@ -114,8 +109,8 @@ function benchWorkload(key) {
   // (b) compileStringAsync(source) (inline-string entry) is itself ~4x
   //     slower than compileAsync(path) (file entry) for USWDS specifically
   //     (3100ms vs 765-950ms, confirmed by direct A/B), even in a single
-  //     fresh process/single call. compile(path) is what bench-sass.js and
-  //     the roadmap baseline actually measured, so it's used here too.
+  //     fresh process/single call. compile(path) is what the original
+  //     benchmark and roadmap baseline measured, so it's used here too.
   // Both are sass-embedded's own behavior, not grass's -- out of scope for
   // todo #155, noted for a future sass-embedded-focused investigation.
   // sass-embedded is an OPTIONAL reference engine: it's a devDependency that
@@ -154,7 +149,7 @@ function benchWorkload(key) {
     } catch {}
   } else {
     console.log(
-      `  ${"sass-embedded".padEnd(24)} SKIPPED (not installed -- run \`npm install\` in prototype/ to enable this comparison)`
+      `  ${"sass-embedded".padEnd(24)} SKIPPED (not installed -- run \`npm ci\` in bench/ to enable this comparison)`
     );
   }
   const wasmRes = runN(SURFACE_LABEL, () =>
@@ -229,7 +224,7 @@ function benchWorkload(key) {
       // that dominates import resolution).
       const testPaths = [];
       for (let i = 0; i < 100; i++)
-        testPaths.push(resolve(__dirname, `packages/nonexistent_${i}.scss`));
+        testPaths.push(resolve(FIXTURE_ROOT, `packages/nonexistent_${i}.scss`));
       const fsStart = performance.now();
       for (let rep = 0; rep < 100; rep++) {
         for (const p of testPaths) {
@@ -291,22 +286,79 @@ function benchWorkload(key) {
   return { name, nativeRes, napiRes, wasmRes, sassRes, diagnosticRes };
 }
 
-const args = process.argv.slice(2);
-const diagnoseFs = args.includes("--diagnose-fs");
-const which = args.find((arg) => !arg.startsWith("--")) || "all";
-const keys = which === "all" ? Object.keys(WORKLOADS) : [which];
-for (const k of keys) {
-  if (!WORKLOADS[k]) {
-    console.error(`Unknown workload "${k}". Options: ${Object.keys(WORKLOADS).join(", ")}, all`);
-    process.exit(1);
+function option(args, name, fallback) {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : fallback;
+}
+
+async function runWorker(engine, fixture) {
+  const { loadPaths, entryFile } = WORKLOADS[fixture]();
+  if (engine === "native") {
+    execFileSync(GRASS_BIN, [entryFile, "--style=expanded", "-I", loadPaths[0]], { stdio: "ignore" });
+    return;
   }
+  if (engine === "sass-embedded") {
+    const sass = await import("sass-embedded");
+    await sass.compileAsync(entryFile, { loadPaths, logger: sass.Logger.silent, charset: false });
+    return;
+  }
+  if (engine === "napi") {
+    const require = createRequire(import.meta.url);
+    const napi = require(resolve(REPO_ROOT, "crates/napi/grass.darwin-arm64.node"));
+    napi.compile(entryFile, { loadPaths, quiet: true, charset: false });
+    return;
+  }
+  if (engine === "wasm" || engine === "wasm-string") {
+    const { compile } = await import(resolve(REPO_ROOT, "crates/lib/pkg-publish/index.js"));
+    if (engine === "wasm-string") {
+      compile(entryFile, { loadPaths, quiet: true });
+      const times = [];
+      for (let i = 0; i < 5; i++) {
+        const start = performance.now();
+        compile(entryFile, { loadPaths, quiet: true });
+        times.push(performance.now() - start);
+      }
+      times.sort((a, b) => a - b);
+      const median = times[Math.floor(times.length / 2)];
+      console.log(`Runs: ${times.map((t) => t.toFixed(0) + "ms").join(", ")}`);
+      console.log(`WASM compile (median, no startup): ${median.toFixed(0)}ms`);
+    } else {
+      compile(entryFile, { loadPaths, quiet: true, charset: false });
+    }
+    return;
+  }
+  throw new Error(`Unknown engine: ${engine}`);
 }
 
-const results = {};
-for (const k of keys) {
-  results[k] = benchWorkload(k);
+async function main() {
+  const args = process.argv.slice(2);
+  const engine = option(args, "--engine", "breakdown");
+  const fixture = option(args, "--fixture", "all");
+  const diagnoseFs = args.includes("--diagnose-fs");
+  const keys = fixture === "all" ? Object.keys(WORKLOADS) : [fixture];
+  for (const k of keys) {
+    if (!WORKLOADS[k]) throw new Error(`Unknown fixture "${k}". Options: ${Object.keys(WORKLOADS).join(", ")}, all`);
+  }
+  if (args.includes("--worker")) {
+    if (keys.length !== 1) throw new Error("--worker requires one fixture");
+    await runWorker(engine, keys[0]);
+    return;
+  }
+  if (engine === "breakdown") {
+    for (const k of keys) await benchWorkload(k, diagnoseFs);
+  } else if (engine === "wasm-string") {
+    for (const k of keys) await runWorker(engine, k);
+  } else {
+    for (const k of keys) {
+      const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(process.argv[1])} --worker --engine ${engine} --fixture ${k}`;
+      const output = `/tmp/grass-bench-${engine}-${k}.md`;
+      execFileSync("hyperfine", ["--warmup", "1", "--runs", "5", "--export-markdown", output, command], { stdio: "inherit" });
+    }
+  }
+  try { unlinkSync(NATIVE_OUT); } catch {}
 }
 
-try {
-  unlinkSync(NATIVE_OUT);
-} catch {}
+main().catch((error) => {
+  console.error(error?.stack || error);
+  process.exitCode = 1;
+});

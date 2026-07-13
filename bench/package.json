@@ -1,11 +1,7 @@
 {
-  "name": "grass-prototype",
+  "name": "grass-bench",
   "private": true,
   "type": "module",
-  "scripts": {
-    "compile": "node compile.js",
-    "watch": "node watch.js"
-  },
   "dependencies": {
     "grass-wasm": "file:../crates/lib/pkg-node"
   },

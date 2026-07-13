@@ -10,7 +10,7 @@ import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, statSync, realpathSync, readdirSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const grassJsPath = resolve(__dirname, "../crates/lib/pkg-publish/grass.js");
+const grassJsPath = resolve(__dirname, "../../crates/lib/pkg-publish/grass.js");
 
 let src = readFileSync(grassJsPath, "utf8");
 if (!src.includes("__debug_wasm")) {
@@ -23,7 +23,7 @@ if (!src.includes("__debug_wasm")) {
 
 const wasmMod = await import(grassJsPath);
 const { initSync, compile: wasmCompile } = wasmMod;
-initSync({ module: readFileSync(resolve(__dirname, "../crates/lib/pkg-publish/grass_bg.wasm")) });
+initSync({ module: readFileSync(resolve(__dirname, "../../crates/lib/pkg-publish/grass_bg.wasm")) });
 
 const fsCallbacks = {
   is_file(p) { try { return statSync(p).isFile(); } catch { return false; } },
@@ -34,9 +34,9 @@ const fsCallbacks = {
   readdirSync(d) { try { return readdirSync(d, { withFileTypes: true }).map((e) => (e.isFile() ? "f" : e.isDirectory() ? "d" : "o") + e.name); } catch { return []; } },
 };
 
-const uswdsPath = resolve(__dirname, "packages/uswds/_index-direct.scss");
+const uswdsPath = resolve(__dirname, "../fixtures/packages/uswds/_index-direct.scss");
 const uswdsSrc = readFileSync(uswdsPath, "utf8");
-const loadPaths = [resolve(__dirname, "packages")];
+const loadPaths = [resolve(__dirname, "../fixtures/packages")];
 
 const N = process.argv[2] ? parseInt(process.argv[2], 10) : 15;
 for (let i = 0; i < N; i++) {

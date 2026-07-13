@@ -6,9 +6,15 @@ set -euo pipefail
 
 MODE="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GRASS="${GRASS:-$REPO_ROOT/target/release/grass}"
-FIXTURE_DIR="${PERF_FIXTURE_DIR:-$SCRIPT_DIR}"
+if [ -n "${PERF_FIXTURE_DIR:-}" ]; then
+  FIXTURE_DIR="$PERF_FIXTURE_DIR"
+elif [ -d "$REPO_ROOT/bench/fixtures/packages/uswds" ]; then
+  FIXTURE_DIR="$REPO_ROOT/bench/fixtures"
+else
+  FIXTURE_DIR="$REPO_ROOT/prototype"
+fi
 LOAD_PATH="$FIXTURE_DIR/packages"
 ARTIFACT_DIR="${PROFILE_ARTIFACT_DIR:-/tmp/grass-profile}"
 BENCH_FILE="$ARTIFACT_DIR/_grass_profile.scss"
@@ -21,11 +27,11 @@ usage() {
 fixture_error() {
   echo "ERROR: USWDS fixture not found at $LOAD_PATH/uswds"
   echo ""
-  echo "This fixture (prototype/packages/uswds) is untracked and won't exist in a"
+  echo "This fixture (bench/fixtures/packages/uswds) is untracked and won't exist in a"
   echo "fresh git worktree. Either:"
   echo "  - run this from the primary checkout, where the fixture is already populated, or"
-  echo "  - set PERF_FIXTURE_DIR to a prototype/ directory that has packages/uswds, e.g.:"
-  echo "      PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype $0 $MODE"
+  echo "  - set PERF_FIXTURE_DIR to a directory containing packages/uswds, e.g.:"
+  echo "      PERF_FIXTURE_DIR=/path/to/checkout/with/packages $0 $MODE"
   exit 2
 }
 
