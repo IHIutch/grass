@@ -571,6 +571,18 @@ fn if_function_warns_with_suggestion() {
 }
 
 #[test]
+fn if_function_warns_for_parenthesized_condition() {
+    let input = "$a: 1;\na {\n  b: if(($a > 0), 1, 2);\n}\n";
+    let logger = TestLogger::default();
+    let options = grass::Options::default().logger(&logger);
+    let output = grass::from_string(input.to_string(), &options).expect(input);
+    assert_eq!(&output, "a {\n  b: 1;\n}\n");
+    let warnings = logger.warning_messages();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Suggestion: if(sass(($a > 0)): 1; else: 2)"));
+}
+
+#[test]
 fn if_function_suggestion_uses_not_sass_when_if_true_is_null() {
     let input = "a {\n  b: if(true, null, 2);\n}\n";
     let logger = TestLogger::default();
