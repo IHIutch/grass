@@ -14,6 +14,14 @@ const WARMUPS = 2;
 
 function hash(s) { return createHash("sha256").update(s).digest("hex").slice(0, 16); }
 
+function errorSummary(path) {
+  const lines = readFileSync(path, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
+  const errorIndex = lines.findIndex((line) => /\bError:/.test(line) && !/WARNING|DEPRECATION/.test(line));
+  if (errorIndex < 0) return lines.find((line) => !/WARNING|DEPRECATION|More info|Suggestion/.test(line)) || "no Error line captured";
+  const context = lines.slice(errorIndex + 1).find((line) => /(?:^|\s)[^ ]+:\d+(?::\d+)?/.test(line));
+  return [lines[errorIndex], context].filter(Boolean).join(" | ");
+}
+
 function run(command, args, cwd, stdout, stderr, timeout = 180000) {
   const out = openSync(stdout, "w");
   const err = openSync(stderr, "w");
@@ -41,7 +49,8 @@ function prepare(project, repo, prepDir) {
   }
   let content = readFileSync(resolve(repo, project.prep.from), "utf8");
   content = content.replace(/^---[\s\S]*?---\s*/m, "");
-  content = content.replace(/\{\{[\s\S]*?\}\}/g, "").replace(/\{%[\s\S]*?%\}/g, "");
+  const liquidValue = project.prep.liquidDefault || "";
+  content = content.replace(/\{\{[\s\S]*?\}\}/g, liquidValue).replace(/\{%[\s\S]*?%\}/g, "");
   writeFileSync(join(prepDir, project.prep.file), content);
 }
 
@@ -96,19 +105,24 @@ function oneProject(project) {
     const paths = loadPaths(project, repo, prep);
     if (!existsSync(entry)) throw new Error(`entry not found: ${project.entry}`);
     const grassTimes = []; const dartTimes = [];
+    let grassError = null; let dartError = null;
     const grassOut = join(work, "grass.css"); const dartOut = join(work, "dart.css");
     const grassErr = join(work, "grass.stderr"); const dartErr = join(work, "dart.stderr");
     for (let i = 0; i < WARMUPS + RUNS; i++) {
       const g = compile("grass", entry, paths, grassOut, grassErr, repo);
-      if (g.result.status !== 0) throw new Error(`grass exit ${g.result.status}: ${readFileSync(grassErr, "utf8").split("\n")[0]}`);
-      if (i >= WARMUPS) grassTimes.push(g.ms);
+      if (g.result.status !== 0) grassError ||= `grass exit ${g.result.status}: ${errorSummary(grassErr)}`;
+      else if (i >= WARMUPS) grassTimes.push(g.ms);
       const d = compile("dart", entry, paths, dartOut, dartErr, repo);
-      if (d.result.status !== 0) throw new Error(`dart-sass exit ${d.result.status}: ${readFileSync(dartErr, "utf8").split("\n")[0]}`);
-      if (i >= WARMUPS) dartTimes.push(d.ms);
-      if (i === WARMUPS && !readFileSync(grassOut).equals(readFileSync(dartOut))) {
+      if (d.result.status !== 0) dartError ||= `dart-sass exit ${d.result.status}: ${errorSummary(dartErr)}`;
+      else if (i >= WARMUPS) dartTimes.push(d.ms);
+      if (i === WARMUPS && !grassError && !dartError && !readFileSync(grassOut).equals(readFileSync(dartOut))) {
         record.status = "DIFF";
         record.signature = firstDiff(grassOut, dartOut);
       }
+    }
+    if (grassError || dartError) {
+      record.error = [grassError, dartError].filter(Boolean).join("; ");
+      return record;
     }
     const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
     record.grassMedianMs = Number(median(grassTimes).toFixed(1));
@@ -133,7 +147,7 @@ function writeResults(records) {
 function ratchet(records) {
   const path = join(DIR, "BASELINE.json");
   const current = Object.fromEntries(records.map((r) => [r.name, r]));
-  if (!existsSync(path)) {
+  if (!existsSync(path) || process.env.UPDATE_BASELINE === "1") {
     writeFileSync(path, JSON.stringify({ schema: 1, sass: "1.101.0", projects: current }, null, 2) + "\n");
     return 0;
   }

@@ -53,7 +53,9 @@ node bench/scripts/cross-engine.mjs --engine breakdown --fixture bootstrap
 `bench/scripts/bench.sh` is a compatibility wrapper for the four ordinary
 USWDS engine modes. Run `npm ci` in `bench/` before sass-embedded or package
 benchmarks. `profile.sh cpu|heap` retains the CPU and dhat workflows; it writes
-profiles under `/tmp/grass-profile`. The diagnostics are deliberately kept
+profiles under `/tmp/grass-profile` and automatically rebuilds the plain
+`target/release/grass` binary before exiting, including after a profiling
+failure. The diagnostics are deliberately kept
 separate: `memory-plateau-check.mjs`, `multi-compile-stress.mjs`, and
 `wasm-spec-runner.mjs` are correctness/memory investigations, not published
 speed numbers.
@@ -93,9 +95,9 @@ existing baseline’s PASS regresses or a measured run exceeds the documented
 timing review threshold. A missing baseline is created from the run; review it
 before committing. Improvements print a ratchet-up reminder.
 
-The first two consecutive full runs before the final reveal.js triage had the
-same parity status; reveal.js is now recorded as an explicit drop because its
-lockfile cannot be installed with `npm ci`:
+The finalized active corpus produced the same parity status on two consecutive
+full runs. reveal.js is recorded as an explicit drop because its lockfile cannot
+be installed with `npm ci`:
 
 | Status | Projects |
 |---|---:|
@@ -105,9 +107,11 @@ lockfile cannot be installed with `npm ci`:
 
 The DIFF is recorded as raw signature `672042/672042@597516`; the first visible
 difference is Dart Sass’s grouped `h1`–`h6` selectors followed by `.h1`–`.h6`
-versus Grass’s interleaved order. No compiler code was changed. Dropped
-projects and reasons are recorded in the manifest; there are no silent corpus
-caps.
+versus Grass’s interleaved order. The four ERROR signatures are preserved in
+`results.md` and `BASELINE.json` with their actual `Error:` lines; Dart Sass
+compiles each of those four entries, so they are discovery candidates rather
+than manifest drops. No compiler code was changed. Dropped projects and reasons
+are recorded in the manifest; there are no silent corpus caps.
 
 To re-pin, update each project’s commit from its repository’s default HEAD,
 verify the detached checkout, rerun `node bench/real-world/run.mjs all` twice,

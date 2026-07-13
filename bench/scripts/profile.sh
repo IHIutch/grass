@@ -18,6 +18,20 @@ fi
 LOAD_PATH="$FIXTURE_DIR/packages"
 ARTIFACT_DIR="${PROFILE_ARTIFACT_DIR:-/tmp/grass-profile}"
 BENCH_FILE="$ARTIFACT_DIR/_grass_profile.scss"
+RESTORE_NEEDED=0
+
+restore_plain_binary() {
+  if [ "$RESTORE_NEEDED" -eq 1 ]; then
+    RESTORE_NEEDED=0
+    echo "Restoring plain target/release/grass after instrumented profiling build..."
+    if ! ~/.cargo/bin/cargo build --release -p grass; then
+      echo "ERROR: failed to restore the plain release binary" >&2
+      exit 1
+    fi
+    echo "Restored plain target/release/grass."
+  fi
+}
+trap restore_plain_binary EXIT
 
 usage() {
   echo "Usage: $0 cpu|heap"
@@ -55,6 +69,7 @@ case "$MODE" in
       exit 1
     fi
 
+    RESTORE_NEEDED=1
     CARGO_PROFILE_RELEASE_STRIP=none \
     CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
       ~/.cargo/bin/cargo build --release -p grass
@@ -73,6 +88,7 @@ case "$MODE" in
     echo "The samply profile UI was opened by samply record."
     ;;
   heap)
+    RESTORE_NEEDED=1
     CARGO_PROFILE_RELEASE_STRIP=none \
       ~/.cargo/bin/cargo build --release --features dhat-heap -p grass
 
