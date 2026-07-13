@@ -1890,13 +1890,6 @@ impl<'a> Visitor<'a> {
             env.scopes.enable_span_tracking();
         }
 
-        // Pre-declare global variable slots for any `!global` declarations found
-        // during parsing. This ensures the module exposes the same members
-        // regardless of control flow, defaulting to `null` if never assigned.
-        for name in &stylesheet.pre_declared_global_variables {
-            env.scopes.insert_var(0, *name, Value::Null);
-        }
-
         // Save the configuration Rc for tracking before it's moved into the closure.
         let config_for_tracking = configuration.as_ref().map(Rc::clone);
 
@@ -1941,6 +1934,16 @@ impl<'a> Visitor<'a> {
             let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
 
             visitor.visit_stylesheet(&stylesheet)?;
+
+            // Dart Sass materializes global variables declared in unreachable
+            // branches after evaluating the stylesheet. Doing this after
+            // @use rules matters when a later !global declaration has the same
+            // name as a module loaded with `as *`.
+            for name in &stylesheet.pre_declared_global_variables {
+                if !visitor.env.scopes.global_var_exists(*name) {
+                    visitor.env.scopes.insert_var(0, *name, Value::Null);
+                }
+            }
 
             // Flush any remaining pending imports from this module.
             visitor.flush_pending_imports(true);
