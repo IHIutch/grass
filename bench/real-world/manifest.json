@@ -1,0 +1,28 @@
+{
+  "source": "Seeded from https://raw.githubusercontent.com/momiji-rs/sasso/master/bench/real-world/projects.json (Apache-2.0/MIT). Commits were re-pinned from each repository's default HEAD on 2026-07-13.",
+  "projects": [
+    {"name":"bootstrap","git":"https://github.com/twbs/bootstrap","commit":"b37afd77f69b97ae67722a9c3edb5ec5339544f3","entry":"scss/bootstrap.scss","loadPaths":[]},
+    {"name":"bulma","git":"https://github.com/jgthms/bulma","commit":"741da22368cd548111224983a1c3ece8954fe8cc","entry":"bulma.scss","loadPaths":[]},
+    {"name":"govuk-frontend","git":"https://github.com/alphagov/govuk-frontend","commit":"d5bc6f61a5245dfced6a114278fcbb253ed9bc77","entry":"packages/govuk-frontend/src/govuk/index.scss","loadPaths":["packages/govuk-frontend/src"]},
+    {"name":"uswds","git":"https://github.com/uswds/uswds","commit":"636338773b3c296e9b9454f3840e5a7791bcf56d","prep":{"file":"entry.scss","content":"@forward \"uswds\";\n"},"entry":"@prep/entry.scss","loadPaths":["packages"]},
+    {"name":"vuetify","git":"https://github.com/vuetifyjs/vuetify","commit":"a7590552c48dd2c355e9ed9d8b7f915f99820320","entry":"packages/vuetify/src/styles/main.sass","loadPaths":["packages/vuetify/src/styles"]},
+    {"name":"quasar","git":"https://github.com/quasarframework/quasar","commit":"466aa6a4a155e636f1c509aa80449804fe2e1ed9","entry":"ui/src/css/index.sass","loadPaths":["ui/src/css"]},
+    {"name":"tabler","git":"https://github.com/tabler/tabler","commit":"62178f8ef10977a38f5ed8b951874ce5a6eb9e7a","entry":"core/scss/tabler.scss","loadPaths":[]},
+    {"name":"adminlte","git":"https://github.com/ColorlibHQ/AdminLTE","commit":"1b5a9c4e53269076ce4aaf5789737f6bbc0b8696","entry":"src/scss/adminlte.scss","loadPaths":["@node_modules"]},
+    {"name":"font-awesome","git":"https://github.com/FortAwesome/Font-Awesome","commit":"70fb2dd154b617f62fc4ae5b0b7e2943bfd2aa96","entry":"scss/fontawesome.scss","loadPaths":[]},
+    {"name":"video.js","git":"https://github.com/videojs/video.js","commit":"1ce2b219f450842455e120518bf669e1d5b2ae38","entry":"src/css/video-js.scss","loadPaths":["@node_modules"]},
+    {"name":"minimal-mistakes","git":"https://github.com/mmistakes/minimal-mistakes","commit":"58d9185b2ee1127f117c7655a448e25ce2c284e4","prep":{"from":"assets/css/main.scss","file":"entry.scss","liquidDefault":"default"},"entry":"@prep/entry.scss","loadPaths":["_sass"]},
+    {"name":"just-the-docs","git":"https://github.com/just-the-docs/just-the-docs","commit":"2f985510bc0976aeb7afdaf65d1ae41d78b45e4a","prep":{"file":"entry.scss","content":"@import \"support/support\";\n@import \"custom/setup\";\n@import \"color_schemes/light\";\n@import \"modules\";\n"},"entry":"@prep/entry.scss","loadPaths":["_sass"]},
+    {"name":"mastodon","git":"https://github.com/mastodon/mastodon","commit":"95d3b704f61ff8ea4682676b3e87dd27386a7c38","entry":"app/javascript/styles/application.scss","loadPaths":["app/javascript/styles"]},
+    {"name":"grafana","git":"https://github.com/grafana/grafana","commit":"b40e2e8a6c0e24a7fa8e5edeba7c1dc3e3465137","entry":"public/sass/grafana.dark.scss","loadPaths":["public/sass"]}
+  ],
+  "dropped": [
+    {"name":"carbon","reason":"Generated packages/layout/scss/generated files are required; raw repo does not compile standalone."},
+    {"name":"reveal.js","reason":"The pinned repository's package-lock cannot be installed with npm ci; excluded rather than silently treating the dependency setup as a parity result."},
+    {"name":"primer-css","reason":"Requires the @primer/primitives npm dependency and harness-level package installation."},
+    {"name":"nextcloud","reason":"Requires project-specific node_modules linking/build setup beyond npm ci."},
+    {"name":"wagtail","reason":"Requires project-specific node_modules linking/build setup beyond npm ci."},
+    {"name":"forem","reason":"Rails application asset pipeline is required beyond npm ci."},
+    {"name":"chirpy","reason":"Jekyll/Liquid preprocessing is required beyond npm ci."}
+  ]
+}

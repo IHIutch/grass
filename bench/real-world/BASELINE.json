@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "sass": "1.101.0",
+  "projects": {
+    "bootstrap": {
+      "name": "bootstrap",
+      "commit": "b37afd77f69b97ae67722a9c3edb5ec5339544f3",
+      "status": "PASS",
+      "grassMedianMs": 56,
+      "dartMedianMs": 1467.6,
+      "ratio": 26.21,
+      "signature": null,
+      "error": null
+    },
+    "bulma": {
+      "name": "bulma",
+      "commit": "741da22368cd548111224983a1c3ece8954fe8cc",
+      "status": "ERROR",
+      "grassMedianMs": null,
+      "dartMedianMs": null,
+      "ratio": null,
+      "signature": null,
+      "error": "grass exit 1: Error: Expected number, variable, function, or calculation."
+    },
+    "govuk-frontend": {
+      "name": "govuk-frontend",
+      "commit": "d5bc6f61a5245dfced6a114278fcbb253ed9bc77",
+      "status": "ERROR",
+      "grassMedianMs": null,
+      "dartMedianMs": null,
+      "ratio": null,
+      "signature": null,
+      "error": "grass exit 1: Error: This module and the new module both define a variable named \"$govuk-suppressed-warnings\"."
+    },
+    "uswds": {
+      "name": "uswds",
+      "commit": "636338773b3c296e9b9454f3840e5a7791bcf56d",
+      "status": "PASS",
+      "grassMedianMs": 189.4,
+      "dartMedianMs": 5121.7,
+      "ratio": 27.04,
+      "signature": null,
+      "error": null
+    },
+    "vuetify": {
+      "name": "vuetify",
+      "commit": "a7590552c48dd2c355e9ed9d8b7f915f99820320",
+      "status": "PASS",
+      "grassMedianMs": 35.3,
+      "dartMedianMs": 1113,
+      "ratio": 31.53,
+      "signature": null,
+      "error": null
+    },
+    "quasar": {
+      "name": "quasar",
+      "commit": "466aa6a4a155e636f1c509aa80449804fe2e1ed9",
+      "status": "PASS",
+      "grassMedianMs": 39.7,
+      "dartMedianMs": 1145.6,
+      "ratio": 28.86,
+      "signature": null,
+      "error": null
+    },
+    "tabler": {
+      "name": "tabler",
+      "commit": "62178f8ef10977a38f5ed8b951874ce5a6eb9e7a",
+      "status": "DIFF",
+      "grassMedianMs": 153.7,
+      "dartMedianMs": 1441.5,
+      "ratio": 9.38,
+      "signature": "672042/672042@597516",
+      "error": null
+    },
+    "adminlte": {
+      "name": "adminlte",
+      "commit": "1b5a9c4e53269076ce4aaf5789737f6bbc0b8696",
+      "status": "PASS",
+      "grassMedianMs": 72.9,
+      "dartMedianMs": 1251,
+      "ratio": 17.16,
+      "signature": null,
+      "error": null
+    },
+    "reveal.js": {
+      "name": "reveal.js",
+      "commit": "a3b940695648aa1c5b0680bc9a5b905cf43020e5",
+      "status": "ERROR",
+      "grassMedianMs": null,
+      "dartMedianMs": null,
+      "ratio": null,
+      "signature": null,
+      "error": "npm ci failed"
+    },
+    "font-awesome": {
+      "name": "font-awesome",
+      "commit": "70fb2dd154b617f62fc4ae5b0b7e2943bfd2aa96",
+      "status": "PASS",
+      "grassMedianMs": 13.3,
+      "dartMedianMs": 852.8,
+      "ratio": 64.12,
+      "signature": null,
+      "error": null
+    },
+    "video.js": {
+      "name": "video.js",
+      "commit": "1ce2b219f450842455e120518bf669e1d5b2ae38",
+      "status": "PASS",
+      "grassMedianMs": 10.7,
+      "dartMedianMs": 1071.7,
+      "ratio": 100.16,
+      "signature": null,
+      "error": null
+    },
+    "minimal-mistakes": {
+      "name": "minimal-mistakes",
+      "commit": "58d9185b2ee1127f117c7655a448e25ce2c284e4",
+      "status": "ERROR",
+      "grassMedianMs": null,
+      "dartMedianMs": null,
+      "ratio": null,
+      "signature": null,
+      "error": "grass exit 1: DEPRECATION WARNING [import]: Sass @import rules are deprecated and will be removed in Dart Sass 3.0.0."
+    },
+    "just-the-docs": {
+      "name": "just-the-docs",
+      "commit": "2f985510bc0976aeb7afdaf65d1ae41d78b45e4a",
+      "status": "PASS",
+      "grassMedianMs": 12.7,
+      "dartMedianMs": 901.7,
+      "ratio": 71,
+      "signature": null,
+      "error": null
+    },
+    "mastodon": {
+      "name": "mastodon",
+      "commit": "95d3b704f61ff8ea4682676b3e87dd27386a7c38",
+      "status": "PASS",
+      "grassMedianMs": 20.9,
+      "dartMedianMs": 1008.9,
+      "ratio": 48.27,
+      "signature": null,
+      "error": null
+    },
+    "grafana": {
+      "name": "grafana",
+      "commit": "b40e2e8a6c0e24a7fa8e5edeba7c1dc3e3465137",
+      "status": "ERROR",
+      "grassMedianMs": null,
+      "dartMedianMs": null,
+      "ratio": null,
+      "signature": null,
+      "error": "grass exit 1: DEPRECATION WARNING [import]: Sass @import rules are deprecated and will be removed in Dart Sass 3.0.0."
+    }
+  }
+}
