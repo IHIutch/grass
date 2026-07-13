@@ -14,12 +14,17 @@ const WARMUPS = 2;
 
 function hash(s) { return createHash("sha256").update(s).digest("hex").slice(0, 16); }
 
+function relativizePath(value) {
+  const root = ROOT.replaceAll("\\", "/");
+  return value.replaceAll("./" + root + "/", "").replaceAll(root + "/", "");
+}
+
 function errorSummary(path) {
   const lines = readFileSync(path, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
   const errorIndex = lines.findIndex((line) => /\bError:/.test(line) && !/WARNING|DEPRECATION/.test(line));
   if (errorIndex < 0) return lines.find((line) => !/WARNING|DEPRECATION|More info|Suggestion/.test(line)) || "no Error line captured";
   const context = lines.slice(errorIndex + 1).find((line) => /(?:^|\s)[^ ]+:\d+(?::\d+)?/.test(line));
-  return [lines[errorIndex], context].filter(Boolean).join(" | ");
+  return [lines[errorIndex], context].filter(Boolean).map(relativizePath).join(" | ");
 }
 
 function run(command, args, cwd, stdout, stderr, timeout = 180000) {
