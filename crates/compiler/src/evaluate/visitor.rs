@@ -3347,9 +3347,9 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn trim_included(&self, nodes: &[CssTreeIdx]) -> CssTreeIdx {
+    fn trim_included(&self, nodes: &[CssTreeIdx]) -> (CssTreeIdx, Option<usize>) {
         if nodes.is_empty() {
-            return CssTree::ROOT;
+            return (CssTree::ROOT, None);
         }
 
         let mut parent = self.parent;
@@ -3382,10 +3382,11 @@ impl<'a> Visitor<'a> {
         }
 
         if parent != Some(CssTree::ROOT) {
-            return CssTree::ROOT;
+            return (CssTree::ROOT, None);
         }
 
-        nodes[innermost_contiguous.unwrap()]
+        let innermost_contiguous = innermost_contiguous.unwrap();
+        (nodes[innermost_contiguous], Some(innermost_contiguous))
     }
 
     fn visit_at_root_rule(
@@ -3424,7 +3425,10 @@ impl<'a> Visitor<'a> {
             current_parent_idx = grandparent_idx;
         }
 
-        let root = self.trim_included(&included);
+        let (root, included_start) = self.trim_included(&included);
+        if let Some(included_start) = included_start {
+            included.truncate(included_start);
+        }
 
         // If we didn't exclude any rules, we don't need to use the copies we might
         // have created.
@@ -3464,12 +3468,7 @@ impl<'a> Visitor<'a> {
 
             Some(outer_copy)
         } else {
-            let inner_copy = self
-                .css_tree
-                .get(root)
-                .as_ref()
-                .map(CssStmt::copy_without_children);
-            inner_copy.map(|p| self.css_tree.add_stmt(p, None))
+            Some(root)
         };
 
         let body = mem::take(&mut at_root_rule.body);
