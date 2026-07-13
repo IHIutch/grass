@@ -238,6 +238,7 @@ enum ImportKey {
 }
 
 type ImportPathCacheEntry = (PathBuf, PathBuf, bool, SassResult<Option<ImportSource>>);
+type PreModuleComments = FxHashMap<PathBuf, Vec<CssStmt>>;
 
 /// Evaluation context of the current execution
 #[derive(Debug)]
@@ -307,6 +308,15 @@ pub struct Visitor<'a> {
     pub(crate) configuration: Rc<RefCell<Configuration>>,
     combined_import_section: Vec<CssStmt>,
     pending_import_items: Vec<CssStmt>,
+    /// Root plain imports that may need to be moved ahead of module imports
+    /// when the root module itself has not loaded CSS.
+    root_import_spans: Vec<Span>,
+    /// Whether the root module loaded a user module before its plain imports.
+    root_loaded_module: bool,
+    /// Comments collected before module loads in the current Sass module
+    /// environment. Nested environments share this map when it already
+    /// exists, matching Dart Sass's pre-module comment scope.
+    pre_module_comments: Option<Rc<RefCell<PreModuleComments>>>,
     in_module_import_section: bool,
     module_depth: usize,
     /// Number of trailing import-section items (comments) flushed to css_tree
@@ -404,6 +414,9 @@ impl<'a> Visitor<'a> {
             plain_css_style_rule_depth: 0,
             combined_import_section: Vec::new(),
             pending_import_items: Vec::new(),
+            root_import_spans: Vec::new(),
+            root_loaded_module: false,
+            pre_module_comments: None,
             in_module_import_section: true,
             module_depth: 0,
             import_section_tree_count: 0,
@@ -746,6 +759,24 @@ impl<'a> Visitor<'a> {
 
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
         self.flush_pending_imports(true);
+        if !self.root_loaded_module
+            && !self.css_tree_has_emitted_css()
+            && !self.root_import_spans.is_empty()
+        {
+            let root_import_spans = mem::take(&mut self.root_import_spans);
+            let mut root_imports = Vec::new();
+            let mut remaining = Vec::new();
+            for item in self.combined_import_section.drain(..) {
+                if matches!(&item, CssStmt::Import(_, _, span) if span.is_some_and(|span| root_import_spans.contains(&span)))
+                {
+                    root_imports.push(item);
+                } else {
+                    remaining.push(item);
+                }
+            }
+            root_imports.append(&mut remaining);
+            self.combined_import_section = root_imports;
+        }
         self.extend_modules()?;
         self.teardown_module_graph();
         let mut finished_tree = self.css_tree.finish();
@@ -789,11 +820,9 @@ impl<'a> Visitor<'a> {
 
     /// Flush pending import-section items: imports and their interleaved
     /// comments go to `combined_import_section`, while trailing comments
-    /// (after the last import) go to the CSS tree.
-    ///
-    /// When `end_of_module` is true and the pending items contain no imports
-    /// (only comments), all items go to `combined_import_section` to maintain
-    /// correct topological ordering for comment-only modules.
+    /// (after the last import) stay in the CSS tree so their traversal
+    /// position is preserved. The root import prefix is reordered in finish
+    /// when needed.
     fn flush_pending_imports(&mut self, end_of_module: bool) {
         if self.pending_import_items.is_empty() {
             return;
@@ -803,17 +832,45 @@ impl<'a> Visitor<'a> {
         for (i, item) in pending.into_iter().enumerate() {
             if i < idx {
                 self.combined_import_section.push(item);
-            } else if end_of_module && idx == 0 {
-                // Module had only comments, no imports — keep in combined
-                // so they appear in the correct topological position.
-                self.combined_import_section.push(item);
             } else {
+                // A nested module's comment-only import section is CSS emitted
+                // at this module's load position and must remain cloneable.
                 if !end_of_module && self.module_depth == 0 {
                     self.import_section_tree_count += 1;
                 }
                 self.css_tree.add_stmt(item, None);
             }
         }
+    }
+
+    /// Emit comments associated with a module load at the current traversal
+    /// position. This mirrors Dart Sass's `_combineCss`: comments stay in the
+    /// import prefix until output traversal has started (including with
+    /// comment-only nodes), then remain in traversal order.
+    fn emit_pre_module_comments(&mut self, comments: &[CssStmt]) {
+        let css_started = self
+            .css_tree
+            .root_children_from(0)
+            .into_iter()
+            .any(|idx| !self.css_tree.is_hidden(idx) && self.css_tree.get(idx).is_some());
+        for comment in comments {
+            if css_started {
+                self.css_tree.add_stmt(comment.clone(), None);
+            } else {
+                self.combined_import_section.push(comment.clone());
+            }
+        }
+    }
+
+    fn css_tree_has_emitted_css(&self) -> bool {
+        self.css_tree.root_children_from(0).into_iter().any(|idx| {
+            !self.css_tree.is_hidden(idx)
+                && self
+                    .css_tree
+                    .get(idx)
+                    .as_ref()
+                    .is_some_and(|stmt| !matches!(stmt, CssStmt::Comment(..) | CssStmt::Import(..)))
+        })
     }
 
     /// Clone a cached module's CSS and ExtensionStore for @import isolation.
@@ -835,16 +892,20 @@ impl<'a> Visitor<'a> {
             return (Rc::clone(cached), false);
         }
 
-        // Only clone CSS indices that haven't been cloned yet in this @import context
+        // Only clone CSS indices that haven't been cloned yet in this @import context.
+        // Comment-only modules still need a clone even when no selector is
+        // present to populate `import_selector_map`.
+        let mut cloned_any = false;
         for idx in &all_css_indices {
             if !self.import_cloned_css.contains(idx) {
                 self.css_tree
                     .clone_subtree(*idx, CssTree::ROOT, &mut self.import_selector_map);
                 self.import_cloned_css.insert(*idx);
+                cloned_any = true;
             }
         }
 
-        if self.import_selector_map.is_empty() {
+        if !cloned_any {
             return (Rc::clone(cached), false);
         }
 
@@ -1866,6 +1927,7 @@ impl<'a> Visitor<'a> {
 
             // Each module starts with a fresh import section.
             let old_pending_imports = mem::take(&mut visitor.pending_import_items);
+            let old_pre_module_comments = visitor.pre_module_comments.clone();
             let old_in_module_import_section = visitor.in_module_import_section;
             visitor.in_module_import_section = true;
             visitor.module_depth += 1;
@@ -1936,6 +1998,7 @@ impl<'a> Visitor<'a> {
             module_upstream = mem::replace(&mut visitor.upstream_modules, old_upstream);
 
             // Restore import section state for the parent module.
+            visitor.pre_module_comments = old_pre_module_comments;
             visitor.module_depth -= 1;
             visitor.pending_import_items = old_pending_imports;
             visitor.in_module_import_section = old_in_module_import_section;
@@ -2363,17 +2426,62 @@ impl<'a> Visitor<'a> {
             return Err(("Module loop: this module is already being loaded.", span).into());
         }
 
+        let first_load = !self.modules.contains_key(&canonical_url);
+        let mut pre_module_comments = Vec::new();
+        if self.module_depth == 0 && !self.in_import_context {
+            self.root_loaded_module = true;
+        }
         self.active_modules.insert(canonical_url.clone());
 
-        // Flush pre-module comments into the combined import section before
-        // loading the module, so comments before @use/@forward appear before
-        // the module's own imports in the output.
-        self.combined_import_section
-            .append(&mut self.pending_import_items);
+        // Preserve comments before a nested module load at that module's
+        // traversal position. Root-level comments remain in the combined
+        // import section so they stay ahead of all module CSS.
+        if first_load {
+            let pending = mem::take(&mut self.pending_import_items);
+            let mut remaining = Vec::with_capacity(pending.len());
+            for item in pending {
+                if matches!(item, CssStmt::Comment(..)) {
+                    pre_module_comments.push(item);
+                } else {
+                    remaining.push(item);
+                }
+            }
+            self.pending_import_items = remaining;
+
+            // Imports stay in the current module's pending section. Comments
+            // are associated with the first loaded module and emitted after
+            // evaluation once we know whether that module contributes CSS.
+            if !self.in_import_context {
+                self.emit_pre_module_comments(&pre_module_comments);
+            }
+        } else if self.modules.contains_key(&canonical_url) {
+            let comments = self
+                .pre_module_comments
+                .as_ref()
+                .and_then(|comments| comments.borrow().get(&canonical_url).cloned());
+            if let Some(comments) = comments {
+                self.emit_pre_module_comments(&comments);
+            }
+        }
 
         let module = self.execute(Rc::clone(&stylesheet), configuration, names_in_errors)?;
 
         self.active_modules.remove(&canonical_url);
+
+        if first_load && !pre_module_comments.is_empty() {
+            let module_has_css = !self.collect_transitive_css_indices(&module).is_empty();
+            if module_has_css {
+                let comments = self
+                    .pre_module_comments
+                    .get_or_insert_with(|| Rc::new(RefCell::new(FxHashMap::default())))
+                    .clone();
+                comments
+                    .borrow_mut()
+                    .entry(canonical_url.clone())
+                    .or_default()
+                    .extend(pre_module_comments.clone());
+            }
+        }
 
         callback(self, module, stylesheet)?;
 
@@ -3196,6 +3304,9 @@ impl<'a> Visitor<'a> {
         if self.parent.is_some() && self.parent != Some(CssTree::ROOT) {
             self.css_tree.add_stmt(node, self.parent);
         } else if self.in_module_import_section {
+            if self.module_depth == 0 && !self.in_import_context {
+                self.root_import_spans.push(static_import.span);
+            }
             self.pending_import_items.push(node);
         } else {
             // Out-of-order import after the import section ended
@@ -3236,9 +3347,9 @@ impl<'a> Visitor<'a> {
         Ok(None)
     }
 
-    fn trim_included(&self, nodes: &[CssTreeIdx]) -> CssTreeIdx {
+    fn trim_included(&self, nodes: &[CssTreeIdx]) -> (CssTreeIdx, Option<usize>) {
         if nodes.is_empty() {
-            return CssTree::ROOT;
+            return (CssTree::ROOT, None);
         }
 
         let mut parent = self.parent;
@@ -3271,10 +3382,11 @@ impl<'a> Visitor<'a> {
         }
 
         if parent != Some(CssTree::ROOT) {
-            return CssTree::ROOT;
+            return (CssTree::ROOT, None);
         }
 
-        nodes[innermost_contiguous.unwrap()]
+        let innermost_contiguous = innermost_contiguous.unwrap();
+        (nodes[innermost_contiguous], Some(innermost_contiguous))
     }
 
     fn visit_at_root_rule(
@@ -3313,7 +3425,10 @@ impl<'a> Visitor<'a> {
             current_parent_idx = grandparent_idx;
         }
 
-        let root = self.trim_included(&included);
+        let (root, included_start) = self.trim_included(&included);
+        if let Some(included_start) = included_start {
+            included.truncate(included_start);
+        }
 
         // If we didn't exclude any rules, we don't need to use the copies we might
         // have created.
@@ -3353,12 +3468,7 @@ impl<'a> Visitor<'a> {
 
             Some(outer_copy)
         } else {
-            let inner_copy = self
-                .css_tree
-                .get(root)
-                .as_ref()
-                .map(CssStmt::copy_without_children);
-            inner_copy.map(|p| self.css_tree.add_stmt(p, None))
+            Some(root)
         };
 
         let body = mem::take(&mut at_root_rule.body);

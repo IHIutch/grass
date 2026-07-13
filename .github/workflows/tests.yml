@@ -92,6 +92,9 @@ jobs:
               echo "No differences found"
           fi
 
+      - name: Verify USWDS output when fixture is available
+        run: ./ci/check-uswds-byte-zero.sh
+
   napi:
     runs-on: ubuntu-latest
     steps:

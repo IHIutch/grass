@@ -86,6 +86,26 @@ test!(
     "@supports (a: b) {\n  a b {\n    color: red;\n  }\n}\n"
 );
 test!(
+    supports_at_root_child_stays_in_parent,
+    "@mixin add-aspect-children {
+        @at-root img#{&}, & > img {
+            object-fit: cover;
+        }
+    }
+
+    @mixin add-aspect {
+        @supports (aspect-ratio: 1) {
+            height: inherit;
+            @include add-aspect-children;
+        }
+    }
+
+    .add-aspect {
+        @include add-aspect;
+    }",
+    "@supports (aspect-ratio: 1) {\n  .add-aspect {\n    height: inherit;\n  }\n  img.add-aspect, .add-aspect > img {\n    object-fit: cover;\n  }\n}\n"
+);
+test!(
     supports_nested_inside_media_nested_inside_style_rule,
     "a {
     @media foo {
