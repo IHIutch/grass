@@ -1,4 +1,4 @@
-use std::{io::Write, sync::Arc};
+use std::{borrow::Cow, io::Write, sync::Arc};
 
 use codemap::{CodeMap, File, Span};
 
@@ -521,19 +521,38 @@ impl<'a> Serializer<'a> {
                 self.visit_calculation(calc)?;
             }
             CalculationArg::String(s) | CalculationArg::Interpolation(s) => {
-                self.buffer.extend_from_slice(s.as_bytes());
+                if s.starts_with('(') {
+                    self.write_calculation_text(s, false);
+                } else {
+                    self.buffer.extend_from_slice(s.as_bytes());
+                }
             }
             CalculationArg::Operation { lhs, op, rhs } => {
-                let paren_left = match &**lhs {
-                    CalculationArg::Operation { op: op2, .. } => op2.precedence() < op.precedence(),
-                    _ => false,
+                let (paren_left, omit_left_parens) = match &**lhs {
+                    CalculationArg::Operation { op: op2, .. } => {
+                        (op2.precedence() < op.precedence(), false)
+                    }
+                    CalculationArg::String(_) | CalculationArg::Interpolation(_) => {
+                        (false, Self::can_omit_calculation_lhs_parens(lhs, *op))
+                    }
+                    _ => (false, false),
                 };
 
                 if paren_left {
                     self.buffer.push(b'(');
                 }
 
-                self.write_calculation_arg(lhs)?;
+                if omit_left_parens {
+                    if let CalculationArg::String(text) | CalculationArg::Interpolation(text) =
+                        &**lhs
+                    {
+                        self.write_calculation_text(text, true);
+                    } else {
+                        unreachable!("omit_left_parens only applies to calculation text");
+                    }
+                } else {
+                    self.write_calculation_arg(lhs)?;
+                }
 
                 if paren_left {
                     self.buffer.push(b')');
@@ -552,10 +571,11 @@ impl<'a> Serializer<'a> {
                     self.buffer.push(b' ');
                 }
 
-                let paren_right = match &**rhs {
-                    CalculationArg::Operation { op: op2, .. } => {
-                        CalculationArg::parenthesize_calculation_rhs(*op, *op2)
-                    }
+                let (paren_right, omit_right_parens) = match &**rhs {
+                    CalculationArg::Operation { op: op2, .. } => (
+                        CalculationArg::parenthesize_calculation_rhs(*op, *op2),
+                        false,
+                    ),
                     // Degenerate numbers (NaN/infinity) with units serialize as
                     // multi-token expressions (e.g. "infinity * 1px"), which need
                     // parens to preserve precedence in division context
@@ -564,16 +584,29 @@ impl<'a> Serializer<'a> {
                             && (n.num.0.is_infinite() || n.num.0.is_nan())
                             && n.unit != Unit::None =>
                     {
-                        true
+                        (true, false)
                     }
-                    _ => false,
+                    CalculationArg::String(_) | CalculationArg::Interpolation(_) => {
+                        (false, Self::can_omit_calculation_rhs_parens(rhs, *op))
+                    }
+                    _ => (false, false),
                 };
 
                 if paren_right {
                     self.buffer.push(b'(');
                 }
 
-                self.write_calculation_arg(rhs)?;
+                if omit_right_parens {
+                    if let CalculationArg::String(text) | CalculationArg::Interpolation(text) =
+                        &**rhs
+                    {
+                        self.write_calculation_text(text, true);
+                    } else {
+                        unreachable!("omit_right_parens only applies to calculation text");
+                    }
+                } else {
+                    self.write_calculation_arg(rhs)?;
+                }
 
                 if paren_right {
                     self.buffer.push(b')');
@@ -582,6 +615,201 @@ impl<'a> Serializer<'a> {
         }
 
         Ok(())
+    }
+
+    /// Write text embedded in a calculation using the whitespace normalization
+    /// applied by Dart Sass when the text is represented as a calculation
+    /// operation. Interpolated calc fragments can arrive here as strings rather
+    /// than structured operations, including source newlines and indentation.
+    fn write_calculation_text(&mut self, text: &str, omit_outer_parens: bool) {
+        let normalized = Self::normalize_calculation_text(text);
+        let text = if omit_outer_parens {
+            Self::outer_calculation_parens(&normalized).unwrap_or(normalized.as_ref())
+        } else {
+            normalized.as_ref()
+        };
+        self.buffer.extend_from_slice(text.as_bytes());
+    }
+
+    fn normalize_calculation_text(text: &str) -> Cow<'_, str> {
+        if !text.starts_with('(') {
+            return Cow::Borrowed(text);
+        }
+
+        let needs_whitespace_normalization = text
+            .bytes()
+            .any(|character| matches!(character, b'\n' | b'\r' | b'\t'));
+        let needs_parenthesis_normalization = text
+            .strip_prefix('(')
+            .and_then(|text| text.strip_suffix(')'))
+            .is_some_and(|text| Self::calculation_text_precedence(text).is_some());
+        if !needs_whitespace_normalization && !needs_parenthesis_normalization {
+            return Cow::Borrowed(text);
+        }
+
+        let mut normalized = String::with_capacity(text.len());
+        let mut pending_space = false;
+        let mut pending_literal_space = false;
+        let mut pending_newline = false;
+        for character in text.chars() {
+            if character.is_whitespace() {
+                pending_space = true;
+                pending_literal_space = character == ' ' && !pending_newline;
+                pending_newline |= matches!(character, '\n' | '\r');
+                continue;
+            }
+
+            if pending_space
+                && !normalized.is_empty()
+                && !normalized.ends_with('(')
+                && (character != ')' || pending_literal_space)
+            {
+                normalized.push(' ');
+            }
+            normalized.push(character);
+            pending_space = false;
+            pending_literal_space = false;
+            pending_newline = false;
+        }
+        Cow::Owned(Self::remove_redundant_calculation_parens(normalized))
+    }
+
+    fn remove_redundant_calculation_parens(mut text: String) -> String {
+        loop {
+            let mut stack = Vec::new();
+            let mut pairs = Vec::new();
+            for (index, character) in text.bytes().enumerate() {
+                match character {
+                    b'(' => stack.push(index),
+                    b')' => {
+                        if let Some(start) = stack.pop() {
+                            pairs.push((start, index));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut removed = false;
+            for (start, end) in pairs {
+                let before = text[..start]
+                    .bytes()
+                    .rev()
+                    .find(|byte| !byte.is_ascii_whitespace());
+                let after = text[end + 1..]
+                    .bytes()
+                    .find(|byte| !byte.is_ascii_whitespace());
+                let inner_precedence = Self::calculation_text_precedence(&text[start + 1..end]);
+
+                let omit = match (before, after, inner_precedence) {
+                    (Some(operator @ (b'+' | b'-' | b'*' | b'/')), _, Some(inner)) => {
+                        let outer = Self::calculation_operator_precedence(operator);
+                        match operator {
+                            b'/' | b'+' => false,
+                            b'-' => inner > outer,
+                            b'*' => inner >= outer,
+                            _ => unreachable!(),
+                        }
+                    }
+                    (
+                        None | Some(b'('),
+                        Some(operator @ (b'+' | b'-' | b'*' | b'/')),
+                        Some(inner),
+                    ) => inner >= Self::calculation_operator_precedence(operator),
+                    _ => false,
+                };
+
+                if omit {
+                    text.remove(end);
+                    text.remove(start);
+                    removed = true;
+                    break;
+                }
+            }
+
+            if !removed {
+                return text;
+            }
+        }
+    }
+
+    fn calculation_operator_precedence(operator: u8) -> u8 {
+        match operator {
+            b'+' | b'-' => 5,
+            b'*' | b'/' => 6,
+            _ => unreachable!("not a calculation operator"),
+        }
+    }
+
+    fn outer_calculation_parens(text: &str) -> Option<&str> {
+        if !text.starts_with('(') || !text.ends_with(')') {
+            return None;
+        }
+
+        let mut depth = 0;
+        for (index, character) in text.bytes().enumerate() {
+            match character {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 && index != text.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        (depth == 0).then(|| &text[1..text.len() - 1])
+    }
+
+    fn calculation_text_precedence(text: &str) -> Option<u8> {
+        let mut depth = 0;
+        let mut precedence = None;
+        for (index, character) in text.bytes().enumerate() {
+            match character {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b'+' | b'-' if depth == 0 && index != 0 => precedence = Some(5),
+                b'*' | b'/' if depth == 0 && precedence.is_none() => precedence = Some(6),
+                _ => {}
+            }
+        }
+        precedence
+    }
+
+    fn can_omit_calculation_lhs_parens(lhs: &CalculationArg, outer: BinaryOp) -> bool {
+        let text = match lhs {
+            CalculationArg::String(text) | CalculationArg::Interpolation(text) => text,
+            _ => return false,
+        };
+        let Some(inner) = Self::outer_calculation_parens(text) else {
+            return false;
+        };
+        if inner.contains("var(") {
+            return false;
+        }
+        Self::calculation_text_precedence(inner)
+            .is_some_and(|precedence| precedence >= outer.precedence())
+    }
+
+    fn can_omit_calculation_rhs_parens(rhs: &CalculationArg, outer: BinaryOp) -> bool {
+        let text = match rhs {
+            CalculationArg::String(text) | CalculationArg::Interpolation(text) => text,
+            _ => return false,
+        };
+        let Some(inner) = Self::outer_calculation_parens(text) else {
+            return false;
+        };
+        if inner.contains("var(") {
+            return false;
+        }
+        let Some(precedence) = Self::calculation_text_precedence(inner) else {
+            return false;
+        };
+        match outer {
+            BinaryOp::Div | BinaryOp::Plus => false,
+            _ => precedence > outer.precedence(),
+        }
     }
 
     /// Write a potentially degenerate (NaN/Infinity) value in legacy color syntax.
