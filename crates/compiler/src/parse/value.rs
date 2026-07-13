@@ -2610,8 +2610,20 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     "tan" => CalculationName::Tan,
                     _ => unreachable!(),
                 };
-                let args = ValueParser::parse_calculation_arguments(parser, Some(1), start)?;
-                Self::make_calculation(parser, calc_name, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(1), start) {
+                    Ok(args) => Self::make_calculation(parser, calc_name, args, start),
+                    Err(e) => {
+                        return Self::try_parse_calculation_error_fallback(
+                            parser,
+                            name,
+                            calc_name,
+                            start,
+                            before_args,
+                            e,
+                        );
+                    }
+                }
             }
             "atan2" | "mod" | "rem" => {
                 let calc_name = match name {
@@ -2620,24 +2632,86 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
                     "rem" => CalculationName::Rem,
                     _ => unreachable!(),
                 };
-                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                Self::make_calculation(parser, calc_name, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(2), start) {
+                    Ok(args) => Self::make_calculation(parser, calc_name, args, start),
+                    Err(e) => {
+                        return Self::try_parse_calculation_error_fallback(
+                            parser,
+                            name,
+                            calc_name,
+                            start,
+                            before_args,
+                            e,
+                        );
+                    }
+                }
             }
             "pow" => {
-                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                Self::make_calculation(parser, CalculationName::Pow, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(2), start) {
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Pow, args, start),
+                    Err(e) => {
+                        return Self::try_parse_calculation_error_fallback(
+                            parser,
+                            name,
+                            CalculationName::Pow,
+                            start,
+                            before_args,
+                            e,
+                        );
+                    }
+                }
             }
             "log" => {
-                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                Self::make_calculation(parser, CalculationName::Log, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(2), start) {
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Log, args, start),
+                    Err(e) => {
+                        return Self::try_parse_calculation_error_fallback(
+                            parser,
+                            name,
+                            CalculationName::Log,
+                            start,
+                            before_args,
+                            e,
+                        );
+                    }
+                }
             }
             "hypot" => {
-                let args = ValueParser::parse_calculation_arguments(parser, None, start)?;
-                Self::make_calculation(parser, CalculationName::Hypot, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, None, start) {
+                    Ok(args) => Self::make_calculation(parser, CalculationName::Hypot, args, start),
+                    Err(e) => {
+                        return Self::try_parse_calculation_error_fallback(
+                            parser,
+                            name,
+                            CalculationName::Hypot,
+                            start,
+                            before_args,
+                            e,
+                        );
+                    }
+                }
             }
             "calc-size" => {
-                let args = ValueParser::parse_calculation_arguments(parser, Some(2), start)?;
-                Self::make_calculation(parser, CalculationName::CalcSize, args, start)
+                let before_args = parser.toks().cursor();
+                match ValueParser::parse_calculation_arguments(parser, Some(2), start) {
+                    Ok(args) => {
+                        Self::make_calculation(parser, CalculationName::CalcSize, args, start)
+                    }
+                    Err(e) => {
+                        return Self::try_parse_calculation_error_fallback(
+                            parser,
+                            name,
+                            CalculationName::CalcSize,
+                            start,
+                            before_args,
+                            e,
+                        );
+                    }
+                }
             }
             "round" => {
                 let before_args = parser.toks().cursor();
@@ -2653,6 +2727,129 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
         };
 
         Self::try_parse_calculation_fallback(parser, name, call_start, calculation).map(Some)
+    }
+
+    /// If the calculation grammar rejects an argument, preserve the ordinary
+    /// function-call parse so an unevaluated branch can still be parsed and a
+    /// user-defined function can still shadow the calculation. When no user
+    /// function exists, the calculation receives the ordinary positional
+    /// arguments and reports the same evaluation-time arity diagnostics as
+    /// dart-sass.
+    fn try_parse_calculation_error_fallback(
+        parser: &mut P,
+        name: &str,
+        calculation_name: CalculationName,
+        start: usize,
+        call_start: usize,
+        error: Box<crate::error::SassError>,
+    ) -> SassResult<Option<Spanned<AstExpr<'a>>>> {
+        parser.toks_mut().set_cursor(call_start);
+        let invocation = match parser.parse_argument_invocation(false, false) {
+            Ok(invocation) => invocation,
+            Err(_) => {
+                parser.toks_mut().set_cursor(call_start);
+                return Err(error);
+            }
+        };
+
+        let calculation = Self::make_calculation(
+            parser,
+            calculation_name,
+            invocation.positional.to_vec(),
+            start,
+        );
+        let span = calculation.span;
+        let calculation_error = if invocation
+            .positional
+            .iter()
+            .any(Self::contains_calculation_modulo)
+        {
+            Some((
+                "This operation can't be used in a calculation.".to_string(),
+                span,
+            ))
+        } else if !invocation.named.is_empty() {
+            Some((
+                "Keyword arguments can't be used with calculations.".to_string(),
+                span,
+            ))
+        } else if invocation.rest.is_some() || invocation.keyword_rest.is_some() {
+            Some((
+                "Rest arguments can't be used with calculations.".to_string(),
+                span,
+            ))
+        } else {
+            Self::calculation_arity_error(calculation_name, invocation.positional.len(), span)
+        };
+
+        Ok(Some(Self::make_calculation_with_fallback(
+            parser,
+            name,
+            calculation,
+            invocation,
+            calculation_error,
+        )))
+    }
+
+    fn contains_calculation_modulo(expr: &AstExpr<'a>) -> bool {
+        match expr {
+            AstExpr::BinaryOp(binary) => {
+                binary.op == BinaryOp::Rem
+                    || Self::contains_calculation_modulo(&binary.lhs)
+                    || Self::contains_calculation_modulo(&binary.rhs)
+            }
+            AstExpr::Paren(inner) => Self::contains_calculation_modulo(inner),
+            AstExpr::List(list) => list
+                .elems
+                .iter()
+                .any(|element| Self::contains_calculation_modulo(&element.node)),
+            _ => false,
+        }
+    }
+
+    fn calculation_arity_error(
+        name: CalculationName,
+        args: usize,
+        span: Span,
+    ) -> Option<(String, Span)> {
+        let (required, max) = match name {
+            CalculationName::Acos
+            | CalculationName::Asin
+            | CalculationName::Atan
+            | CalculationName::Cos
+            | CalculationName::Exp
+            | CalculationName::Sign
+            | CalculationName::Sin
+            | CalculationName::Sqrt
+            | CalculationName::Tan => (1, Some(1)),
+            CalculationName::Atan2
+            | CalculationName::Mod
+            | CalculationName::Pow
+            | CalculationName::Rem => (2, Some(2)),
+            CalculationName::Log | CalculationName::CalcSize => (1, Some(2)),
+            CalculationName::Hypot => (1, None),
+            _ => return None,
+        };
+
+        if args == 0 {
+            Some(("Missing argument.".to_string(), span))
+        } else if args < required {
+            Some((
+                format!("{required} arguments required, but only {args} were passed."),
+                span,
+            ))
+        } else if max.is_some_and(|max| args > max) {
+            let max = max.unwrap();
+            Some((
+                format!(
+                    "Only {max} argument{} allowed, but {args} were passed.",
+                    if max == 1 { "" } else { "s" }
+                ),
+                span,
+            ))
+        } else {
+            None
+        }
     }
 
     fn make_calculation_with_fallback(

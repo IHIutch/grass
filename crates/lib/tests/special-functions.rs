@@ -7,6 +7,32 @@ test!(
     "a {\n  color: 1;\n}\n"
 );
 error!(
+    log_quoted_string,
+    "a { b: log(\"x\"); }", "Error: This expression can't be used in a calculation."
+);
+error!(
+    exp_quoted_string,
+    "a { b: exp(\"x\"); }", "Error: This expression can't be used in a calculation."
+);
+error!(
+    atan2_quoted_string,
+    "a { b: atan2(\"x\", 2); }", "Error: This expression can't be used in a calculation."
+);
+error!(
+    log_quoted_string_variable,
+    "$value: log(\"s\");", "Error: This expression can't be used in a calculation."
+);
+test!(
+    log_quoted_string_in_unreachable_branch,
+    "@if false { $_: log(\"x\"); }",
+    ""
+);
+test!(
+    log_quoted_string_user_function,
+    "@function log($value) { @return $value; }\na { b: log(\"x\"); }\n",
+    "a {\n  b: \"x\";\n}\n"
+);
+error!(
     calc_newline,
     "a {\n  color: calc(\n);\n}\n", "Error: Missing argument."
 );

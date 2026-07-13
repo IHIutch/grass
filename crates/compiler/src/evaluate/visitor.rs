@@ -5635,7 +5635,9 @@ impl<'a> Visitor<'a> {
                 }
             }
             AstExpr::String(string_expr, _span) => {
-                debug_assert!(string_expr.1 == QuoteKind::None);
+                if string_expr.1 == QuoteKind::Quoted {
+                    return Err(("This expression can't be used in a calculation.", span).into());
+                }
                 let text = self.perform_interpolation_ref(&string_expr.0, false)?;
                 if string_expr.0.contents.len() == 1
                     && matches!(
