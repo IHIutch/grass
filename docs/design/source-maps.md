@@ -1,5 +1,7 @@
 # Source maps: design spike and prototype
 
+> Paths in this historical document predate the `bench/` reorganization (2026-07-13).
+
 **Status:** design spike deliverable for Plan 013 (solo todo #131). Prototype behind an
 off-by-default option; not wired into any user-facing surface. See "Deferred slices" for what's
 left.

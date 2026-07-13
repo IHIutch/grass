@@ -1,5 +1,7 @@
 # Design spike: napi bridge for `functions` and `importers` (todo #221)
 
+> Paths in this historical document predate the `bench/` reorganization (2026-07-13).
+
 Status: design only, no production code. Written against grass HEAD `1c7174e`,
 `sass` npm package `1.97.3`, `napi`/`napi-derive` `2.x` (per
 `crates/napi/Cargo.toml`).

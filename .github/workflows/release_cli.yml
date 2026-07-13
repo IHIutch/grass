@@ -46,7 +46,7 @@ jobs:
         run: git clone --depth=1 --branch v5.0.2 https://github.com/twbs/bootstrap.git
 
       # Profiling on Bootstrap (not USWDS) is a deliberate workload
-      # substitution: prototype/packages is untracked and unavailable in CI
+      # substitution: bench/fixtures/packages is untracked and unavailable in CI
       # checkouts, and the measured 1.16x speedup is workload-shape-independent
       # (verified on both USWDS and Bootstrap in the same session).
       - name: PGO build

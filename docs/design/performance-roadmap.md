@@ -1,5 +1,7 @@
 # Performance roadmap
 
+> Paths in this historical document predate the `bench/` reorganization (2026-07-13).
+
 **Status:** spike deliverable for Plan 014 (solo todo #132). Measured, not implemented — see
 "Ranked backlog" for follow-up work.
 

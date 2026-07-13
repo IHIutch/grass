@@ -13,13 +13,13 @@ set -euo pipefail
 #   ./build-pgo.sh --clean            # Remove PGO artifacts
 #
 # WORKLOAD/WORKLOAD_FLAGS can be overridden via env vars (e.g. for CI, where
-# prototype/packages is untracked and unavailable):
+# bench/fixtures/packages is untracked and unavailable):
 #   PGO_WORKLOAD=bootstrap/scss/bootstrap.scss PGO_WORKLOAD_FLAGS="--style=expanded" ./build-pgo.sh
 
 CARGO="${CARGO:-$HOME/.cargo/bin/cargo}"
 PGO_DIR="/tmp/grass-pgo-$$"
-WORKLOAD="${PGO_WORKLOAD:-prototype/packages/uswds/_index-direct.scss}"
-WORKLOAD_FLAGS="${PGO_WORKLOAD_FLAGS:---style=expanded -I prototype/packages}"
+WORKLOAD="${PGO_WORKLOAD:-bench/fixtures/packages/uswds/_index-direct.scss}"
+WORKLOAD_FLAGS="${PGO_WORKLOAD_FLAGS:---style=expanded -I bench/fixtures/packages}"
 PROFILE_RUNS=5
 
 case "${1:-}" in
