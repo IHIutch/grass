@@ -1,3 +1,5 @@
+use std::io::Write;
+
 #[macro_use]
 mod macros;
 
@@ -173,3 +175,30 @@ test!(
 test!(silent_comment_as_child, "a {\n// silent\n}\n", "");
 test!(single_hash_in_loud_comment, "/*#*/", "/*#*/\n");
 error!(unclosed_loud_comment, "/*", "Error: expected more input.");
+
+#[test]
+fn comments_before_module_css_follow_module_order() {
+    let input = r#"@use "comments_before_module_css_follow_module_order__a";
+@use "comments_before_module_css_follow_module_order__b";"#;
+    tempfile!(
+        "comments_before_module_css_follow_module_order__a.scss",
+        r#"@forward "comments_before_module_css_follow_module_order__normalize";"#
+    );
+    tempfile!(
+        "comments_before_module_css_follow_module_order__normalize.scss",
+        "/* normalize comment */\nhtml { line-height: 1.15; }\n/* normalize tail */"
+    );
+    tempfile!(
+        "comments_before_module_css_follow_module_order__b.scss",
+        r#"@forward "comments_before_module_css_follow_module_order__comments";"#
+    );
+    tempfile!(
+        "comments_before_module_css_follow_module_order__comments.scss",
+        "/* comments only */"
+    );
+
+    assert_eq!(
+        "/* normalize comment */\nhtml {\n  line-height: 1.15;\n}\n\n/* normalize tail */\n/* comments only */\n",
+        &grass::from_string(input.to_string(), &grass::Options::default()).expect(input)
+    );
+}
