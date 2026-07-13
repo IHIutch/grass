@@ -107,11 +107,12 @@ be installed with `npm ci`:
 
 The DIFF is recorded as raw signature `672042/672042@597516`; the first visible
 difference is Dart Sass’s grouped `h1`–`h6` selectors followed by `.h1`–`.h6`
-versus Grass’s interleaved order. The four ERROR signatures are preserved in
-`results.md` and `BASELINE.json` with their actual `Error:` lines; Dart Sass
-compiles each of those four entries, so they are discovery candidates rather
-than manifest drops. No compiler code was changed. Dropped projects and reasons
-are recorded in the manifest; there are no silent corpus caps.
+versus Grass’s interleaved order. The four ERROR details are preserved in
+`BASELINE.json` and the filed discovery todos, while their `results.md` cells
+remain empty; Dart Sass compiles each of those four entries, so they are
+discovery candidates rather than manifest drops. No compiler code was changed.
+Dropped projects and reasons are recorded in the manifest; there are no silent
+corpus caps.
 
 To re-pin, update each project’s commit from its repository’s default HEAD,
 verify the detached checkout, rerun `node bench/real-world/run.mjs all` twice,
