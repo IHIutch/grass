@@ -308,6 +308,11 @@ pub struct Visitor<'a> {
     pub(crate) configuration: Rc<RefCell<Configuration>>,
     combined_import_section: Vec<CssStmt>,
     pending_import_items: Vec<CssStmt>,
+    /// Root plain imports that may need to be moved ahead of module imports
+    /// when the root module itself has not loaded CSS.
+    root_import_spans: Vec<Span>,
+    /// Whether the root module loaded a user module before its plain imports.
+    root_loaded_module: bool,
     /// Comments collected before module loads in the current Sass module
     /// environment. Nested environments share this map when it already
     /// exists, matching Dart Sass's pre-module comment scope.
@@ -409,6 +414,8 @@ impl<'a> Visitor<'a> {
             plain_css_style_rule_depth: 0,
             combined_import_section: Vec::new(),
             pending_import_items: Vec::new(),
+            root_import_spans: Vec::new(),
+            root_loaded_module: false,
             pre_module_comments: None,
             in_module_import_section: true,
             module_depth: 0,
@@ -752,6 +759,24 @@ impl<'a> Visitor<'a> {
 
     pub(crate) fn finish(mut self) -> SassResult<Vec<CssStmt>> {
         self.flush_pending_imports(true);
+        if !self.root_loaded_module
+            && !self.css_tree_has_emitted_css()
+            && !self.root_import_spans.is_empty()
+        {
+            let root_import_spans = mem::take(&mut self.root_import_spans);
+            let mut root_imports = Vec::new();
+            let mut remaining = Vec::new();
+            for item in self.combined_import_section.drain(..) {
+                if matches!(&item, CssStmt::Import(_, _, span) if span.is_some_and(|span| root_import_spans.contains(&span)))
+                {
+                    root_imports.push(item);
+                } else {
+                    remaining.push(item);
+                }
+            }
+            root_imports.append(&mut remaining);
+            self.combined_import_section = root_imports;
+        }
         self.extend_modules()?;
         self.teardown_module_graph();
         let mut finished_tree = self.css_tree.finish();
@@ -795,11 +820,9 @@ impl<'a> Visitor<'a> {
 
     /// Flush pending import-section items: imports and their interleaved
     /// comments go to `combined_import_section`, while trailing comments
-    /// (after the last import) go to the CSS tree.
-    ///
-    /// When `end_of_module` is true and the pending items contain no imports
-    /// (only comments), all items go to `combined_import_section` to maintain
-    /// correct topological ordering for comment-only modules.
+    /// (after the last import) stay in the CSS tree so their traversal
+    /// position is preserved. The root import prefix is reordered in finish
+    /// when needed.
     fn flush_pending_imports(&mut self, end_of_module: bool) {
         if self.pending_import_items.is_empty() {
             return;
@@ -808,10 +831,6 @@ impl<'a> Visitor<'a> {
         let idx = Self::index_after_imports(&pending);
         for (i, item) in pending.into_iter().enumerate() {
             if i < idx {
-                self.combined_import_section.push(item);
-            } else if end_of_module && idx == 0 && self.module_depth == 0 {
-                // Root had only comments, no imports — keep them in combined
-                // so they remain ahead of module CSS in the import section.
                 self.combined_import_section.push(item);
             } else {
                 // A nested module's comment-only import section is CSS emitted
@@ -825,16 +844,33 @@ impl<'a> Visitor<'a> {
     }
 
     /// Emit comments associated with a module load at the current traversal
-    /// position. Root comments remain in the combined import section; nested
-    /// comments belong in the CSS tree beside the module edge.
+    /// position. This mirrors Dart Sass's `_combineCss`: comments stay in the
+    /// import prefix until output traversal has started (including with
+    /// comment-only nodes), then remain in traversal order.
     fn emit_pre_module_comments(&mut self, comments: &[CssStmt]) {
+        let css_started = self
+            .css_tree
+            .root_children_from(0)
+            .into_iter()
+            .any(|idx| !self.css_tree.is_hidden(idx) && self.css_tree.get(idx).is_some());
         for comment in comments {
-            if self.module_depth == 0 {
-                self.combined_import_section.push(comment.clone());
-            } else {
+            if css_started {
                 self.css_tree.add_stmt(comment.clone(), None);
+            } else {
+                self.combined_import_section.push(comment.clone());
             }
         }
+    }
+
+    fn css_tree_has_emitted_css(&self) -> bool {
+        self.css_tree.root_children_from(0).into_iter().any(|idx| {
+            !self.css_tree.is_hidden(idx)
+                && self
+                    .css_tree
+                    .get(idx)
+                    .as_ref()
+                    .is_some_and(|stmt| !matches!(stmt, CssStmt::Comment(..) | CssStmt::Import(..)))
+        })
     }
 
     /// Clone a cached module's CSS and ExtensionStore for @import isolation.
@@ -2392,6 +2428,9 @@ impl<'a> Visitor<'a> {
 
         let first_load = !self.modules.contains_key(&canonical_url);
         let mut pre_module_comments = Vec::new();
+        if self.module_depth == 0 && !self.in_import_context {
+            self.root_loaded_module = true;
+        }
         self.active_modules.insert(canonical_url.clone());
 
         // Preserve comments before a nested module load at that module's
@@ -3265,6 +3304,9 @@ impl<'a> Visitor<'a> {
         if self.parent.is_some() && self.parent != Some(CssTree::ROOT) {
             self.css_tree.add_stmt(node, self.parent);
         } else if self.in_module_import_section {
+            if self.module_depth == 0 && !self.in_import_context {
+                self.root_import_spans.push(static_import.span);
+            }
             self.pending_import_items.push(node);
         } else {
             // Out-of-order import after the import section ended
