@@ -8,6 +8,8 @@ are fetched at pinned commits; the extend synthetic is tracked.
 
 - Run on a quiet machine and record a same-session control when comparing
   numbers. Do not compare absolute milliseconds across sessions.
+- Published benchmark measurements run on Node 24 LTS; peak memory uses
+  dart-sass's native sass-embedded binary, not the pure-JS npm `sass` CLI.
 - `perf.sh compare` builds git-revision bases with the default toolchain,
   refuses unknown or mismatched rustc fingerprints, alternates base/candidate
   pairs in both orders, and reports raw `/usr/bin/time -l` instruction counts.
@@ -30,6 +32,7 @@ are fetched at pinned commits; the extend synthetic is tracked.
 | Does one binary compile the smoke workload? | `perf.sh quick` |
 | Where do native/WASM/N-API timings differ? | `cross-engine.mjs` |
 | Do N-API `compileAsync` calls scale across libuv workers? | `napi-concurrent.mjs` |
+| Does the shipped WASM surface match the other engines? | `wasm-compare.mjs` |
 | Do real projects still compile and match bytes? | `real-world/run.mjs` |
 | Where is compiler time or memory spent? | `profile.sh` and `diagnostics/` |
 
@@ -71,6 +74,12 @@ node bench/scripts/cross-engine.mjs --engine wasm --fixture uswds
 node bench/scripts/cross-engine.mjs --engine napi --fixture uswds
 node bench/scripts/cross-engine.mjs --engine wasm-string --fixture uswds
 node bench/scripts/cross-engine.mjs --engine breakdown --fixture bootstrap
+```
+
+For the shipped WASM comparison, use the Bootstrap fixture:
+
+```sh
+PERF_FIXTURE_DIR=/path/to/bootstrap node bench/scripts/wasm-compare.mjs
 ```
 
 For N-API async concurrency, point `PERF_FIXTURE_DIR` at the Bootstrap tree:
@@ -209,10 +218,10 @@ N-API async concurrency, distinct Bootstrap, N=8:
 
 | UV_THREADPOOL_SIZE | Sequential median | Concurrent median | Speedup |
 |---:|---:|---:|---:|
-| 4 (default) | 346.2 ms | 90.9 ms | 3.81x |
-| 8 | 345.5 ms | 50.5 ms | 6.84x |
+| 4 (default) | 347.6 ms | 92.4 ms | 3.76x |
+| 8 | 346.3 ms | 52.3 ms | 6.63x |
 
-Measured with 2 warmups and 5 reps on 2026-07-14; medians are same-session, machine-load-sensitive reference values.
+Measured with 2 warmups and 5 reps on 2026-07-14 on Node 24.14.0; medians are same-session, machine-load-sensitive reference values.
 
 The previous USWDS reference used the retired component-flat entry: 1,825.9M
 base instructions / 1,826.0M candidate instructions and 174.876 ms / 174.153
