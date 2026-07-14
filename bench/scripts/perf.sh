@@ -240,7 +240,7 @@ quick() {
   if [ -n "$CANDIDATE_ARG" ]; then build_candidate_if_needed; else build_candidate_if_needed; fi
   workload_paths uswds; load_check
   local command json
-  command="$(shell_command "$CANDIDATE_BINARY" "$ENTRY" "$LOAD_PATH") > /dev/null 2>$(printf '%q' "$REPO_ROOT/bench/quick.stderr")"
+  command="$(shell_command "$CANDIDATE_BINARY" "$ENTRY" "$LOAD_PATH") > /dev/null 2>$(printf '%q' "$TMP_ROOT/quick.stderr")"
   json="$(mktemp -t grass-quick)"
   hyperfine --warmup 3 --runs 10 --export-json "$json" "$command"
   python3 - "$json" <<'PY'

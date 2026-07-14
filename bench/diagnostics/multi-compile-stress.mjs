@@ -19,7 +19,7 @@ function hash(s) {
 }
 
 async function main() {
-  const { compile } = await import("../crates/lib/pkg-publish/index.js");
+  const { compile } = await import("../../crates/lib/pkg-publish/index.js");
 
   const uswdsPath = uswdsFixture.entry;
   const bootstrapPath = bootstrapFixture.entry;
