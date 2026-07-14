@@ -19,7 +19,7 @@ if (hasNative) {
       },
     };
     const res = grass.compileString("a { b: double(5px); }", opts);
-    assert.equal(res.css, "a {\n  b: 10px;\n}\n");
+    assert.equal(res.css, "a {\n  b: 10px;\n}");
   }
 
   // --- functions (async) ---
@@ -31,7 +31,7 @@ if (hasNative) {
       },
     };
     const res = await grass.compileStringAsync("a { b: triple(2); }", opts);
-    assert.equal(res.css, "a {\n  b: 6;\n}\n");
+    assert.equal(res.css, "a {\n  b: 6;\n}");
   }
 
   // --- throwing function callback surfaces as a clean error ---
@@ -63,7 +63,7 @@ if (hasNative) {
         ],
       };
       const res = grass.compileString('@import "virtual:thing";\na { b: $a; }', opts);
-      assert.equal(res.css, "a {\n  b: red;\n}\n");
+      assert.equal(res.css, "a {\n  b: red;\n}");
     } finally {
       rmSync(path);
     }
@@ -86,7 +86,7 @@ if (hasNative) {
       ],
     };
     const res = grass.compileString('@use "db:colors" as colors;\na { b: colors.$c; }', opts);
-    assert.equal(res.css, "a {\n  b: red;\n}\n");
+    assert.equal(res.css, "a {\n  b: red;\n}");
   }
 
   // --- importers (async): full Importer shape over compileStringAsync ---
@@ -106,7 +106,7 @@ if (hasNative) {
       ],
     };
     const res = await grass.compileStringAsync('@use "db:colors-async" as colors;\na { b: colors.$c; }', opts);
-    assert.equal(res.css, "a {\n  b: blue;\n}\n");
+    assert.equal(res.css, "a {\n  b: blue;\n}");
   }
 
   // --- throwing importer callback surfaces as a clean error ---
@@ -142,7 +142,7 @@ if (hasNative) {
       },
     };
     const res = grass.compileString('@use "dep" as d;\na { b: d.$c; }', opts);
-    assert.equal(res.css, "a {\n  b: green;\n}\n");
+    assert.equal(res.css, "a {\n  b: green;\n}");
   }
 
   // --- StringOptions.url + StringOptions.importer over the async entry point ---
@@ -162,7 +162,7 @@ if (hasNative) {
       },
     };
     const res = await grass.compileStringAsync('@use "dep" as d;\na { b: d.$c; }', opts);
-    assert.equal(res.css, "a {\n  b: purple;\n}\n");
+    assert.equal(res.css, "a {\n  b: purple;\n}");
   }
 
   console.log("functions native ok");

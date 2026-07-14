@@ -32,7 +32,7 @@ assert.equal(grass.SassNumber, undefined, "GRASS_FORCE_WASM did not disable the 
 
 // --- compileString: expanded, compressed, error throw ---
 
-assert.equal(grass.compileString("a { b: c }").css, "a {\n  b: c;\n}\n");
+assert.equal(grass.compileString("a { b: c }").css, "a {\n  b: c;\n}");
 assert.equal(grass.compileString("a { b: c }", { style: "compressed" }).css, "a{b:c}");
 assert.throws(() => grass.compileString("a { b: "));
 
@@ -47,10 +47,10 @@ writeFileSync(entryPath, `@use "${depName}" as dep;\na { b: dep.$c; }`);
 
 try {
   const fileResult = grass.compile(entryPath);
-  assert.equal(fileResult.css, "a {\n  b: teal;\n}\n");
+  assert.equal(fileResult.css, "a {\n  b: teal;\n}");
 
   const asyncResult = await grass.compileAsync(entryPath);
-  assert.equal(asyncResult.css, "a {\n  b: teal;\n}\n");
+  assert.equal(asyncResult.css, "a {\n  b: teal;\n}");
 } finally {
   rmSync(depPath);
   rmSync(entryPath);

@@ -522,9 +522,19 @@ pub fn from_string<S: Into<String>>(input: S, options: &Options) -> Result<Strin
 }
 
 #[cfg(feature = "wasm-exports")]
+fn js_css(mut css: String) -> String {
+    if css.ends_with('\n') {
+        css.pop();
+    }
+    css
+}
+
+#[cfg(feature = "wasm-exports")]
 #[wasm_bindgen(js_name = from_string)]
 pub fn from_string_js(input: String) -> std::result::Result<String, String> {
-    from_string(input, &Options::default()).map_err(|e| e.to_string())
+    from_string(input, &Options::default())
+        .map(js_css)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(feature = "wasm-exports")]
@@ -671,6 +681,7 @@ mod wasm_fs {
 #[cfg(feature = "wasm-exports")]
 fn wasm_compile_result(css: String, map: Option<SourceMapData>, include_sources: bool) -> JsValue {
     let obj = js_sys::Object::new();
+    let css = js_css(css);
     js_sys::Reflect::set(&obj, &JsValue::from_str("css"), &JsValue::from_str(&css)).unwrap();
 
     let source_map = match map {

@@ -17,7 +17,7 @@ for (const name of ["compile", "compileString", "compileAsync", "compileStringAs
 }
 
 // Sync happy path + option mapping
-assert.equal(binding.compileString("a { b: c }", null).css, "a {\n  b: c;\n}\n");
+assert.equal(binding.compileString("a { b: c }", null).css, "a {\n  b: c;\n}");
 assert.equal(binding.compileString("a { b: c }", { style: "compressed" }).css, "a{b:c}");
 
 // Sync error path throws (does not abort)
@@ -25,8 +25,18 @@ assert.throws(() => binding.compileString("a { b: ", null));
 
 // Async happy + error paths
 const r = await binding.compileStringAsync("a { b: c }", null);
-assert.equal(r.css, "a {\n  b: c;\n}\n");
+assert.equal(r.css, "a {\n  b: c;\n}");
 await assert.rejects(binding.compileStringAsync("a { b: ", null));
+
+// Regression invariant: the JS API must not append a trailing newline; the
+// CLI still does. Expanded sync and async output matches dart-sass's JS API,
+// while compressed output remains unchanged.
+{
+  const expected = "a {\n  b: c;\n}";
+  assert.equal(binding.compileString("a { b: c }", null).css, expected);
+  assert.equal((await binding.compileStringAsync("a { b: c }", null)).css, expected);
+  assert.equal(binding.compileString("a { b: c }", { style: "compressed" }).css, "a{b:c}");
+}
 
 // No-callback compileStringAsync calls are safe and produce identical output
 // when eight distinct inputs are issued together on the libuv threadpool.
@@ -46,7 +56,7 @@ await assert.rejects(binding.compileStringAsync("a { b: ", null));
 const slashDivSource = "$a: 1;\nb { c: $a/2; }";
 assert.equal(
   binding.compileString(slashDivSource, { silenceDeprecations: ["slash-div"] }).css,
-  "b {\n  c: 0.5;\n}\n",
+  "b {\n  c: 0.5;\n}",
 );
 assert.throws(() =>
   binding.compileString(slashDivSource, { fatalDeprecations: ["slash-div"] }),
@@ -58,15 +68,15 @@ assert.throws(() =>
 // hard-errors on the same input.
 assert.equal(
   binding.compileString("a { b: c }", { silenceDeprecations: ["bogus-id"] }).css,
-  "a {\n  b: c;\n}\n",
+  "a {\n  b: c;\n}",
 );
 assert.equal(
   binding.compileString("a { b: c }", { fatalDeprecations: ["bogus-id"] }).css,
-  "a {\n  b: c;\n}\n",
+  "a {\n  b: c;\n}",
 );
 assert.equal(
   binding.compileString("a { b: c }", { futureDeprecations: ["bogus-id"] }).css,
-  "a {\n  b: c;\n}\n",
+  "a {\n  b: c;\n}",
 );
 // A bogus ID mixed with a real one: the real one still takes effect.
 assert.throws(() =>
@@ -85,7 +95,7 @@ assert.equal(
   binding.compileString(ifFunctionSource, {
     fatalDeprecations: [{ major: 1, minor: 94, patch: 9 }],
   }).css,
-  "a {\n  b: 1;\n}\n",
+  "a {\n  b: 1;\n}",
 );
 assert.throws(() =>
   binding.compileString(ifFunctionSource, {
@@ -183,7 +193,7 @@ assert.throws(() =>
   const path = join(tmpdir(), `grass-napi-test-${process.pid}.scss`);
   writeFileSync(path, "a { b: c }");
   try {
-    assert.equal(binding.compile(path, null).css, "a {\n  b: c;\n}\n");
+    assert.equal(binding.compile(path, null).css, "a {\n  b: c;\n}");
   } finally {
     rmSync(path);
   }
@@ -224,7 +234,7 @@ assert.throws(() =>
     },
   };
   const res = binding.compileString("a { b: double(5px); }", opts);
-  assert.equal(res.css, "a {\n  b: 10px;\n}\n");
+  assert.equal(res.css, "a {\n  b: 10px;\n}");
 }
 
 // String custom function: quoted/unquoted round-trips.
@@ -239,7 +249,7 @@ assert.throws(() =>
     },
   };
   const res = binding.compileString('a { b: shout("hi"); c: shout(hi); }', opts);
-  assert.equal(res.css, 'a {\n  b: "HI!";\n  c: HI!;\n}\n');
+  assert.equal(res.css, 'a {\n  b: "HI!";\n  c: HI!;\n}');
 }
 
 // List custom function: in/out, separator preserved.
@@ -255,7 +265,7 @@ assert.throws(() =>
     },
   };
   const res = binding.compileString("a { b: double-list(1 2 3); }", opts);
-  assert.equal(res.css, "a {\n  b: 2 4 6;\n}\n");
+  assert.equal(res.css, "a {\n  b: 2 4 6;\n}");
 }
 
 // null/bool: mapped to plain JS null/true/false (grass-specific simplification,
@@ -274,7 +284,7 @@ assert.throws(() =>
     "a { b: negate(true); c: negate(false); d: or-default(null, 5); e: or-default(9, 5); }",
     opts,
   );
-  assert.equal(res.css, "a {\n  b: false;\n  c: true;\n  d: 5;\n  e: 9;\n}\n");
+  assert.equal(res.css, "a {\n  b: false;\n  c: true;\n  d: 5;\n  e: 9;\n}");
 }
 
 // Rest-args signature: `$args...` collapses into a single SassList-shaped
@@ -292,7 +302,7 @@ assert.throws(() =>
     },
   };
   const res = binding.compileString("a { b: sum-all(1, 2, 3); }", opts);
-  assert.equal(res.css, "a {\n  b: 6;\n}\n");
+  assert.equal(res.css, "a {\n  b: 6;\n}");
 }
 
 // A bare JS Array is also accepted as an ergonomic convenience (becomes a
@@ -305,7 +315,7 @@ assert.throws(() =>
     },
   };
   const res = binding.compileString("a { b: make-list(); }", opts);
-  assert.equal(res.css, "a {\n  b: 1, 2;\n}\n");
+  assert.equal(res.css, "a {\n  b: 1, 2;\n}");
 }
 
 // A thrown JS exception surfaces as a clean compile error (not a crash).
@@ -376,7 +386,7 @@ function withTimeout(promise, ms, label) {
     10000,
     "baseline async fn",
   );
-  assert.equal(r.css, "a {\n  b: 42px;\n}\n");
+  assert.equal(r.css, "a {\n  b: 42px;\n}");
 }
 
 // A thrown JS exception under compileAsync surfaces as a clean rejection
@@ -404,7 +414,7 @@ async function probeConcurrency(n) {
   }
   const results = await withTimeout(Promise.all(promises), 20000, `concurrency N=${n}`);
   const elapsed = Date.now() - start;
-  results.forEach((r, i) => assert.equal(r.css, `a {\n  b: ${i}px;\n}\n`));
+  results.forEach((r, i) => assert.equal(r.css, `a {\n  b: ${i}px;\n}`));
   console.log(`  concurrency N=${n}: PASS, elapsed=${elapsed}ms`);
 }
 await probeConcurrency(8);
@@ -427,7 +437,7 @@ await probeConcurrency(16);
     10000,
     "sync re-entrancy",
   );
-  assert.equal(r.css, "a {\n  b: x { y: z; };\n}\n");
+  assert.equal(r.css, "a {\n  b: x { y: z; };\n}");
   console.log("  re-entrancy (sync nested compile): PASS");
 }
 
@@ -453,7 +463,7 @@ await probeConcurrency(16);
     10000,
     "async re-entrancy (fire-and-forget)",
   );
-  assert.equal(r.css, "a {\n  b: started;\n}\n");
+  assert.equal(r.css, "a {\n  b: started;\n}");
   await new Promise((res) => setTimeout(res, 200));
   assert.equal(innerSettled, true, "inner fire-and-forget compile should settle shortly after");
   console.log("  re-entrancy (async nested compile, fire-and-forget): PASS");
@@ -513,7 +523,7 @@ await probeConcurrency(16);
 // between the sync (Ref<JsFunction>) and async (ThreadsafeFunction) bridges.
 {
   const opts = { functions: { "double($n)": (args) => new binding.SassNumber(args[0].value * 2) } };
-  assert.equal(binding.compileString("a { b: double(3); }", opts).css, "a {\n  b: 6;\n}\n");
+  assert.equal(binding.compileString("a { b: double(3); }", opts).css, "a {\n  b: 6;\n}");
 }
 
 // --- `importers` option (todo #221 slice 4, FileImporter only) --------
@@ -540,7 +550,7 @@ await probeConcurrency(16);
       ],
     };
     const res = binding.compileString('@import "virtual:thing";\na { b: $a; }', opts);
-    assert.equal(res.css, "a {\n  b: red;\n}\n");
+    assert.equal(res.css, "a {\n  b: red;\n}");
   } finally {
     rmSync(path);
   }
@@ -563,7 +573,7 @@ await probeConcurrency(16);
       ],
     };
     const res = binding.compileString('@import "virtual:space";\na { b: $a; }', opts);
-    assert.equal(res.css, "a {\n  b: purple;\n}\n");
+    assert.equal(res.css, "a {\n  b: purple;\n}");
   } finally {
     rmSync(path);
   }
@@ -582,7 +592,7 @@ await probeConcurrency(16);
       loadPaths: [dir],
     };
     const res = binding.compileString('@import "real-thing";\na { b: $b; }', opts);
-    assert.equal(res.css, "a {\n  b: blue;\n}\n");
+    assert.equal(res.css, "a {\n  b: blue;\n}");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -624,7 +634,7 @@ await probeConcurrency(16);
       calls.filter(([, url]) => url === "virtual:theme").map(([name]) => name),
       ["first", "second"],
     );
-    assert.equal(res.css, "a {\n  color: teal;\n  border-color: orange;\n}\n");
+    assert.equal(res.css, "a {\n  color: teal;\n  border-color: orange;\n}");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(importedPath, { force: true });
@@ -687,7 +697,7 @@ await probeConcurrency(16);
     ],
   };
   const res = binding.compileString('@use "db:colors" as colors;\na { b: colors.$c; }', opts);
-  assert.equal(res.css, "a {\n  b: red;\n}\n");
+  assert.equal(res.css, "a {\n  b: red;\n}");
 }
 
 // canonicalize/load returning null declines, falling through cleanly (no
@@ -751,7 +761,7 @@ await probeConcurrency(16);
       10000,
       "async FileImporter",
     );
-    assert.equal(res.css, "a {\n  b: teal;\n}\n");
+    assert.equal(res.css, "a {\n  b: teal;\n}");
   } finally {
     rmSync(path);
   }
@@ -778,7 +788,7 @@ await probeConcurrency(16);
     10000,
     "async full Importer",
   );
-  assert.equal(res.css, "a {\n  b: purple;\n}\n");
+  assert.equal(res.css, "a {\n  b: purple;\n}");
 }
 
 // `nonCanonicalScheme` is a full-Importer hint: a declared scheme may not be
@@ -809,7 +819,7 @@ await probeConcurrency(16);
       },
     ],
   });
-  assert.equal(allowed.css, "a {\n  b: c;\n}\n");
+  assert.equal(allowed.css, "a {\n  b: c;\n}");
 }
 
 // Sass passes containingUrl for unschemed relative loads, and for schemed
@@ -842,7 +852,7 @@ for (const hint of ["u", ["u"]]) {
         ],
       };
       const result = binding.compileString('@use "entry" as root;', options);
-      assert.equal(result.css, "a {\n  b: c;\n}\n");
+      assert.equal(result.css, "a {\n  b: c;\n}");
       assert.deepEqual(seen, [
         { url: "entry", containingUrl: null },
         {
@@ -900,7 +910,7 @@ assert.doesNotThrow(() => binding.compileString("a { b: c; }", {
       load: () => ({ contents: "a { b: c; }", syntax: "scss" }),
     }],
   }), 10000, "async allowed nonCanonicalScheme");
-  assert.equal(allowed.css, "a {\n  b: c;\n}\n");
+  assert.equal(allowed.css, "a {\n  b: c;\n}");
 }
 
 for (const hint of ["u", ["u"]]) {
@@ -927,7 +937,7 @@ for (const hint of ["u", ["u"]]) {
           },
         }],
       }), 10000, `async nonCanonicalScheme ${kind}`);
-      assert.equal(result.css, "a {\n  b: c;\n}\n");
+      assert.equal(result.css, "a {\n  b: c;\n}");
       assert.deepEqual(seen, [
         { url: "entry", containingUrl: null },
         {
@@ -1037,7 +1047,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       promises.push(binding.compileStringAsync(source, opts));
     }
     const results = await withTimeout(Promise.all(promises), 20000, `importer concurrency N=${n}`);
-    results.forEach((r, i) => assert.equal(r.css, `a {\n  b: ${i};\n}\n`));
+    results.forEach((r, i) => assert.equal(r.css, `a {\n  b: ${i};\n}`));
     console.log(`  importer concurrency N=${n}: PASS`);
   }
   await probeImporterConcurrency(8);
@@ -1067,7 +1077,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       10000,
       "path async custom function",
     );
-    assert.equal(res.css, "a {\n  b: 10px;\n}\n");
+    assert.equal(res.css, "a {\n  b: 10px;\n}");
   } finally {
     rmSync(path);
   }
@@ -1094,7 +1104,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       10000,
       "path async FileImporter",
     );
-    assert.equal(res.css, "a {\n  b: teal;\n}\n");
+    assert.equal(res.css, "a {\n  b: teal;\n}");
   } finally {
     rmSync(entryPath);
     rmSync(importedPath);
@@ -1124,7 +1134,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       10000,
       "path async full Importer",
     );
-    assert.equal(res.css, "a {\n  b: purple;\n}\n");
+    assert.equal(res.css, "a {\n  b: purple;\n}");
   } finally {
     rmSync(path);
   }
@@ -1147,7 +1157,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       10000,
       "path async importer decline",
     );
-    assert.equal(res.css, "a {\n  b: blue;\n}\n");
+    assert.equal(res.css, "a {\n  b: blue;\n}");
   } finally {
     rmSync(entryPath);
     rmSync(dir, { recursive: true, force: true });
@@ -1195,7 +1205,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       calls.filter(([, url]) => url === "virtual:theme").map(([name]) => name),
       ["first", "second"],
     );
-    assert.equal(res.css, "a {\n  color: teal;\n  border-color: orange;\n}\n");
+    assert.equal(res.css, "a {\n  color: teal;\n  border-color: orange;\n}");
   } finally {
     rmSync(entryPath, { force: true });
     rmSync(importedPath, { force: true });
@@ -1278,8 +1288,8 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       20000,
       "path async callback concurrency",
     );
-    assert.equal(results[0].css, "a {\n  b: one;\n}\n");
-    assert.equal(results[1].css, "a {\n  b: two;\n}\n");
+    assert.equal(results[0].css, "a {\n  b: one;\n}");
+    assert.equal(results[1].css, "a {\n  b: two;\n}");
   } finally {
     rmSync(firstPath);
     rmSync(secondPath);
@@ -1306,7 +1316,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
     },
   };
   const res = binding.compileString('@use "dep" as d;\na { b: d.$c; }', opts);
-  assert.equal(res.css, "a {\n  b: red;\n}\n");
+  assert.equal(res.css, "a {\n  b: red;\n}");
 }
 
 // entrypoint `importer` alone (no url) resolves a custom-scheme load (sync).
@@ -1322,7 +1332,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
     },
   };
   const res = binding.compileString('@use "db:x" as x;\na { b: x.$c; }', opts);
-  assert.equal(res.css, "a {\n  b: blue;\n}\n");
+  assert.equal(res.css, "a {\n  b: blue;\n}");
 }
 
 // StringOptions.importer handles the source's own relative load before the
@@ -1357,9 +1367,9 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       loadPaths: [loadPathDir],
     };
     const source = '@use "dep" as d;\na { color: d.$color; }';
-    assert.equal(binding.compileString(source, opts).css, "a {\n  color: red;\n}\n");
+    assert.equal(binding.compileString(source, opts).css, "a {\n  color: red;\n}");
     entryDeclines = true;
-    assert.equal(binding.compileString(source, opts).css, "a {\n  color: blue;\n}\n");
+    assert.equal(binding.compileString(source, opts).css, "a {\n  color: blue;\n}");
   } finally {
     rmSync(arrayPath, { force: true });
     rmSync(loadPathDir, { recursive: true, force: true });
@@ -1402,14 +1412,14 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
       10000,
       "string async entrypoint importer",
     );
-    assert.equal(first.css, "a {\n  color: red;\n}\n");
+    assert.equal(first.css, "a {\n  color: red;\n}");
     entryDeclines = true;
     const second = await withTimeout(
       binding.compileStringAsync(source, opts),
       10000,
       "string async importer-array precedence",
     );
-    assert.equal(second.css, "a {\n  color: blue;\n}\n");
+    assert.equal(second.css, "a {\n  color: blue;\n}");
   } finally {
     rmSync(arrayPath, { force: true });
     rmSync(loadPathDir, { recursive: true, force: true });
@@ -1435,7 +1445,7 @@ for (const invalid of ["U", "", "u:", "u/v", "u v", ":u", "u_"]) {
     10000,
     "compileStringAsync url+importer",
   );
-  assert.equal(res.css, "a {\n  b: green;\n}\n");
+  assert.equal(res.css, "a {\n  b: green;\n}");
 }
 
 // url becomes the source map's entrypoint `sources` entry (not a data: URL).
