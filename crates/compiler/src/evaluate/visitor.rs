@@ -2818,10 +2818,7 @@ impl<'a> Visitor<'a> {
             // Fall back to CSS candidates
             let mut css_candidates = Vec::new();
             if for_import {
-                css_candidates.extend(path_candidates(append_extension(
-                    base_path,
-                    "import.css",
-                )));
+                css_candidates.extend(path_candidates(append_extension(base_path, "import.css")));
             }
             css_candidates.extend(path_candidates(append_extension(base_path, "css")));
             if let Some(found) = check_conflicts(&css_candidates, context_dir, span)? {

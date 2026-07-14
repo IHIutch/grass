@@ -2453,8 +2453,7 @@ impl<'a> Serializer<'a> {
         std::ptr::eq(
             map.find_file(comment_span.low()),
             map.find_file(previous_span.low()),
-        )
-            && self.source_line(comment_span.low()) == self.source_line(previous_span.high())
+        ) && self.source_line(comment_span.low()) == self.source_line(previous_span.high())
     }
 
     fn write_children(

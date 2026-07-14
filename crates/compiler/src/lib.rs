@@ -405,10 +405,8 @@ fn compile_impl<P: AsRef<Path>>(
             CssStmt::Comment(_, span) => Some(*span),
             _ => None,
         };
-        let trailing_comment = serializer.is_trailing_comment_after_comment(
-            &stmt,
-            previous_comment_span,
-        );
+        let trailing_comment =
+            serializer.is_trailing_comment_after_comment(&stmt, previous_comment_span);
 
         let buf_len_before = serializer.buffer_len();
 
