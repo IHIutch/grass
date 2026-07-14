@@ -29,6 +29,7 @@ are fetched at pinned commits; the extend synthetic is tracked.
 | Did this compiler change regress against its base? | `perf.sh compare` |
 | Does one binary compile the smoke workload? | `perf.sh quick` |
 | Where do native/WASM/N-API timings differ? | `cross-engine.mjs` |
+| Do N-API `compileAsync` calls scale across libuv workers? | `napi-concurrent.mjs` |
 | Do real projects still compile and match bytes? | `real-world/run.mjs` |
 | Where is compiler time or memory spent? | `profile.sh` and `diagnostics/` |
 

@@ -28,6 +28,20 @@ const r = await binding.compileStringAsync("a { b: c }", null);
 assert.equal(r.css, "a {\n  b: c;\n}\n");
 await assert.rejects(binding.compileStringAsync("a { b: ", null));
 
+// No-callback compileStringAsync calls are safe and produce identical output
+// when eight distinct inputs are issued together on the libuv threadpool.
+{
+  const sources = Array.from({ length: 8 }, (_, i) => `a { b: ${i}px; }`);
+  const sequential = [];
+  for (const source of sources) {
+    sequential.push(await binding.compileStringAsync(source, null));
+  }
+  const concurrent = await Promise.all(
+    sources.map((source) => binding.compileStringAsync(source, null)),
+  );
+  concurrent.forEach((result, i) => assert.equal(result.css, sequential[i].css));
+}
+
 // silenceDeprecations / fatalDeprecations option mapping
 const slashDivSource = "$a: 1;\nb { c: $a/2; }";
 assert.equal(

@@ -105,6 +105,15 @@ For a single-binary smoke measurement, use `bash bench/scripts/perf.sh quick`.
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
 `bench/scripts/bench.sh`.
 
+The no-callback N-API `compileAsync` path already runs in parallel on libuv's
+threadpool. On the Bootstrap fixture, the distinct-input median was 173.6ms
+sequential versus 46.4ms concurrent for N=4 with the default
+`UV_THREADPOOL_SIZE=4` (3.74x), and 346.9ms versus 51.4ms for N=8 with
+`UV_THREADPOOL_SIZE=8` (6.74x). Node consumers issuing many independent
+compiles can set `UV_THREADPOOL_SIZE` before the first async work, subject to
+the machine's available CPU; callback-bearing compiles are not covered by this
+measurement.
+
 ## Profiling
 
 Use profiling to rank performance candidates before changing code; use
