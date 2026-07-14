@@ -45,7 +45,7 @@ Fetch the pinned sources, then run the base-vs-candidate gate:
 
 ```sh
 bash bench/fixtures/fetch.sh all
-bash bench/scripts/perf.sh compare --base "$(git merge-base HEAD main)" --workload all
+bash bench/scripts/perf.sh compare --base "$(git merge-base HEAD origin/HEAD)" --workload all
 ```
 
 For a one-binary smoke measurement with no verdict:

@@ -92,7 +92,7 @@ and Bootstrap fixtures when needed:
 ```bash
 bash bench/fixtures/fetch.sh all
 ~/.cargo/bin/cargo build --release -p grass
-bash bench/scripts/perf.sh compare --base "$(git merge-base HEAD main)" --workload all
+bash bench/scripts/perf.sh compare --base "$(git merge-base HEAD origin/HEAD)" --workload all
 ```
 
 The gate rejects prebuilt binaries whose rustc fingerprints differ or cannot
