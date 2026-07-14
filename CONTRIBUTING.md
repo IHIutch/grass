@@ -105,14 +105,25 @@ For a single-binary smoke measurement, use `bash bench/scripts/perf.sh quick`.
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
 `bench/scripts/bench.sh`.
 
-The no-callback N-API `compileAsync` path already runs in parallel on libuv's
-threadpool. On the Bootstrap fixture, the distinct-input median was 173.6ms
-sequential versus 46.4ms concurrent for N=4 with the default
-`UV_THREADPOOL_SIZE=4` (3.74x), and 346.9ms versus 51.4ms for N=8 with
-`UV_THREADPOOL_SIZE=8` (6.74x). Node consumers issuing many independent
-compiles can set `UV_THREADPOOL_SIZE` before the first async work, subject to
-the machine's available CPU; callback-bearing compiles are not covered by this
-measurement.
+The no-callback N-API `compileAsync` path is threadpool-bound. On the Bootstrap
+fixture, the distinct-input N=8 speedup was 3.85x with the default
+`UV_THREADPOOL_SIZE=4` and 6.85x with `UV_THREADPOOL_SIZE=8`. Node consumers
+issuing many independent compiles can set `UV_THREADPOOL_SIZE` before the first
+async work, subject to the machine's available CPU.
+
+Callback-bearing compiles are bound by callback density (callbacks per ms of
+compile work): each callback is a blocking round-trip serialized through the
+single JS thread. A realistic file importer made 87 callbacks over a roughly
+46ms Bootstrap compile (roughly 1.9 callbacks/ms), left the threadpool as the
+constraint, and measured 6.43x speedup at N=8 with
+`UV_THREADPOOL_SIZE=8`. A synthetic workload with 2,000 custom-function calls
+over a roughly 17ms compile (roughly 118 callbacks/ms) capped near 1.5x, and
+raising `UV_THREADPOOL_SIZE` barely helped.
+
+This is not explained by callback CPU: callback bodies measured 0.3–0.5% of
+wall time, and event-loop lag measured the JS thread at 8.5% busy during the
+capped workload. The precise mechanism, including N-API ThreadsafeFunction
+dispatch versus cross-thread wakeup latency, is not established.
 
 ## Profiling
 
