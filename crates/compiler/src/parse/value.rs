@@ -1470,23 +1470,37 @@ impl<'a, 'c, P: StylesheetParser<'a>> ValueParser<'a, 'c, P> {
 
         if let Some(plain) = plain {
             if plain == "if" && parser.toks().next_char_is('(') {
-                // Try CSS-native if() syntax first
-                if let Some(css_if) = super::css_if::try_parse_css_if(parser, start)? {
-                    return Ok(css_if);
-                }
-                // Fall back to legacy if($condition, $if-true, $if-false)
+                // Dart Sass disambiguates the two if() grammars by trying
+                // legacy syntax first and falling back to modern CSS syntax
+                // only when the legacy parse fails. In particular, a
+                // parenthesized legacy condition starts with `if((` but is
+                // not CSS syntax.
                 let args_start = parser.toks().cursor();
-                let call_args = parser.parse_argument_invocation(false, false)?;
-                let args_end = parser.toks().cursor();
-                let span = call_args.span;
+                let warning_count = parser.parse_time_warnings_mut().len();
+                let was_consuming_newlines = parser.is_consuming_newlines();
+                match parser.parse_argument_invocation(false, false) {
+                    Ok(call_args) => {
+                        let args_end = parser.toks().cursor();
+                        let span = call_args.span;
 
-                let message =
-                    Self::legacy_if_deprecation_message(parser, &call_args, args_start, args_end);
-                parser
-                    .parse_time_warnings_mut()
-                    .push((Deprecation::IfFunction, span, message));
+                        let message = Self::legacy_if_deprecation_message(
+                            parser, &call_args, args_start, args_end,
+                        );
+                        parser.parse_time_warnings_mut().push((
+                            Deprecation::IfFunction,
+                            span,
+                            message,
+                        ));
 
-                return Ok(AstExpr::If(parser.arena().alloc(Ternary(call_args))).span(span));
+                        return Ok(AstExpr::If(parser.arena().alloc(Ternary(call_args))).span(span));
+                    }
+                    Err(_) => {
+                        parser.toks_mut().set_cursor(args_start);
+                        parser.set_consume_newlines(was_consuming_newlines);
+                        parser.parse_time_warnings_mut().truncate(warning_count);
+                        return super::css_if::parse_css_if(parser, start);
+                    }
+                }
             } else if plain == "not" {
                 // In indented syntax, allow newlines after `not` so expressions
                 // can span multiple lines (e.g., `$a: not\nb`).

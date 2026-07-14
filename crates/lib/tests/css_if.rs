@@ -216,6 +216,26 @@ test!(
     "a {b: if(false, c, d)}",
     "a {\n  b: d;\n}\n"
 );
+test!(
+    legacy_if_parenthesized_condition,
+    "a {b: if((true), c, d)}",
+    "a {\n  b: c;\n}\n"
+);
+test!(
+    legacy_if_parenthesized_comparison,
+    "$a: 1; a {b: if(($a > 0), c, d)}",
+    "a {\n  b: c;\n}\n"
+);
+test!(
+    legacy_if_not_parenthesized,
+    "$a: 1; a {b: if(not ($a == 0), c, d)}",
+    "a {\n  b: c;\n}\n"
+);
+test!(
+    legacy_if_nested_parenthesized,
+    "a {b: if((if((true), 1, 2) > 0), c, d)}",
+    "a {\n  b: c;\n}\n"
+);
 
 // Errors
 error!(
