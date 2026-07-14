@@ -164,10 +164,10 @@ function writeResults(records) {
     rows.push("");
   }
   rows.push(
-    "| Project | Commit | Grass median (ms) | Dart median (ms) | Speedup |",
+    "| Project | Commit | Dart median (ms) | Grass median (ms) | Speedup |",
     "|---|---|---:|---:|---:|",
   );
-  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.grassMedianMs ?? "—"} | ${r.dartMedianMs ?? "—"} | ${r.ratio == null ? "—" : `${r.ratio}x`} |`);
+  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.dartMedianMs ?? "—"} | ${r.grassMedianMs ?? "—"} | ${r.ratio == null ? "—" : `${r.ratio}x`} |`);
   rows.push(
     "",
     `Runs: ${RUNS} measured after ${WARMUPS} warmups per engine; raw byte comparison; stderr captured to per-run files; no source maps; quiet machine recommended.`,
