@@ -125,6 +125,32 @@ test!(
     "/**/\n/**/\n"
 );
 test!(
+    consecutive_loud_comments_stay_on_source_line,
+    "/*! a */ /* b */",
+    "/*! a */ /* b */\n"
+);
+test!(
+    consecutive_non_loud_comments_stay_on_source_line,
+    "/* a */ /* b */",
+    "/* a */ /* b */\n"
+);
+test!(
+    comments_separated_by_blank_line_use_separate_lines,
+    "/*! a */\n\n/* b */",
+    "/*! a */\n/* b */\n"
+);
+test!(
+    comment_then_declaration_same_source_line,
+    "a { /* a */ color: red; }",
+    "a { /* a */\n  color: red;\n}\n"
+);
+test!(
+    consecutive_loud_comments_compressed,
+    "/*! a */ /*! b */",
+    "/*! a *//*! b */",
+    grass::Options::default().style(grass::OutputStyle::Compressed)
+);
+test!(
     no_extra_newline_when_after_placeholder_selector,
     r"a {
       color: red;
