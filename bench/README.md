@@ -98,14 +98,14 @@ graph shape. `bench/fixtures/fetch.sh all` recreates the pinned source trees.
 
 ## PGO training and held-out validation
 
-`build-pgo.sh` defaults to a four-project profile from the pinned corpus:
-USWDS (`@use`/`@forward` module depth), Bootstrap (legacy `@import` and
-`@each` control flow), Tabler (`@extend` and selector machinery), and Font
-Awesome (value/string interpolation and serialization-heavy icon content).
-The profile collection runs each project three times and merges all generated
-profiles. Set `PGO_TRAINING_SET=uswds` or another comma-separated subset to
-reproduce a single-project regime; `PGO_WORKLOAD` and `PGO_WORKLOAD_FLAGS`
-remain single-entry escape hatches.
+`build-pgo.sh` defaults to the pinned Bootstrap project (legacy `@import` and
+`@each` control flow), and collects it three times before merging the generated
+profiles. This is the deliberate single-project choice: it is what CI already
+shipped, it was the best profile on two of three held-out projects, and it was
+the fastest candidate to profile. Set `PGO_TRAINING_SET=uswds,bootstrap,tabler,font-awesome`
+or another comma-separated subset to rerun the experiment. The individual
+project handlers, `bench/fixtures/fetch.sh all`, and
+`PGO_WORKLOAD`/`PGO_WORKLOAD_FLAGS` remain escape hatches for experiments.
 
 For a held-out corpus project, use the same interleaved gate with its manifest
 entry and load path. This preserves the gate's same-toolchain check, paired
@@ -136,7 +136,7 @@ secondary hyperfine medians.
 | Vuetify | No | 365.5M / 33.352 ms | 310.0M / 29.919 ms | −15.19% |
 | Grafana | No | 86.1M / 10.758 ms | 76.4M / 9.513 ms | −11.35% |
 
-The trained entries measured as follows:
+The four-project experiment's trained entries measured as follows:
 
 | Project | In training set? | Plain instructions / wall | PGO instructions / wall | Delta |
 |---|---|---:|---:|---:|
@@ -145,11 +145,21 @@ The trained entries measured as follows:
 | Tabler | Yes | 1165.4M / 109.341 ms | 1044.8M / 100.542 ms | −10.35% |
 | Font Awesome | Yes | 117.9M / 11.809 ms | 100.9M / 10.803 ms | −14.38% |
 
-For the old-regime comparison on the same held-out entries, USWDS-only was
-Mastodon −14.54% (188.6M→161.2M), Vuetify −15.36% (365.2M→309.0M), and
-Grafana −10.77% (86.0M→76.7M). Bootstrap-only was Mastodon −15.90%
-(188.6M→158.6M), Vuetify −14.42% (365.3M→312.6M), and Grafana −11.58%
-(86.0M→76.1M). Their wall medians were lower than plain in every case.
+The full three-regime comparison on the same held-out entries was:
+
+| Project | USWDS-only | Bootstrap-only | Multi-project (4) |
+|---|---|---|---|
+| Mastodon | 188.6M→161.2M, −14.54% (17.938→16.854 ms) | 188.6M→158.6M, **−15.90%** (17.876→16.529 ms) | 188.7M→160.5M, −14.97% (19.634→18.214 ms) |
+| Vuetify | 365.2M→309.0M, **−15.36%** (31.569→27.338 ms) | 365.3M→312.6M, −14.42% (32.353→28.699 ms) | 365.5M→310.0M, −15.19% (33.352→29.919 ms) |
+| Grafana | 86.0M→76.7M, −10.77% (9.337→8.533 ms) | 86.0M→76.1M, **−11.58%** (10.655→8.664 ms) | 86.1M→76.4M, −11.35% (10.758→9.513 ms) |
+
+The three training sets all generalized: every held-out project improved on
+both instructions and wall time. The training set therefore does not matter
+measurably for this corpus and machine. The four-project profile was
+marginally worse than Bootstrap-only on Mastodon (−15.90% vs −14.97%) and
+Grafana (−11.58% vs −11.35%); it won only on Vuetify (−15.19% vs −14.42%).
+Bootstrap-only is consequently the deliberate default, avoiding CI cost for a
+scheme that buys nothing while preserving the training-set escape hatches.
 
 The PGO binary passed the USWDS byte-zero gate. A full corpus runner attempt
 produced 12 PASS projects and setup ERRORs for `govuk-frontend` and `adminlte`
@@ -164,9 +174,9 @@ projects were faster on instructions and wall time in this run. This supports
 generalization for this corpus and machine, but is not evidence for every Sass
 project.
 
-CI fetches the same four pinned projects with `bash bench/fixtures/fetch.sh
-pgo` before invoking the default `build-pgo.sh` path, so CI and local release
-profiles use the same training set.
+CI fetches the same pinned Bootstrap project with `bash
+bench/fixtures/fetch.sh pgo` before invoking the default `build-pgo.sh` path,
+so CI and local release profiles use the same training set.
 
 ## Reference values
 

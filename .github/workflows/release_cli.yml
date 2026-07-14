@@ -45,9 +45,9 @@ jobs:
       - name: Fetch pinned PGO training corpus
         run: bash bench/fixtures/fetch.sh pgo
 
-      # Keep release binaries on the same default multi-project profile as
-      # local builds. PGO_WORKLOAD/PGO_WORKLOAD_FLAGS remain available for
-      # deliberate release experiments.
+      # Keep release binaries on the same default Bootstrap-only profile as
+      # local builds. PGO_TRAINING_SET, PGO_WORKLOAD, and PGO_WORKLOAD_FLAGS
+      # remain available for deliberate release experiments.
       - name: PGO build
         run: ./build-pgo.sh
 

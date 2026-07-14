@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fetch the pinned source trees used by the executable performance gate and
-# the default PGO training set.
+# the default Bootstrap-only PGO training set. Individual project names and
+# `all` remain available for rerunning the training-set experiment.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -62,10 +63,7 @@ case "${1:-all}" in
     fetch_repo font-awesome "$FONT_AWESOME_URL" "$FONT_AWESOME_PIN"
     ;;
   pgo)
-    fetch_repo uswds "$USWDS_URL" "$USWDS_PIN"
     fetch_repo bootstrap "$BOOTSTRAP_URL" "$BOOTSTRAP_PIN"
-    fetch_repo tabler "$TABLER_URL" "$TABLER_PIN"
-    fetch_repo font-awesome "$FONT_AWESOME_URL" "$FONT_AWESOME_PIN"
     ;;
   all)
     fetch_repo uswds "$USWDS_URL" "$USWDS_PIN"

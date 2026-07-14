@@ -3,24 +3,22 @@ set -euo pipefail
 
 # Profile-Guided Optimization build for grass.
 #
-# The default profile is collected from four pinned real-world projects:
-# USWDS exercises the @use/@forward module graph, Bootstrap exercises the
-# legacy @import and @each paths, Tabler exercises @extend and selector
-# machinery, and Font Awesome exercises value/string interpolation and CSS
-# serialization. PROFILE_RUNS applies independently to each project.
-# In the 2026-07-14 measurement on this checkout, the multi-project profile
-# reduced instructions by 10.35%--14.38% on trained entries and
-# 11.35%--15.19% on held-out Mastodon, Vuetify, and Grafana. The local build
-# took 175.43 s wall; these are measurement notes, not a portable guarantee.
+# The default profile is collected from the pinned Bootstrap project. This is
+# what CI already shipped, it scored best on two of three held-out projects in
+# the 2026-07-14 experiment, and it is the fastest candidate to profile.
+# The experiment found no measurable benefit from paying for a four-project
+# profile: Bootstrap-only beat it on Mastodon and Grafana, while the
+# four-project profile won only on Vuetify. PROFILE_RUNS applies to each
+# selected project. These are measurement notes, not a portable guarantee.
 #
 # Usage:
 #   ./build-pgo.sh                    # Build PGO-optimized binary
 #   ./build-pgo.sh --benchmark        # Build + benchmark the first workload
 #   ./build-pgo.sh --clean            # Remove PGO artifacts
 #
-# PGO_TRAINING_SET is a comma-separated project list and defaults to
-# uswds,bootstrap,tabler,font-awesome. Set it to one project to reproduce an
-# old single-project regime. PGO_WORKLOAD/PGO_WORKLOAD_FLAGS remain a
+# PGO_TRAINING_SET is a comma-separated project list and defaults to bootstrap.
+# Set it to uswds,bootstrap,tabler,font-awesome (or any subset) to rerun the
+# training-set experiment. PGO_WORKLOAD/PGO_WORKLOAD_FLAGS remain a
 # single-entry escape hatch for CI or experiments.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -72,7 +70,7 @@ fixture_root() {
 }
 
 PGO_INPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/grass-pgo-input.XXXXXX")"
-TRAINING_SET="${PGO_TRAINING_SET:-uswds,bootstrap,tabler,font-awesome}"
+TRAINING_SET="${PGO_TRAINING_SET:-bootstrap}"
 IFS=',' read -r -a TRAINING_PROJECTS <<< "$TRAINING_SET"
 
 ENTRY=""
