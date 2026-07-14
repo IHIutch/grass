@@ -2,8 +2,7 @@
 
 `bench/` contains performance tooling and parity corpora. It is separate from
 `ci/`, which owns spec conformance and the USWDS byte-zero gate. Source trees
-are fetched at pinned commits; the three custom USWDS entries and the extend
-synthetic are tracked.
+are fetched at pinned commits; the extend synthetic is tracked.
 
 ## Measurement rules
 
@@ -54,8 +53,11 @@ For a one-binary smoke measurement with no verdict:
 bash bench/scripts/perf.sh quick
 ```
 
-Fixture resolution is `PERF_FIXTURE_DIR` → fetched pinned tree → legacy
-`bench/fixtures/packages` (or `bootstrap-bench`) for users who still have it.
+Fixture resolution is `PERF_FIXTURE_DIR` → the matching pinned tree in the
+real-world corpus cache → fetched pinned tree → legacy tree. The USWDS
+workload always generates a temporary `input.scss` containing `@use "uswds";`
+and compiles it through the upstream package entry; no custom benchmark entry
+is committed.
 
 Run the consolidated engines. Use `--fixture bootstrap` or `--fixture uswds`;
 `breakdown` also accepts `--diagnose-fs` for its explicitly non-surface shim
@@ -86,7 +88,7 @@ The pinned sources can be recreated with `bash bench/fixtures/fetch.sh all`.
 
 The performance fixtures intentionally cover different Sass workload shapes:
 
-- **USWDS** is `@use`-module-heavy, with a deep graph of roughly 90 partials;
+- **USWDS** is the upstream `@use "uswds";` entry, `@use`-module-heavy, with a deep graph of roughly 90 partials;
   it stresses import-graph and filesystem resolution.
 - **Bootstrap v5.0.2** is legacy `@import`-heavy and `@each`-heavy, generating
   CSS through evaluator, value, and serialization paths.
@@ -102,14 +104,19 @@ in the same run.
 
 | Workload | Base instructions | Candidate instructions | Base wall median | Candidate wall median |
 |---|---:|---:|---:|---:|
-| USWDS direct | 1,825.9M | 1,826.0M (+0.01%) | 174.876 ms | 174.153 ms |
-| Bootstrap | 627.6M | 627.4M (-0.03%) | 56.390 ms | 56.396 ms |
-| Extend synthetic | 33.3M | 33.0M (-0.90%) | 5.936 ms | 5.649 ms |
+| USWDS upstream | 1,911.7M | 1,911.0M (-0.04%) | 183.205 ms | 182.342 ms |
+| Bootstrap | 627.9M | 628.3M (+0.07%) | 56.525 ms | 56.510 ms |
+| Extend synthetic | 33.3M | 33.0M (-0.85%) | 5.766 ms | 5.733 ms |
 
 Measured with 10 interleaved pairs, pair 1 discarded, three hyperfine warmups,
 and 10 hyperfine wall runs on 2026-07-13. The machine load was elevated but
 below the logical-CPU warning threshold; rerun on a quiet machine before using
 these as an adjudication.
+
+The previous USWDS reference used the retired component-flat entry: 1,825.9M
+base instructions / 1,826.0M candidate instructions and 174.876 ms / 174.153
+ms wall medians. The upstream-entry values above are a correction to measure
+the workload users actually compile, not a regression.
 
 ## Real-world parity corpus
 
@@ -161,8 +168,9 @@ it is a local/manual gate.
 
 ## Layout and ownership
 
-- `fixtures/`: pinned-source fetcher/resolvers, tracked custom USWDS entries,
-  and the deterministic extend synthetic.
+- `fixtures/`: pinned-source fetcher/resolvers and the deterministic extend
+  synthetic. Workloads use upstream project entry points; no hand-modified
+  entries are benchmark fixtures.
 - `scripts/`: executable perf gate, profiling, the compatibility wrapper, and the
   consolidated cross-engine runner.
 - `diagnostics/`: memory, repeated-compile, and persistent-WASM spec tools.
