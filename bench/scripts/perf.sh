@@ -123,12 +123,20 @@ ensure_extend_fixture() {
   if [ ! -f "$path" ]; then node "$REPO_ROOT/bench/fixtures/gen-extend-synth.mjs" "$path" >/dev/null; fi
 }
 
+ensure_uswds_entry() {
+  [ -n "$TMP_ROOT" ] || TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/grass-perf.XXXXXX")"
+  local entry_dir="$TMP_ROOT/uswds-entry"
+  mkdir -p "$entry_dir"
+  printf '@use "uswds";\n' > "$entry_dir/input.scss"
+  ENTRY="$entry_dir/input.scss"
+}
+
 workload_paths() {
   local kind="$1" root
   case "$kind" in
     uswds)
       root="$(resolve_fixture_root uswds)"
-      ENTRY="$root/packages/uswds/_index-direct.scss"; LOAD_PATH="$root/packages" ;;
+      ensure_uswds_entry; LOAD_PATH="$root/packages" ;;
     bootstrap)
       root="$(resolve_fixture_root bootstrap)"
       if [ -f "$root/scss/bootstrap.scss" ]; then ENTRY="$root/scss/bootstrap.scss"; LOAD_PATH="$root/scss"; else ENTRY="$root/bootstrap-bench/scss/bootstrap.scss"; LOAD_PATH="$root/bootstrap-bench/scss"; fi ;;

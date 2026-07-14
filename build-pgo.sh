@@ -16,18 +16,34 @@ set -euo pipefail
 # bench/fixtures/packages is untracked and unavailable):
 #   PGO_WORKLOAD=bootstrap/scss/bootstrap.scss PGO_WORKLOAD_FLAGS="--style=expanded" ./build-pgo.sh
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
+source "$REPO_ROOT/bench/fixtures/resolve.sh"
+
 CARGO="${CARGO:-$HOME/.cargo/bin/cargo}"
 PGO_DIR="/tmp/grass-pgo-$$"
-WORKLOAD="${PGO_WORKLOAD:-bench/fixtures/packages/uswds/_index-direct.scss}"
-WORKLOAD_FLAGS="${PGO_WORKLOAD_FLAGS:---style=expanded -I bench/fixtures/packages}"
+if [ "${1:-}" = "--clean" ]; then
+    rm -rf /tmp/grass-pgo-*
+    echo "Cleaned PGO artifacts."
+    exit 0
+fi
+PGO_INPUT_DIR=""
+if [ -n "${PGO_WORKLOAD:-}" ]; then
+    WORKLOAD="$PGO_WORKLOAD"
+    WORKLOAD_FLAGS="${PGO_WORKLOAD_FLAGS:---style=expanded -I bench/fixtures/packages}"
+else
+    PGO_INPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/grass-pgo-input.XXXXXX")"
+    PGO_FIXTURE_ROOT="$(resolve_fixture_root uswds)"
+    printf '@use "uswds";\n' > "$PGO_INPUT_DIR/input.scss"
+    WORKLOAD="$PGO_INPUT_DIR/input.scss"
+    WORKLOAD_FLAGS="${PGO_WORKLOAD_FLAGS:---style=expanded -I $PGO_FIXTURE_ROOT/packages}"
+fi
 PROFILE_RUNS=5
 
+cleanup() { rm -rf "$PGO_DIR" "$PGO_INPUT_DIR"; }
+trap cleanup EXIT
+
 case "${1:-}" in
-    --clean)
-        rm -rf /tmp/grass-pgo-*
-        echo "Cleaned PGO artifacts."
-        exit 0
-        ;;
     --benchmark)
         BENCHMARK=1
         ;;
