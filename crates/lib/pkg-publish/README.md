@@ -243,9 +243,10 @@ Across 14 real-world projects, grass compiles 2.54x–17.17x faster than sass-em
 - Peak memory (Bootstrap, CLI): 187.7 MB → 21.1 MB (8.90x less)
 - 8 concurrent Bootstrap compiles (distinct, N=8): 90.2 ms (3.79x vs sequential)
 - Real-world parity: 14/14 byte-identical to dart-sass 1.101.0
+- **WASM** (Bootstrap, warm): **67.9 ms** — **3.08x faster** than dart-sass's *native* build (**209.3 ms**), which requires a subprocess and cannot run in browsers or Cloudflare Workers, and **4.97x faster** than dart-sass's pure-JS build (**337.0 ms**), dart-sass's only option there. One-time **~100 ms** module init, amortized across compiles; first compile **176.6 ms**.
 
 Measured 2026-07-14 on a 10-core machine with Node 23.4.0. Engine speed (Bootstrap/USWDS and corpus) uses warm in-process medians (2 warmups/5 reps), with no process startup for either engine, same as `bench/real-world/run.mjs`. Peak memory is CLI max RSS from the `sass` binary directly.
-Concurrency uses `bench/scripts/napi-concurrent.mjs` for Grass-vs-Grass sequential/concurrent compiles. See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md); performance is vs sass-embedded 1.100.0, while byte-parity is vs dart-sass 1.101.0.
+Concurrency uses `bench/scripts/napi-concurrent.mjs` for Grass-vs-Grass sequential/concurrent compiles. See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md); performance is vs sass-embedded 1.100.0, while byte-parity is vs dart-sass 1.101.0; WASM is measured through the shipped `pkg-publish` surface with `GRASS_FORCE_WASM=1`, warm in-process, using the same method as the other engine rows.
 
 ### Concurrency
 
