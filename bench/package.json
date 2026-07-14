@@ -6,6 +6,6 @@
     "grass-wasm": "file:../crates/lib/pkg-node"
   },
   "devDependencies": {
-    "sass-embedded": "^1.97.3"
+    "sass-embedded": "^1.100.0"
   }
 }

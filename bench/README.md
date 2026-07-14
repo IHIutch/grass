@@ -21,8 +21,8 @@ are fetched at pinned commits; the extend synthetic is tracked.
 - The real-world runner interleaves each project’s two engines, performs two
   warmups and five measured runs, captures stderr to files, uses quiet machine
   output, disables source maps, and compares raw bytes with no
-  canonicalization. Wall-time medians are Grass and Dart Sass separately;
-  Dart/Grass is only a ratio, not a parity criterion.
+  canonicalization. Wall-time medians are informational rather than a
+  like-for-like speed comparison; the corpus verifies byte-exact parity.
 
 | Question | Tool |
 |---|---|
@@ -238,8 +238,8 @@ existing baseline’s PASS regresses or a measured run exceeds the documented
 timing review threshold. A missing baseline is created from the run; review it
 before committing. Improvements print a ratchet-up reminder.
 
-On a passing run, `results.md` contains Project, Commit, Grass median (ms), Dart
-median (ms), and Speedup. If any project fails, it adds a `## Failures` section
+On a passing run, `results.md` contains Project, Commit, Dart median (ms), and
+Grass median (ms). If any project fails, it adds a `## Failures` section
 above the table with each project's status and error signature.
 
 The finalized active corpus produced the same parity status on two consecutive

@@ -221,23 +221,24 @@ those you would have to make if upgrading to `dart-sass`.
 
 ## Performance
 
-| Workload | grass | dart-sass (sass-embedded) | speedup |
+| Workload | dart-sass (sass-embedded) | grass | speedup |
 |---|---:|---:|---:|
-| Bootstrap (Node, warm) | 95.9 ms | 325.5 ms | 3.39x |
-| USWDS (Node, warm) | 233.4 ms | 3.152 s | 13.50x |
-| 8 concurrent Bootstrap compiles (distinct, N=8) | 90.9 ms | — | 3.81x vs sequential |
-| Real-world parity | 14/14 byte-identical to dart-sass 1.101.0 | — | — |
+| Bootstrap (Node, warm) | 320.3 ms | 97.6 ms | 3.28x |
+| USWDS (Node, warm) | 3.136 s | 233.4 ms | 13.44x |
+| Peak memory (Bootstrap, CLI) | 187.7 MB | 21.1 MB | 8.90x less |
+| 8 concurrent Bootstrap compiles (distinct, N=8) | — | 90.2 ms | 3.79x vs sequential |
+| Real-world parity | — | 14/14 byte-identical to dart-sass 1.101.0 | — |
 
-Measured 2026-07-14 on a 10-core machine with Node 23.4.0; fresh worker, 1 warmup, 5 runs; machine-specific.
-See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md) for methodology; sass-embedded is 1.97.3.
+Measured 2026-07-14 on a 10-core machine with Node 23.4.0; fresh worker, 1 warmup/5 runs for engine medians, 2 warmups/5 reps for concurrency; machine-specific. Peak memory is CLI max RSS measured with the `sass` binary directly.
+See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md) for methodology; performance measured against sass-embedded 1.100.0; byte-parity verified against dart-sass 1.101.0.
 
 ### Concurrency
 
 `compileAsync` and `compileStringAsync` run on libuv's threadpool, so concurrent compiles can parallelize.
 
-With 8 distinct Bootstrap compiles, `UV_THREADPOOL_SIZE=4` measured 3.81x vs sequential; setting it to 8 measured 6.84x. Set it before the first async work.
+With 8 distinct Bootstrap compiles, `UV_THREADPOOL_SIZE=4` measured 3.79x vs sequential; setting it to 8 measured 6.79x. Set it before the first async work.
 
-Custom JavaScript functions invoked per declaration serialize on the JS thread: fn-heavy measured 1.60x at pool 4 and 1.76x at pool 8. Custom importers do not: Bootstrap made 87 callbacks/compile against 45.9 ms sequential work.
+Custom JavaScript functions invoked per declaration serialize on the JS thread: fn-heavy measured 1.56x at pool 4 and 1.79x at pool 8. Custom importers do not: Bootstrap made 87 callbacks/compile against 45.9 ms sequential work.
 
 ### WASM package measurements
 

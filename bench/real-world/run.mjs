@@ -99,7 +99,7 @@ function firstDiff(a, b) {
 }
 
 function oneProject(project) {
-  const record = { name: project.name, commit: project.commit, status: "ERROR", grassMedianMs: null, dartMedianMs: null, ratio: null, signature: null, error: null };
+  const record = { name: project.name, commit: project.commit, status: "ERROR", grassMedianMs: null, dartMedianMs: null, signature: null, error: null };
   const work = join(DIR, `.tmp-${project.name}-${process.pid}`);
   mkdirSync(work, { recursive: true });
   try {
@@ -132,7 +132,6 @@ function oneProject(project) {
     const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
     record.grassMedianMs = Number(median(grassTimes).toFixed(1));
     record.dartMedianMs = Number(median(dartTimes).toFixed(1));
-    record.ratio = Number((record.dartMedianMs / record.grassMedianMs).toFixed(2));
     if (record.status !== "DIFF") record.status = "PASS";
   } catch (error) {
     record.error = String(error?.message || error);
@@ -164,14 +163,14 @@ function writeResults(records) {
     rows.push("");
   }
   rows.push(
-    "| Project | Commit | Dart median (ms) | Grass median (ms) | Speedup |",
-    "|---|---|---:|---:|---:|",
+    "| Project | Commit | Dart median (ms) | Grass median (ms) |",
+    "|---|---|---:|---:|",
   );
-  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.dartMedianMs ?? "—"} | ${r.grassMedianMs ?? "—"} | ${r.ratio == null ? "—" : `${r.ratio}x`} |`);
+  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.dartMedianMs ?? "—"} | ${r.grassMedianMs ?? "—"} |`);
   rows.push(
     "",
     `Runs: ${RUNS} measured after ${WARMUPS} warmups per engine; raw byte comparison; stderr captured to per-run files; no source maps; quiet machine recommended.`,
-    "The ratio is measured per FULL CLI invocation and therefore includes dart-sass's ~137 ms process startup (which is why small projects show 60-110× and large ones 10-28×).",
+    "The Dart and Grass medians are not a like-for-like speed comparison: dart-sass runs via npx -y sass@1.101.0, paying npx resolution and Dart VM startup every run (about 0.7 s even for a one-line file), while grass runs as a direct native binary. The medians are informational; this corpus verifies byte-exact parity, not speed. See bench/scripts/cross-engine.mjs for the warm in-process comparison.",
   );
   writeFileSync(join(DIR, "results.md"), rows.join("\n") + "\n");
 }

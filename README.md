@@ -19,6 +19,19 @@ a bug except for in the case of error messages and error spans.
 [Documentation](https://docs.rs/grass/)  
 [crates.io](https://crates.io/crates/grass)
 
+## Performance
+
+| Workload | dart-sass (sass-embedded) | grass | speedup |
+|---|---:|---:|---:|
+| Bootstrap (Node, warm) | 320.3 ms | 97.6 ms | 3.28x |
+| USWDS (Node, warm) | 3.136 s | 233.4 ms | 13.44x |
+| Peak memory (Bootstrap, CLI) | 187.7 MB | 21.1 MB | 8.90x less |
+| 8 concurrent Bootstrap compiles (distinct, N=8) | — | 90.2 ms | 3.79x vs sequential |
+| Real-world parity | — | 14/14 byte-identical to dart-sass 1.101.0 | — |
+
+Measured 2026-07-14 on a 10-core machine with Node 23.4.0; fresh worker, 1 warmup/5 runs for engine medians, 2 warmups/5 reps for concurrency; machine-specific. Peak memory is CLI max RSS measured with the `sass` binary directly.
+See [`bench/README.md`](bench/README.md) for methodology; performance measured against sass-embedded 1.100.0; byte-parity verified against dart-sass 1.101.0.
+
 ## Status
 
 `grass` targets complete feature parity with `dart-sass`; output deviations other than error messages and spans are bugs.
@@ -27,18 +40,6 @@ The real-world corpus is byte-identical on 14/14 projects to dart-sass 1.101.0, 
 CI checks byte-zero output for Bootstrap v5.0.2 and USWDS when the fixture is available. Report bugs in [IHIutch/grass issues](https://github.com/IHIutch/grass/issues).
 
 `grass` is not a drop-in replacement for `libsass` and does not intend to be. If you are upgrading to `grass` from `libsass`, you may have to make modifications to your stylesheets, though these changes should not differ from those you would have to make if upgrading to `dart-sass`.
-
-## Performance
-
-| Workload | grass | dart-sass (sass-embedded) | speedup |
-|---|---:|---:|---:|
-| Bootstrap (Node, warm) | 95.9 ms | 325.5 ms | 3.39x |
-| USWDS (Node, warm) | 233.4 ms | 3.152 s | 13.50x |
-| 8 concurrent Bootstrap compiles (distinct, N=8) | 90.9 ms | — | 3.81x vs sequential |
-| Real-world parity | 14/14 byte-identical to dart-sass 1.101.0 | — | — |
-
-Measured 2026-07-14 on a 10-core machine with Node 23.4.0; fresh worker, 1 warmup, 5 runs; machine-specific.
-See [`bench/README.md`](bench/README.md) for methodology; sass-embedded is 1.97.3.
 
 ## Cargo Features
 
