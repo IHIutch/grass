@@ -95,6 +95,10 @@ existing baseline’s PASS regresses or a measured run exceeds the documented
 timing review threshold. A missing baseline is created from the run; review it
 before committing. Improvements print a ratchet-up reminder.
 
+On a passing run, `results.md` contains Project, Commit, Grass median (ms), Dart
+median (ms), and Speedup. If any project fails, it adds a `## Failures` section
+above the table with each project's status and error signature.
+
 The finalized active corpus produced the same parity status on two consecutive
 full runs. reveal.js is recorded as an explicit drop because its lockfile cannot
 be installed with `npm ci`:
