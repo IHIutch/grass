@@ -1,6 +1,12 @@
 #[macro_use]
 mod macros;
 
+test!(
+    extend_placeholder_preserves_mixin_nested_at_rule_order,
+    "@mixin emits-media { x: 1; @media print { y: 2; } } %placeholder { @include emits-media; z: 3; } .a { @extend %placeholder; }",
+    ".a {\n  x: 1;\n}\n@media print {\n  .a {\n    y: 2;\n  }\n}\n.a {\n  z: 3;\n}\n"
+);
+
 test!(empty_extend_self, "a { @extend a; }", "");
 test!(
     extend_selector_list_original_order,

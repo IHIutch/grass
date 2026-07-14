@@ -9,7 +9,7 @@ use std::{
 
 use rustc_hash::FxHashSet;
 
-use crate::selector::{Selector, SelectorList};
+use crate::selector::{ComplexSelectorComponent, Selector, SelectorList, SimpleSelector};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExtendedSelector(Rc<RefCell<SelectorList>>);
@@ -45,6 +45,23 @@ impl ExtendedSelector {
 
     pub fn is_invisible_or_bogus(&self) -> bool {
         (*self.0).borrow().is_invisible_or_bogus()
+    }
+
+    /// Whether this selector contains a placeholder that may become visible
+    /// after a later `@extend`. Used while constructing the CSS tree: a
+    /// nested at-rule whose wrapper has only a placeholder selector is not
+    /// currently emit-visible, but it is still a structural sibling for the
+    /// parent-copy decision if that placeholder will be extended.
+    pub fn contains_placeholder(&self) -> bool {
+        self.0.borrow().components.iter().any(|complex| {
+            complex.components.iter().any(|component| match component {
+                ComplexSelectorComponent::Compound(compound) => compound
+                    .components
+                    .iter()
+                    .any(|simple| matches!(simple, SimpleSelector::Placeholder(..))),
+                ComplexSelectorComponent::Combinator(..) => false,
+            })
+        })
     }
 
     pub fn into_selector(self) -> Selector {
