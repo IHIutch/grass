@@ -96,6 +96,77 @@ The performance fixtures intentionally cover different Sass workload shapes:
 Using both prevents a performance change from being tuned to only one import
 graph shape. `bench/fixtures/fetch.sh all` recreates the pinned source trees.
 
+## PGO training and held-out validation
+
+`build-pgo.sh` defaults to a four-project profile from the pinned corpus:
+USWDS (`@use`/`@forward` module depth), Bootstrap (legacy `@import` and
+`@each` control flow), Tabler (`@extend` and selector machinery), and Font
+Awesome (value/string interpolation and serialization-heavy icon content).
+The profile collection runs each project three times and merges all generated
+profiles. Set `PGO_TRAINING_SET=uswds` or another comma-separated subset to
+reproduce a single-project regime; `PGO_WORKLOAD` and `PGO_WORKLOAD_FLAGS`
+remain single-entry escape hatches.
+
+For a held-out corpus project, use the same interleaved gate with its manifest
+entry and load path. This preserves the gate's same-toolchain check, paired
+ordering, instruction-primary result, and cold-pair discard:
+
+```sh
+bash bench/scripts/perf.sh compare \
+  --base /path/to/plain-release/grass \
+  --candidate /path/to/pgo/grass \
+  --entry bench/real-world/.cache/vuetify/packages/vuetify/src/styles/main.sass \
+  --load-path bench/real-world/.cache/vuetify/packages/vuetify/src/styles \
+  --label vuetify
+```
+
+The `--entry`/`--load-path` form is intentionally an escape hatch for corpus
+entries that are not one of the three built-in synthetic workloads. Record the
+raw `perf.sh` `RAW:`, `SUMMARY:`, `PERF:`, and `WALL:` lines for each regime;
+do not substitute standalone shell timing.
+
+The 2026-07-14 measurement used the pinned plain-release reference binary and
+the same default rustc fingerprint on a loaded machine. Values below are the
+raw `perf.sh` median summaries after pair 1 was discarded; wall values are the
+secondary hyperfine medians.
+
+| Project | In training set? | Plain instructions / wall | PGO instructions / wall | Delta |
+|---|---|---:|---:|---:|
+| Mastodon | No | 188.7M / 19.634 ms | 160.5M / 18.214 ms | −14.97% |
+| Vuetify | No | 365.5M / 33.352 ms | 310.0M / 29.919 ms | −15.19% |
+| Grafana | No | 86.1M / 10.758 ms | 76.4M / 9.513 ms | −11.35% |
+
+The trained entries measured as follows:
+
+| Project | In training set? | Plain instructions / wall | PGO instructions / wall | Delta |
+|---|---|---:|---:|---:|
+| USWDS | Yes | 1910.6M / 169.982 ms | 1663.3M / 150.444 ms | −12.95% |
+| Bootstrap | Yes | 628.0M / 51.942 ms | 539.7M / 45.563 ms | −14.06% |
+| Tabler | Yes | 1165.4M / 109.341 ms | 1044.8M / 100.542 ms | −10.35% |
+| Font Awesome | Yes | 117.9M / 11.809 ms | 100.9M / 10.803 ms | −14.38% |
+
+For the old-regime comparison on the same held-out entries, USWDS-only was
+Mastodon −14.54% (188.6M→161.2M), Vuetify −15.36% (365.2M→309.0M), and
+Grafana −10.77% (86.0M→76.7M). Bootstrap-only was Mastodon −15.90%
+(188.6M→158.6M), Vuetify −14.42% (365.3M→312.6M), and Grafana −11.58%
+(86.0M→76.1M). Their wall medians were lower than plain in every case.
+
+The PGO binary passed the USWDS byte-zero gate. The corpus runner produced
+13 PASS projects; `govuk-frontend` was ERROR because its project-local `npm
+ci` failed, so that project is unverified rather than counted as a byte-pass.
+No corpus byte-diff was reported. The CI workflow was not executed locally;
+its added fetch/build wall time is therefore unverified. The local default
+multi-project build took 175.43 s wall, including both release compilations.
+
+The held-out gains are within the trained-entry range, and all three held-out
+projects were faster on instructions and wall time in this run. This supports
+generalization for this corpus and machine, but is not evidence for every Sass
+project.
+
+CI fetches the same four pinned projects with `bash bench/fixtures/fetch.sh
+pgo` before invoking the default `build-pgo.sh` path, so CI and local release
+profiles use the same training set.
+
 ## Reference values
 
 These are plain-release, same-session measurements on the pinned fixtures.
