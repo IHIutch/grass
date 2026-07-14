@@ -1,9 +1,10 @@
 import { createHash } from "crypto";
 import { createRequire } from "module";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, closeSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, closeSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { spawnSync } from "child_process";
 import { performance } from "perf_hooks";
+import { pathToFileURL } from "url";
 
 delete process.env.NO_COLOR;
 process.env.FORCE_COLOR = "0";
@@ -11,6 +12,33 @@ const sassEmbedded = await import("sass-embedded");
 
 const DIR = new URL(".", import.meta.url).pathname;
 const ROOT = resolve(DIR, "../..");
+
+// The WASM leg measures the shipped pkg-publish surface. GRASS_FORCE_WASM is
+// read once at module load (index.js), so it must be set before this import;
+// SassNumber is only defined when the native binding loaded, so it doubles as
+// proof that these timings actually go through WASM.
+process.env.GRASS_FORCE_WASM = "1";
+const grassWasm = await import(pathToFileURL(join(ROOT, "crates/lib/pkg-publish/index.js")).href);
+delete process.env.GRASS_FORCE_WASM;
+if (grassWasm.SassNumber !== undefined) {
+  console.error("FATAL: pkg-publish loaded the native binding despite GRASS_FORCE_WASM=1; refusing to label napi timings as WASM");
+  process.exit(2);
+}
+
+// grass_bg.wasm is gitignored and does NOT rebuild on checkout or merge; a
+// stale binary has repeatedly produced false parity failures. Warn loudly.
+{
+  const wasmMtime = statSync(join(ROOT, "crates/lib/pkg-publish/grass_bg.wasm")).mtimeMs;
+  const srcDir = join(ROOT, "crates/compiler/src");
+  const newestSrc = Math.max(
+    ...readdirSync(srcDir, { recursive: true, encoding: "utf8" }).map((f) => {
+      try { return statSync(join(srcDir, f)).mtimeMs; } catch { return 0; }
+    }),
+  );
+  if (wasmMtime < newestSrc) {
+    console.error("WARNING: crates/lib/pkg-publish/grass_bg.wasm is OLDER than crates/compiler/src. It is gitignored and never rebuilds on checkout/merge — rebuild it with wasm-pack (see bench/README.md) before trusting any WASM result.");
+  }
+}
 const CACHE = process.env.CORPUS_CACHE || join(DIR, ".cache");
 const MANIFEST = JSON.parse(readFileSync(join(DIR, "manifest.json"), "utf8"));
 const GRASS = process.env.GRASS_BINARY || join(ROOT, "target/release/grass");
@@ -109,6 +137,7 @@ function compile(kind, entry, paths, out, err, cwd) {
 
 function compileWarm(kind, entry, paths) {
   if (kind === "grass") return grassNapi.compile(entry, { loadPaths: paths, quiet: true });
+  if (kind === "wasm") return grassWasm.compile(entry, { loadPaths: paths, quiet: true });
   return sassEmbedded.compile(entry, {
     loadPaths: paths,
     quietDeps: true,
@@ -125,7 +154,7 @@ function firstDiff(a, b) {
 }
 
 function oneProject(project) {
-  const record = { name: project.name, commit: project.commit, status: "ERROR", dartWarmMs: null, grassWarmMs: null, speedup: null, signature: null, error: null };
+  const record = { name: project.name, commit: project.commit, status: "ERROR", dartWarmMs: null, grassWarmMs: null, speedup: null, wasmWarmMs: null, wasmSpeedup: null, signature: null, error: null };
   const work = join(DIR, `.tmp-${project.name}-${process.pid}`);
   mkdirSync(work, { recursive: true });
   try {
@@ -173,6 +202,29 @@ function oneProject(project) {
     record.grassWarmMs = Number(median(grassTimes).toFixed(1));
     record.dartWarmMs = Number(median(dartTimes).toFixed(1));
     record.speedup = Number((record.dartWarmMs / record.grassWarmMs).toFixed(2));
+
+    // WASM leg: same warm in-process method, through the shipped pkg-publish
+    // surface (GRASS_FORCE_WASM=1, asserted at import). Byte-compared against
+    // the dart CLI reference above; the CLI terminates output with exactly one
+    // newline that the JS API omits, so strip it to compare like for like.
+    let dartRef = readFileSync(dartOut);
+    if (dartRef[dartRef.length - 1] === 0x0a) dartRef = dartRef.subarray(0, dartRef.length - 1);
+    const wasmTimes = [];
+    let wasmCss = null;
+    for (let i = 0; i < WARMUPS + RUNS; i++) {
+      const wasmStart = performance.now();
+      const result = compileWarm("wasm", entry, paths);
+      const wasmMs = performance.now() - wasmStart;
+      if (wasmCss === null) wasmCss = Buffer.from(result.css, "utf8");
+      if (i >= WARMUPS) wasmTimes.push(wasmMs);
+    }
+    if (!wasmCss.equals(dartRef)) {
+      record.status = "DIFF";
+      record.signature = `wasm:${wasmCss.length}/${dartRef.length}`;
+      return record;
+    }
+    record.wasmWarmMs = Number(median(wasmTimes).toFixed(1));
+    record.wasmSpeedup = Number((record.dartWarmMs / record.wasmWarmMs).toFixed(2));
     record.status = "PASS";
   } catch (error) {
     record.error = String(error?.message || error);
@@ -212,6 +264,21 @@ function writeResults(records) {
     "",
     `Timing method: warm in-process medians (${WARMUPS} warmups, ${RUNS} reps), grass via the N-API binding and dart via sass-embedded 1.100.0; neither includes process startup. Parity is separately byte-compared via the CLIs against dart-sass 1.101.0. Raw bytes, stderr capture, no source maps; quiet machine recommended.`,
   );
+  const wasmPassing = records.filter((r) => r.wasmWarmMs !== null);
+  rows.push(
+    "",
+    "## WASM engine",
+    "",
+    `grass's WASM build produced output byte-identical to dart-sass 1.101.0 on ${wasmPassing.length} of ${records.length} projects.`,
+    "",
+    "| Project | dart-sass (warm, ms) | grass WASM (warm, ms) | speedup |",
+    "|---|---:|---:|---:|",
+  );
+  for (const r of records) rows.push(`| ${r.name} | ${r.dartWarmMs ?? "—"} | ${r.wasmWarmMs ?? "—"} | ${r.wasmSpeedup ? `${r.wasmSpeedup}x` : "—"} |`);
+  rows.push(
+    "",
+    `WASM method: same warm in-process medians (${WARMUPS} warmups, ${RUNS} reps) against the same dart-sass (sass-embedded 1.100.0) reference times, but grass measured through the shipped \`crates/lib/pkg-publish\` JS API with \`GRASS_FORCE_WASM=1\` (the run aborts if the native binding loads instead). Its output is byte-compared against the dart-sass 1.101.0 CLI reference from the parity leg.`,
+  );
   writeFileSync(join(DIR, "results.md"), rows.join("\n") + "\n");
 }
 
@@ -219,7 +286,7 @@ function ratchet(records) {
   const path = join(DIR, "BASELINE.json");
   const current = Object.fromEntries(records.map((r) => [r.name, r]));
   if (!existsSync(path) || process.env.UPDATE_BASELINE === "1") {
-    writeFileSync(path, JSON.stringify({ schema: 2, paritySass: "1.101.0", timingSass: "sass-embedded 1.100.0", projects: current }, null, 2) + "\n");
+    writeFileSync(path, JSON.stringify({ schema: 3, paritySass: "1.101.0", timingSass: "sass-embedded 1.100.0", projects: current }, null, 2) + "\n");
     return 0;
   }
   const baseline = JSON.parse(readFileSync(path, "utf8")).projects || {};

@@ -241,14 +241,27 @@ node bench/real-world/run.mjs all
 node bench/real-world/run.mjs --project uswds
 ```
 
-The runner has two separate legs. First, it compiles each entry once through
+The runner has three separate legs. First, it compiles each entry once through
 the Grass and `npx -y sass@1.101.0` CLIs and byte-compares the raw outputs as a
 parity gate. Then it performs two warmups and five measured in-process reps of
 the same entry through the N-API binding and `sass-embedded` 1.100.0; neither
-timing includes CLI, npx, or compiler-process startup. `quietDeps` and silent
-logging keep diagnostics out of the timing loop. The timing medians and
-speedups are in [results.md](real-world/results.md); the warm Grass medians are
-ratcheted in [BASELINE.json](real-world/BASELINE.json).
+timing includes CLI, npx, or compiler-process startup. Third, it repeats the
+same warm method through the shipped `crates/lib/pkg-publish` JS API with
+`GRASS_FORCE_WASM=1` — the runner aborts if the native binding loads instead —
+and byte-compares the WASM output against the dart-sass CLI reference (modulo
+the single trailing newline the CLI adds and the JS API omits). `quietDeps` and
+silent logging keep diagnostics out of the timing loops. The timing medians and
+speedups for both engines are in [results.md](real-world/results.md); the warm
+medians are ratcheted in [BASELINE.json](real-world/BASELINE.json).
+
+The WASM leg measures `crates/lib/pkg-publish/grass_bg.wasm`, which is
+gitignored and never rebuilds on checkout or merge — rebuild it first
+(`wasm-pack build --release --target web --out-name grass
+--no-default-features --features wasm-exports,random` in `crates/lib`, then
+copy `pkg/grass_bg.wasm`, `pkg/grass_bg.wasm.d.ts`, `pkg/grass.d.ts`, and
+`pkg/grass.js` into `crates/lib/pkg-publish/`). The runner prints a loud
+warning when the binary is older than `crates/compiler/src`; a stale binary
+has produced false parity failures.
 
 The current active corpus is 14/14 PASS and byte-identical. The generated
 results retain all projects and never silently drop a project after an API or
