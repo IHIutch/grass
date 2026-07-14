@@ -3,6 +3,37 @@ mod macros;
 
 test!(empty_extend_self, "a { @extend a; }", "");
 test!(
+    extend_selector_list_original_order,
+    ".h1 { @extend h1; }
+     .h2 { @extend h2; }
+     .h3 { @extend h3; }
+     .h4 { @extend h4; }
+     .h5 { @extend h5; }
+     .h6 { @extend h6; }
+     h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
+     .h1 a, .h2 a, .h3 a, .h4 a, .h5 a, .h6 a { c: d; }",
+    "h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,\n.h1 a, .h2 a, .h3 a, .h4 a, .h5 a, .h6 a {\n  c: d;\n}\n"
+);
+test!(
+    extend_selector_list_double_extender_order,
+    "h1 a, .h1 a, .heading a { c: d; }
+     .h1, .heading { @extend h1; }",
+    "h1 a, .h1 a, .heading a {\n  c: d;\n}\n"
+);
+test!(
+    extend_selector_list_second_member,
+    "h1 a, h2 a, h3 a, .h2 a { c: d; }
+     .h2 { @extend h2; }",
+    "h1 a, h2 a, h3 a, .h2 a {\n  c: d;\n}\n"
+);
+test!(
+    extend_selector_list_nested_order,
+    "h1, h2, .h1, .h2 { x, y { c: d; } }
+     .h1 { @extend h1; }
+     .h2 { @extend h2; }",
+    "h1 x, h1 y, h2 x, h2 y, .h1 x, .h1 y, .h2 x, .h2 y {\n  c: d;\n}\n"
+);
+test!(
     extend_self_with_styles,
     "a {\n  color: red;\n  @extend a;\n}\n",
     "a {\n  color: red;\n}\n"

@@ -5,32 +5,11 @@ use std::{
 };
 
 use codemap::Span;
-use rustc_hash::{FxBuildHasher, FxHashSet};
+use rustc_hash::FxBuildHasher;
 
 use crate::error::SassResult;
 
 use super::{CompoundSelector, Pseudo, SelectorList, SimpleSelector, Specificity};
-
-#[derive(Clone, Debug)]
-pub(crate) struct ComplexSelectorHashSet(FxHashSet<ComplexSelector>);
-
-impl ComplexSelectorHashSet {
-    pub fn new() -> Self {
-        Self(FxHashSet::default())
-    }
-
-    pub fn insert(&mut self, complex: &ComplexSelector) -> bool {
-        self.0.insert(complex.clone())
-    }
-
-    pub fn contains(&self, complex: &ComplexSelector) -> bool {
-        self.0.contains(complex)
-    }
-
-    pub fn extend<'a>(&mut self, complexes: impl Iterator<Item = &'a ComplexSelector>) {
-        self.0.extend(complexes.cloned());
-    }
-}
 
 /// A complex selector.
 ///
@@ -63,11 +42,18 @@ pub(crate) struct ComplexSelector {
     /// Since components are never mutated after construction, this is always valid.
     cached_specificity: Specificity,
 
+    /// Whether this selector should be treated as an original during trimming.
+    ///
+    /// Dart Sass tracks this by object identity. Grass's selectors are value
+    /// types, so this bit preserves that distinction when an extended selector
+    /// is textually equal to an original selector in the same list.
+    original: bool,
+
     /// True for selectors built via `new_transient`, which skip computing
     /// `cached_hash` because they exist only to be compared (e.g. via
     /// `is_super_selector`) and are discarded immediately after. Checked by a
     /// debug assertion in `Hash::hash` — transient selectors must never be
-    /// inserted into a `ComplexSelectorHashSet` or used as a hash map/set key.
+    /// inserted into a hash map/set or used as a hash map/set key.
     is_transient: bool,
 }
 
@@ -167,6 +153,7 @@ impl ComplexSelector {
             line_break,
             cached_hash,
             cached_specificity,
+            original: false,
             is_transient: false,
         }
     }
@@ -174,7 +161,7 @@ impl ComplexSelector {
     /// Like `new`, but skips computing the hash. Only use this for
     /// comparison-only selectors (e.g. built solely to call
     /// `is_super_selector` on) that are discarded immediately and never
-    /// inserted into a `ComplexSelectorHashSet` or used as a hash map/set key
+    /// inserted into a hash map/set or used as a hash map/set key
     /// — doing so trips the debug assertion in `Hash::hash`.
     pub fn new_transient(components: Vec<ComplexSelectorComponent>, line_break: bool) -> Self {
         let cached_specificity = Self::compute_specificity(&components);
@@ -183,8 +170,30 @@ impl ComplexSelector {
             line_break,
             cached_hash: 0,
             cached_specificity,
+            original: false,
             is_transient: true,
         }
+    }
+
+    pub fn mark_original(&mut self) {
+        self.original = true;
+    }
+
+    pub fn is_original(&self) -> bool {
+        self.original
+    }
+
+    pub fn contains_pseudo_selector(&self) -> bool {
+        self.components.iter().any(|component| {
+            matches!(
+                component,
+                ComplexSelectorComponent::Compound(compound)
+                    if compound
+                        .components
+                        .iter()
+                        .any(|simple| matches!(simple, SimpleSelector::Pseudo(..)))
+            )
+        })
     }
 
     fn compute_specificity(components: &[ComplexSelectorComponent]) -> Specificity {
