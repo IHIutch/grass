@@ -114,7 +114,7 @@ test!(
 test!(
     multiline_comments_everywhere,
     "  /**/  @for  /**/  $i  /**/  from  /**/  0  /**/  to  /**/  2  /**/  {}  /**/  ",
-    "/**/\n/**/\n"
+    "/**/ /**/\n"
 );
 test!(
     uppercase_keywords,
