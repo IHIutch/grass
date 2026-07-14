@@ -13,6 +13,9 @@ THRESHOLD=1.0
 WORKLOAD_ARG="uswds,bootstrap,extend"
 BASE_ARG=""
 CANDIDATE_ARG=""
+ENTRY_ARG=""
+LOAD_PATH_ARG=""
+LABEL_ARG=""
 TMP_ROOT=""
 BASE_WORKTREE=""
 BASE_BINARY=""
@@ -25,6 +28,7 @@ usage() {
 Usage:
   bench/scripts/perf.sh compare --base <git-rev|path> [--candidate <path>]
                                 [--workload uswds,bootstrap,extend|all]
+                                [--entry <path> [--load-path <path>] [--label <name>]]
                                 [--threshold 1.0] [--runs N]
   bench/scripts/perf.sh quick [--candidate <path>]
 EOF
@@ -134,6 +138,11 @@ ensure_uswds_entry() {
 workload_paths() {
   local kind="$1" root
   case "$kind" in
+    custom)
+      ENTRY="$(resolve_binary_path "$ENTRY_ARG")"
+      LOAD_PATH=""
+      [ -n "$LOAD_PATH_ARG" ] && LOAD_PATH="$(resolve_binary_path "$LOAD_PATH_ARG")"
+      ;;
     uswds)
       root="$(resolve_fixture_root uswds)"
       ensure_uswds_entry; LOAD_PATH="$root/packages" ;;
@@ -151,7 +160,9 @@ workload_paths() {
 measure_one() {
   local binary="$1" entry="$2" load_path="$3" stderr_file="$4" stdout_file="$5"
   local seconds instructions
-  if ! "$TIME_BIN" -l "$binary" "$entry" --style=expanded --no-source-map -I "$load_path" >"$stdout_file" 2>"$stderr_file"; then
+  local -a args=("$entry" --style=expanded --no-source-map)
+  [ -n "$load_path" ] && args+=(-I "$load_path")
+  if ! "$TIME_BIN" -l "$binary" "${args[@]}" >"$stdout_file" 2>"$stderr_file"; then
     echo "ERROR: compiler failed; stderr captured at $stderr_file" >&2
     sed -n '1,12p' "$stderr_file" >&2 || true
     return 1
@@ -168,13 +179,17 @@ PY
 )"
 }
 
-shell_command() { printf '%q ' "$1" "$2" --style=expanded --no-source-map -I "$3"; }
+shell_command() {
+  printf '%q ' "$1" "$2" --style=expanded --no-source-map
+  [ -n "$3" ] && printf '%q ' -I "$3"
+}
 
 run_workload() {
   local kind="$1" run_dir="$TMP_ROOT/$kind" data="$TMP_ROOT/$kind.tsv" pair order base_instr cand_instr base_ms cand_ms
-  local base_cmd cand_cmd wall_json wall_base wall_cand summary_status
+  local base_cmd cand_cmd wall_json wall_base wall_cand summary_status display_kind="$kind"
+  [ "$kind" != custom ] || display_kind="${LABEL_ARG:-custom}"
   mkdir -p "$run_dir"; : > "$data"; workload_paths "$kind"
-  echo ""; echo "=== $kind ($ENTRY) ==="
+  echo ""; echo "=== $display_kind ($ENTRY) ==="
   echo "Measurement rule: discard pair 1 as the cold pair; summarize pairs 2..$RUNS."
   for ((pair=1; pair<=RUNS; pair++)); do
     if (( pair % 2 == 1 )); then order="base,candidate"; else order="candidate,base"; fi
@@ -190,9 +205,9 @@ run_workload() {
       base_instr="$MEASURE_INSTR"; base_ms="$MEASURE_WALL_MS"
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' "$pair" "$base_instr" "$cand_instr" "$base_ms" "$cand_ms" >> "$data"
-    echo "RAW: workload=$kind pair=$pair order=$order base_instr=$base_instr candidate_instr=$cand_instr base_wall_ms=$base_ms candidate_wall_ms=$cand_ms stderr_base=$run_dir/pair-$pair-base.stderr stderr_candidate=$run_dir/pair-$pair-candidate.stderr"
+    echo "RAW: workload=$display_kind pair=$pair order=$order base_instr=$base_instr candidate_instr=$cand_instr base_wall_ms=$base_ms candidate_wall_ms=$cand_ms stderr_base=$run_dir/pair-$pair-base.stderr stderr_candidate=$run_dir/pair-$pair-candidate.stderr"
   done
-  if python3 - "$data" "$THRESHOLD" "$kind" <<'PY'
+  if python3 - "$data" "$THRESHOLD" "$display_kind" <<'PY'
 import statistics, sys
 path, threshold, kind = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 rows = []
@@ -278,9 +293,22 @@ compare() {
   fi
   load_check; ensure_extend_fixture
   local kinds=()
-  if [ "$WORKLOAD_ARG" = all ]; then kinds=(uswds bootstrap extend); else IFS=',' read -r -a kinds <<< "$WORKLOAD_ARG"; fi
+  if [ -n "$ENTRY_ARG" ]; then
+    kinds=(custom)
+  elif [ "$WORKLOAD_ARG" = all ]; then
+    kinds=(uswds bootstrap extend)
+  else
+    IFS=',' read -r -a kinds <<< "$WORKLOAD_ARG"
+  fi
   for kind in "${kinds[@]}"; do
-    case "$kind" in uswds|bootstrap|extend) ;; *) die "unknown workload: $kind" ;; esac
+    case "$kind" in uswds|bootstrap|extend|custom) ;; *) die "unknown workload: $kind" ;; esac
+    if [ "$kind" = custom ]; then
+      [ -n "$ENTRY_ARG" ] || die "--entry requires a path"
+      [ -f "$(resolve_binary_path "$ENTRY_ARG")" ] || die "custom entry is missing: $ENTRY_ARG"
+      if [ -n "$LOAD_PATH_ARG" ] && [ ! -d "$(resolve_binary_path "$LOAD_PATH_ARG")" ]; then
+        die "custom load path is missing: $LOAD_PATH_ARG"
+      fi
+    fi
     if run_workload "$kind"; then :; else status=1; fi
   done
   return "$status"
@@ -293,6 +321,9 @@ while [ "$#" -gt 0 ]; do
     --base) [ "$#" -ge 2 ] || usage; BASE_ARG="$2"; shift 2 ;;
     --candidate) [ "$#" -ge 2 ] || usage; CANDIDATE_ARG="$2"; shift 2 ;;
     --workload) [ "$#" -ge 2 ] || usage; WORKLOAD_ARG="$2"; shift 2 ;;
+    --entry) [ "$#" -ge 2 ] || usage; ENTRY_ARG="$2"; shift 2 ;;
+    --load-path) [ "$#" -ge 2 ] || usage; LOAD_PATH_ARG="$2"; shift 2 ;;
+    --label) [ "$#" -ge 2 ] || usage; LABEL_ARG="$2"; shift 2 ;;
     --threshold) [ "$#" -ge 2 ] || usage; THRESHOLD="$2"; shift 2 ;;
     --runs) [ "$#" -ge 2 ] || usage; RUNS="$2"; shift 2 ;;
     *) usage ;;
