@@ -23,7 +23,11 @@ function referenceCss(entry) {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
-  return result.stdout;
+  // dart-sass's CLI terminates stdout with a newline; its JS API does not return one
+  // (`compile(...).css` ends at the closing brace). We compare this CLI stdout against
+  // grass's *JS API* result, so strip exactly one trailing newline to compare like for
+  // like. grass matches both contracts: its CLI emits the newline, its JS API does not.
+  return result.stdout.replace(/\n$/, "");
 }
 
 const hasNative = process.env.GRASS_FORCE_WASM !== "1" &&
