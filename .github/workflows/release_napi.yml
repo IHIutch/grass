@@ -72,7 +72,7 @@ jobs:
           mkdir -p "$context"
           docker build --tag "$image" --file - "$context" <<'DOCKERFILE'
           FROM rust:1.97-alpine@sha256:ec9c91e77119ce498cd1e87d96d77e0f75b2cee21655a29bc2bf75a51a2b20a4
-          RUN apk add --no-cache nodejs npm build-base libgcc
+          RUN apk add --no-cache nodejs npm build-base libgcc zig
           ENV RUSTFLAGS="-C target-feature=-crt-static"
           DOCKERFILE
           docker run --rm \
@@ -82,7 +82,7 @@ jobs:
             -v "$PWD:/w" \
             -w /w/crates/napi \
             "$image" \
-            sh -c "npm ci && npx napi build --manifest-path Cargo.toml --platform --profile release-napi --target ${{ matrix.target }}"
+            sh -c "npm ci && npx napi build --manifest-path Cargo.toml --platform --profile release-napi --target ${{ matrix.target }} --cross-compile"
 
       - name: Verify musl linkage
         if: contains(matrix.target, 'musl')
