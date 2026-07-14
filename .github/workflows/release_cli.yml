@@ -42,16 +42,14 @@ jobs:
           toolchain: "1.97.0" # pinned stable — bump deliberately
           components: llvm-tools-preview
 
-      - name: Clone profiling workload (Bootstrap v5.0.2)
-        run: git clone --depth=1 --branch v5.0.2 https://github.com/twbs/bootstrap.git
+      - name: Fetch pinned PGO training corpus
+        run: bash bench/fixtures/fetch.sh pgo
 
-      # Profiling on Bootstrap (not USWDS) is a deliberate workload
-      # substitution: the local perf gate fetches its pinned fixture on demand,
-      # while this release workflow intentionally trains on Bootstrap
-      # directly; the measured 1.16x speedup is workload-shape-independent
-      # (verified on both USWDS and Bootstrap in the same session).
+      # Keep release binaries on the same default multi-project profile as
+      # local builds. PGO_WORKLOAD/PGO_WORKLOAD_FLAGS remain available for
+      # deliberate release experiments.
       - name: PGO build
-        run: PGO_WORKLOAD=bootstrap/scss/bootstrap.scss PGO_WORKLOAD_FLAGS="--style=expanded" ./build-pgo.sh
+        run: ./build-pgo.sh
 
       - name: Install dart-sass 1.97.3
         run: |
