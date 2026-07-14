@@ -82,6 +82,18 @@ speed numbers.
 
 The pinned sources can be recreated with `bash bench/fixtures/fetch.sh all`.
 
+## Fixtures
+
+The performance fixtures intentionally cover different Sass workload shapes:
+
+- **USWDS** is `@use`-module-heavy, with a deep graph of roughly 90 partials;
+  it stresses import-graph and filesystem resolution.
+- **Bootstrap v5.0.2** is legacy `@import`-heavy and `@each`-heavy, generating
+  CSS through evaluator, value, and serialization paths.
+
+Using both prevents a performance change from being tuned to only one import
+graph shape. `bench/fixtures/fetch.sh all` recreates the pinned source trees.
+
 ## Reference values
 
 These are plain-release, same-session measurements on the pinned fixtures.

@@ -57,7 +57,7 @@ function runN(label, fn) {
   console.log(
     `  ${label.padEnd(24)} median: ${med.toFixed(1)}ms  min: ${min.toFixed(
       1
-    )}ms  sd: ${sd.toFixed(1)}ms (n=${N}, noise caveat: no hyperfine, ambient machine load per performance-roadmap.md)`
+    )}ms  sd: ${sd.toFixed(1)}ms (n=${N}, noise caveat: no hyperfine, ambient machine load per bench/README.md)`
   );
   return { med, min, sd, times };
 }
@@ -96,7 +96,7 @@ async function benchWorkload(key, diagnoseFs = false) {
   writeFileSync(benchFile, source);
 
   // 1. sass-embedded: measured via a FRESH node process per rep (matching
-  // performance-roadmap.md's hyperfine methodology), calling compileAsync on
+  // bench/README.md's hyperfine methodology), calling compileAsync on
   // the entry FILE rather than compileStringAsync on inline source.
   //
   // Two methodology traps found and worked around here:
@@ -159,7 +159,7 @@ async function benchWorkload(key, diagnoseFs = false) {
 
   // 2. Native CLI: forks a fresh process per rep (same cost model hyperfine
   // uses), so this is comparable to the hyperfine-measured baseline in
-  // performance-roadmap.md without needing hyperfine itself.
+  // bench/README.md without needing hyperfine itself.
   const nativeArgs = [
     entryFile,
     NATIVE_OUT,
