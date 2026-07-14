@@ -7,9 +7,12 @@
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createHash } from "crypto";
+import { resolveFixture } from "../fixtures/resolve.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const loadPaths = [resolve(__dirname, "../fixtures/packages")];
+const uswdsFixture = resolveFixture("uswds");
+const bootstrapFixture = resolveFixture("bootstrap");
+const loadPaths = [uswdsFixture.loadPath];
 
 function hash(s) {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -18,8 +21,8 @@ function hash(s) {
 async function main() {
   const { compile } = await import("../crates/lib/pkg-publish/index.js");
 
-  const uswdsPath = resolve(__dirname, "../fixtures/packages/uswds/_index-direct.scss");
-  const bootstrapPath = resolve(__dirname, "../fixtures/bootstrap-bench/scss/bootstrap.scss");
+  const uswdsPath = uswdsFixture.entry;
+  const bootstrapPath = bootstrapFixture.entry;
 
   const results = [];
   const N = process.argv[2] ? parseInt(process.argv[2], 10) : 6;

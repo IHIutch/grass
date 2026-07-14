@@ -1,17 +1,20 @@
 # grass benchmarking
 
 `bench/` contains performance tooling and parity corpora. It is separate from
-`ci/`, which owns spec conformance and the USWDS byte-zero gate. Fixture trees
-under `bench/fixtures/` are intentionally untracked; the supplied checkout has
-USWDS and Bootstrap copies for local runs.
+`ci/`, which owns spec conformance and the USWDS byte-zero gate. Source trees
+are fetched at pinned commits; the three custom USWDS entries and the extend
+synthetic are tracked.
 
 ## Measurement rules
 
 - Run on a quiet machine and record a same-session control when comparing
   numbers. Do not compare absolute milliseconds across sessions.
-- `perf-check.sh` uses hyperfine with 5 warmups and 15 measured runs when
-  available; its fallback is a 3-run smoke median. The standing baseline is
-  `bench/.perf-baseline` (`205` ms); do not rewrite it casually.
+- `perf.sh compare` builds git-revision bases with the default toolchain,
+  refuses unknown or mismatched rustc fingerprints, alternates base/candidate
+  pairs in both orders, and reports raw `/usr/bin/time -l` instruction counts.
+  It drops pair 1 as the deterministic cold-start rule and uses hyperfine
+  (`--warmup 3 --runs 10`) for secondary wall medians. It has no absolute
+  baseline.
 - `cross-engine.mjs` preserves the old engine semantics: the native, napi,
   WASM, and sass-embedded modes use a fresh worker under hyperfine (1 warmup,
   5 runs), `wasm-string` performs one warmup followed by five in-process timed
@@ -22,6 +25,14 @@ USWDS and Bootstrap copies for local runs.
   canonicalization. Wall-time medians are Grass and Dart Sass separately;
   Dart/Grass is only a ratio, not a parity criterion.
 
+| Question | Tool |
+|---|---|
+| Did this compiler change regress against its base? | `perf.sh compare` |
+| Does one binary compile the smoke workload? | `perf.sh quick` |
+| Where do native/WASM/N-API timings differ? | `cross-engine.mjs` |
+| Do real projects still compile and match bytes? | `real-world/run.mjs` |
+| Where is compiler time or memory spent? | `profile.sh` and `diagnostics/` |
+
 ## Commands
 
 Build the release CLI first:
@@ -30,12 +41,21 @@ Build the release CLI first:
 ~/.cargo/bin/cargo build --release
 ```
 
-Run the acceptance performance check (fixture resolution is
-`PERF_FIXTURE_DIR` → `bench/fixtures` → legacy `prototype` fallback):
+Fetch the pinned sources, then run the base-vs-candidate gate:
 
 ```sh
-bash bench/scripts/perf-check.sh
+bash bench/fixtures/fetch.sh all
+bash bench/scripts/perf.sh compare --base "$(git merge-base HEAD main)" --workload all
 ```
+
+For a one-binary smoke measurement with no verdict:
+
+```sh
+bash bench/scripts/perf.sh quick
+```
+
+Fixture resolution is `PERF_FIXTURE_DIR` → fetched pinned tree → legacy
+`bench/fixtures/packages` (or `bootstrap-bench`) for users who still have it.
 
 Run the consolidated engines. Use `--fixture bootstrap` or `--fixture uswds`;
 `breakdown` also accepts `--diagnose-fs` for its explicitly non-surface shim
@@ -60,21 +80,13 @@ separate: `memory-plateau-check.mjs`, `multi-compile-stress.mjs`, and
 `wasm-spec-runner.mjs` are correctness/memory investigations, not published
 speed numbers.
 
-The Bootstrap fixture can be recreated with:
+The pinned sources can be recreated with `bash bench/fixtures/fetch.sh all`.
 
-```sh
-bash bench/fixtures/fetch-bootstrap.sh
-```
+## Reference values
 
-## Current local numbers
-
-On the 2026-07-13 session, the release CLI’s USWDS performance gate was
-`165 ms` median versus the standing `205 ms` baseline (`-19.5%`). Consolidated
-smokes completed for every mode: sass-embedded USWDS `744.1 ms` mean,
-native Bootstrap `100.0 ms` mean, WASM USWDS `428.3 ms` mean, napi USWDS
-`211.6 ms` mean, wasm-string Bootstrap `65 ms` median, and breakdown Bootstrap
-medians of sass-embedded `321 ms`, WASM `62 ms`, napi `39 ms`, and native
-`50 ms`. These are session measurements, not a new baseline.
+These are plain-release, same-session measurements on the pinned fixtures.
+They are documentation only; future gates compare base and candidate binaries
+in the same run.
 
 ## Real-world parity corpus
 
@@ -126,9 +138,9 @@ it is a local/manual gate.
 
 ## Layout and ownership
 
-- `fixtures/`: `_bench_bootstrap.scss`, `_variables.scss` when present, the
-  fetcher, and untracked USWDS/Bootstrap trees.
-- `scripts/`: acceptance perf, profiling, the compatibility wrapper, and the
+- `fixtures/`: pinned-source fetcher/resolvers, tracked custom USWDS entries,
+  and the deterministic extend synthetic.
+- `scripts/`: executable perf gate, profiling, the compatibility wrapper, and the
   consolidated cross-engine runner.
 - `diagnostics/`: memory, repeated-compile, and persistent-WASM spec tools.
 - `real-world/`: manifest, runner, committed baseline, and generated results.

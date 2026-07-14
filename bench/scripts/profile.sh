@@ -8,13 +8,8 @@ MODE="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GRASS="${GRASS:-$REPO_ROOT/target/release/grass}"
-if [ -n "${PERF_FIXTURE_DIR:-}" ]; then
-  FIXTURE_DIR="$PERF_FIXTURE_DIR"
-elif [ -d "$REPO_ROOT/bench/fixtures/packages/uswds" ]; then
-  FIXTURE_DIR="$REPO_ROOT/bench/fixtures"
-else
-  FIXTURE_DIR="$REPO_ROOT/prototype"
-fi
+source "$REPO_ROOT/bench/fixtures/resolve.sh"
+FIXTURE_DIR="$(resolve_fixture_root uswds)"
 LOAD_PATH="$FIXTURE_DIR/packages"
 ARTIFACT_DIR="${PROFILE_ARTIFACT_DIR:-/tmp/grass-profile}"
 BENCH_FILE="$ARTIFACT_DIR/_grass_profile.scss"
@@ -39,13 +34,7 @@ usage() {
 }
 
 fixture_error() {
-  echo "ERROR: USWDS fixture not found at $LOAD_PATH/uswds"
-  echo ""
-  echo "This fixture (bench/fixtures/packages/uswds) is untracked and won't exist in a"
-  echo "fresh git worktree. Either:"
-  echo "  - run this from the primary checkout, where the fixture is already populated, or"
-  echo "  - set PERF_FIXTURE_DIR to a directory containing packages/uswds, e.g.:"
-  echo "      PERF_FIXTURE_DIR=/path/to/checkout/with/packages $0 $MODE"
+  echo "ERROR: USWDS fixture not found at $LOAD_PATH/uswds" >&2
   exit 2
 }
 
