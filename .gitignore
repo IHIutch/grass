@@ -35,9 +35,20 @@ dhat*
 *.cmd
 *.exe
 
+# Reproducible benchmark helpers and their checked-in synthetic inputs.
+!/bench/fixtures/fetch.sh
+!/bench/fixtures/resolve.sh
+!/bench/fixtures/gen-extend-synth.mjs
+!/bench/fixtures/extend-synth.scss
+!/bench/fixtures/packages/uswds/_index-direct.scss
+!/bench/fixtures/packages/uswds/_index-extreme.scss
+!/bench/fixtures/packages/uswds/_index-source.scss
+!/bench/scripts/perf.sh
+
 # common Sass frameworks that may wish to live alongside grass for testing
 
 /bench/real-world/.cache
+/bench/fixtures/fetched
 susy
 bulma*
 bootstrap*
