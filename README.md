@@ -10,6 +10,8 @@ input syntax, and fine-grained deprecation control), along with supporting types
 In addition to a library, this crate also includes a binary that is intended to act as an invisible
 replacement to the Sass commandline executable.
 
+Node users can install [`ihiutch-grass`](https://www.npmjs.com/package/ihiutch-grass) with `npm install ihiutch-grass`.
+
 This crate aims to achieve complete feature parity with the `dart-sass` reference
 implementation. A deviation from the `dart-sass` implementation can be considered
 a bug except for in the case of error messages and error spans.
@@ -19,19 +21,24 @@ a bug except for in the case of error messages and error spans.
 
 ## Status
 
-`grass` has reached a stage where one can be quite confident in its output. For the average user there should not be perceptible differences from `dart-sass`.
-
-Every commit of `grass` is tested against bootstrap v5.0.2, and every release is tested against the last 2,500 commits of bootstrap's `main` branch.
-
-That said, there are a number of known missing features and bugs. The rough edges of `grass` largely include `@forward` and more complex uses of `@use`. We support basic usage of these rules, but more advanced features such as `@import`ing modules containing `@forward` with prefixes may not behave as expected.
-
-All known missing features and bugs are tracked in [#19](https://github.com/connorskees/grass/issues/19).
+`grass` targets complete feature parity with `dart-sass`; output deviations other than error messages and spans are bugs.
+The real-world corpus is byte-identical on 14/14 projects to dart-sass 1.101.0, including USWDS and govuk-frontend;
+`@use` and `@forward` are covered. The sass-spec baseline records 39 failures out of 13,888 tests against dart-sass 1.101.0.
+CI checks byte-zero output for Bootstrap v5.0.2 and USWDS when the fixture is available. Report bugs in [IHIutch/grass issues](https://github.com/IHIutch/grass/issues).
 
 `grass` is not a drop-in replacement for `libsass` and does not intend to be. If you are upgrading to `grass` from `libsass`, you may have to make modifications to your stylesheets, though these changes should not differ from those you would have to make if upgrading to `dart-sass`.
 
 ## Performance
 
-`grass` is benchmarked against `dart-sass` and `sassc` (`libsass`) [here](https://github.com/connorskees/sass-perf). In general, `grass` appears to be ~2x faster than `dart-sass` and ~1.7x faster than `sassc`.
+| Workload | grass | dart-sass (sass-embedded) | speedup |
+|---|---:|---:|---:|
+| Bootstrap (Node, warm) | 95.9 ms | 325.5 ms | 3.39x |
+| USWDS (Node, warm) | 233.4 ms | 3.152 s | 13.50x |
+| 8 concurrent Bootstrap compiles (distinct, N=8) | 90.9 ms | — | 3.81x vs sequential |
+| Real-world parity | 14/14 byte-identical to dart-sass 1.101.0 | — | — |
+
+Measured 2026-07-14 on a 10-core machine with Node 23.4.0; fresh worker, 1 warmup, 5 runs; machine-specific.
+See [`bench/README.md`](bench/README.md) for methodology; sass-embedded is 1.97.3.
 
 ## Cargo Features
 

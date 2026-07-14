@@ -73,6 +73,15 @@ node bench/scripts/cross-engine.mjs --engine wasm-string --fixture uswds
 node bench/scripts/cross-engine.mjs --engine breakdown --fixture bootstrap
 ```
 
+For N-API async concurrency, point `PERF_FIXTURE_DIR` at the Bootstrap tree:
+
+```sh
+PERF_FIXTURE_DIR=/path/to/bootstrap node bench/scripts/napi-concurrent.mjs
+UV_THREADPOOL_SIZE=8 PERF_FIXTURE_DIR=/path/to/bootstrap node bench/scripts/napi-concurrent.mjs
+```
+
+It reports warmup/median wall times, speedups, callback counts, and callback CPU for same/distinct Bootstrap, custom-function, and importer workloads.
+
 `bench/scripts/bench.sh` is a compatibility wrapper for the four ordinary
 USWDS engine modes. Run `npm ci` in `bench/` before sass-embedded or package
 benchmarks. `profile.sh cpu|heap` retains the CPU and dhat workflows; it writes
@@ -195,6 +204,15 @@ Measured with 10 interleaved pairs, pair 1 discarded, three hyperfine warmups,
 and 10 hyperfine wall runs on 2026-07-13. The machine load was elevated but
 below the logical-CPU warning threshold; rerun on a quiet machine before using
 these as an adjudication.
+
+N-API async concurrency, distinct Bootstrap, N=8:
+
+| UV_THREADPOOL_SIZE | Sequential median | Concurrent median | Speedup |
+|---:|---:|---:|---:|
+| 4 (default) | 346.2 ms | 90.9 ms | 3.81x |
+| 8 | 345.5 ms | 50.5 ms | 6.84x |
+
+Measured with 2 warmups and 5 reps on 2026-07-14; medians are same-session, machine-load-sensitive reference values.
 
 The previous USWDS reference used the retired component-flat entry: 1,825.9M
 base instructions / 1,826.0M candidate instructions and 174.876 ms / 174.153
