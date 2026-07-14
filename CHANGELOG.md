@@ -7,6 +7,18 @@ called out explicitly where relevant.
 
 # Unreleased
 
+## Breaking (npm packages only: `ihiutch-grass`, `ihiutch-grass-napi`)
+
+- **JS API: `css` no longer ends with a trailing newline.** `compile()`,
+  `compileString()`, and their async forms now return `css` exactly as dart-sass's
+  JS API does — without a trailing newline. Previously grass appended one, so every
+  result differed from dart-sass by a single byte. If you write `result.css` straight
+  to a file and need the previous bytes, append `"\n"` yourself.
+
+  **The CLI and the Rust API are unchanged** — both still end output with a newline,
+  matching dart-sass's CLI. (dart-sass deliberately has different trailing-newline
+  behavior for its CLI and its JS API; grass now matches both.)
+
 ## Source maps
 
 - implement Source Map v3 generation end-to-end: CLI (`--no-source-map`, `--source-map-urls`,
@@ -71,6 +83,14 @@ called out explicitly where relevant.
 - raise the maximum style-rule nesting depth from 128 to 1024, matching dart-sass more closely
 - improve compile performance: the release CLI's USWDS benchmark has dropped from ~271ms to
   ~205ms since the `0.13.4` release
+- release CLI binaries are now PGO-trained on a multi-project corpus, rather than a single project
+- npm: `compileAsync`/`compileStringAsync` parallelize across concurrent calls on libuv's
+  threadpool. Raise `UV_THREADPOOL_SIZE` before the first async call for multi-entry builds — on 8
+  concurrent Bootstrap compiles, 3.76x vs sequential at the default pool of 4, and 6.63x at 8
+- add a real-world parity/benchmark corpus: 14 projects (Bootstrap, USWDS, Bulma, Vuetify,
+  Mastodon, Grafana and others), all compiling byte-identical to dart-sass 1.101.0
+  (see `bench/real-world/results.md`)
+- benchmarks and CI standardized on Node 24 LTS (Node 20 reached end of life in April 2026)
 
 # 0.13.4
 

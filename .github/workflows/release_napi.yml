@@ -45,7 +45,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20.20.2
+          node-version: 24.14.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # v1, resolves 1.97.0
@@ -110,11 +110,11 @@ jobs:
         working-directory: crates/napi
         shell: bash
         run: |
-          version="v20.20.2"
+          version="v24.14.0"
           archive="node-${version}-darwin-x64.tar.gz"
-          # Node v20.20.2 darwin-x64 tarball; SHA-256 verified against the official SHASUMS256.txt.
+          # Node v24.14.0 darwin-x64 tarball; SHA-256 verified against the official SHASUMS256.txt.
           curl -fsSLo "$RUNNER_TEMP/$archive" "https://nodejs.org/dist/${version}/$archive"
-          echo "8be6f5e4bb128c82774f8a0b8d7a1cc1365a7977d9657cece0ca647b3fe04e61  $RUNNER_TEMP/$archive" | shasum -a 256 -c -
+          echo "f2879eb810e25993a0578e5d878930266fd2eafcffe9f2839b3d8db354d4879e  $RUNNER_TEMP/$archive" | shasum -a 256 -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
           arch -x86_64 "$RUNNER_TEMP/node-${version}-darwin-x64/bin/node" test.mjs
 
@@ -131,7 +131,7 @@ jobs:
       - name: Test native module (x86_64 Linux musl)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         shell: bash
-        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node test.mjs
+        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd node test.mjs
 
       - name: Test native module (aarch64 Linux GNU)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -141,7 +141,7 @@ jobs:
       - name: Test native module (aarch64 Linux musl)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         shell: bash
-        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 node test.mjs
+        run: docker run --rm -v "$PWD:/w" -w /w/crates/napi node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd node test.mjs
 
       - name: Test native module (x86_64 Windows)
         if: matrix.target == 'x86_64-pc-windows-msvc'
@@ -170,7 +170,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20.20.2
+          node-version: 24.14.0
 
       - name: Install npm 11.18.0 (trusted publishing requires >= 11.5.1)
         run: npm install -g npm@11.18.0 && npm --version
