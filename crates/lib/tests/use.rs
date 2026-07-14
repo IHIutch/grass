@@ -646,6 +646,54 @@ fn include_variable_with_star_namespace() {
 }
 
 #[test]
+fn use_star_does_not_conflict_with_later_global_assignment() {
+    let mut fs = TestFs::new();
+
+    fs.add_file(
+        "_shared.scss",
+        r#"$govuk-suppressed-warnings: () !default;"#,
+    );
+    fs.add_file(
+        "_wrapper.scss",
+        r#"
+            @use "shared" as *;
+
+            @mixin warning() {
+                $govuk-suppressed-warnings: (x) !global;
+            }
+        "#,
+    );
+
+    let input = r#"@use "wrapper";"#;
+
+    assert_eq!(
+        "",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
+
+#[test]
+fn use_star_still_errors_for_distinct_global_modules() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_a.scss", "$a: blue;");
+    fs.add_file("_b.scss", "$a: red;");
+
+    let input = r#"
+        @use "a" as *;
+        @use "b" as *;
+
+        a { color: $a; }
+    "#;
+
+    assert_err!(
+        input,
+        "Error: This variable is available from multiple global modules.",
+        grass::Options::default().fs(&fs)
+    );
+}
+
+#[test]
 fn include_function_with_star_namespace() {
     let mut fs = TestFs::new();
 

@@ -1890,13 +1890,6 @@ impl<'a> Visitor<'a> {
             env.scopes.enable_span_tracking();
         }
 
-        // Pre-declare global variable slots for any `!global` declarations found
-        // during parsing. This ensures the module exposes the same members
-        // regardless of control flow, defaulting to `null` if never assigned.
-        for name in &stylesheet.pre_declared_global_variables {
-            env.scopes.insert_var(0, *name, Value::Null);
-        }
-
         // Save the configuration Rc for tracking before it's moved into the closure.
         let config_for_tracking = configuration.as_ref().map(Rc::clone);
 
@@ -1941,6 +1934,16 @@ impl<'a> Visitor<'a> {
             let root_children_before = visitor.css_tree.child_count(CssTree::ROOT);
 
             visitor.visit_stylesheet(&stylesheet)?;
+
+            // Dart Sass materializes global variables declared in unreachable
+            // branches after evaluating the stylesheet. Doing this after
+            // @use rules matters when a later !global declaration has the same
+            // name as a module loaded with `as *`.
+            for name in &stylesheet.pre_declared_global_variables {
+                if !visitor.env.scopes.global_var_exists(*name) {
+                    visitor.env.scopes.insert_var(0, *name, Value::Null);
+                }
+            }
 
             // Flush any remaining pending imports from this module.
             visitor.flush_pending_imports(true);
@@ -2702,6 +2705,15 @@ impl<'a> Visitor<'a> {
             vec![path, partial]
         }
 
+        // Sass treats an unrecognized suffix in a load path as part of the
+        // basename. `breakpoints.mixin` therefore resolves to
+        // `breakpoints.mixin.scss`, not `breakpoints.scss`.
+        fn append_extension(path: &Path, extension: &str) -> PathBuf {
+            let dirname = path.parent().unwrap_or_else(|| Path::new(""));
+            let basename = path.file_name().unwrap_or_else(|| OsStr::new(".."));
+            dirname.join(format!("{}.{}", basename.to_string_lossy(), extension))
+        }
+
         // Build candidates for an explicit non-CSS extension. Unlike the
         // general path candidates above, partials take priority within each
         // group so conflicts are reported in Sass's order.
@@ -2722,8 +2734,8 @@ impl<'a> Visitor<'a> {
         ) -> (Vec<PathBuf>, Vec<PathBuf>) {
             let mut import_candidates = Vec::new();
             if for_import {
-                let sass_import = path.with_extension("import.sass");
-                let scss_import = path.with_extension("import.scss");
+                let sass_import = append_extension(path, "import.sass");
+                let scss_import = append_extension(path, "import.scss");
                 let dirname = sass_import
                     .parent()
                     .unwrap_or_else(|| Path::new(""))
@@ -2738,8 +2750,8 @@ impl<'a> Visitor<'a> {
                 import_candidates.push(scss_import);
             }
 
-            let sass_path = path.with_extension("sass");
-            let scss_path = path.with_extension("scss");
+            let sass_path = append_extension(path, "sass");
+            let scss_path = append_extension(path, "scss");
             let dirname = sass_path
                 .parent()
                 .unwrap_or_else(|| Path::new(""))
@@ -2806,9 +2818,12 @@ impl<'a> Visitor<'a> {
             // Fall back to CSS candidates
             let mut css_candidates = Vec::new();
             if for_import {
-                css_candidates.extend(path_candidates(base_path.with_extension("import.css")));
+                css_candidates.extend(path_candidates(append_extension(
+                    base_path,
+                    "import.css",
+                )));
             }
-            css_candidates.extend(path_candidates(base_path.with_extension("css")));
+            css_candidates.extend(path_candidates(append_extension(base_path, "css")));
             if let Some(found) = check_conflicts(&css_candidates, context_dir, span)? {
                 return Ok(Some(found));
             }
@@ -3231,15 +3246,17 @@ impl<'a> Visitor<'a> {
         // need to put its CSS into an intermediate [ModifiableCssStylesheet] so
         // that we can hermetically resolve `@extend`s before injecting it.
         if stylesheet.uses.is_empty() && stylesheet.forwards.is_empty() {
-            // Pre-declare global variable slots from the imported stylesheet.
-            // Even if `!global` declarations are inside unreachable branches,
-            // they create variable slots that default to `null`.
+            self.visit_stylesheet(&stylesheet)?;
+            // Match Dart Sass's post-evaluation materialization of global
+            // variables from unreachable branches. In particular, don't let
+            // a later `!global` declaration conflict with an earlier
+            // `@use ... as *` while the imported stylesheet is evaluated.
             for name in &stylesheet.pre_declared_global_variables {
                 if !self.env.scopes.global_var_exists(*name) {
                     self.env.scopes.insert_var(0, *name, Value::Null);
                 }
             }
-            self.visit_stylesheet(&stylesheet)?;
+            self.active_modules.remove(&url);
             return Ok(());
         }
 
