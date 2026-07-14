@@ -223,13 +223,26 @@ those you would have to make if upgrading to `dart-sass`.
 
 Across 14 real-world projects, grass compiles 2.54x–17.17x faster than sass-embedded (6.23x median), byte-identically to dart-sass 1.101.0. See the [full corpus results](https://github.com/IHIutch/grass/blob/master/bench/real-world/results.md).
 
-| Workload | dart-sass (sass-embedded) | grass | speedup |
+| Project | dart-sass (sass-embedded) | grass | speedup |
 |---|---:|---:|---:|
-| Bootstrap (Node, warm) | 203.9 ms | 42.6 ms | 4.79x |
-| USWDS (Node, warm) | 3.046 s | 177.4 ms | 17.17x |
-| Peak memory (Bootstrap, CLI) | 187.7 MB | 21.1 MB | 8.90x less |
-| 8 concurrent Bootstrap compiles (distinct, N=8) | — | 90.2 ms | 3.79x vs sequential |
-| Real-world parity | — | 14/14 byte-identical to dart-sass 1.101.0 | — |
+| uswds | 3046.1 ms | 177.4 ms | 17.17x |
+| video.js | 58 ms | 4.2 ms | 13.81x |
+| grafana | 64.8 ms | 5.6 ms | 11.57x |
+| just-the-docs | 66.9 ms | 6 ms | 11.15x |
+| font-awesome | 71.9 ms | 7.5 ms | 9.59x |
+| minimal-mistakes | 95 ms | 12 ms | 7.92x |
+| mastodon | 111.4 ms | 15.4 ms | 7.23x |
+| govuk-frontend | 107.7 ms | 20.6 ms | 5.23x |
+| vuetify | 149.9 ms | 29.3 ms | 5.12x |
+| quasar | 156.6 ms | 30.8 ms | 5.08x |
+| bootstrap | 203.9 ms | 42.6 ms | 4.79x |
+| adminlte | 231.9 ms | 58.8 ms | 3.94x |
+| bulma | 501.8 ms | 140.7 ms | 3.57x |
+| tabler | 247.3 ms | 97.5 ms | 2.54x |
+
+- Peak memory (Bootstrap, CLI): 187.7 MB → 21.1 MB (8.90x less)
+- 8 concurrent Bootstrap compiles (distinct, N=8): 90.2 ms (3.79x vs sequential)
+- Real-world parity: 14/14 byte-identical to dart-sass 1.101.0
 
 Measured 2026-07-14 on a 10-core machine with Node 23.4.0. Engine speed (Bootstrap/USWDS and corpus) uses warm in-process medians (2 warmups/5 reps), with no process startup for either engine, same as `bench/real-world/run.mjs`. Peak memory is CLI max RSS from the `sass` binary directly.
 Concurrency uses `bench/scripts/napi-concurrent.mjs` for Grass-vs-Grass sequential/concurrent compiles. See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md); performance is vs sass-embedded 1.100.0, while byte-parity is vs dart-sass 1.101.0.
