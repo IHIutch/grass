@@ -36,6 +36,8 @@ dhat*
 *.exe
 
 # common Sass frameworks that may wish to live alongside grass for testing
+
+/bench/real-world/.cache
 susy
 bulma*
 bootstrap*

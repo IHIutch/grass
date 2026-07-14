@@ -1560,20 +1560,29 @@ impl<'a> Serializer<'a> {
         prev_was_group_end: bool,
         prev_requires_semicolon: bool,
         had_previous_visible: bool,
+        trailing_comment: bool,
     ) -> SassResult<()> {
         if prev_requires_semicolon {
             self.buffer.push(b';');
         }
 
-        if !self.buffer.is_empty() || had_previous_visible {
+        if !trailing_comment && (!self.buffer.is_empty() || had_previous_visible) {
             self.write_optional_newline();
         }
 
-        if prev_was_group_end && !self.buffer.is_empty() {
+        if !trailing_comment && prev_was_group_end && !self.buffer.is_empty() {
             self.write_optional_newline();
         }
 
-        self.visit_stmt(stmt)?;
+        if trailing_comment {
+            if let CssStmt::Comment(comment, span) = stmt {
+                self.write_inline_comment(&comment, span, false)?;
+            } else {
+                unreachable!("only comments can be trailing comments");
+            }
+        } else {
+            self.visit_stmt(stmt)?;
+        }
 
         Ok(())
     }
@@ -2410,6 +2419,43 @@ impl<'a> Serializer<'a> {
         }
     }
 
+    /// Whether `comment` is a trailing comment for a preceding comment.
+    ///
+    /// Dart Sass uses the source span relationship here rather than treating
+    /// every comment as a standalone statement. In particular, consecutive
+    /// comments that start on the line where the previous comment ends stay
+    /// on that line. This is deliberately limited to comment/comment pairs;
+    /// the other trailing-comment cases have their own statement-specific
+    /// handling below.
+    pub(crate) fn is_trailing_comment_after_comment(
+        &self,
+        comment: &CssStmt,
+        previous: Option<Span>,
+    ) -> bool {
+        if self.options.is_compressed() {
+            return false;
+        }
+
+        let (CssStmt::Comment(_, comment_span), Some(previous_span)) = (comment, previous) else {
+            return false;
+        };
+
+        let Some(map) = self.map else { return false };
+
+        // Repeated imports can emit the same source comment span more than
+        // once. Dart Sass treats that as a distinct node occurrence rather
+        // than a trailing comment (its containment path rejects the equal
+        // span), so don't splice equal/contained spans together.
+        if previous_span.contains(*comment_span) {
+            return false;
+        }
+
+        std::ptr::eq(
+            map.find_file(comment_span.low()),
+            map.find_file(previous_span.low()),
+        ) && self.source_line(comment_span.low()) == self.source_line(previous_span.high())
+    }
+
     fn write_children(
         &mut self,
         children: Vec<CssStmt>,
@@ -2455,6 +2501,10 @@ impl<'a> Serializer<'a> {
             let needs_semicolon = Self::requires_semicolon(&child);
             let end_line = self.stmt_end_line(&child);
             let closing_brace_line = self.stmt_closing_brace_line(&child);
+            let previous_comment_span = match &child {
+                CssStmt::Comment(_, span) => Some(*span),
+                _ => None,
+            };
             let is_last = children.is_empty();
             let did_write = self.visit_stmt(child)?;
 
@@ -2485,6 +2535,25 @@ impl<'a> Serializer<'a> {
                                         children.remove(idx);
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Consecutive comments on one source line are also trailing
+                // comments in dart-sass. They don't have a semicolon to trigger
+                // the style-specific case above.
+                if !needs_semicolon {
+                    let next_visible = children.iter().position(|c| !c.is_invisible());
+                    if let Some(idx) = next_visible {
+                        if self.is_trailing_comment_after_comment(
+                            &children[idx],
+                            previous_comment_span,
+                        ) {
+                            if let CssStmt::Comment(ref comment, span) = children[idx] {
+                                let comment = comment.clone();
+                                self.write_inline_comment(&comment, span, false)?;
+                                children.remove(idx);
                             }
                         }
                     }

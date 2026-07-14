@@ -6,12 +6,32 @@ set -euo pipefail
 
 MODE="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GRASS="${GRASS:-$REPO_ROOT/target/release/grass}"
-FIXTURE_DIR="${PERF_FIXTURE_DIR:-$SCRIPT_DIR}"
+if [ -n "${PERF_FIXTURE_DIR:-}" ]; then
+  FIXTURE_DIR="$PERF_FIXTURE_DIR"
+elif [ -d "$REPO_ROOT/bench/fixtures/packages/uswds" ]; then
+  FIXTURE_DIR="$REPO_ROOT/bench/fixtures"
+else
+  FIXTURE_DIR="$REPO_ROOT/prototype"
+fi
 LOAD_PATH="$FIXTURE_DIR/packages"
 ARTIFACT_DIR="${PROFILE_ARTIFACT_DIR:-/tmp/grass-profile}"
 BENCH_FILE="$ARTIFACT_DIR/_grass_profile.scss"
+RESTORE_NEEDED=0
+
+restore_plain_binary() {
+  if [ "$RESTORE_NEEDED" -eq 1 ]; then
+    RESTORE_NEEDED=0
+    echo "Restoring plain target/release/grass after instrumented profiling build..."
+    if ! ~/.cargo/bin/cargo build --release -p grass; then
+      echo "ERROR: failed to restore the plain release binary" >&2
+      exit 1
+    fi
+    echo "Restored plain target/release/grass."
+  fi
+}
+trap restore_plain_binary EXIT
 
 usage() {
   echo "Usage: $0 cpu|heap"
@@ -21,11 +41,11 @@ usage() {
 fixture_error() {
   echo "ERROR: USWDS fixture not found at $LOAD_PATH/uswds"
   echo ""
-  echo "This fixture (prototype/packages/uswds) is untracked and won't exist in a"
+  echo "This fixture (bench/fixtures/packages/uswds) is untracked and won't exist in a"
   echo "fresh git worktree. Either:"
   echo "  - run this from the primary checkout, where the fixture is already populated, or"
-  echo "  - set PERF_FIXTURE_DIR to a prototype/ directory that has packages/uswds, e.g.:"
-  echo "      PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype $0 $MODE"
+  echo "  - set PERF_FIXTURE_DIR to a directory containing packages/uswds, e.g.:"
+  echo "      PERF_FIXTURE_DIR=/path/to/checkout/with/packages $0 $MODE"
   exit 2
 }
 
@@ -49,6 +69,7 @@ case "$MODE" in
       exit 1
     fi
 
+    RESTORE_NEEDED=1
     CARGO_PROFILE_RELEASE_STRIP=none \
     CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
       ~/.cargo/bin/cargo build --release -p grass
@@ -67,6 +88,7 @@ case "$MODE" in
     echo "The samply profile UI was opened by samply record."
     ;;
   heap)
+    RESTORE_NEEDED=1
     CARGO_PROFILE_RELEASE_STRIP=none \
       ~/.cargo/bin/cargo build --release --features dhat-heap -p grass
 

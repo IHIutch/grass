@@ -150,7 +150,7 @@ test!(
 test!(
     multiline_comments_everywhere,
     "  /**/  $a  /**/  :  /**/  red  /**/  ;  /**/  ",
-    "/**/\n/**/\n"
+    "/**/ /**/\n"
 );
 test!(
     default_var_overrides_when_null_declared_global,

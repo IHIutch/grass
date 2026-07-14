@@ -28,6 +28,17 @@ pub(crate) fn try_parse_css_if<'a>(
         return Ok(None);
     }
 
+    Ok(Some(parse_css_if(parser, start)?))
+}
+
+/// Parse a modern CSS-style `if()` expression after the caller has selected
+/// that grammar. Legacy and modern `if()` calls are disambiguated by trying
+/// the legacy argument parser first, so this function deliberately doesn't
+/// perform any additional detection.
+pub(crate) fn parse_css_if<'a>(
+    parser: &mut impl StylesheetParser<'a>,
+    start: usize,
+) -> SassResult<Spanned<AstExpr<'a>>> {
     parser.expect_char('(')?;
     let was_consuming_newlines = parser.is_consuming_newlines();
     parser.set_consume_newlines(true);
@@ -68,9 +79,7 @@ pub(crate) fn try_parse_css_if<'a>(
     parser.set_consume_newlines(was_consuming_newlines);
     let span = parser.toks_mut().span_from(start);
 
-    Ok(Some(
-        AstExpr::CssIf(parser.arena().alloc(CssIfExpression { clauses, span })).span(span),
-    ))
+    Ok(AstExpr::CssIf(parser.arena().alloc(CssIfExpression { clauses, span })).span(span))
 }
 
 /// Detect whether we're looking at new CSS if() syntax vs legacy if().

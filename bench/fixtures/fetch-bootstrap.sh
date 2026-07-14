@@ -4,7 +4,7 @@
 # loop-heavy stylesheet — structurally very different from the USWDS fixture
 # used by perf-check.sh — and is deliberately not vendored into git. This
 # script replaces the ad-hoc "clone into /private/tmp" step with a permanent,
-# reproducible home under prototype/ (already covered by the `bootstrap*`
+# reproducible home under bench/fixtures/ (already covered by the `bootstrap*`
 # .gitignore pattern).
 #
 # Usage: ./fetch-bootstrap.sh [target-dir]

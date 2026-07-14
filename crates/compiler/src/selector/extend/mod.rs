@@ -9,8 +9,8 @@ type FxIndexMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
 use crate::{ast::CssMediaQuery, error::SassResult};
 
 use super::{
-    ComplexSelector, ComplexSelectorComponent, ComplexSelectorHashSet, CompoundSelector, Pseudo,
-    SelectorList, SimpleSelector,
+    ComplexSelector, ComplexSelectorComponent, CompoundSelector, Pseudo, SelectorList,
+    SimpleSelector,
 };
 
 pub(crate) use extended_selector::ExtendedSelector;
@@ -88,15 +88,6 @@ pub(crate) struct ExtensionStore {
     /// [second law of extend]: https://github.com/sass/sass/issues/324#issuecomment-4607184
     source_specificity: FxHashMap<SimpleSelector, i32>,
 
-    /// A set of `ComplexSelector`s that were originally part of
-    /// their component `SelectorList`s, as opposed to being added by `@extend`.
-    ///
-    /// This allows us to ensure that we don't trim any selectors that need to
-    /// exist to satisfy the [first law of extend][].
-    ///
-    /// [first law of extend]: https://github.com/sass/sass/issues/324#issuecomment-4607184
-    originals: ComplexSelectorHashSet,
-
     /// The mode that controls this extender's behavior.
     mode: ExtendMode,
 
@@ -120,7 +111,6 @@ impl ExtensionStore {
             extensions_by_extender: FxHashMap::default(),
             media_contexts: FxHashMap::default(),
             source_specificity: FxHashMap::default(),
-            originals: ComplexSelectorHashSet::new(),
             mode: ExtendMode::Normal,
             span,
         }
@@ -168,7 +158,6 @@ impl ExtensionStore {
             extensions_by_extender: self.extensions_by_extender.clone(),
             media_contexts: new_media_contexts,
             source_specificity: self.source_specificity.clone(),
-            originals: self.originals.clone(),
             mode: self.mode,
             span: self.span,
         }
@@ -309,7 +298,7 @@ impl ExtensionStore {
     }
 
     fn extend_or_replace(
-        selector: SelectorList,
+        mut selector: SelectorList,
         source: SelectorList,
         targets: SelectorList,
         mode: ExtendMode,
@@ -338,12 +327,14 @@ impl ExtensionStore {
             })
             .collect::<SassResult<Vec<CompoundSelector>>>()?;
 
-        // Create one store and set originals once, then iterate targets
+        // Mark originals once, then iterate targets
         // one at a time, threading the selector through each extension.
         let mut store = ExtensionStore::with_mode(mode, span);
 
         if !selector.is_invisible() {
-            store.originals.extend(selector.components.iter());
+            for complex in &mut selector.components {
+                complex.mark_original();
+            }
         }
 
         let mut current = selector;
@@ -401,7 +392,7 @@ impl ExtensionStore {
         };
 
         Ok(SelectorList {
-            components: self.trim(extended, &|complex| self.originals.contains(complex)),
+            components: self.trim(extended, &ComplexSelector::is_original),
             span: self.span,
         })
     }
@@ -435,7 +426,7 @@ impl ExtensionStore {
 
         let complex_has_line_break = complex.line_break;
 
-        let is_original = self.originals.contains(complex);
+        let is_original = complex.is_original();
 
         for (i, component) in complex.components.iter().enumerate() {
             if let ComplexSelectorComponent::Compound(component) = component {
@@ -497,7 +488,7 @@ impl ExtensionStore {
                     )
                     .into_iter()
                     .filter_map(|components| {
-                        let output_complex = ComplexSelector::new(
+                        let mut output_complex = ComplexSelector::new(
                             components,
                             complex_has_line_break
                                 || path.iter().any(|input_complex| input_complex.line_break),
@@ -508,8 +499,17 @@ impl ExtensionStore {
                         // Make sure that copies of `complex` retain their status as "original"
                         // selectors. This includes selectors that are modified because a :not()
                         // was extended into.
-                        if first && self.originals.contains(complex) {
-                            self.originals.insert(&output_complex);
+                        let preserve_original = (first && complex.is_original())
+                            || (!complex.is_original()
+                                && complex.is_invisible()
+                                && path.iter().any(ComplexSelector::is_original))
+                            || path.iter().any(|input| {
+                                extensions.is_none()
+                                    && input.is_original()
+                                    && input.contains_pseudo_selector()
+                            });
+                        if preserve_original {
+                            output_complex.mark_original();
                         }
                         first = false;
 
@@ -1059,8 +1059,8 @@ impl ExtensionStore {
         media_query_context: &Option<Vec<CssMediaQuery>>,
     ) -> SassResult<ExtendedSelector> {
         if !selector.is_invisible() {
-            for complex in &selector.components {
-                self.originals.insert(complex);
+            for complex in &mut selector.components {
+                complex.mark_original();
             }
         }
 
@@ -1083,15 +1083,15 @@ impl ExtensionStore {
     pub fn register_existing_selector(&mut self, selector: &ExtendedSelector) -> SassResult<()> {
         let mut list = selector.as_selector_list().clone();
         if !list.is_invisible() {
-            for complex in &list.components {
-                self.originals.insert(complex);
+            for complex in &mut list.components {
+                complex.mark_original();
             }
         }
         // Apply pending extensions to this selector (e.g., @extend a before load-css)
         if !self.extensions.is_empty() {
             list = self.extend_list(list, None, None)?;
-            selector.set_inner(list.clone());
         }
+        selector.set_inner(list.clone());
         self.register_selector(&list, selector);
         Ok(())
     }

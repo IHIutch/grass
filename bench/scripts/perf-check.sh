@@ -3,20 +3,27 @@
 # Compiles USWDS with the release binary and reports the median time.
 # Uses hyperfine when it's on PATH (--warmup 5 --runs 15) for reliable
 # numbers; falls back to a 3-run smoke test otherwise.
-# Run from the prototype/ directory.
+# Run from the repository root or from any directory.
 #
 # Usage: ./perf-check.sh [path/to/grass]
 #
 # Fixture resolution: by default looks for packages/uswds next to this
 # script. The fixture is untracked, so fresh git worktrees won't have it —
-# set PERF_FIXTURE_DIR to point at a prototype/ directory that does (e.g. the
-# primary checkout) to run from a worktree.
+# set PERF_FIXTURE_DIR to point at a directory containing packages/.
 
 set -e
 
-GRASS="${1:-../target/release/grass}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+GRASS="${1:-$REPO_ROOT/target/release/grass}"
 BENCH_FILE="/tmp/_grass_perf_check.scss"
-FIXTURE_DIR="${PERF_FIXTURE_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+if [ -n "${PERF_FIXTURE_DIR:-}" ]; then
+  FIXTURE_DIR="$PERF_FIXTURE_DIR"
+elif [ -d "$REPO_ROOT/bench/fixtures/packages/uswds" ]; then
+  FIXTURE_DIR="$REPO_ROOT/bench/fixtures"
+else
+  FIXTURE_DIR="$REPO_ROOT/prototype"
+fi
 LOAD_PATH="$FIXTURE_DIR/packages"
 
 if [ ! -x "$GRASS" ]; then
@@ -28,11 +35,11 @@ fi
 if [ ! -d "$LOAD_PATH/uswds" ]; then
   echo "ERROR: USWDS fixture not found at $LOAD_PATH/uswds"
   echo ""
-  echo "This fixture (prototype/packages/uswds) is untracked and won't exist in a"
+  echo "This fixture (bench/fixtures/packages/uswds) is untracked and won't exist in a"
   echo "fresh git worktree. Either:"
   echo "  - run this from the primary checkout, where the fixture is already populated, or"
-  echo "  - set PERF_FIXTURE_DIR to a prototype/ directory that has packages/uswds, e.g.:"
-  echo "      PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./perf-check.sh"
+  echo "  - set PERF_FIXTURE_DIR to a directory containing packages/uswds, e.g.:"
+  echo "      PERF_FIXTURE_DIR=/path/to/checkout/with/packages ./bench/scripts/perf-check.sh"
   exit 2
 fi
 
@@ -71,7 +78,11 @@ echo ""
 echo "PERF: grass native USWDS compile: ${median}ms (median)"
 
 # Compare against baseline if available
-BASELINE_FILE="$(dirname "$0")/.perf-baseline"
+if [ -f "$REPO_ROOT/bench/.perf-baseline" ]; then
+  BASELINE_FILE="$REPO_ROOT/bench/.perf-baseline"
+else
+  BASELINE_FILE="$REPO_ROOT/prototype/.perf-baseline"
+fi
 if [ -f "$BASELINE_FILE" ]; then
   baseline=$(cat "$BASELINE_FILE")
   delta=$(python3 -c "

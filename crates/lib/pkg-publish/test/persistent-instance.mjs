@@ -1,4 +1,4 @@
-// Miniaturized version of prototype/multi-compile-stress.mjs: alternates two
+// Miniaturized version of bench/diagnostics/multi-compile-stress.mjs: alternates two
 // small compiles N times in ONE wasm instance and checks every output is
 // byte-identical to the first occurrence of its input. A bad allocator
 // reset (todo #282) may only show up on compile 2+, since compile 1 always

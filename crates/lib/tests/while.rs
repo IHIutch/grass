@@ -140,7 +140,7 @@ test!(
 test!(
     multiline_comments_everywhere,
     "  /**/  @while  /**/  false  /**/  {}  /**/  ",
-    "/**/\n/**/\n"
+    "/**/ /**/\n"
 );
 error!(
     missing_closing_curly_brace,

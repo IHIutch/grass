@@ -19,7 +19,7 @@ day-to-day workflow for human contributors.
 - `crates/napi/` — napi-rs native Node.js addon (`grass_napi` crate)
 - `crates/include_sass/` — proc macro crate
 - `crates/lib/tests/` — integration tests, organized by feature
-- `prototype/` — benchmark fixtures and perf baseline
+- `bench/` — benchmark scripts, fixtures, diagnostics, and perf baseline
 - `sass-spec/` — git submodule of the official Sass spec test suite
 
 ## Build, Test, Lint
@@ -90,34 +90,34 @@ check:
 
 ```bash
 cargo build --release
-cd prototype && ./perf-check.sh
+bash bench/scripts/perf-check.sh
 ```
 
 This compiles the USWDS fixture three times with the release binary,
 reports the median, and compares it against the baseline in
-`prototype/.perf-baseline`. If performance regresses by more than 5%,
+`bench/.perf-baseline`. If performance regresses by more than 5%,
 investigate before committing — don't just bump the baseline to make the
 gate pass.
 
 To update the baseline after an intentional, understood change:
 
 ```bash
-echo "<new_median_ms>" > prototype/.perf-baseline
+echo "<new_median_ms>" > bench/.perf-baseline
 ```
 
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
-`prototype/bench.sh`.
+`bench/scripts/bench.sh`.
 
 ## Profiling
 
 Use profiling to rank performance candidates before changing code; use
-`prototype/perf-check.sh` for acceptance, and always run the performance gate
+`bench/scripts/perf-check.sh` for acceptance, and always run the performance gate
 for a change that affects the compiler. The profiling harness uses the same
 USWDS fixture and compile invocation as the performance check:
 
 ```bash
-PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./prototype/profile.sh cpu
-PERF_FIXTURE_DIR=/path/to/primary-checkout/prototype ./prototype/profile.sh heap
+PERF_FIXTURE_DIR=/path/to/checkout/with/packages ./bench/scripts/profile.sh cpu
+PERF_FIXTURE_DIR=/path/to/checkout/with/packages ./bench/scripts/profile.sh heap
 ```
 
 The `cpu` mode records a samply profile and opens its local profile UI. Install

@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Compare the local Grass binary with Dart Sass for the untracked USWDS fixture.
-# Fresh CI checkouts don't contain prototype/packages, so absence is an
+# Fresh CI checkouts don't contain bench/fixtures/packages, so absence is an
 # intentional skip rather than a failed build.
 
 set -euo pipefail
 
-fixture_dir="${USWDS_FIXTURE_DIR:-prototype}"
+if [[ -n "${USWDS_FIXTURE_DIR:-}" ]]; then
+  fixture_dir="$USWDS_FIXTURE_DIR"
+elif [[ -d "bench/fixtures/packages/uswds" ]]; then
+  fixture_dir="bench/fixtures"
+else
+  fixture_dir="prototype"
+fi
 binary="${GRASS_BINARY:-target/debug/grass}"
 load_path="$fixture_dir/packages"
 

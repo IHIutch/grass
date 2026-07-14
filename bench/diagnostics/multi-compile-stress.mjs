@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 import { createHash } from "crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const loadPaths = [resolve(__dirname, "packages")];
+const loadPaths = [resolve(__dirname, "../fixtures/packages")];
 
 function hash(s) {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -18,8 +18,8 @@ function hash(s) {
 async function main() {
   const { compile } = await import("../crates/lib/pkg-publish/index.js");
 
-  const uswdsPath = "packages/uswds/_index-direct.scss";
-  const bootstrapPath = resolve(__dirname, "bootstrap-bench/scss/bootstrap.scss");
+  const uswdsPath = resolve(__dirname, "../fixtures/packages/uswds/_index-direct.scss");
+  const bootstrapPath = resolve(__dirname, "../fixtures/bootstrap-bench/scss/bootstrap.scss");
 
   const results = [];
   const N = process.argv[2] ? parseInt(process.argv[2], 10) : 6;

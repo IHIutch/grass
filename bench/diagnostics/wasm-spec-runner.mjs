@@ -23,7 +23,7 @@ import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SPEC_DIR = resolve(__dirname, "..", "sass-spec", "spec");
+const SPEC_DIR = resolve(__dirname, "..", "..", "sass-spec", "spec");
 
 function parseHrx(path) {
   const content = readFileSync(path, "utf8");
@@ -171,7 +171,7 @@ const fsCallbacks = {
 
 async function main() {
   const { initSync, compile_file: compileFile } = await import("../crates/lib/pkg-publish/grass.js");
-  const wasmBytes = readFileSync(resolve(__dirname, "../crates/lib/pkg-publish/grass_bg.wasm"));
+  const wasmBytes = readFileSync(resolve(__dirname, "../../crates/lib/pkg-publish/grass_bg.wasm"));
   initSync({ module: wasmBytes });
 
   const categoryArg = process.argv.find((a, i) => i >= 2 && !a.startsWith("--"));

@@ -390,6 +390,7 @@ fn compile_impl<P: AsRef<Path>>(
     let mut prev_was_group_end = false;
     let mut prev_requires_semicolon = false;
     let mut had_previous_visible = false;
+    let mut previous_comment_span = None;
     let mut stmts: std::collections::VecDeque<CssStmt> = stmts.into();
 
     while let Some(stmt) = stmts.pop_front() {
@@ -400,6 +401,12 @@ fn compile_impl<P: AsRef<Path>>(
         let is_group_end = stmt.is_group_end();
         let requires_semicolon = Serializer::requires_semicolon(&stmt);
         let closing_brace_line = serializer.stmt_closing_brace_line(&stmt);
+        let current_comment_span = match &stmt {
+            CssStmt::Comment(_, span) => Some(*span),
+            _ => None,
+        };
+        let trailing_comment =
+            serializer.is_trailing_comment_after_comment(&stmt, previous_comment_span);
 
         let buf_len_before = serializer.buffer_len();
 
@@ -409,6 +416,7 @@ fn compile_impl<P: AsRef<Path>>(
                 prev_was_group_end,
                 prev_requires_semicolon,
                 had_previous_visible,
+                trailing_comment,
             )
             .map_err(|e| raw_to_parse_error(&map, *e, options.unicode_error_messages))?;
 
@@ -422,6 +430,8 @@ fn compile_impl<P: AsRef<Path>>(
         if serializer.buffer_len() == buf_len_before {
             continue;
         }
+
+        previous_comment_span = current_comment_span;
 
         // Sub-problem C at top level: comment after closing `}` on same source line
         let mut spliced_trailing_comment = false;

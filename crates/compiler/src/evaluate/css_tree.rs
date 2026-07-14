@@ -187,8 +187,13 @@ impl CssTree {
                 self.has_visible_child(idx)
             }
             CssStmt::RuleSet { selector, .. } => {
-                // A ruleset is visible if its selector is visible and it has visible children
-                !selector.is_invisible() && self.has_visible_child(idx)
+                // A placeholder ruleset is normally invisible, but it may
+                // become visible when a later @extend mutates its shared
+                // selector. Count it while deciding whether an intervening
+                // nested at-rule needs a parent copy; final serialization
+                // still applies the normal invisibility check.
+                (!selector.is_invisible() || selector.contains_placeholder())
+                    && self.has_visible_child(idx)
             }
             // Styles, comments, imports, unknown at-rules, keyframes are always visible
             _ => true,

@@ -44,6 +44,23 @@ fn imports_variable() {
 }
 
 #[test]
+fn use_preserves_dotted_basename_when_adding_extension() {
+    let mut fs = TestFs::new();
+
+    fs.add_file("_foo.bar.scss", "$a: red;");
+
+    let input = r#"
+        @use "foo.bar" as *;
+        a { color: $a; }
+    "#;
+
+    assert_eq!(
+        "a {\n  color: red;\n}\n",
+        &grass::from_string(input.to_string(), &grass::Options::default().fs(&fs)).expect(input)
+    );
+}
+
+#[test]
 fn import_no_semicolon() {
     let input = "@import \"import_no_semicolon\"\na {\n color: $a;\n}";
     tempfile!("import_no_semicolon", "$a: red;");
