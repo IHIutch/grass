@@ -221,16 +221,18 @@ those you would have to make if upgrading to `dart-sass`.
 
 ## Performance
 
+Across 14 real-world projects, grass compiles 2.54x–17.17x faster than sass-embedded (6.23x median), byte-identically to dart-sass 1.101.0. See the [full corpus results](https://github.com/IHIutch/grass/blob/master/bench/real-world/results.md).
+
 | Workload | dart-sass (sass-embedded) | grass | speedup |
 |---|---:|---:|---:|
-| Bootstrap (Node, warm) | 320.3 ms | 97.6 ms | 3.28x |
-| USWDS (Node, warm) | 3.136 s | 233.4 ms | 13.44x |
+| Bootstrap (Node, warm) | 203.9 ms | 42.6 ms | 4.79x |
+| USWDS (Node, warm) | 3.046 s | 177.4 ms | 17.17x |
 | Peak memory (Bootstrap, CLI) | 187.7 MB | 21.1 MB | 8.90x less |
 | 8 concurrent Bootstrap compiles (distinct, N=8) | — | 90.2 ms | 3.79x vs sequential |
 | Real-world parity | — | 14/14 byte-identical to dart-sass 1.101.0 | — |
 
-Measured 2026-07-14 on a 10-core machine with Node 23.4.0; fresh worker, 1 warmup/5 runs for engine medians, 2 warmups/5 reps for concurrency; machine-specific. Peak memory is CLI max RSS measured with the `sass` binary directly.
-See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md) for methodology; performance measured against sass-embedded 1.100.0; byte-parity verified against dart-sass 1.101.0.
+Measured 2026-07-14 on a 10-core machine with Node 23.4.0. Engine speed (Bootstrap/USWDS and corpus) uses warm in-process medians (2 warmups/5 reps), with no process startup for either engine, same as `bench/real-world/run.mjs`. Peak memory is CLI max RSS from the `sass` binary directly.
+Concurrency uses `bench/scripts/napi-concurrent.mjs` for Grass-vs-Grass sequential/concurrent compiles. See [`bench/README.md`](https://github.com/IHIutch/grass/blob/master/bench/README.md); performance is vs sass-embedded 1.100.0, while byte-parity is vs dart-sass 1.101.0.
 
 ### Concurrency
 

@@ -232,34 +232,19 @@ node bench/real-world/run.mjs all
 node bench/real-world/run.mjs --project uswds
 ```
 
-The runner writes [results.md](real-world/results.md) and ratchets against
-[BASELINE.json](real-world/BASELINE.json). It exits non-zero only when an
-existing baseline’s PASS regresses or a measured run exceeds the documented
-timing review threshold. A missing baseline is created from the run; review it
-before committing. Improvements print a ratchet-up reminder.
+The runner has two separate legs. First, it compiles each entry once through
+the Grass and `npx -y sass@1.101.0` CLIs and byte-compares the raw outputs as a
+parity gate. Then it performs two warmups and five measured in-process reps of
+the same entry through the N-API binding and `sass-embedded` 1.100.0; neither
+timing includes CLI, npx, or compiler-process startup. `quietDeps` and silent
+logging keep diagnostics out of the timing loop. The timing medians and
+speedups are in [results.md](real-world/results.md); the warm Grass medians are
+ratcheted in [BASELINE.json](real-world/BASELINE.json).
 
-On a passing run, `results.md` contains Project, Commit, Dart median (ms), and
-Grass median (ms). If any project fails, it adds a `## Failures` section
-above the table with each project's status and error signature.
-
-The finalized active corpus produced the same parity status on two consecutive
-full runs. reveal.js is recorded as an explicit drop because its lockfile cannot
-be installed with `npm ci`:
-
-| Status | Projects |
-|---|---:|
-| PASS | 9 |
-| DIFF | 1 (`tabler`, selector ordering; discovery todo #350) |
-| ERROR | 4 (standalone or existing compiler diagnostic limitations) |
-
-The DIFF is recorded as raw signature `672042/672042@597516`; the first visible
-difference is Dart Sass’s grouped `h1`–`h6` selectors followed by `.h1`–`.h6`
-versus Grass’s interleaved order. The four ERROR details are preserved in
-`BASELINE.json` and the filed discovery todos, while their `results.md` cells
-remain empty; Dart Sass compiles each of those four entries, so they are
-discovery candidates rather than manifest drops. No compiler code was changed.
-Dropped projects and reasons are recorded in the manifest; there are no silent
-corpus caps.
+The current active corpus is 14/14 PASS and byte-identical. The generated
+results retain all projects and never silently drop a project after an API or
+parity failure. Dropped projects and their setup requirements are recorded in
+the manifest.
 
 To re-pin, update each project’s commit from its repository’s default HEAD,
 verify the detached checkout, rerun `node bench/real-world/run.mjs all` twice,
