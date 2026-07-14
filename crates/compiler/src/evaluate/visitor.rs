@@ -2792,6 +2792,46 @@ impl<'a> Visitor<'a> {
             Ok(existing.into_iter().next().cloned())
         };
 
+        // A path returned by a FileImporter is already resolved when it has a
+        // recognized Sass extension. Dart Sass only treats .sass, .scss, and
+        // .css as extensions; every other suffix remains part of the basename
+        // and goes through the normal append-extension logic below.
+        let resolve_explicit_extension = |path: &Path,
+                                          for_import: bool,
+                                          context_dir: &Path,
+                                          span: Span|
+         -> SassResult<Option<PathBuf>> {
+            let Some(extension) = path.extension() else {
+                return Ok(None);
+            };
+            if extension != OsStr::new("sass")
+                && extension != OsStr::new("scss")
+                && extension != OsStr::new("css")
+            {
+                return Ok(None);
+            }
+
+            if for_import {
+                let import_path = path.with_extension(format!(
+                    "import.{}",
+                    extension.to_str().expect("Sass extensions are UTF-8")
+                ));
+                if let Some(found) = check_conflicts(
+                    &explicit_extension_candidates(import_path),
+                    context_dir,
+                    span,
+                )? {
+                    return Ok(Some(found));
+                }
+            }
+
+            check_conflicts(
+                &explicit_extension_candidates(path.to_path_buf()),
+                context_dir,
+                span,
+            )
+        };
+
         // Resolve candidates with conflict detection: check import candidates first
         // (if for_import), then regular candidates. Import candidates take priority
         // and never conflict with regular candidates.
@@ -2845,9 +2885,20 @@ impl<'a> Visitor<'a> {
                         // partial/extension/index-file resolution on top,
                         // exactly like a load path".
                         let delegate_path = Self::normalize_path(&delegate_path);
-                        if let Some(found) =
-                            resolve_with_conflicts(&delegate_path, for_import, context_dir, span)?
+                        let found = if delegate_path.extension() == Some(OsStr::new("sass"))
+                            || delegate_path.extension() == Some(OsStr::new("scss"))
+                            || delegate_path.extension() == Some(OsStr::new("css"))
                         {
+                            resolve_explicit_extension(
+                                &delegate_path,
+                                for_import,
+                                context_dir,
+                                span,
+                            )?
+                        } else {
+                            resolve_with_conflicts(&delegate_path, for_import, context_dir, span)?
+                        };
+                        if let Some(found) = found {
                             return Ok(Some(ImportSource::Path(found)));
                         }
                         if self.is_dir_fast(&delegate_path) {

@@ -57,6 +57,28 @@ fn custom_importer_delegates_to_path() {
 }
 
 #[test]
+fn custom_importer_delegates_to_explicit_scss_path() {
+    tempfile!(
+        "custom_importer_explicit__target.scss",
+        "$a: red;",
+        dir = "dir-custom_importer_explicit"
+    );
+
+    let options = Options::default().add_importer(Rc::new(VirtualImporter {
+        virtual_url: "virtual:explicit",
+        target: PathBuf::from("dir-custom_importer_explicit/custom_importer_explicit__target.scss"),
+    }));
+
+    let css = grass::from_string(
+        "@import \"virtual:explicit\";\na {\n  color: $a;\n}".to_owned(),
+        &options,
+    )
+    .unwrap();
+
+    assert_eq!(css, "a {\n  color: red;\n}\n");
+}
+
+#[test]
 fn custom_importer_not_found_falls_through_to_default_resolution() {
     tempfile!(
         "custom_importer_not_found__real.scss",
