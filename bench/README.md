@@ -151,12 +151,13 @@ Grafana −10.77% (86.0M→76.7M). Bootstrap-only was Mastodon −15.90%
 (188.6M→158.6M), Vuetify −14.42% (365.3M→312.6M), and Grafana −11.58%
 (86.0M→76.1M). Their wall medians were lower than plain in every case.
 
-The PGO binary passed the USWDS byte-zero gate. The corpus runner produced
-13 PASS projects; `govuk-frontend` was ERROR because its project-local `npm
-ci` failed, so that project is unverified rather than counted as a byte-pass.
-No corpus byte-diff was reported. The CI workflow was not executed locally;
-its added fetch/build wall time is therefore unverified. The local default
-multi-project build took 175.43 s wall, including both release compilations.
+The PGO binary passed the USWDS byte-zero gate. A full corpus runner attempt
+produced 12 PASS projects and setup ERRORs for `govuk-frontend` and `adminlte`
+because their project-local `npm ci` steps failed; isolated reruns of both
+projects passed, and no corpus byte-diff was reported. The CI workflow was not
+executed locally; its added fetch/build wall time is therefore unverified. The
+local default multi-project build took 175.43 s wall, including both release
+compilations.
 
 The held-out gains are within the trained-entry range, and all three held-out
 projects were faster on instructions and wall time in this run. This supports
