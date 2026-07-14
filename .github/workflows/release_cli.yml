@@ -72,8 +72,14 @@ jobs:
 
       - name: Verify PGO build output unchanged vs dart-sass
         run: |
-          ./target/release/grass bootstrap/scss/bootstrap.scss --style=expanded > grass-output.css
-          ./dart-sass/sass bootstrap/scss/bootstrap.scss --style=expanded > dart-sass-output.css
+          # `bench/fixtures/fetch.sh pgo` clones Bootstrap to bench/fixtures/fetched/.
+          # This step used to read a top-level bootstrap/, which the bench reorganization
+          # removed — the path silently rotted because this workflow only runs on v* tags.
+          bootstrap="bench/fixtures/fetched/bootstrap/scss/bootstrap.scss"
+          test -f "$bootstrap" || { echo "Bootstrap fixture missing at $bootstrap"; exit 1; }
+
+          ./target/release/grass "$bootstrap" --style=expanded > grass-output.css
+          ./dart-sass/sass "$bootstrap" --style=expanded > dart-sass-output.css
 
           if [[ $(diff -u grass-output.css dart-sass-output.css) ]]; then
               echo "Differences found"
