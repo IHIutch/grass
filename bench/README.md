@@ -88,6 +88,17 @@ These are plain-release, same-session measurements on the pinned fixtures.
 They are documentation only; future gates compare base and candidate binaries
 in the same run.
 
+| Workload | Base instructions | Candidate instructions | Base wall median | Candidate wall median |
+|---|---:|---:|---:|---:|
+| USWDS direct | 1,825.9M | 1,826.0M (+0.01%) | 174.876 ms | 174.153 ms |
+| Bootstrap | 627.6M | 627.4M (-0.03%) | 56.390 ms | 56.396 ms |
+| Extend synthetic | 33.3M | 33.0M (-0.90%) | 5.936 ms | 5.649 ms |
+
+Measured with 10 interleaved pairs, pair 1 discarded, three hyperfine warmups,
+and 10 hyperfine wall runs on 2026-07-13. The machine load was elevated but
+below the logical-CPU warning threshold; rerun on a quiet machine before using
+these as an adjudication.
+
 ## Real-world parity corpus
 
 The manifest is [manifest.json](real-world/manifest.json), seeded from sasso’s
