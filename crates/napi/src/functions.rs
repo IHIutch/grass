@@ -101,11 +101,11 @@
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc};
 
-use napi::bindgen_prelude::FromNapiValue;
+use napi::bindgen_prelude::{FromNapiValue, Function, FunctionRef, JsValue, Unknown};
 use napi::threadsafe_function::{
-    ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
+    ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
-use napi::{sys, Env, Error, JsFunction, JsUnknown, NapiValue, Ref, Result, Status};
+use napi::{sys, Env, Error, Result, Status, ValueType};
 
 use grass_compiler::codemap::Span;
 use grass_compiler::sass_value::{ArgumentResult, Value};
@@ -128,7 +128,8 @@ use crate::wire::{value_to_wire, wire_to_sass, WireValue};
 /// and reuses this type rather than re-deriving the same safety argument.
 pub(crate) struct SyncEnv(pub(crate) Env);
 
-// SAFETY: see the module doc comment and `SyncEnv`'s doc comment above.
+// SAFETY: the synchronous callback path never leaves the JS thread; this
+// wrapper only satisfies the compiler-side `Send + Sync` callback bound.
 unsafe impl Send for SyncEnv {}
 unsafe impl Sync for SyncEnv {}
 
@@ -137,15 +138,16 @@ unsafe impl Sync for SyncEnv {}
 /// for the full thread-safety argument.
 pub struct JsFunctionRef {
     env: SyncEnv,
-    func_ref: Ref<()>,
+    func_ref: FunctionRef<Unknown<'static>, Unknown<'static>>,
 }
 
 impl JsFunctionRef {
     fn call(&self, args: &[Value], span: Span) -> SassResult<Value> {
         let env = self.env.0;
 
-        let func = env
-            .get_reference_value::<JsFunction>(&self.func_ref)
+        let func = self
+            .func_ref
+            .borrow_back(&env)
             .map_err(|e| napi_err_to_sass(&e, span))?;
 
         let mut js_args = Vec::with_capacity(args.len());
@@ -161,7 +163,7 @@ impl JsFunctionRef {
         let args_array =
             crate::values::to_unknown(env, js_args).map_err(|e| napi_err_to_sass(&e, span))?;
 
-        match func.call(None, &[args_array]) {
+        match func.call(args_array) {
             Ok(js_return) => {
                 js_value_to_sass(env, js_return).map_err(|e| napi_err_to_sass(&e, span))
             }
@@ -179,31 +181,20 @@ impl JsFunctionRef {
     }
 }
 
-impl Drop for JsFunctionRef {
-    fn drop(&mut self) {
-        // `Ref<T>`'s own `Drop` (debug builds only) asserts the ref count is
-        // already 0 — it does not unref itself. This is the real cleanup;
-        // see the module doc comment for why `self.env` is still valid here.
-        let _ = self.func_ref.unref(self.env.0);
-    }
-}
-
 impl FromNapiValue for JsFunctionRef {
     unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-        let env_wrapped = Env::from(env);
-
-        let unknown = unsafe { napi::JsUnknown::from_raw(env, napi_val)? };
-        if unknown.get_type()? != napi::ValueType::Function {
+        let unknown = unsafe { Unknown::from_napi_value(env, napi_val)? };
+        if unknown.get_type()? != ValueType::Function {
             return Err(Error::from_reason(
                 "`functions` values must be JS functions".to_owned(),
             ));
         }
 
-        let func: JsFunction = unsafe { JsFunction::from_raw(env, napi_val)? };
-        let func_ref = env_wrapped.create_reference(func)?;
+        let func: Function<'_, Unknown<'static>, Unknown<'static>> = unsafe { unknown.cast()? };
+        let func_ref = func.create_ref()?;
 
         Ok(JsFunctionRef {
-            env: SyncEnv(env_wrapped),
+            env: SyncEnv(Env::from(env)),
             func_ref,
         })
     }
@@ -269,7 +260,13 @@ type ThreadsafeCallArgs = (
 /// [`JsFunctionRef::into_threadsafe`] on the JS thread; [`Self::call`] is
 /// meant to be invoked from a libuv worker thread.
 pub struct AsyncJsFunctionRef {
-    tsfn: ThreadsafeFunction<ThreadsafeCallArgs, ErrorStrategy::Fatal>,
+    tsfn: ThreadsafeFunction<
+        ThreadsafeCallArgs,
+        Unknown<'static>,
+        Vec<Unknown<'static>>,
+        Status,
+        false,
+    >,
 }
 
 impl AsyncJsFunctionRef {
@@ -323,18 +320,21 @@ impl JsFunctionRef {
     /// relies on for the sync path).
     pub(crate) fn into_threadsafe(self) -> Result<AsyncJsFunctionRef> {
         let outer_env = self.env.0;
-        let noop = outer_env.create_function("grass_async_fn_target", noop_callback)?;
+        let noop: Function<'_, Unknown<'static>, Unknown<'static>> =
+            outer_env.create_function("grass_async_fn_target", noop_callback)?;
 
         let tsfn = noop
-            .create_threadsafe_function::<ThreadsafeCallArgs, JsUnknown, _, ErrorStrategy::Fatal>(
-                0,
-                move |ctx: ThreadSafeCallContext<ThreadsafeCallArgs>| -> Result<Vec<JsUnknown>> {
+            .build_threadsafe_function::<ThreadsafeCallArgs>()
+            .callee_handled::<false>()
+            .build_callback(
+                move |ctx: ThreadsafeCallContext<ThreadsafeCallArgs>| -> Result<Vec<Unknown<'static>>> {
                     let (wire_args, tx) = ctx.value;
                     let env = ctx.env;
 
                     let outcome: std::result::Result<WireValue, String> = (|| {
-                        let func = env
-                            .get_reference_value::<JsFunction>(&self.func_ref)
+                        let func = self
+                            .func_ref
+                            .borrow_back(&env)
                             .map_err(|e| e.reason.clone())?;
 
                         let mut js_args = Vec::with_capacity(wire_args.len());
@@ -347,7 +347,7 @@ impl JsFunctionRef {
                         let args_array = crate::values::to_unknown(env, js_args)
                             .map_err(|e| e.reason.clone())?;
 
-                        match func.call(None, &[args_array]) {
+                        match func.call(args_array) {
                             Ok(js_return) => {
                                 // Must be checked BEFORE js_value_to_sass, which
                                 // would otherwise reject a Promise with a generic

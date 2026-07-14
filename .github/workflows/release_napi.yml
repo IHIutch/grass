@@ -61,7 +61,7 @@ jobs:
       - name: Build native module
         if: ${{ !contains(matrix.target, 'musl') }}
         working-directory: crates/napi
-        run: npx napi build --platform --profile release-napi --target ${{ matrix.target }}
+        run: npx napi build --manifest-path Cargo.toml --platform --profile release-napi --target ${{ matrix.target }}
 
       - name: Build native module (musl container)
         if: contains(matrix.target, 'musl')
@@ -82,7 +82,7 @@ jobs:
             -v "$PWD:/w" \
             -w /w/crates/napi \
             "$image" \
-            sh -c "npm ci && npx napi build --platform --profile release-napi --target ${{ matrix.target }}"
+            sh -c "npm ci && npx napi build --manifest-path Cargo.toml --platform --profile release-napi --target ${{ matrix.target }}"
 
       - name: Verify musl linkage
         if: contains(matrix.target, 'musl')

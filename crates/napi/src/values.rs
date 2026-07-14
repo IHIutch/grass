@@ -16,8 +16,10 @@
 
 use std::rc::Rc;
 
-use napi::bindgen_prelude::{Either, FromNapiValue, ToNapiValue, ValidateNapiValue};
-use napi::{Env, Error, JsUnknown, NapiValue, Result, ValueType};
+use napi::bindgen_prelude::{
+    Either, FromNapiValue, JsValue, ToNapiValue, Unknown, ValidateNapiValue,
+};
+use napi::{Env, Error, Result, ValueType};
 use napi_derive::napi;
 
 use grass_compiler::sass_value as sass;
@@ -100,7 +102,7 @@ impl SassList {
     #[napi(constructor)]
     pub fn new(
         env: Env,
-        contents: Vec<JsUnknown>,
+        contents: Vec<Unknown<'static>>,
         separator: Option<String>,
         brackets: Option<bool>,
     ) -> Result<Self> {
@@ -117,7 +119,7 @@ impl SassList {
     }
 
     #[napi(getter)]
-    pub fn contents(&self, env: Env) -> Result<Vec<JsUnknown>> {
+    pub fn contents(&self, env: Env) -> Result<Vec<Unknown<'static>>> {
         self.elems
             .iter()
             .map(|v| sass_value_to_js(env, v))
@@ -125,11 +127,8 @@ impl SassList {
     }
 }
 
-pub fn to_unknown<T: ToNapiValue>(env: Env, val: T) -> Result<JsUnknown> {
-    unsafe {
-        let raw = T::to_napi_value(env.raw(), val)?;
-        JsUnknown::from_raw(env.raw(), raw)
-    }
+pub fn to_unknown<T: ToNapiValue>(env: Env, val: T) -> Result<Unknown<'static>> {
+    unsafe { Unknown::from_napi_value(env.raw(), T::to_napi_value(env.raw(), val)?) }
 }
 
 pub(crate) fn list_separator_to_str(sep: sass::ListSeparator) -> &'static str {
@@ -194,11 +193,15 @@ fn unsupported_sass_value(kind: &str) -> Error {
 
 /// Converts a grass-internal `Value` into the JS value handed to a
 /// `functions` callback as one of its `args`.
-pub fn sass_value_to_js(env: Env, value: &sass::Value) -> Result<JsUnknown> {
+pub fn sass_value_to_js(env: Env, value: &sass::Value) -> Result<Unknown<'static>> {
     match value {
-        sass::Value::True => Ok(env.get_boolean(true)?.into_unknown()),
-        sass::Value::False => Ok(env.get_boolean(false)?.into_unknown()),
-        sass::Value::Null => Ok(env.get_null()?.into_unknown()),
+        sass::Value::True => to_unknown(env, true),
+        sass::Value::False => to_unknown(env, false),
+        sass::Value::Null => {
+            let mut raw = std::ptr::null_mut();
+            unsafe { napi::sys::napi_get_null(env.raw(), &mut raw) };
+            Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw) })
+        }
         sass::Value::Dimension(n) => {
             let (numerator_units, denominator_units) = unit_to_js_units(&n.unit);
             to_unknown(
@@ -246,10 +249,10 @@ pub fn sass_value_to_js(env: Env, value: &sass::Value) -> Result<JsUnknown> {
 
 /// Converts a JS value (a `functions` callback's return value, or a nested
 /// `SassList` constructor argument) into a grass-internal `Value`.
-pub fn js_value_to_sass(env: Env, value: JsUnknown) -> Result<sass::Value> {
+pub fn js_value_to_sass(env: Env, value: Unknown<'static>) -> Result<sass::Value> {
     match value.get_type()? {
         ValueType::Boolean => {
-            let b = value.coerce_to_bool()?.get_value()?;
+            let b = value.coerce_to_bool()?;
             Ok(if b {
                 sass::Value::True
             } else {
@@ -258,7 +261,7 @@ pub fn js_value_to_sass(env: Env, value: JsUnknown) -> Result<sass::Value> {
         }
         ValueType::Null | ValueType::Undefined => Ok(sass::Value::Null),
         ValueType::Object => {
-            let raw = unsafe { <JsUnknown as napi::NapiRaw>::raw(&value) };
+            let raw = value.raw();
 
             if unsafe { <&SassNumber as ValidateNapiValue>::validate(env.raw(), raw) }.is_ok() {
                 let n: &SassNumber = unsafe { FromNapiValue::from_napi_value(env.raw(), raw)? };
@@ -295,7 +298,7 @@ pub fn js_value_to_sass(env: Env, value: JsUnknown) -> Result<sass::Value> {
             }
 
             if value.is_array()? {
-                let items: Vec<JsUnknown> =
+                let items: Vec<Unknown<'static>> =
                     unsafe { FromNapiValue::from_napi_value(env.raw(), raw)? };
                 let elems = items
                     .into_iter()
