@@ -43,29 +43,15 @@ fetch_repo() {
   echo "$name fixture ready at $destination ($pin)"
 }
 
-install_custom_uswds_entries() {
-  local destination="$FETCH_ROOT/uswds/packages/uswds"
-  mkdir -p "$destination"
-  for entry in _index-direct.scss _index-extreme.scss _index-source.scss; do
-    if [ ! -f "$SCRIPT_DIR/packages/uswds/$entry" ]; then
-      echo "ERROR: tracked custom USWDS entry is missing: $SCRIPT_DIR/packages/uswds/$entry" >&2
-      exit 1
-    fi
-    cp "$SCRIPT_DIR/packages/uswds/$entry" "$destination/$entry"
-  done
-}
-
 case "${1:-all}" in
   uswds)
     fetch_repo uswds "$USWDS_URL" "$USWDS_PIN"
-    install_custom_uswds_entries
     ;;
   bootstrap)
     fetch_repo bootstrap "$BOOTSTRAP_URL" "$BOOTSTRAP_PIN"
     ;;
   all)
     fetch_repo uswds "$USWDS_URL" "$USWDS_PIN"
-    install_custom_uswds_entries
     fetch_repo bootstrap "$BOOTSTRAP_URL" "$BOOTSTRAP_PIN"
     ;;
   *) usage ;;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Print the root of a benchmark fixture after applying the documented order:
-# PERF_FIXTURE_DIR, fetched pinned trees, then the legacy hand-managed tree.
+# PERF_FIXTURE_DIR, the real-world corpus cache, fetched pinned trees, then
+# the legacy hand-managed tree.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +21,15 @@ resolve_fixture_root() {
     fi
     echo "ERROR: PERF_FIXTURE_DIR=$root has no $kind fixture" >&2
     return 2
+  fi
+
+  if [ "$kind" = uswds ] && [ -d "$REPO_ROOT/bench/real-world/.cache/uswds/packages/uswds" ]; then
+    printf '%s\n' "$REPO_ROOT/bench/real-world/.cache/uswds"
+    return 0
+  fi
+  if [ "$kind" = bootstrap ] && [ -f "$REPO_ROOT/bench/real-world/.cache/bootstrap/scss/bootstrap.scss" ]; then
+    printf '%s\n' "$REPO_ROOT/bench/real-world/.cache/bootstrap"
+    return 0
   fi
 
   if [ "$kind" = uswds ] && [ -d "$REPO_ROOT/bench/fixtures/fetched/uswds/packages/uswds" ]; then

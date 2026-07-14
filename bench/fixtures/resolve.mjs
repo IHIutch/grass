@@ -1,14 +1,27 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const FIXTURES = resolve(dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = resolve(FIXTURES, "../..");
+const CORPUS_CACHE = join(REPO_ROOT, "bench/real-world/.cache");
+let uswdsEntry;
+
+function upstreamUswdsEntry() {
+  if (!uswdsEntry) {
+    const entryDir = mkdtempSync(join(tmpdir(), "grass-uswds-entry-"));
+    uswdsEntry = join(entryDir, "input.scss");
+    writeFileSync(uswdsEntry, '@use "uswds";\n');
+    process.on("exit", () => rmSync(entryDir, { recursive: true, force: true }));
+  }
+  return uswdsEntry;
+}
 
 function candidates(kind) {
   const result = [];
-  if (process.env.PERF_FIXTURE_DIR) result.push(process.env.PERF_FIXTURE_DIR);
-  else if (kind === "uswds" && process.env.USWDS_FIXTURE_DIR) result.push(process.env.USWDS_FIXTURE_DIR);
+  if (process.env.PERF_FIXTURE_DIR) return [process.env.PERF_FIXTURE_DIR];
+  result.push(join(CORPUS_CACHE, kind));
   result.push(join(FIXTURES, "fetched", kind));
   result.push(FIXTURES);
   return result;
@@ -34,7 +47,7 @@ export function resolveFixture(kind) {
         root: normalizedRoot,
         loadPath: kind === "uswds" ? join(normalizedRoot, "packages") : join(normalizedRoot, "scss"),
         entry: kind === "uswds"
-          ? join(normalizedRoot, "packages/uswds/_index-direct.scss")
+          ? upstreamUswdsEntry()
           : join(normalizedRoot, "scss/bootstrap.scss"),
       };
     }
