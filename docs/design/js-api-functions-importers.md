@@ -631,7 +631,7 @@ NOT touch `crates/napi` at all.
 7. **Perf cost of the new `find_import` pre-check**: even when no JS
    importers are registered, slice 4 adds a new "walk `options.importers`"
    step to every `find_import_uncached` call. Needs to be a zero-cost no-op
-   (empty `Vec` check) verified against `prototype/perf-check.sh`, matching
+   (empty `Vec` check) verified against the historical `prototype/perf-check.sh`, matching
    how `custom_fns`/`GLOBAL_FUNCTIONS` lookups already sit ahead of hot paths
    without regressing USWDS/Bootstrap compiles.
 8. **Promise callback architecture**: the pinned target allows Promise

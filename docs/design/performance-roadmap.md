@@ -1,6 +1,11 @@
 # Performance roadmap
 
 > Paths in this historical document predate the `bench/` reorganization (2026-07-13).
+>
+> Plan 129 note: references below to `perf-check.sh` and `.perf-baseline` are
+> historical descriptions of the retired prose-era gate. The current executable
+> comparison is `bench/scripts/perf.sh compare`; these historical measurements
+> and recommendations are intentionally preserved.
 
 **Status:** spike deliverable for Plan 014 (solo todo #132). Measured, not implemented — see
 "Ranked backlog" for follow-up work.
