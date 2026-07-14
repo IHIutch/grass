@@ -85,35 +85,52 @@ echo "a { b: c }" | ./target/release/grass --stdin --style=expanded
 
 ## Performance Gate
 
-Before committing any change that touches `crates/compiler/`, run the perf
-check:
+For a compiler performance comparison, build the candidate with the default
+toolchain and compare it with the merge base. The gate fetches pinned USWDS
+and Bootstrap fixtures when needed:
 
 ```bash
-cargo build --release
-bash bench/scripts/perf-check.sh
+bash bench/fixtures/fetch.sh all
+~/.cargo/bin/cargo build --release -p grass
+bash bench/scripts/perf.sh compare --base "$(git merge-base HEAD origin/HEAD)" --workload all
 ```
 
-This compiles the USWDS fixture three times with the release binary,
-reports the median, and compares it against the baseline in
-`bench/.perf-baseline`. If performance regresses by more than 5%,
-investigate before committing — don't just bump the baseline to make the
-gate pass.
+The gate rejects prebuilt binaries whose rustc fingerprints differ or cannot
+be determined, alternates base/candidate order in one run set, reports raw
+instruction counts from `/usr/bin/time -l`, and uses hyperfine wall medians as
+the secondary signal. It discards the first pair as a documented cold-start
+rule. There is no absolute performance baseline to rewrite.
 
-To update the baseline after an intentional, understood change:
-
-```bash
-echo "<new_median_ms>" > bench/.perf-baseline
-```
-
+For a single-binary smoke measurement, use `bash bench/scripts/perf.sh quick`.
 For a full cross-engine benchmark (native vs. WASM vs. sass-embedded), see
 `bench/scripts/bench.sh`.
+
+The no-callback N-API `compileAsync` path is threadpool-bound. On the Bootstrap
+fixture, the distinct-input N=8 speedup was 3.85x with the default
+`UV_THREADPOOL_SIZE=4` and 6.85x with `UV_THREADPOOL_SIZE=8`. Node consumers
+issuing many independent compiles can set `UV_THREADPOOL_SIZE` before the first
+async work, subject to the machine's available CPU.
+
+Callback-bearing compiles are bound by callback density (callbacks per ms of
+compile work): each callback is a blocking round-trip serialized through the
+single JS thread. A realistic file importer made 87 callbacks over a roughly
+46ms Bootstrap compile (roughly 1.9 callbacks/ms), left the threadpool as the
+constraint, and measured 6.43x speedup at N=8 with
+`UV_THREADPOOL_SIZE=8`. A synthetic workload with 2,000 custom-function calls
+over a roughly 17ms compile (roughly 118 callbacks/ms) capped near 1.5x, and
+raising `UV_THREADPOOL_SIZE` barely helped.
+
+This is not explained by callback CPU: callback bodies measured 0.3–0.5% of
+wall time, and event-loop lag measured the JS thread at 8.5% busy during the
+capped workload. The precise mechanism, including N-API ThreadsafeFunction
+dispatch versus cross-thread wakeup latency, is not established.
 
 ## Profiling
 
 Use profiling to rank performance candidates before changing code; use
-`bench/scripts/perf-check.sh` for acceptance, and always run the performance gate
+`bench/scripts/perf.sh compare` for acceptance, and always run the performance gate
 for a change that affects the compiler. The profiling harness uses the same
-USWDS fixture and compile invocation as the performance check:
+USWDS fixture and compile invocation as the performance gate:
 
 ```bash
 PERF_FIXTURE_DIR=/path/to/checkout/with/packages ./bench/scripts/profile.sh cpu
@@ -135,7 +152,7 @@ teardown allocation deltas; dhat complements it with call-site attribution.
 
 Follow the measurement rules from the performance gate: compare a same-moment
 control, use both workloads, and never compare absolute milliseconds across
-separate sessions. Profiling ranks where to investigate; `perf-check.sh`
+separate sessions. Profiling ranks where to investigate; `perf.sh compare`
 remains the authoritative acceptance check.
 
 ### PGO reference numbers (2026-07-11)
@@ -157,8 +174,8 @@ perf numbers come from plain `--release` builds. Measured at `428608e2`
 
 Rule of thumb: deep-optimization decisions (what to target next) should
 consult PGO profiles — that's the binary users run, and PGO already
-restructures leaf-level inlining. Acceptance gates and `.perf-baseline`
-stay on plain release builds for comparability with history. To profile a
+restructures leaf-level inlining. Acceptance gates stay on plain release
+builds for comparability with history. To profile a
 PGO build, run `build-pgo.sh` with `CARGO_PROFILE_RELEASE_STRIP=none` (the
 release profile strips symbols otherwise) and point `samply record` at the
 resulting binary directly — `profile.sh cpu` rebuilds a plain binary and

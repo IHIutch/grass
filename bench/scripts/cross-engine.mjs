@@ -20,13 +20,10 @@ import {
   realpathSync,
   existsSync,
 } from "fs";
+import { resolveFixture } from "../fixtures/resolve.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../..");
-const FIXTURE_ROOT = process.env.PERF_FIXTURE_DIR || process.env.USWDS_FIXTURE_DIR ||
-  (existsSync(resolve(REPO_ROOT, "bench/fixtures/packages/uswds"))
-    ? resolve(REPO_ROOT, "bench/fixtures")
-    : resolve(REPO_ROOT, "prototype"));
 const GRASS_BIN = resolve(REPO_ROOT, "target/release/grass");
 const NATIVE_OUT = "/tmp/grass-bench-native-out.css";
 const SURFACE_LABEL = "grass WASM (pkg-publish surface)";
@@ -60,24 +57,25 @@ function runN(label, fn) {
   console.log(
     `  ${label.padEnd(24)} median: ${med.toFixed(1)}ms  min: ${min.toFixed(
       1
-    )}ms  sd: ${sd.toFixed(1)}ms (n=${N}, noise caveat: no hyperfine, ambient machine load per performance-roadmap.md)`
+    )}ms  sd: ${sd.toFixed(1)}ms (n=${N}, noise caveat: no hyperfine, ambient machine load per bench/README.md)`
   );
   return { med, min, sd, times };
 }
 
 const WORKLOADS = {
   uswds: () => {
-    const loadPaths = [resolve(FIXTURE_ROOT, "packages")];
-    const entryFile = resolve(FIXTURE_ROOT, "packages/uswds/_index-direct.scss");
+    const fixture = resolveFixture("uswds");
+    const loadPaths = [fixture.loadPath];
+    const entryFile = fixture.entry;
     // Read the flattened entry directly so every engine compiles
     // exactly the same content, whether fed as a file path or inline string.
     const source = readFileSync(entryFile, "utf8");
     return { name: "USWDS", loadPaths, entryFile, source };
   },
   bootstrap: () => {
-    const scssDir = resolve(FIXTURE_ROOT, "bootstrap-bench/scss");
-    const entryFile = resolve(scssDir, "bootstrap.scss");
-    const loadPaths = [scssDir];
+    const fixture = resolveFixture("bootstrap");
+    const entryFile = fixture.entry;
+    const loadPaths = [fixture.loadPath];
     const source = readFileSync(entryFile, "utf8");
     return { name: "Bootstrap v5.0.2", loadPaths, entryFile, source };
   },
@@ -98,7 +96,7 @@ async function benchWorkload(key, diagnoseFs = false) {
   writeFileSync(benchFile, source);
 
   // 1. sass-embedded: measured via a FRESH node process per rep (matching
-  // performance-roadmap.md's hyperfine methodology), calling compileAsync on
+  // bench/README.md's hyperfine methodology), calling compileAsync on
   // the entry FILE rather than compileStringAsync on inline source.
   //
   // Two methodology traps found and worked around here:
@@ -161,7 +159,7 @@ async function benchWorkload(key, diagnoseFs = false) {
 
   // 2. Native CLI: forks a fresh process per rep (same cost model hyperfine
   // uses), so this is comparable to the hyperfine-measured baseline in
-  // performance-roadmap.md without needing hyperfine itself.
+  // bench/README.md without needing hyperfine itself.
   const nativeArgs = [
     entryFile,
     NATIVE_OUT,

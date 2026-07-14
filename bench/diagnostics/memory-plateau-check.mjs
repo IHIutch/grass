@@ -8,6 +8,7 @@
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, statSync, realpathSync, readdirSync } from "fs";
+import { resolveFixture } from "../fixtures/resolve.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const grassJsPath = resolve(__dirname, "../../crates/lib/pkg-publish/grass.js");
@@ -34,9 +35,10 @@ const fsCallbacks = {
   readdirSync(d) { try { return readdirSync(d, { withFileTypes: true }).map((e) => (e.isFile() ? "f" : e.isDirectory() ? "d" : "o") + e.name); } catch { return []; } },
 };
 
-const uswdsPath = resolve(__dirname, "../fixtures/packages/uswds/_index-direct.scss");
+const uswdsFixture = resolveFixture("uswds");
+const uswdsPath = uswdsFixture.entry;
 const uswdsSrc = readFileSync(uswdsPath, "utf8");
-const loadPaths = [resolve(__dirname, "../fixtures/packages")];
+const loadPaths = [uswdsFixture.loadPath];
 
 const N = process.argv[2] ? parseInt(process.argv[2], 10) : 15;
 for (let i = 0; i < N; i++) {

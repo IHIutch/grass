@@ -58,8 +58,8 @@ as a performance target.
 The scheduled smoke summary reports runtime coverage as target cases started,
 target cases completed, expected compile errors, and crash/hang artifact
 count, all attributable to `GITHUB_SHA`. It does not report execution time as
-a quality score. Performance changes belong in the performance roadmap and
-its separately maintained benchmark baselines.
+a quality score. Performance changes belong in the benchmark workflow and
+executable gate documented in `bench/README.md`.
 
 ## Triage and escalation
 

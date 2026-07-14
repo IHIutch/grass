@@ -1,16 +1,32 @@
 import { createHash } from "crypto";
+import { createRequire } from "module";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, closeSync } from "fs";
 import { join, resolve } from "path";
 import { spawnSync } from "child_process";
 import { performance } from "perf_hooks";
 
+delete process.env.NO_COLOR;
+process.env.FORCE_COLOR = "0";
+const sassEmbedded = await import("sass-embedded");
+
 const DIR = new URL(".", import.meta.url).pathname;
 const ROOT = resolve(DIR, "../..");
-const CACHE = join(DIR, ".cache");
+const CACHE = process.env.CORPUS_CACHE || join(DIR, ".cache");
 const MANIFEST = JSON.parse(readFileSync(join(DIR, "manifest.json"), "utf8"));
 const GRASS = process.env.GRASS_BINARY || join(ROOT, "target/release/grass");
+const require = createRequire(import.meta.url);
+const grassNapi = require(resolve(ROOT, "crates/napi/grass.darwin-arm64.node"));
 const RUNS = 5;
 const WARMUPS = 2;
+const SILENCED_DEPRECATIONS = [
+  "call-string", "moz-document", "relative-canonical", "new-global",
+  "color-module-compat", "slash-div", "bogus-combinators", "strict-unary",
+  "function-units", "duplicate-var-flags", "null-alpha", "abs-percent",
+  "fs-importer-cwd", "feature-exists", "color-4-api", "color-functions",
+  "legacy-js-api", "global-builtin",
+  "compile-string-relative-url", "misplaced-rest",
+  "with-private", "if-function", "function-name", "adjacent-compounds",
+];
 
 function hash(s) { return createHash("sha256").update(s).digest("hex").slice(0, 16); }
 
@@ -91,6 +107,16 @@ function compile(kind, entry, paths, out, err, cwd) {
   return run("npx", ["-y", "sass@1.101.0", "--style=expanded", "--no-source-map", ...include, entry, out], cwd, out + ".stdout", err);
 }
 
+function compileWarm(kind, entry, paths) {
+  if (kind === "grass") return grassNapi.compile(entry, { loadPaths: paths, quiet: true });
+  return sassEmbedded.compile(entry, {
+    loadPaths: paths,
+    quietDeps: true,
+    silenceDeprecations: SILENCED_DEPRECATIONS,
+    logger: sassEmbedded.Logger.silent,
+  });
+}
+
 function firstDiff(a, b) {
   const x = readFileSync(a); const y = readFileSync(b);
   const n = Math.min(x.length, y.length);
@@ -99,7 +125,7 @@ function firstDiff(a, b) {
 }
 
 function oneProject(project) {
-  const record = { name: project.name, commit: project.commit, status: "ERROR", grassMedianMs: null, dartMedianMs: null, ratio: null, signature: null, error: null };
+  const record = { name: project.name, commit: project.commit, status: "ERROR", dartWarmMs: null, grassWarmMs: null, speedup: null, signature: null, error: null };
   const work = join(DIR, `.tmp-${project.name}-${process.pid}`);
   mkdirSync(work, { recursive: true });
   try {
@@ -109,31 +135,45 @@ function oneProject(project) {
     const entry = project.entry.startsWith("@prep/") ? join(prep, project.entry.slice("@prep/".length)) : resolve(repo, project.entry);
     const paths = loadPaths(project, repo, prep);
     if (!existsSync(entry)) throw new Error(`entry not found: ${project.entry}`);
-    const grassTimes = []; const dartTimes = [];
-    let grassError = null; let dartError = null;
     const grassOut = join(work, "grass.css"); const dartOut = join(work, "dart.css");
     const grassErr = join(work, "grass.stderr"); const dartErr = join(work, "dart.stderr");
-    for (let i = 0; i < WARMUPS + RUNS; i++) {
-      const g = compile("grass", entry, paths, grassOut, grassErr, repo);
-      if (g.result.status !== 0) grassError ||= `grass exit ${g.result.status}: ${errorSummary(grassErr)}`;
-      else if (i >= WARMUPS) grassTimes.push(g.ms);
-      const d = compile("dart", entry, paths, dartOut, dartErr, repo);
-      if (d.result.status !== 0) dartError ||= `dart-sass exit ${d.result.status}: ${errorSummary(dartErr)}`;
-      else if (i >= WARMUPS) dartTimes.push(d.ms);
-      if (i === WARMUPS && !grassError && !dartError && !readFileSync(grassOut).equals(readFileSync(dartOut))) {
-        record.status = "DIFF";
-        record.signature = firstDiff(grassOut, dartOut);
-      }
-    }
+
+    // Parity is a gate: keep these CLI invocations and the raw byte comparison
+    // separate from the timing leg below.
+    const g = compile("grass", entry, paths, grassOut, grassErr, repo);
+    const d = compile("dart", entry, paths, dartOut, dartErr, repo);
+    const grassError = g.result.status !== 0 ? `grass exit ${g.result.status}: ${errorSummary(grassErr)}` : null;
+    const dartError = d.result.status !== 0 ? `dart-sass exit ${d.result.status}: ${errorSummary(dartErr)}` : null;
     if (grassError || dartError) {
       record.error = [grassError, dartError].filter(Boolean).join("; ");
       return record;
     }
+    if (!readFileSync(grassOut).equals(readFileSync(dartOut))) {
+      record.status = "DIFF";
+      record.signature = firstDiff(grassOut, dartOut);
+      return record;
+    }
+
+    // Timing is a separate, warm, in-process comparison: no CLI, npx, or VM
+    // startup is included in either engine's measured calls.
+    const grassTimes = []; const dartTimes = [];
+    for (let i = 0; i < WARMUPS + RUNS; i++) {
+      const grassStart = performance.now();
+      compileWarm("grass", entry, paths);
+      const grassMs = performance.now() - grassStart;
+      const dartStart = performance.now();
+      compileWarm("dart", entry, paths);
+      const dartMs = performance.now() - dartStart;
+      if (i >= WARMUPS) {
+        grassTimes.push(grassMs);
+        dartTimes.push(dartMs);
+      }
+    }
     const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-    record.grassMedianMs = Number(median(grassTimes).toFixed(1));
-    record.dartMedianMs = Number(median(dartTimes).toFixed(1));
-    record.ratio = Number((record.dartMedianMs / record.grassMedianMs).toFixed(2));
-    if (record.status !== "DIFF") record.status = "PASS";
+    record.grassWarmMs = Number(median(grassTimes).toFixed(1));
+    record.dartWarmMs = Number(median(dartTimes).toFixed(1));
+    record.speedup = Number((record.dartWarmMs / record.grassWarmMs).toFixed(2));
+    record.status = "PASS";
   } catch (error) {
     record.error = String(error?.message || error);
   } finally {
@@ -152,7 +192,7 @@ function writeResults(records) {
       ? `All ${records.length} projects compile byte-identical to dart-sass 1.101.0.`
       : `Only ${passing.length} of ${records.length} projects compile byte-identical to dart-sass 1.101.0.`,
     "",
-    "Generated by `node bench/real-world/run.mjs all` against `npx -y sass@1.101.0`.",
+    "Generated by `node bench/real-world/run.mjs all`; parity uses the `npx -y sass@1.101.0` CLI.",
     "",
   ];
   if (!allPass) {
@@ -164,14 +204,13 @@ function writeResults(records) {
     rows.push("");
   }
   rows.push(
-    "| Project | Commit | Grass median (ms) | Dart median (ms) | Speedup |",
+    "| Project | Commit | dart-sass (warm, ms) | grass (warm, ms) | speedup |",
     "|---|---|---:|---:|---:|",
   );
-  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.grassMedianMs ?? "—"} | ${r.dartMedianMs ?? "—"} | ${r.ratio ?? "—"} |`);
+  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.dartWarmMs ?? "—"} | ${r.grassWarmMs ?? "—"} | ${r.speedup ? `${r.speedup}x` : "—"} |`);
   rows.push(
     "",
-    `Runs: ${RUNS} measured after ${WARMUPS} warmups per engine; raw byte comparison; stderr captured to per-run files; no source maps; quiet machine recommended.`,
-    "The ratio is measured per FULL CLI invocation and therefore includes dart-sass's ~137 ms process startup (which is why small projects show 60-110× and large ones 10-28×).",
+    `Timing method: warm in-process medians (${WARMUPS} warmups, ${RUNS} reps), grass via the N-API binding and dart via sass-embedded 1.100.0; neither includes process startup. Parity is separately byte-compared via the CLIs against dart-sass 1.101.0. Raw bytes, stderr capture, no source maps; quiet machine recommended.`,
   );
   writeFileSync(join(DIR, "results.md"), rows.join("\n") + "\n");
 }
@@ -180,7 +219,7 @@ function ratchet(records) {
   const path = join(DIR, "BASELINE.json");
   const current = Object.fromEntries(records.map((r) => [r.name, r]));
   if (!existsSync(path) || process.env.UPDATE_BASELINE === "1") {
-    writeFileSync(path, JSON.stringify({ schema: 1, sass: "1.101.0", projects: current }, null, 2) + "\n");
+    writeFileSync(path, JSON.stringify({ schema: 2, paritySass: "1.101.0", timingSass: "sass-embedded 1.100.0", projects: current }, null, 2) + "\n");
     return 0;
   }
   const baseline = JSON.parse(readFileSync(path, "utf8")).projects || {};
@@ -189,7 +228,7 @@ function ratchet(records) {
     const b = baseline[r.name];
     if (!b) { console.log(`RATCHET: new project ${r.name}; consider updating BASELINE.json`); continue; }
     if (b.status === "PASS" && r.status !== "PASS") { console.error(`REGRESSION: ${r.name} ${b.status} -> ${r.status}`); regressions++; }
-    if (r.status === "PASS" && b.grassMedianMs && r.grassMedianMs > b.grassMedianMs * 1.2) console.log(`RATCHET: ${r.name} is slower than baseline; review before updating baseline`);
+    if (r.status === "PASS" && b.grassWarmMs && r.grassWarmMs > b.grassWarmMs * 1.2) console.log(`RATCHET: ${r.name} is slower than baseline; review before updating BASELINE.json`);
     if (b.status !== "PASS" && r.status === "PASS") console.log(`RATCHET: ${r.name} improved to PASS; update BASELINE.json`);
   }
   return regressions;

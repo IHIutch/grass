@@ -16,7 +16,7 @@ const wasmModule = await WebAssembly.compile(wasmBytes);
 workers.init(wasmModule);
 
 const res = workers.compileString("a { b: c }");
-assert.equal(res.css, "a {\n  b: c;\n}\n");
+assert.equal(res.css, "a {\n  b: c;\n}");
 assert.ok(Array.isArray(res.loadedUrls));
 assert.equal(res.sourceMap, undefined);
 
@@ -24,7 +24,7 @@ assert.equal(workers.compileString("a { b: c }", { style: "compressed" }).css, "
 assert.throws(() => workers.compileString("a { b: "));
 
 const ar = await workers.compileStringAsync("a { b: c }");
-assert.equal(ar.css, "a {\n  b: c;\n}\n");
+assert.equal(ar.css, "a {\n  b: c;\n}");
 
 // sourceMap option: absent by default; a real object when requested.
 {

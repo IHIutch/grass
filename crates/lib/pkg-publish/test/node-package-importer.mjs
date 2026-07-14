@@ -71,7 +71,7 @@ if (!hasNative) {
   const scopedResult = grass.compileString('@use "pkg:@org/theme" as scoped;', {
     importers: [importer],
   });
-  assert.equal(scopedResult.css, ".scoped {\n  color: orange;\n}\n");
+  assert.equal(scopedResult.css, ".scoped {\n  color: orange;\n}");
 
   // Root manifest fallback checks sass before style when exports is absent.
   const fallbackRoot = join(root, "fallback");
@@ -112,7 +112,7 @@ if (!hasNative) {
   const explicitResult = grass.compileString('@use "pkg:explicit-theme" as explicit;', {
     importers: [new grass.NodePackageImporter(explicitRoot)],
   });
-  assert.equal(explicitResult.css, ".explicit {\n  color: green;\n}\n");
+  assert.equal(explicitResult.css, ".explicit {\n  color: green;\n}");
 
   // F-307(4): a preceding FileImporter wins at its supplied array position.
   const virtualFile = join(root, "virtual.scss");
@@ -123,7 +123,7 @@ if (!hasNative) {
       importer,
     ],
   });
-  assert.equal(precedingResult.css, ".preceding {\n  color: purple;\n}\n");
+  assert.equal(precedingResult.css, ".preceding {\n  color: purple;\n}");
 
   // F-307(5): missing packages and blocked exports decline into Sass's normal error;
   // malformed package metadata is surfaced from the Node resolver.
@@ -156,7 +156,7 @@ if (!hasNative) {
   const asyncResult = await grass.compileStringAsync('@use "pkg:theme" as theme; a { color: theme.$color; }', {
     importers: [importer],
   });
-  assert.equal(asyncResult.css, "a {\n  color: red;\n}\n");
+  assert.equal(asyncResult.css, "a {\n  color: red;\n}");
   const asyncFileResult = await grass.compileAsync(exportsEntry, { importers: [importer] });
   assert.equal(asyncFileResult.css, exportsResult.css);
 

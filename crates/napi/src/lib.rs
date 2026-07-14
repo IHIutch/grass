@@ -187,6 +187,16 @@ fn source_map_result(
     map.map(|m| m.to_json_value(None, include_sources))
 }
 
+/// dart-sass's JS API returns CSS without a trailing newline, while grass's
+/// Rust/CLI surface includes one (matching dart-sass's CLI). The JS bindings
+/// must strip exactly one to preserve JS-API parity.
+fn js_css(mut css: String) -> String {
+    if css.ends_with('\n') {
+        css.pop();
+    }
+    css
+}
+
 // `AssertUnwindSafe`/`UnwindSafe` bounds below are sound: these closures only
 // read owned inputs, and on panic the compiler state being unwound through is
 // discarded rather than reused, so there is no observable broken invariant.
@@ -351,7 +361,7 @@ pub fn compile(path: String, options: Option<CompileOptions>) -> napi::Result<Co
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(CompileResult {
-            css,
+            css: js_css(css),
             source_map: source_map_result(map, include_sources),
         })
     })
@@ -380,7 +390,7 @@ pub fn compile_string(
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(CompileResult {
-            css,
+            css: js_css(css),
             source_map: source_map_result(map, include_sources),
         })
     })
@@ -485,7 +495,7 @@ impl Task for CompileTask {
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         let (css, map) = output;
         Ok(CompileResult {
-            css,
+            css: js_css(css),
             source_map: source_map_result(map, self.include_sources),
         })
     }
@@ -535,7 +545,7 @@ impl Task for CompileStringTask {
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         let (css, map) = output;
         Ok(CompileResult {
-            css,
+            css: js_css(css),
             source_map: source_map_result(map, self.include_sources),
         })
     }
@@ -610,7 +620,7 @@ mod tests {
     #[test]
     fn compile_string_produces_css() {
         let res = compile_string("a { b: c }".to_owned(), None).unwrap();
-        assert_eq!(res.css, "a {\n  b: c;\n}\n");
+        assert_eq!(res.css, "a {\n  b: c;\n}");
     }
 
     #[test]
@@ -628,14 +638,14 @@ mod tests {
         let source = "$a: 1;\nb { c: $a/2; }".to_owned();
 
         let with_warning = compile_string(source.clone(), None).unwrap();
-        assert_eq!(with_warning.css, "b {\n  c: 0.5;\n}\n");
+        assert_eq!(with_warning.css, "b {\n  c: 0.5;\n}");
 
         let opts = CompileOptions {
             silence_deprecations: Some(vec!["slash-div".to_owned()]),
             ..base_opts()
         };
         let res = compile_string(source, Some(opts)).unwrap();
-        assert_eq!(res.css, "b {\n  c: 0.5;\n}\n");
+        assert_eq!(res.css, "b {\n  c: 0.5;\n}");
     }
 
     #[test]
@@ -726,7 +736,7 @@ mod tests {
             };
             let res = compile_string("a { b: c }".to_owned(), Some(opts));
             assert!(res.is_ok(), "field {field} unexpectedly errored");
-            assert_eq!(res.unwrap().css, "a {\n  b: c;\n}\n");
+            assert_eq!(res.unwrap().css, "a {\n  b: c;\n}");
         }
     }
 
@@ -870,7 +880,7 @@ mod tests {
         std::fs::write(&path, "a { b: c }").unwrap();
 
         let res = compile(path.to_string_lossy().into_owned(), None).unwrap();
-        assert_eq!(res.css, "a {\n  b: c;\n}\n");
+        assert_eq!(res.css, "a {\n  b: c;\n}");
 
         std::fs::remove_file(&path).unwrap();
     }
