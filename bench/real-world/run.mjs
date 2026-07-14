@@ -167,7 +167,7 @@ function writeResults(records) {
     "| Project | Commit | Grass median (ms) | Dart median (ms) | Speedup |",
     "|---|---|---:|---:|---:|",
   );
-  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.grassMedianMs ?? "—"} | ${r.dartMedianMs ?? "—"} | ${r.ratio ?? "—"} |`);
+  for (const r of records) rows.push(`| ${r.name} | ${r.commit.slice(0, 12)} | ${r.grassMedianMs ?? "—"} | ${r.dartMedianMs ?? "—"} | ${r.ratio == null ? "—" : `${r.ratio}x`} |`);
   rows.push(
     "",
     `Runs: ${RUNS} measured after ${WARMUPS} warmups per engine; raw byte comparison; stderr captured to per-run files; no source maps; quiet machine recommended.`,
