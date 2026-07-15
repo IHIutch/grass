@@ -121,22 +121,23 @@ else
     done
 fi
 
-# Find llvm-profdata. The rustup llvm-tools-preview copy is the safest choice
-# when a system LLVM is unavailable; the existing precedence is retained for
-# compatibility with the release runners.
-if command -v llvm-profdata &>/dev/null; then
+# Find llvm-profdata. Prefer the rustup toolchain copy because it matches
+# rustc's raw profile format, then fall back to PATH and Xcode's copy.
+if [ -x "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata" ]; then
+    PROFDATA="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata"
+elif command -v llvm-profdata &>/dev/null; then
     PROFDATA="llvm-profdata"
 elif xcrun --find llvm-profdata &>/dev/null 2>&1; then
     PROFDATA="xcrun llvm-profdata"
-elif [ -x "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata" ]; then
-    PROFDATA="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/llvm-profdata"
 else
     echo "Error: llvm-profdata not found. Install Xcode, LLVM, or run: rustup component add llvm-tools-preview" >&2
     exit 1
 fi
 
 echo "=== Step 1/4: Building instrumented binary ==="
-RUSTFLAGS="-Cprofile-generate=$PGO_DIR" $CARGO build --release 2>&1 | grep -E "Compiling grass |Finished"
+# mimalloc faults under PGO instrumentation on macOS arm64; profile collection
+# only needs code-path counters, so use the system allocator for this binary.
+RUSTFLAGS="-Cprofile-generate=$PGO_DIR" $CARGO build --release --no-default-features --features "commandline,random,stacker,custom-builtin-fns" 2>&1 | grep -E "Compiling grass |Finished"
 
 run_default_workload() {
     local entry="$1" load_path="$2"

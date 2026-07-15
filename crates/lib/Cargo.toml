@@ -54,11 +54,11 @@ dhat = { version = "0.3", optional = true }
 
 [features]
 # todo: no commandline by default
-default = ["commandline", "random", "stacker", "custom-builtin-fns"]
+default = ["commandline", "random", "stacker", "custom-builtin-fns", "mimalloc"]
 # Option (enabled by default): build a binary using clap. Also pulls in
 # `notify` for `--watch`/`--poll` -- both are CLI-only concerns, so there's
 # no separate feature gate for watch support.
-commandline = ["clap", "mimalloc", "dep:notify"]
+commandline = ["clap", "dep:notify"]
 random = ["grass_compiler/random"]
 wasm-exports = ["grass_compiler/wasm-exports", "wasm-bindgen"]
 # Option (enabled by default): register Rust functions as Sass builtins via

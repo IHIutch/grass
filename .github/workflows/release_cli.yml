@@ -17,14 +17,13 @@ jobs:
           # Native-execution targets only — an instrumented PGO binary must run
           # on the same architecture it was built on, so cross-compiled targets
           # (aarch64-linux, windows, musl) are deliberately excluded here.
+          # Intel macOS CLI is intentionally omitted: the macos-13 Intel runner
+          # is deprecated; Intel users are covered by the ihiutch-grass npm
+          # package or `cargo install grass`.
           - target: aarch64-apple-darwin
             os: macos-14
             artifact-name: grass-darwin-arm64
             dart-sass-suffix: macos-arm64
-          - target: x86_64-apple-darwin
-            os: macos-13
-            artifact-name: grass-darwin-x64
-            dart-sass-suffix: macos-x64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact-name: grass-linux-x64-gnu
@@ -59,7 +58,6 @@ jobs:
           case "${{ matrix.dart-sass-suffix }}" in
             linux-x64) expected_sha256="049bb0a0171a776b82cbd1b0a644e43fbeafe8a67e851c077e2f0d1da6f28a86" ;;
             macos-arm64) expected_sha256="b73fda91716e9f4fa2e997d89eb4988adb1ba9718c715516743380f797309d0d" ;;
-            macos-x64) expected_sha256="d3eb1ec8106b81a654cdbcc7e7107d518a802b71fed26b34c2e78a861b59f382" ;;
             *) echo "Unsupported Dart Sass suffix: ${{ matrix.dart-sass-suffix }}"; exit 1 ;;
           esac
           if command -v sha256sum >/dev/null 2>&1; then
